@@ -181,7 +181,7 @@ const BUTTON_IN = 1.22;
 const BUTTON_OUT = 1 / BUTTON_IN;
 const LOW_ZOOM_LABEL_THRESHOLD = 6;
 const MID_ZOOM_LABEL_THRESHOLD = 16;
-const STATION_HIT_RADIUS_PX = 4.25;
+const STATION_HIT_RADIUS_PX = 14;
 
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
@@ -818,14 +818,7 @@ export default function RedlineMap() {
   const hoverStation =
     hoverStationIndex !== null ? stationPoints[hoverStationIndex] || null : null;
 
-  const activeStationProjected = useMemo(() => {
-    if (!showStations) return null;
-    const activeIdx = hoverStationIndex ?? selectedStationIndex;
-    if (activeIdx === null) return null;
-    return projectedStations.find((station) => station.idx === activeIdx) || null;
-  }, [showStations, hoverStationIndex, selectedStationIndex, projectedStations]);
-
-  const tooltipStation = activeStationProjected?.point || null;
+  const tooltipStation = showStations ? (selectedStation || hoverStation) : null;
 
 
   const selectedStationIdentity = useMemo(
@@ -1417,7 +1410,28 @@ export default function RedlineMap() {
       return;
     }
 
-    if (hoverStationIndex !== null) {
+    if (!showStations) {
+      setHoverStationIndex(null);
+      return;
+    }
+
+    const localX = e.clientX - rect.left;
+    const localY = e.clientY - rect.top;
+    const nearest = projectedStations.reduce(
+      (best, station) => {
+        const screen = worldToScreen(station.world.x, station.world.y, viewport);
+        const d = Math.hypot(screen.x - localX, screen.y - localY);
+        if (d < best.distance) {
+          return { idx: station.idx, distance: d };
+        }
+        return best;
+      },
+      { idx: -1, distance: Number.POSITIVE_INFINITY }
+    );
+
+    if (nearest.distance <= STATION_HIT_RADIUS_PX) {
+      setHoverStationIndex(nearest.idx);
+    } else {
       setHoverStationIndex(null);
     }
   }
@@ -1465,14 +1479,40 @@ export default function RedlineMap() {
       return;
     }
 
+    const moved = Math.hypot(e.clientX - panStartRef.current.x, e.clientY - panStartRef.current.y);
+    if (moved < 4) {
+      const rect = mapContainerRef.current?.getBoundingClientRect();
+      if (rect) {
+        const localX = e.clientX - rect.left;
+        const localY = e.clientY - rect.top;
+        const nearest = projectedStations.reduce(
+          (best, station) => {
+            const screen = worldToScreen(station.world.x, station.world.y, viewport);
+            const d = Math.hypot(screen.x - localX, screen.y - localY);
+            if (d < best.distance) {
+              return { idx: station.idx, distance: d };
+            }
+            return best;
+          },
+          { idx: -1, distance: Number.POSITIVE_INFINITY }
+        );
+        if (nearest.distance <= STATION_HIT_RADIUS_PX) {
+          setSelectedStationIndex(nearest.idx);
+        }
+      }
+    }
+
     setIsPanning(false);
     panStartRef.current = null;
   }
 
   const tooltipScreenPosition = useMemo(() => {
-    if (!activeStationProjected) return null;
-    return worldToScreen(activeStationProjected.world.x, activeStationProjected.world.y, viewport);
-  }, [activeStationProjected, viewport]);
+    if (hoverStationIndex === null && selectedStationIndex === null) return null;
+    const idx = hoverStationIndex ?? selectedStationIndex;
+    const station = projectedStations.find((item) => item.idx === idx);
+    if (!station) return null;
+    return worldToScreen(station.world.x, station.world.y, viewport);
+  }, [hoverStationIndex, selectedStationIndex, projectedStations, viewport]);
 
   const redlineStroke = "rgba(255, 72, 72, 1)";
   const redlineCasing = "rgba(18, 4, 6, 0.82)";
@@ -1783,41 +1823,34 @@ export default function RedlineMap() {
                       {projectedStations.map(({ idx, world }) => {
                         const isSelected = selectedStationIndex === idx;
                         const isHovered = hoverStationIndex === idx;
-                        const baseRadius = viewport.zoom < 4 ? 1.18 : viewport.zoom < 12 ? 0.98 : 0.86;
-                        const radius = isSelected ? baseRadius + 0.12 : isHovered ? baseRadius + 0.06 : baseRadius;
-                        const hitRadius = Math.max(radius + 0.18, STATION_HIT_RADIUS_PX / Math.max(viewport.zoom, 0.0001));
+                        const baseRadius = viewport.zoom < 4 ? 1.8 : viewport.zoom < 12 ? 1.5 : 1.25;
+                        const radius = isSelected ? baseRadius + 0.8 : isHovered ? baseRadius + 0.45 : baseRadius;
+                        const halo = isSelected ? radius + 3.2 : isHovered ? radius + 2.1 : radius + 0.7;
 
                         return (
-                          <g key={`station-${idx}`} style={{ cursor: "pointer" }}>
+                          <g key={`station-${idx}`}>
+                            {(isSelected || isHovered) ? (
+                              <circle
+                                cx={world.x}
+                                cy={world.y}
+                                r={halo}
+                                fill={isSelected ? "rgba(255, 214, 10, 0.24)" : "rgba(255,255,255,0.16)"}
+                              />
+                            ) : null}
                             <circle
                               cx={world.x}
                               cy={world.y}
-                              r={hitRadius}
-                              fill="rgba(0,0,0,0.001)"
-                              pointerEvents="all"
-                              onPointerEnter={() => setHoverStationIndex(idx)}
-                              onPointerLeave={() => setHoverStationIndex((current) => (current === idx ? null : current))}
-                              onPointerDown={(event) => {
-                                event.preventDefault();
-                                event.stopPropagation();
-                                setIsPanning(false);
-                                panStartRef.current = null;
-                                setHoverStationIndex(idx);
-                                setSelectedStationIndex(idx);
-                              }}
-                              onClick={(event) => {
-                                event.preventDefault();
-                                event.stopPropagation();
-                                setHoverStationIndex(idx);
-                                setSelectedStationIndex(idx);
-                              }}
+                              r={radius + 0.45}
+                              fill="rgba(255,255,255,0.82)"
                             />
                             <circle
                               cx={world.x}
                               cy={world.y}
                               r={radius}
-                              fill={isSelected ? "#facc15" : "#000000"}
-                              pointerEvents="none"
+                              fill={isSelected ? "#facc15" : isHovered ? "#dbeafe" : "#05070a"}
+                              stroke={isSelected ? "rgba(255,255,255,0.96)" : isHovered ? "rgba(255,255,255,0.92)" : "rgba(255,255,255,0.78)"}
+                              strokeWidth={isSelected ? 1.05 : isHovered ? 0.95 : 0.8}
+                              vectorEffect="non-scaling-stroke"
                             />
                           </g>
                         );
@@ -1832,11 +1865,7 @@ export default function RedlineMap() {
                 )}
 
                 {projectedStations
-                  .filter(
-                    (station) =>
-                      visibleLabelIndices.has(station.idx) &&
-                      (hoverStationIndex === station.idx || selectedStationIndex === station.idx)
-                  )
+                  .filter((station) => visibleLabelIndices.has(station.idx))
                   .map((station) => {
                     const screen = worldToScreen(station.world.x, station.world.y, viewport);
                     return (
@@ -1844,8 +1873,8 @@ export default function RedlineMap() {
                         key={`label-${station.idx}`}
                         style={{
                           position: "absolute",
-                          left: screen.x,
-                          top: screen.y - 10,
+                          left: screen.x + 10,
+                          top: screen.y - 24,
                           background: "rgba(14, 24, 34, 0.88)",
                           color: "#f8fafc",
                           border: "1px solid rgba(255,255,255,0.08)",
@@ -1856,7 +1885,6 @@ export default function RedlineMap() {
                           lineHeight: 1.2,
                           pointerEvents: "none",
                           whiteSpace: "nowrap",
-                          transform: "translate(-50%, calc(-100% - 6px))",
                         }}
                       >
                         {station.point.station || "--"}
@@ -1884,9 +1912,9 @@ export default function RedlineMap() {
                   <div
                     style={{
                       position: "absolute",
-                      left: clamp(tooltipScreenPosition.x, 170, containerSize.width - 170),
+                      left: Math.min(containerSize.width - 346, tooltipScreenPosition.x + 18),
                       top: Math.max(18, tooltipScreenPosition.y - 18),
-                      transform: "translate(-50%, calc(-100% - 12px))",
+                      transform: "translateY(-50%)",
                       width: 314,
                       maxWidth: "calc(100% - 24px)",
                       borderRadius: 18,
