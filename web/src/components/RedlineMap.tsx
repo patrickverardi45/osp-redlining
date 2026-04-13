@@ -921,23 +921,28 @@ export default function RedlineMap() {
   const handleAddException = useCallback(() => {
     const label = extraExceptionLabel.trim();
     if (!label) return;
-    setExceptions((current: ExceptionCost[]) => [
-      ...current,
+
+    const nextExceptions: ExceptionCost[] = [
+      ...exceptions,
       { id: `custom-${Date.now()}`, label, amount: extraExceptionAmount.trim() },
-    ]);
+    ];
+
+    setExceptions(nextExceptions);
     setExtraExceptionLabel("");
     setExtraExceptionAmount("");
-  }, [extraExceptionLabel, extraExceptionAmount]);
+  }, [exceptions, extraExceptionLabel, extraExceptionAmount]);
 
   const handleRemoveException = useCallback((id: string) => {
-    setExceptions((current: ExceptionCost[]) => current.filter((item: ExceptionCost) => item.id !== id));
-  }, []);
+    const nextExceptions: ExceptionCost[] = exceptions.filter((item) => item.id !== id);
+    setExceptions(nextExceptions);
+  }, [exceptions]);
 
   const handleExceptionChange = useCallback((id: string, field: "label" | "amount", value: string) => {
-    setExceptions((current: ExceptionCost[]) =>
-      current.map((item: ExceptionCost) => (item.id === id ? { ...item, [field]: value } : item))
+    const nextExceptions: ExceptionCost[] = exceptions.map((item) =>
+      item.id === id ? { ...item, [field]: value } : item
     );
-  }, []);
+    setExceptions(nextExceptions);
+  }, [exceptions]);
 
   const handlePrintReport = useCallback(() => {
     if (typeof window !== "undefined") {
