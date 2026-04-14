@@ -814,14 +814,14 @@ export default function RedlineMap() {
   const hoverStation =
     hoverStationIndex !== null ? stationPoints[hoverStationIndex] || null : null;
 
-  const activeTooltipIndex = showStations ? (hoverStationIndex ?? selectedStationIndex) : null;
+  const activeTooltipIndex = showStations ? hoverStationIndex : null;
 
   const tooltipStation = useMemo(() => {
     if (activeTooltipIndex === null) return null;
     return stationPoints[activeTooltipIndex] || null;
   }, [activeTooltipIndex, stationPoints]);
 
-  const tooltipStationMode = hoverStationIndex !== null ? "Hover" : selectedStationIndex !== null ? "Selected" : "";
+  const tooltipStationMode = hoverStationIndex !== null ? "Hover" : "";
 
   const tooltipWorldGeometry = useMemo(() => {
     if (!projectionMetrics || activeTooltipIndex === null || !showStations) {
@@ -1786,6 +1786,11 @@ export default function RedlineMap() {
                     viewBox={viewBoxToString(projectionMetrics, viewport)}
                     preserveAspectRatio="xMidYMid meet"
                     style={{ position: "absolute", inset: 0, width: "100%", height: "100%", display: "block", shapeRendering: "geometricPrecision" }}
+                    onClick={() => {
+                      if (selectedStationIndex !== null) {
+                        setSelectedStationIndex(null);
+                      }
+                    }}
                   >
                     <g id="kmz-design-layer">
                       <rect x={0} y={0} width={projectionMetrics?.worldWidth || PROJECTION_BASE_WIDTH} height={projectionMetrics?.worldHeight || PROJECTION_BASE_WIDTH} fill="rgba(8,18,26,0.96)" />
