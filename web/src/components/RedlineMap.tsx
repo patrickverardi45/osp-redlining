@@ -181,7 +181,6 @@ const BUTTON_IN = 1.22;
 const BUTTON_OUT = 1 / BUTTON_IN;
 const LOW_ZOOM_LABEL_THRESHOLD = 6;
 const MID_ZOOM_LABEL_THRESHOLD = 16;
-const STATION_HIT_RADIUS_PX = 4.25;
 
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
@@ -371,20 +370,6 @@ function screenToWorld(
   };
 }
 
-function worldToScreen(
-  worldX: number,
-  worldY: number,
-  viewport: Viewport
-): ScreenPoint {
-  return {
-    x: worldX * viewport.zoom + viewport.panX,
-    y: worldY * viewport.zoom + viewport.panY,
-  };
-}
-
-function distance(a: ScreenPoint, b: ScreenPoint): number {
-  return Math.hypot(a.x - b.x, a.y - b.y);
-}
 
 function kmzLineStroke(feature: KmzLineFeature): string {
   return (
@@ -773,18 +758,18 @@ export default function RedlineMap() {
 
   const visibleLabelIndices = useMemo(() => {
     const result = new Set<number>();
-    if (!showStations || !projectedStations.length) return result;
+    if (!showStations || !projectedStations.length || !projectionMetrics) return result;
 
-    const thresholdPx =
+    const currentWorldWidth = projectionMetrics.worldWidth / viewport.zoom;
+    const worldThreshold =
       viewport.zoom < LOW_ZOOM_LABEL_THRESHOLD
-        ? 999999
+        ? Number.POSITIVE_INFINITY
         : viewport.zoom < MID_ZOOM_LABEL_THRESHOLD
-        ? 56
-        : 28;
+        ? currentWorldWidth * (56 / Math.max(containerSize.width, 1))
+        : currentWorldWidth * (28 / Math.max(containerSize.width, 1));
 
-    const acceptedScreen: ScreenPoint[] = [];
+    const acceptedWorld: ScreenPoint[] = [];
     for (const station of projectedStations) {
-      const screen = worldToScreen(station.world.x, station.world.y, viewport);
       const mustShow =
         selectedStationIndex === station.idx ||
         hoverStationIndex === station.idx ||
@@ -793,7 +778,7 @@ export default function RedlineMap() {
 
       if (mustShow) {
         result.add(station.idx);
-        acceptedScreen.push(screen);
+        acceptedWorld.push(station.world);
         continue;
       }
 
@@ -801,15 +786,26 @@ export default function RedlineMap() {
         continue;
       }
 
-      const tooClose = acceptedScreen.some((existing) => distance(existing, screen) < thresholdPx);
+      const tooClose = acceptedWorld.some(
+        (existing) => Math.hypot(existing.x - station.world.x, existing.y - station.world.y) < worldThreshold
+      );
+
       if (!tooClose) {
         result.add(station.idx);
-        acceptedScreen.push(screen);
+        acceptedWorld.push(station.world);
       }
     }
 
     return result;
-  }, [showStations, projectedStations, viewport, selectedStationIndex, hoverStationIndex]);
+  }, [
+    showStations,
+    projectedStations,
+    projectionMetrics,
+    viewport.zoom,
+    containerSize.width,
+    selectedStationIndex,
+    hoverStationIndex,
+  ]);
 
 
   const selectedStation =
@@ -818,14 +814,122 @@ export default function RedlineMap() {
   const hoverStation =
     hoverStationIndex !== null ? stationPoints[hoverStationIndex] || null : null;
 
-  const activeStationProjected = useMemo(() => {
-    if (!showStations) return null;
-    const activeIdx = hoverStationIndex ?? selectedStationIndex;
-    if (activeIdx === null) return null;
-    return projectedStations.find((station) => station.idx === activeIdx) || null;
-  }, [showStations, hoverStationIndex, selectedStationIndex, projectedStations]);
+  const activeTooltipIndex = showStations ? (hoverStationIndex ?? selectedStationIndex) : null;
 
-  const tooltipStation = activeStationProjected?.point || null;
+  const tooltipStation = useMemo(() => {
+    if (activeTooltipIndex === null) return null;
+    return stationPoints[activeTooltipIndex] || null;
+  }, [activeTooltipIndex, stationPoints]);
+
+  const tooltipStationMode = hoverStationIndex !== null ? "Hover" : selectedStationIndex !== null ? "Selected" : "";
+
+  const tooltipWorldGeometry = useMemo(() => {
+    if (!projectionMetrics || activeTooltipIndex === null || !showStations) {
+      return null;
+    }
+
+    const station = projectedStations.find((item) => item.idx === activeTooltipIndex);
+    if (!station) return null;
+
+    const currentWorldWidth = projectionMetrics.worldWidth / viewport.zoom;
+    const currentWorldHeight = projectionMetrics.worldHeight / viewport.zoom;
+    const viewLeft = -viewport.panX / viewport.zoom;
+    const viewTop = -viewport.panY / viewport.zoom;
+    const viewRight = viewLeft + currentWorldWidth;
+    const viewBottom = viewTop + currentWorldHeight;
+
+    const baseScale = clamp(2.4 / Math.max(viewport.zoom, 1), 0.38, 2.4);
+
+    const cardWidth = baseScale * 64;
+    const margin = baseScale * 3;
+    const offsetX = baseScale * 5.25;
+    const cornerRadius = baseScale * 4;
+    const calloutInset = baseScale * 1.15;
+    const calloutStroke = Math.max(0.7, baseScale * 0.34);
+
+    const headerFontSize = baseScale * 1.9;
+    const stationFontSize = baseScale * 4.1;
+    const rowLabelFontSize = baseScale * 2.2;
+    const rowFontSize = baseScale * 2.15;
+    const headerLetterSpacing = baseScale * 0.18;
+    const rowGap = baseScale * 3.05;
+    const paddingX = baseScale * 4.0;
+    const headerY = baseScale * 4.7;
+    const stationY = baseScale * 9.6;
+    const rowsStartY = baseScale * 14.0;
+    const valueX = paddingX + baseScale * 12.8;
+    const contentBottomPadding = baseScale * 3.3;
+    const rowCount = 10;
+    const minCardHeight = rowsStartY + rowGap * (rowCount - 1) + contentBottomPadding;
+    const cardHeight = Math.max(baseScale * 48, minCardHeight);
+
+    const labelFontSize = baseScale * 2.05;
+    const labelHeight = baseScale * 4.15;
+    const labelRadius = baseScale * 1.85;
+    const labelPaddingX = baseScale * 2.05;
+    const labelDx = baseScale * 2.0;
+    const labelDy = baseScale * 4.7;
+
+    const preferRight = station.world.x + offsetX + cardWidth <= viewRight - margin;
+    const anchorX = preferRight
+      ? station.world.x + offsetX
+      : Math.max(viewLeft + margin, station.world.x - cardWidth - offsetX);
+
+    const anchorY = Math.min(
+      Math.max(viewTop + margin, station.world.y - cardHeight * 0.48),
+      viewBottom - cardHeight - margin
+    );
+
+    return {
+      stationX: station.world.x,
+      stationY: station.world.y,
+      cardX: anchorX,
+      cardY: anchorY,
+      cardWidth,
+      cardHeight,
+      calloutMidY: anchorY + baseScale * 7.2,
+      placeRight: preferRight,
+      cornerRadius,
+      calloutInset,
+      calloutStroke,
+      paddingX,
+      headerY,
+      stationYText: stationY,
+      rowsStartY,
+      valueX,
+      headerFontSize,
+      stationFontSize,
+      rowLabelFontSize,
+      rowFontSize,
+      headerLetterSpacing,
+      rowGap,
+      labelDx,
+      labelDy,
+      labelFontSize,
+      labelHeight,
+      labelRadius,
+      labelPaddingX,
+    };
+  }, [activeTooltipIndex, projectedStations, projectionMetrics, viewport, showStations]);
+
+
+  const labelWorldGeometry = useMemo(() => {
+    if (!projectionMetrics) return null;
+
+    const currentWorldWidth = projectionMetrics.worldWidth / viewport.zoom;
+    const currentWorldHeight = projectionMetrics.worldHeight / viewport.zoom;
+    const baseScale = clamp(2.4 / Math.max(viewport.zoom, 1), 0.38, 2.4);
+
+    return {
+      calloutStroke: Math.max(0.7, baseScale * 0.34),
+      labelDx: baseScale * 2.0,
+      labelDy: baseScale * 4.7,
+      labelFontSize: baseScale * 2.05,
+      labelHeight: baseScale * 4.15,
+      labelRadius: baseScale * 1.85,
+      labelPaddingX: baseScale * 2.05,
+    };
+  }, [projectionMetrics, viewport.zoom]);
 
 
   const selectedStationIdentity = useMemo(
@@ -1414,15 +1518,10 @@ export default function RedlineMap() {
         panX: panStartRef.current ? panStartRef.current.panX + dx : current.panX,
         panY: panStartRef.current ? panStartRef.current.panY + dy : current.panY,
       }));
-      return;
-    }
-
-    if (hoverStationIndex !== null) {
-      setHoverStationIndex(null);
     }
   }
 
-  function handlePointerUp(e: React.PointerEvent<HTMLDivElement>) {
+  function handlePointerUp(_: React.PointerEvent<HTMLDivElement>) {
     if (boxZoom && mapContainerRef.current) {
       const width = Math.abs(boxZoom.endX - boxZoom.startX);
       const height = Math.abs(boxZoom.endY - boxZoom.startY);
@@ -1455,24 +1554,9 @@ export default function RedlineMap() {
       return;
     }
 
-    if (!isPanning || !panStartRef.current) {
-      return;
-    }
-
-    if (!showStations) {
-      setIsPanning(false);
-      panStartRef.current = null;
-      return;
-    }
-
     setIsPanning(false);
     panStartRef.current = null;
   }
-
-  const tooltipScreenPosition = useMemo(() => {
-    if (!activeStationProjected) return null;
-    return worldToScreen(activeStationProjected.world.x, activeStationProjected.world.y, viewport);
-  }, [activeStationProjected, viewport]);
 
   const redlineStroke = "rgba(255, 72, 72, 1)";
   const redlineCasing = "rgba(18, 4, 6, 0.82)";
@@ -1780,48 +1864,164 @@ export default function RedlineMap() {
 
                     {showStations ? (
                       <g id="station-layer">
-                      {projectedStations.map(({ idx, world }) => {
-                        const isSelected = selectedStationIndex === idx;
-                        const isHovered = hoverStationIndex === idx;
-                        const baseRadius = viewport.zoom < 4 ? 1.18 : viewport.zoom < 12 ? 0.98 : 0.86;
-                        const radius = isSelected ? baseRadius + 0.12 : isHovered ? baseRadius + 0.06 : baseRadius;
-                        const hitRadius = Math.max(radius + 0.18, STATION_HIT_RADIUS_PX / Math.max(viewport.zoom, 0.0001));
+                        {projectedStations.map(({ idx, world, point }) => {
+                          const isSelected = selectedStationIndex === idx;
+                          const isHovered = hoverStationIndex === idx;
+                          const baseRadius = viewport.zoom < 4 ? 1.8 : viewport.zoom < 12 ? 1.5 : 1.25;
+                          const radius = isSelected ? baseRadius + 0.8 : isHovered ? baseRadius + 0.45 : baseRadius;
+                          const halo = isSelected ? radius + 3.2 : isHovered ? radius + 2.1 : radius + 0.7;
+                          const showLabel = visibleLabelIndices.has(idx);
+                          const stationLabel = cleanDisplayText(point.station);
 
-                        return (
-                          <g key={`station-${idx}`} style={{ cursor: "pointer" }}>
-                            <circle
-                              cx={world.x}
-                              cy={world.y}
-                              r={hitRadius}
-                              fill="rgba(0,0,0,0.001)"
-                              pointerEvents="all"
+                          return (
+                            <g
+                              key={`station-${idx}`}
+                              style={{ cursor: "pointer" }}
+                              onPointerDown={(e) => {
+                                e.stopPropagation();
+                              }}
                               onPointerEnter={() => setHoverStationIndex(idx)}
                               onPointerLeave={() => setHoverStationIndex((current) => (current === idx ? null : current))}
-                              onPointerDown={(event) => {
-                                event.preventDefault();
-                                event.stopPropagation();
-                                setIsPanning(false);
-                                panStartRef.current = null;
-                                setHoverStationIndex(idx);
+                              onClick={(e) => {
+                                e.stopPropagation();
                                 setSelectedStationIndex(idx);
                               }}
-                              onClick={(event) => {
-                                event.preventDefault();
-                                event.stopPropagation();
-                                setHoverStationIndex(idx);
-                                setSelectedStationIndex(idx);
-                              }}
-                            />
-                            <circle
-                              cx={world.x}
-                              cy={world.y}
-                              r={radius}
-                              fill={isSelected ? "#facc15" : "#000000"}
-                              pointerEvents="none"
-                            />
-                          </g>
-                        );
-                      })}
+                            >
+                              {(isSelected || isHovered) ? (
+                                <circle
+                                  cx={world.x}
+                                  cy={world.y}
+                                  r={halo}
+                                  fill={isSelected ? "rgba(255, 214, 10, 0.24)" : "rgba(255,255,255,0.16)"}
+                                  pointerEvents="none"
+                                />
+                              ) : null}
+                              <circle
+                                cx={world.x}
+                                cy={world.y}
+                                r={radius + 0.45}
+                                fill="rgba(255,255,255,0.82)"
+                              />
+                              <circle
+                                cx={world.x}
+                                cy={world.y}
+                                r={radius}
+                                fill={isSelected ? "#facc15" : isHovered ? "#dbeafe" : "#05070a"}
+                                stroke={isSelected ? "rgba(255,255,255,0.96)" : isHovered ? "rgba(255,255,255,0.92)" : "rgba(255,255,255,0.78)"}
+                                strokeWidth={isSelected ? 1.05 : isHovered ? 0.95 : 0.8}
+                                vectorEffect="non-scaling-stroke"
+                              />
+                              {showLabel ? (
+                                <g pointerEvents="none">
+                                  <rect
+                                    x={world.x + (labelWorldGeometry?.labelDx ?? 6)}
+                                    y={world.y - (labelWorldGeometry?.labelDy ?? 12) - (labelWorldGeometry?.labelHeight ?? 10) * 0.5}
+                                    rx={labelWorldGeometry?.labelRadius ?? 4}
+                                    ry={labelWorldGeometry?.labelRadius ?? 4}
+                                    width={Math.max((labelWorldGeometry?.labelHeight ?? 10) * 2.2, stationLabel.length * (labelWorldGeometry?.labelFontSize ?? 5) * 0.62 + (labelWorldGeometry?.labelPaddingX ?? 4) * 2)}
+                                    height={labelWorldGeometry?.labelHeight ?? 10}
+                                    fill="rgba(14, 24, 34, 0.88)"
+                                    stroke="rgba(255,255,255,0.08)"
+                                    strokeWidth={Math.max(0.55, (labelWorldGeometry?.calloutStroke ?? 1) * 0.5)}
+                                  />
+                                  <text
+                                    x={world.x + (labelWorldGeometry?.labelDx ?? 6) + (labelWorldGeometry?.labelPaddingX ?? 4)}
+                                    y={world.y - (labelWorldGeometry?.labelDy ?? 12) + (labelWorldGeometry?.labelFontSize ?? 5) * 0.34}
+                                    fill="#f8fafc"
+                                    fontSize={labelWorldGeometry?.labelFontSize ?? 5}
+                                    fontWeight="700"
+                                    style={{ userSelect: "none" }}
+                                  >
+                                    {stationLabel}
+                                  </text>
+                                </g>
+                              ) : null}
+                            </g>
+                          );
+                        })}
+                      </g>
+                    ) : null}
+
+                    {tooltipStation && tooltipWorldGeometry ? (
+                      <g id="station-tooltip-layer" pointerEvents="none">
+                        <path
+                          d={
+                            tooltipWorldGeometry.placeRight
+                              ? `M ${tooltipWorldGeometry.stationX + tooltipWorldGeometry.calloutInset} ${tooltipWorldGeometry.stationY} L ${tooltipWorldGeometry.cardX} ${tooltipWorldGeometry.calloutMidY}`
+                              : `M ${tooltipWorldGeometry.stationX - tooltipWorldGeometry.calloutInset} ${tooltipWorldGeometry.stationY} L ${tooltipWorldGeometry.cardX + tooltipWorldGeometry.cardWidth} ${tooltipWorldGeometry.calloutMidY}`
+                          }
+                          fill="none"
+                          stroke="rgba(255,255,255,0.28)"
+                          strokeWidth={tooltipWorldGeometry.calloutStroke}
+                          strokeLinecap="round"
+                        />
+                        <rect
+                          x={tooltipWorldGeometry.cardX}
+                          y={tooltipWorldGeometry.cardY}
+                          width={tooltipWorldGeometry.cardWidth}
+                          height={tooltipWorldGeometry.cardHeight}
+                          rx={tooltipWorldGeometry.cornerRadius}
+                          ry={tooltipWorldGeometry.cornerRadius}
+                          fill="rgba(255,255,255,0.985)"
+                          stroke="rgba(15, 23, 42, 0.16)"
+                          strokeWidth={Math.max(0.7, tooltipWorldGeometry.calloutStroke * 0.62)}
+                        />
+                        <text
+                          x={tooltipWorldGeometry.cardX + tooltipWorldGeometry.paddingX}
+                          y={tooltipWorldGeometry.cardY + tooltipWorldGeometry.headerY}
+                          fill="#64748b"
+                          fontSize={tooltipWorldGeometry.headerFontSize}
+                          fontWeight="800"
+                          style={{ letterSpacing: `${tooltipWorldGeometry.headerLetterSpacing}px`, textTransform: "uppercase" }}
+                        >
+                          {tooltipStationMode ? `Field inspection • ${tooltipStationMode}` : "Field inspection"}
+                        </text>
+                        <text
+                          x={tooltipWorldGeometry.cardX + tooltipWorldGeometry.paddingX}
+                          y={tooltipWorldGeometry.cardY + tooltipWorldGeometry.stationYText}
+                          fill="#0f172a"
+                          fontSize={tooltipWorldGeometry.stationFontSize}
+                          fontWeight="900"
+                        >
+                          {cleanDisplayText(tooltipStation.station)}
+                        </text>
+
+                        {[
+                          ["Station", cleanDisplayText(tooltipStation.station)],
+                          ["Mapped FT", formatNumber(tooltipStation.mapped_station_ft, 3)],
+                          ["Depth FT", formatNumber(tooltipStation.depth_ft)],
+                          ["BOC FT", formatNumber(tooltipStation.boc_ft)],
+                          ["Date", formatDisplayDate(tooltipStation.date)],
+                          ["Crew", cleanDisplayText(tooltipStation.crew)],
+                          ["Print", cleanDisplayText(tooltipStation.print)],
+                          ["Source", cleanDisplayText(tooltipStation.source_file)],
+                          ["Notes", cleanDisplayText(tooltipStation.notes)],
+                          ["Lat / Lon", `${formatNumber(tooltipStation.lat, 8)}, ${formatNumber(tooltipStation.lon, 8)}`],
+                        ].map(([label, value], rowIdx) => {
+                          const rowY = tooltipWorldGeometry.cardY + tooltipWorldGeometry.rowsStartY + rowIdx * tooltipWorldGeometry.rowGap;
+                          return (
+                            <g key={`${label}-${rowIdx}`}>
+                              <text
+                                x={tooltipWorldGeometry.cardX + tooltipWorldGeometry.paddingX}
+                                y={rowY}
+                                fill="#64748b"
+                                fontSize={tooltipWorldGeometry.rowLabelFontSize}
+                                fontWeight="800"
+                              >
+                                {label}
+                              </text>
+                              <text
+                                x={tooltipWorldGeometry.cardX + tooltipWorldGeometry.valueX}
+                                y={rowY}
+                                fill="#0f172a"
+                                fontSize={tooltipWorldGeometry.rowFontSize}
+                                fontWeight="600"
+                              >
+                                {String(value)}
+                              </text>
+                            </g>
+                          );
+                        })}
                       </g>
                     ) : null}
                   </svg>
@@ -1830,39 +2030,6 @@ export default function RedlineMap() {
                     Upload a KMZ and structured bore logs to render real map output.
                   </div>
                 )}
-
-                {projectedStations
-                  .filter(
-                    (station) =>
-                      visibleLabelIndices.has(station.idx) &&
-                      (hoverStationIndex === station.idx || selectedStationIndex === station.idx)
-                  )
-                  .map((station) => {
-                    const screen = worldToScreen(station.world.x, station.world.y, viewport);
-                    return (
-                      <div
-                        key={`label-${station.idx}`}
-                        style={{
-                          position: "absolute",
-                          left: screen.x,
-                          top: screen.y - 10,
-                          background: "rgba(14, 24, 34, 0.88)",
-                          color: "#f8fafc",
-                          border: "1px solid rgba(255,255,255,0.08)",
-                          borderRadius: 8,
-                          padding: "2px 7px",
-                          fontSize: 10.5,
-                          fontWeight: 700,
-                          lineHeight: 1.2,
-                          pointerEvents: "none",
-                          whiteSpace: "nowrap",
-                          transform: "translate(-50%, calc(-100% - 6px))",
-                        }}
-                      >
-                        {station.point.station || "--"}
-                      </div>
-                    );
-                  })}
 
                 {boxZoom ? (
                   <div
@@ -1878,76 +2045,6 @@ export default function RedlineMap() {
                       boxSizing: "border-box",
                     }}
                   />
-                ) : null}
-
-                {tooltipStation && tooltipScreenPosition ? (
-                  <div
-                    style={{
-                      position: "absolute",
-                      left: clamp(tooltipScreenPosition.x, 170, containerSize.width - 170),
-                      top: Math.max(18, tooltipScreenPosition.y - 18),
-                      transform: "translate(-50%, calc(-100% - 12px))",
-                      width: 314,
-                      maxWidth: "calc(100% - 24px)",
-                      borderRadius: 18,
-                      background: "linear-gradient(180deg, rgba(255,255,255,0.985) 0%, rgba(247,250,252,0.975) 100%)",
-                      border: "1px solid rgba(15, 23, 42, 0.16)",
-                      padding: 14,
-                      boxShadow: "0 18px 42px rgba(0,0,0,0.24)",
-                      pointerEvents: "none",
-                      backdropFilter: "blur(10px)",
-                    }}
-                  >
-                    <div
-                      style={{
-                        display: "flex",
-                        alignItems: "flex-start",
-                        justifyContent: "space-between",
-                        gap: 10,
-                        paddingBottom: 10,
-                        borderBottom: "1px solid rgba(148, 163, 184, 0.18)",
-                      }}
-                    >
-                      <div>
-                        <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: 0.55, textTransform: "uppercase", color: "#64748b" }}>
-                          Field inspection
-                        </div>
-                        <div style={{ marginTop: 4, fontWeight: 900, fontSize: 17, color: "#0f172a", lineHeight: 1.15 }}>
-                          {cleanDisplayText(tooltipStation.station)}
-                        </div>
-                      </div>
-                      <div
-                        style={{
-                          padding: "5px 8px",
-                          borderRadius: 999,
-                          background: "rgba(15, 23, 42, 0.06)",
-                          color: "#334155",
-                          fontSize: 10.5,
-                          fontWeight: 800,
-                          letterSpacing: 0.25,
-                          whiteSpace: "nowrap",
-                        }}
-                      >
-                        Hover
-                      </div>
-                    </div>
-
-                    <div style={{ marginTop: 12, display: "grid", gap: 8 }}>
-                      <TooltipRow label="Station" value={cleanDisplayText(tooltipStation.station)} />
-                      <TooltipRow label="Mapped FT" value={formatNumber(tooltipStation.mapped_station_ft, 3)} />
-                      <TooltipRow label="Depth FT" value={formatNumber(tooltipStation.depth_ft)} />
-                      <TooltipRow label="BOC FT" value={formatNumber(tooltipStation.boc_ft)} />
-                      <TooltipRow label="Date" value={formatDisplayDate(tooltipStation.date)} />
-                      <TooltipRow label="Crew" value={cleanDisplayText(tooltipStation.crew)} />
-                      <TooltipRow label="Print" value={cleanDisplayText(tooltipStation.print)} />
-                      <TooltipRow label="Source" value={cleanDisplayText(tooltipStation.source_file)} />
-                      <TooltipRow label="Notes" value={cleanDisplayText(tooltipStation.notes)} />
-                      <TooltipRow
-                        label="Lat / Lon"
-                        value={`${formatNumber(tooltipStation.lat, 8)}, ${formatNumber(tooltipStation.lon, 8)}`}
-                      />
-                    </div>
-                  </div>
                 ) : null}
 
                               </div>
