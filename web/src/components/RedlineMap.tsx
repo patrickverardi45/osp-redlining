@@ -1,186 +1,40 @@
 "use client";
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type {
+  CandidateRanking,
+  VerificationInfo,
+  StationPoint,
+  RedlineSegment,
+  GroupMatch,
+  KmzLineFeature,
+  KmzPolygonFeature,
+  BackendState,
+  StationPhoto,
+  ExceptionCost,
+  NoteTone,
+  Bounds,
+  ScreenPoint,
+  Viewport,
+} from "@/lib/types/backend";
+import {
+  PROJECTION_BASE_WIDTH,
+  MAP_HEIGHT,
+  MIN_ZOOM,
+  MAX_ZOOM,
+  FIT_PADDING,
+  WHEEL_IN,
+  WHEEL_OUT,
+  BUTTON_IN,
+  BUTTON_OUT,
+  LOW_ZOOM_LABEL_THRESHOLD,
+  MID_ZOOM_LABEL_THRESHOLD,
+} from "@/lib/map/constants";
 
 const API_BASE =
   process.env.NEXT_PUBLIC_API_BASE?.replace(/\/+$/, "") ||
   process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/+$/, "") ||
   "http://127.0.0.1:8000";
-
-type CandidateRanking = {
-  route_id?: string;
-  route_name?: string;
-  source_folder?: string;
-  route_role?: string;
-  route_length_ft?: number;
-  expected_span_ft?: number;
-  length_gap_ft?: number;
-  score?: number;
-  reason?: string;
-};
-
-type VerificationInfo = {
-  confidence?: string;
-  reason?: string;
-  mapping_mode?: string;
-  anchor_type?: string;
-  print_present?: boolean;
-  route_name?: string;
-  route_length_ft?: number;
-  source_file?: string;
-  print?: string;
-  candidate_rankings?: CandidateRanking[];
-};
-
-type StationPoint = {
-  station?: string;
-  station_ft?: number;
-  mapped_station_ft?: number;
-  lat?: number;
-  lon?: number;
-  depth_ft?: number | null;
-  boc_ft?: number | null;
-  notes?: string;
-  date?: string;
-  crew?: string;
-  print?: string;
-  source_file?: string;
-  point_role?: string;
-  verification?: VerificationInfo;
-};
-
-type RedlineSegment = {
-  segment_id?: string;
-  start_station?: string;
-  end_station?: string;
-  length_ft?: number;
-  print?: string;
-  source_file?: string;
-  route_name?: string;
-  coords?: number[][];
-};
-
-type GroupMatch = {
-  route_name?: string;
-  route_role?: string;
-  confidence_label?: string;
-  final_decision?: string;
-  expected_span_ft?: number;
-  length_gap_ft?: number;
-  print?: string;
-  candidate_rankings?: CandidateRanking[];
-  print_filter?: {
-    print_tokens?: string[];
-  };
-};
-
-type KmzLineFeature = {
-  feature_id?: string;
-  route_id?: string;
-  route_name?: string;
-  source_folder?: string;
-  role?: string;
-  coords?: number[][];
-  color?: string;
-  width?: number;
-  stroke?: string;
-  stroke_width?: number;
-};
-
-type KmzPolygonFeature = {
-  feature_id?: string;
-  name?: string;
-  coords?: number[][];
-  fill_color?: string;
-  stroke_color?: string;
-  fill?: string;
-  stroke?: string;
-  fill_opacity?: number;
-  stroke_width?: number;
-};
-
-type BackendState = {
-  success?: boolean;
-  message?: string;
-  warning?: string;
-  error?: string;
-  route_name?: string | null;
-  selected_route_name?: string | null;
-  selected_route_match?: GroupMatch | null;
-  route_coords?: number[][];
-  loaded_field_data_files?: number;
-  latest_structured_file?: string | null;
-  redline_segments?: RedlineSegment[];
-  station_points?: StationPoint[];
-  active_route_redline_segments?: RedlineSegment[];
-  active_route_station_points?: StationPoint[];
-  verification_summary?: {
-    status?: string;
-    route_selection_reason?: string;
-  };
-  total_length_ft?: number;
-  covered_length_ft?: number;
-  completion_pct?: number;
-  active_route_covered_length_ft?: number;
-  active_route_completion_pct?: number;
-  active_route_station_points_count?: number;
-  active_route_redline_segments_count?: number;
-  committed_rows?: Array<Record<string, unknown>>;
-  bug_report_count?: number;
-  suggested_route_id?: string | null;
-  station_mapping_mode?: string | null;
-  kmz_reference?: {
-    line_features?: KmzLineFeature[];
-    polygon_features?: KmzPolygonFeature[];
-  };
-};
-
-
-type StationPhoto = {
-  photo_id: string;
-  station_identity: string;
-  station_summary: string;
-  original_filename: string;
-  stored_filename: string;
-  content_type?: string;
-  uploaded_at: string;
-  relative_url: string;
-};
-
-type ExceptionCost = {
-  id: string;
-  label: string;
-  amount: string;
-};
-
-type NoteTone = "neutral" | "success" | "warning" | "error";
-
-type Bounds = {
-  minLat: number;
-  maxLat: number;
-  minLon: number;
-  maxLon: number;
-};
-
-type ScreenPoint = { x: number; y: number };
-
-type Viewport = {
-  zoom: number;
-  panX: number;
-  panY: number;
-};
-
-const PROJECTION_BASE_WIDTH = 1000;
-const MAP_HEIGHT = 620;
-const MIN_ZOOM = 1;
-const MAX_ZOOM = 300;
-const FIT_PADDING = 36;
-const WHEEL_IN = 1.18;
-const WHEEL_OUT = 0.85;
-const BUTTON_IN = 1.22;
-const BUTTON_OUT = 1 / BUTTON_IN;
-const LOW_ZOOM_LABEL_THRESHOLD = 6;
-const MID_ZOOM_LABEL_THRESHOLD = 16;
 
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
