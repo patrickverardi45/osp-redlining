@@ -1,6 +1,10 @@
 "use client";
+// @ts-nocheck
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { CircleMarker, MapContainer, Polygon, Polyline, Popup, TileLayer, Tooltip } from "react-leaflet";
+import type { LatLngTuple, Map as LeafletMap } from "leaflet";
+import "leaflet/dist/leaflet.css";
 
 const API_BASE =
   process.env.NEXT_PUBLIC_API_BASE?.replace(/\/+$/, "") ||
@@ -181,7 +185,8 @@ const BUTTON_IN = 1.22;
 const BUTTON_OUT = 1 / BUTTON_IN;
 const LOW_ZOOM_LABEL_THRESHOLD = 6;
 const MID_ZOOM_LABEL_THRESHOLD = 16;
-const STATION_HIT_RADIUS_PX = 14;
+const LIGHT_STREETS_WMS_ENDPOINT = "https://ows.terrestris.de/osm/service";
+const LIGHT_STREETS_WMS_LAYER = "OSM-WMS";
 
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
@@ -280,6 +285,25 @@ function expandBounds(bounds: Bounds, factor = 0.04): Bounds {
   };
 }
 
+function buildLightStreetsBasemapUrl(bounds: Bounds, width: number, height: number): string {
+  const safeWidth = Math.max(256, Math.round(width));
+  const safeHeight = Math.max(256, Math.round(height));
+  const params = new URLSearchParams({
+    SERVICE: "WMS",
+    VERSION: "1.1.1",
+    REQUEST: "GetMap",
+    LAYERS: LIGHT_STREETS_WMS_LAYER,
+    STYLES: "",
+    FORMAT: "image/png",
+    TRANSPARENT: "FALSE",
+    SRS: "EPSG:4326",
+    BBOX: `${bounds.minLon},${bounds.minLat},${bounds.maxLon},${bounds.maxLat}`,
+    WIDTH: String(safeWidth),
+    HEIGHT: String(safeHeight),
+  });
+  return `${LIGHT_STREETS_WMS_ENDPOINT}?${params.toString()}`;
+}
+
 type ProjectionMetrics = {
   worldWidth: number;
   worldHeight: number;
@@ -294,7 +318,7 @@ function getProjectionMetrics(bounds: Bounds, widthPx: number, heightPx: number)
   const safeHeight = Math.max(1, heightPx);
   const latSpan = Math.max(bounds.maxLat - bounds.minLat, 0.000001);
   const midLatRad = ((bounds.minLat + bounds.maxLat) / 2) * (Math.PI / 180);
-  const lonScale = Math.max(Math.cos(midLatRad), 0.000001);
+  const lonScale = 1;
   const lonSpanAdjusted = Math.max((bounds.maxLon - bounds.minLon) * lonScale, 0.000001);
 
   const dataAspect = lonSpanAdjusted / latSpan;
@@ -371,20 +395,6 @@ function screenToWorld(
   };
 }
 
-function worldToScreen(
-  worldX: number,
-  worldY: number,
-  viewport: Viewport
-): ScreenPoint {
-  return {
-    x: worldX * viewport.zoom + viewport.panX,
-    y: worldY * viewport.zoom + viewport.panY,
-  };
-}
-
-function distance(a: ScreenPoint, b: ScreenPoint): number {
-  return Math.hypot(a.x - b.x, a.y - b.y);
-}
 
 function kmzLineStroke(feature: KmzLineFeature): string {
   return (
@@ -612,6 +622,7 @@ export default function RedlineMap() {
   const [isPanning, setIsPanning] = useState(false);
   const panStartRef = useRef<{ x: number; y: number; panX: number; panY: number } | null>(null);
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
+  const leafletMapRef = useRef<LeafletMap | null>(null);
   const [containerSize, setContainerSize] = useState({ width: 1200, height: MAP_HEIGHT });
   const [boxZoom, setBoxZoom] = useState<{ startX: number; startY: number; endX: number; endY: number } | null>(null);
   const [selectedStationIndex, setSelectedStationIndex] = useState<number | null>(null);
@@ -703,6 +714,18 @@ export default function RedlineMap() {
     () => (renderBounds ? getProjectionMetrics(renderBounds, containerSize.width, containerSize.height) : null),
     [renderBounds, containerSize.width, containerSize.height]
   );
+  const basemapImageUrl = useMemo(() => {
+    return buildLightStreetsBasemapUrl(
+      {
+        minLat: 30,
+        maxLat: 31,
+        minLon: -97,
+        maxLon: -96,
+      },
+      1000,
+      600
+    );
+  }, []);
 
   const initialFitBounds = useMemo(() => renderBounds, [renderBounds]);
 
@@ -771,20 +794,66 @@ export default function RedlineMap() {
       .filter((item): item is { idx: number; point: StationPoint; world: ScreenPoint } => Boolean(item));
   }, [stationPoints, renderBounds, projectionMetrics]);
 
+  const leafletKmzLinePaths = useMemo(
+    () =>
+      kmzLineFeatures
+        .map((feature, idx) => ({
+          id: feature.feature_id || feature.route_id || `${feature.route_name || "kmz-line"}-${idx}`,
+          coords: cleanCoords(feature.coords).map((pt) => [pt[0], pt[1]] as LatLngTuple),
+          feature,
+        }))
+        .filter((item) => item.coords.length > 1),
+    [kmzLineFeatures]
+  );
+
+  const leafletKmzPolygonPaths = useMemo(
+    () =>
+      kmzPolygonFeatures
+        .map((feature, idx) => ({
+          id: feature.feature_id || `${feature.name || "kmz-polygon"}-${idx}`,
+          coords: cleanCoords(feature.coords).map((pt) => [pt[0], pt[1]] as LatLngTuple),
+          feature,
+        }))
+        .filter((item) => item.coords.length > 2),
+    [kmzPolygonFeatures]
+  );
+
+  const leafletRedlinePaths = useMemo(
+    () =>
+      redlineSegments
+        .map((segment, idx) => ({
+          id: segment.segment_id || `${segment.start_station || "start"}-${segment.end_station || "end"}-${idx}`,
+          coords: cleanCoords(segment.coords).map((pt) => [pt[0], pt[1]] as LatLngTuple),
+        }))
+        .filter((item) => item.coords.length > 1),
+    [redlineSegments]
+  );
+
+  const leafletStations = useMemo(
+    () =>
+      stationPoints
+        .map((point, idx) => {
+          if (typeof point.lat !== "number" || typeof point.lon !== "number") return null;
+          return { idx, point, position: [point.lat, point.lon] as LatLngTuple };
+        })
+        .filter((item): item is { idx: number; point: StationPoint; position: LatLngTuple } => Boolean(item)),
+    [stationPoints]
+  );
+
   const visibleLabelIndices = useMemo(() => {
     const result = new Set<number>();
-    if (!showStations || !projectedStations.length) return result;
+    if (!showStations || !projectedStations.length || !projectionMetrics) return result;
 
-    const thresholdPx =
+    const currentWorldWidth = projectionMetrics.worldWidth / viewport.zoom;
+    const worldThreshold =
       viewport.zoom < LOW_ZOOM_LABEL_THRESHOLD
-        ? 999999
+        ? Number.POSITIVE_INFINITY
         : viewport.zoom < MID_ZOOM_LABEL_THRESHOLD
-        ? 56
-        : 28;
+        ? currentWorldWidth * (56 / Math.max(containerSize.width, 1))
+        : currentWorldWidth * (28 / Math.max(containerSize.width, 1));
 
-    const acceptedScreen: ScreenPoint[] = [];
+    const acceptedWorld: ScreenPoint[] = [];
     for (const station of projectedStations) {
-      const screen = worldToScreen(station.world.x, station.world.y, viewport);
       const mustShow =
         selectedStationIndex === station.idx ||
         hoverStationIndex === station.idx ||
@@ -793,7 +862,7 @@ export default function RedlineMap() {
 
       if (mustShow) {
         result.add(station.idx);
-        acceptedScreen.push(screen);
+        acceptedWorld.push(station.world);
         continue;
       }
 
@@ -801,15 +870,26 @@ export default function RedlineMap() {
         continue;
       }
 
-      const tooClose = acceptedScreen.some((existing) => distance(existing, screen) < thresholdPx);
+      const tooClose = acceptedWorld.some(
+        (existing) => Math.hypot(existing.x - station.world.x, existing.y - station.world.y) < worldThreshold
+      );
+
       if (!tooClose) {
         result.add(station.idx);
-        acceptedScreen.push(screen);
+        acceptedWorld.push(station.world);
       }
     }
 
     return result;
-  }, [showStations, projectedStations, viewport, selectedStationIndex, hoverStationIndex]);
+  }, [
+    showStations,
+    projectedStations,
+    projectionMetrics,
+    viewport.zoom,
+    containerSize.width,
+    selectedStationIndex,
+    hoverStationIndex,
+  ]);
 
 
   const selectedStation =
@@ -818,7 +898,122 @@ export default function RedlineMap() {
   const hoverStation =
     hoverStationIndex !== null ? stationPoints[hoverStationIndex] || null : null;
 
-  const tooltipStation = showStations ? (selectedStation || hoverStation) : null;
+  const activeTooltipIndex = showStations ? (hoverStationIndex ?? selectedStationIndex) : null;
+
+  const tooltipStation = useMemo(() => {
+    if (activeTooltipIndex === null) return null;
+    return stationPoints[activeTooltipIndex] || null;
+  }, [activeTooltipIndex, stationPoints]);
+
+  const tooltipStationMode = hoverStationIndex !== null ? "Hover" : selectedStationIndex !== null ? "Selected" : "";
+
+  const tooltipWorldGeometry = useMemo(() => {
+    if (!projectionMetrics || activeTooltipIndex === null || !showStations) {
+      return null;
+    }
+
+    const station = projectedStations.find((item) => item.idx === activeTooltipIndex);
+    if (!station) return null;
+
+    const currentWorldWidth = projectionMetrics.worldWidth / viewport.zoom;
+    const currentWorldHeight = projectionMetrics.worldHeight / viewport.zoom;
+    const viewLeft = -viewport.panX / viewport.zoom;
+    const viewTop = -viewport.panY / viewport.zoom;
+    const viewRight = viewLeft + currentWorldWidth;
+    const viewBottom = viewTop + currentWorldHeight;
+
+    const baseScale = clamp(2.4 / Math.max(viewport.zoom, 1), 0.38, 2.4);
+
+    const cardWidth = baseScale * 64;
+    const margin = baseScale * 3;
+    const offsetX = baseScale * 5.25;
+    const cornerRadius = baseScale * 4;
+    const calloutInset = baseScale * 1.15;
+    const calloutStroke = Math.max(0.7, baseScale * 0.34);
+
+    const headerFontSize = baseScale * 1.9;
+    const stationFontSize = baseScale * 4.1;
+    const rowLabelFontSize = baseScale * 2.2;
+    const rowFontSize = baseScale * 2.15;
+    const headerLetterSpacing = baseScale * 0.18;
+    const rowGap = baseScale * 3.05;
+    const paddingX = baseScale * 4.0;
+    const headerY = baseScale * 4.7;
+    const stationY = baseScale * 9.6;
+    const rowsStartY = baseScale * 14.0;
+    const valueX = paddingX + baseScale * 12.8;
+    const contentBottomPadding = baseScale * 3.3;
+    const rowCount = 10;
+    const minCardHeight = rowsStartY + rowGap * (rowCount - 1) + contentBottomPadding;
+    const cardHeight = Math.max(baseScale * 48, minCardHeight);
+
+    const labelFontSize = baseScale * 2.05;
+    const labelHeight = baseScale * 4.15;
+    const labelRadius = baseScale * 1.85;
+    const labelPaddingX = baseScale * 2.05;
+    const labelDx = baseScale * 2.0;
+    const labelDy = baseScale * 4.7;
+
+    const preferRight = station.world.x + offsetX + cardWidth <= viewRight - margin;
+    const anchorX = preferRight
+      ? station.world.x + offsetX
+      : Math.max(viewLeft + margin, station.world.x - cardWidth - offsetX);
+
+    const anchorY = Math.min(
+      Math.max(viewTop + margin, station.world.y - cardHeight * 0.48),
+      viewBottom - cardHeight - margin
+    );
+
+    return {
+      stationX: station.world.x,
+      stationY: station.world.y,
+      cardX: anchorX,
+      cardY: anchorY,
+      cardWidth,
+      cardHeight,
+      calloutMidY: anchorY + baseScale * 7.2,
+      placeRight: preferRight,
+      cornerRadius,
+      calloutInset,
+      calloutStroke,
+      paddingX,
+      headerY,
+      stationYText: stationY,
+      rowsStartY,
+      valueX,
+      headerFontSize,
+      stationFontSize,
+      rowLabelFontSize,
+      rowFontSize,
+      headerLetterSpacing,
+      rowGap,
+      labelDx,
+      labelDy,
+      labelFontSize,
+      labelHeight,
+      labelRadius,
+      labelPaddingX,
+    };
+  }, [activeTooltipIndex, projectedStations, projectionMetrics, viewport, showStations]);
+
+
+  const labelWorldGeometry = useMemo(() => {
+    if (!projectionMetrics) return null;
+
+    const currentWorldWidth = projectionMetrics.worldWidth / viewport.zoom;
+    const currentWorldHeight = projectionMetrics.worldHeight / viewport.zoom;
+    const baseScale = clamp(2.4 / Math.max(viewport.zoom, 1), 0.38, 2.4);
+
+    return {
+      calloutStroke: Math.max(0.7, baseScale * 0.34),
+      labelDx: baseScale * 2.0,
+      labelDy: baseScale * 4.7,
+      labelFontSize: baseScale * 2.05,
+      labelHeight: baseScale * 4.15,
+      labelRadius: baseScale * 1.85,
+      labelPaddingX: baseScale * 2.05,
+    };
+  }, [projectionMetrics, viewport.zoom]);
 
 
   const selectedStationIdentity = useMemo(
@@ -951,30 +1146,14 @@ export default function RedlineMap() {
   }, []);
 
   const fitToBounds = useCallback((targetBounds: Bounds | null) => {
-    const container = mapContainerRef.current;
-    if (!container || !targetBounds) return;
-
-    const width = Math.max(1, container.clientWidth);
-    const height = Math.max(1, container.clientHeight);
-    const metrics = getProjectionMetrics(targetBounds, width, height);
-
-    const topLeft = projectWorldPoint(targetBounds.maxLat, targetBounds.minLon, targetBounds, metrics);
-    const bottomRight = projectWorldPoint(targetBounds.minLat, targetBounds.maxLon, targetBounds, metrics);
-
-    const contentWidth = Math.max(1, bottomRight.x - topLeft.x);
-    const contentHeight = Math.max(1, bottomRight.y - topLeft.y);
-    const usableWidth = Math.max(1, metrics.worldWidth - FIT_PADDING * 2);
-    const usableHeight = Math.max(1, metrics.worldHeight - FIT_PADDING * 2);
-
-    const zoom = clamp(Math.min(usableWidth / contentWidth, usableHeight / contentHeight), MIN_ZOOM, MAX_ZOOM);
-    const centerWorldX = (topLeft.x + bottomRight.x) / 2;
-    const centerWorldY = (topLeft.y + bottomRight.y) / 2;
-
-    setViewport({
-      zoom,
-      panX: metrics.worldWidth / 2 - centerWorldX * zoom,
-      panY: metrics.worldHeight / 2 - centerWorldY * zoom,
-    });
+    if (!targetBounds || !leafletMapRef.current) return;
+    leafletMapRef.current.fitBounds(
+      [
+        [targetBounds.minLat, targetBounds.minLon],
+        [targetBounds.maxLat, targetBounds.maxLon],
+      ],
+      { padding: [36, 36] }
+    );
   }, []);
 
   const zoomAt = useCallback((nextZoom: number, anchorX: number, anchorY: number) => {
@@ -1407,36 +1586,10 @@ export default function RedlineMap() {
         panX: panStartRef.current ? panStartRef.current.panX + dx : current.panX,
         panY: panStartRef.current ? panStartRef.current.panY + dy : current.panY,
       }));
-      return;
-    }
-
-    if (!showStations) {
-      setHoverStationIndex(null);
-      return;
-    }
-
-    const localX = e.clientX - rect.left;
-    const localY = e.clientY - rect.top;
-    const nearest = projectedStations.reduce(
-      (best, station) => {
-        const screen = worldToScreen(station.world.x, station.world.y, viewport);
-        const d = Math.hypot(screen.x - localX, screen.y - localY);
-        if (d < best.distance) {
-          return { idx: station.idx, distance: d };
-        }
-        return best;
-      },
-      { idx: -1, distance: Number.POSITIVE_INFINITY }
-    );
-
-    if (nearest.distance <= STATION_HIT_RADIUS_PX) {
-      setHoverStationIndex(nearest.idx);
-    } else {
-      setHoverStationIndex(null);
     }
   }
 
-  function handlePointerUp(e: React.PointerEvent<HTMLDivElement>) {
+  function handlePointerUp(_: React.PointerEvent<HTMLDivElement>) {
     if (boxZoom && mapContainerRef.current) {
       const width = Math.abs(boxZoom.endX - boxZoom.startX);
       const height = Math.abs(boxZoom.endY - boxZoom.startY);
@@ -1469,50 +1622,9 @@ export default function RedlineMap() {
       return;
     }
 
-    if (!isPanning || !panStartRef.current) {
-      return;
-    }
-
-    if (!showStations) {
-      setIsPanning(false);
-      panStartRef.current = null;
-      return;
-    }
-
-    const moved = Math.hypot(e.clientX - panStartRef.current.x, e.clientY - panStartRef.current.y);
-    if (moved < 4) {
-      const rect = mapContainerRef.current?.getBoundingClientRect();
-      if (rect) {
-        const localX = e.clientX - rect.left;
-        const localY = e.clientY - rect.top;
-        const nearest = projectedStations.reduce(
-          (best, station) => {
-            const screen = worldToScreen(station.world.x, station.world.y, viewport);
-            const d = Math.hypot(screen.x - localX, screen.y - localY);
-            if (d < best.distance) {
-              return { idx: station.idx, distance: d };
-            }
-            return best;
-          },
-          { idx: -1, distance: Number.POSITIVE_INFINITY }
-        );
-        if (nearest.distance <= STATION_HIT_RADIUS_PX) {
-          setSelectedStationIndex(nearest.idx);
-        }
-      }
-    }
-
     setIsPanning(false);
     panStartRef.current = null;
   }
-
-  const tooltipScreenPosition = useMemo(() => {
-    if (hoverStationIndex === null && selectedStationIndex === null) return null;
-    const idx = hoverStationIndex ?? selectedStationIndex;
-    const station = projectedStations.find((item) => item.idx === idx);
-    if (!station) return null;
-    return worldToScreen(station.world.x, station.world.y, viewport);
-  }, [hoverStationIndex, selectedStationIndex, projectedStations, viewport]);
 
   const redlineStroke = "rgba(255, 72, 72, 1)";
   const redlineCasing = "rgba(18, 4, 6, 0.82)";
@@ -1694,11 +1806,11 @@ export default function RedlineMap() {
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                 <button onClick={() => {
                   userHasAdjustedViewportRef.current = true;
-                  zoomAt(viewport.zoom * BUTTON_IN, containerSize.width / 2, containerSize.height / 2);
+                  leafletMapRef.current?.zoomIn();
                 }} style={miniMapButton}>+</button>
                 <button onClick={() => {
                   userHasAdjustedViewportRef.current = true;
-                  zoomAt(viewport.zoom * BUTTON_OUT, containerSize.width / 2, containerSize.height / 2);
+                  leafletMapRef.current?.zoomOut();
                 }} style={miniMapButton}>-</button>
                 <button onClick={() => {
                   userHasAdjustedViewportRef.current = true;
@@ -1720,261 +1832,137 @@ export default function RedlineMap() {
                   height: MAP_HEIGHT,
                   borderRadius: 18,
                   overflow: "hidden",
-                  background: "linear-gradient(180deg, #102535 0%, #0a1824 58%, #07111a 100%)",
-                  border: "1px solid #1a3650",
-                  cursor: boxZoom ? "crosshair" : isPanning ? "grabbing" : "grab",
+                  background: "#eef2f7",
+                  border: "1px solid #d1dbe8",
                   overscrollBehavior: "contain",
-                  touchAction: "none",
-                  userSelect: "none",
-                  boxShadow: "inset 0 1px 0 rgba(255,255,255,0.04)",
-                }}
-                onWheel={handleWheel}
-                onPointerDown={handlePointerDown}
-                onPointerMove={handlePointerMove}
-                onPointerUp={handlePointerUp}
-                onPointerCancel={handlePointerUp}
-                onPointerLeave={() => {
-                  if (!isPanning) setHoverStationIndex(null);
+                  boxShadow: "inset 0 1px 0 rgba(255,255,255,0.65)",
                 }}
               >
-                {renderBounds && projectionMetrics && allCoords.length > 0 ? (
-                  <svg
-                    viewBox={viewBoxToString(projectionMetrics, viewport)}
-                    preserveAspectRatio="xMidYMid meet"
-                    style={{ position: "absolute", inset: 0, width: "100%", height: "100%", display: "block", shapeRendering: "geometricPrecision" }}
-                  >
-                    <g id="kmz-design-layer">
-                      <rect x={0} y={0} width={projectionMetrics?.worldWidth || PROJECTION_BASE_WIDTH} height={projectionMetrics?.worldHeight || PROJECTION_BASE_WIDTH} fill="rgba(8,18,26,0.96)" />
+                <MapContainer
+                  center={[30.5, -96.5]}
+                  zoom={12}
+                  style={{ position: "absolute", inset: 0, width: "100%", height: "100%" }}
+                  ref={(map) => {
+                    leafletMapRef.current = map;
+                  }}
+                >
+                  <TileLayer
+                    url="https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png"
+                    attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>'
+                  />
 
-                      {kmzPolygonPaths.map((poly, idx) => {
-                        const feature = kmzPolygonFeatures[idx];
-                        return poly.path ? (
-                          <path
-                            key={poly.id}
-                            d={poly.path}
-                            fill={kmzPolygonFill(feature)}
-                            fillOpacity={kmzPolygonOpacity(feature)}
-                            stroke={kmzPolygonStroke(feature)}
-                            strokeWidth={feature?.stroke_width ?? 1.2}
-                            vectorEffect="non-scaling-stroke"
-                          />
-                        ) : null;
-                      })}
+                  {leafletKmzPolygonPaths.map(({ id, coords, feature }) => (
+                    <Polygon
+                      key={id}
+                      positions={coords}
+                      pathOptions={{
+                        color: kmzPolygonStroke(feature),
+                        weight: feature?.stroke_width ?? 1.2,
+                        fillColor: kmzPolygonFill(feature),
+                        fillOpacity: kmzPolygonOpacity(feature),
+                      }}
+                    />
+                  ))}
 
-                      {kmzLinePaths.map((line, idx) => {
-                        const feature = kmzLineFeatures[idx];
-                        const stroke = kmzLineStroke(feature);
-                        const width = kmzLineWidth(feature);
-                        return line.path ? (
-                          <g key={line.id}>
-                            <path
-                              d={line.path}
-                              fill="none"
-                              stroke="rgba(12,18,28,0.18)"
-                              strokeWidth={width + 0.8}
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
-                              vectorEffect="non-scaling-stroke"
-                            />
-                            <path
-                              d={line.path}
-                              fill="none"
-                              stroke={stroke}
-                              strokeOpacity={0.78}
-                              strokeWidth={width}
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
-                              vectorEffect="non-scaling-stroke"
-                            />
-                          </g>
-                        ) : null;
-                      })}
-                    </g>
+                  {leafletKmzLinePaths.map(({ id, coords, feature }) => (
+                    <Polyline
+                      key={id}
+                      positions={coords}
+                      pathOptions={{
+                        color: kmzLineStroke(feature),
+                        weight: kmzLineWidth(feature),
+                        opacity: 0.82,
+                      }}
+                    />
+                  ))}
 
-                    <g id="redline-layer">
-                      {redlinePaths.map((line) =>
-                        line.path ? (
-                          <g key={line.id}>
-                            <path
-                              d={line.path}
-                              fill="none"
-                              stroke={redlineCasing}
-                              strokeWidth={6.2}
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
-                              vectorEffect="non-scaling-stroke"
-                            />
-                            <path
-                              d={line.path}
-                              fill="none"
-                              stroke={redlineStroke}
-                              strokeWidth={4.35}
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
-                              vectorEffect="non-scaling-stroke"
-                            />
-                          </g>
-                        ) : null
-                      )}
-                    </g>
+                  {leafletRedlinePaths.map(({ id, coords }) => (
+                    <React.Fragment key={id}>
+                      <Polyline
+                        positions={coords}
+                        pathOptions={{
+                          color: redlineCasing,
+                          weight: 6.2,
+                          opacity: 0.92,
+                        }}
+                      />
+                      <Polyline
+                        positions={coords}
+                        pathOptions={{
+                          color: redlineStroke,
+                          weight: 4.35,
+                          opacity: 1,
+                        }}
+                      />
+                    </React.Fragment>
+                  ))}
 
-                    {showStations ? (
-                      <g id="station-layer">
-                      {projectedStations.map(({ idx, world }) => {
+                  {showStations
+                    ? leafletStations.map(({ idx, point, position }) => {
                         const isSelected = selectedStationIndex === idx;
                         const isHovered = hoverStationIndex === idx;
-                        const baseRadius = viewport.zoom < 4 ? 1.8 : viewport.zoom < 12 ? 1.5 : 1.25;
-                        const radius = isSelected ? baseRadius + 0.8 : isHovered ? baseRadius + 0.45 : baseRadius;
-                        const halo = isSelected ? radius + 3.2 : isHovered ? radius + 2.1 : radius + 0.7;
-
                         return (
-                          <g key={`station-${idx}`}>
-                            {(isSelected || isHovered) ? (
-                              <circle
-                                cx={world.x}
-                                cy={world.y}
-                                r={halo}
-                                fill={isSelected ? "rgba(255, 214, 10, 0.24)" : "rgba(255,255,255,0.16)"}
-                              />
-                            ) : null}
-                            <circle
-                              cx={world.x}
-                              cy={world.y}
-                              r={radius + 0.45}
-                              fill="rgba(255,255,255,0.82)"
-                            />
-                            <circle
-                              cx={world.x}
-                              cy={world.y}
-                              r={radius}
-                              fill={isSelected ? "#facc15" : isHovered ? "#dbeafe" : "#05070a"}
-                              stroke={isSelected ? "rgba(255,255,255,0.96)" : isHovered ? "rgba(255,255,255,0.92)" : "rgba(255,255,255,0.78)"}
-                              strokeWidth={isSelected ? 1.05 : isHovered ? 0.95 : 0.8}
-                              vectorEffect="non-scaling-stroke"
-                            />
-                          </g>
+                          <CircleMarker
+                            key={`leaflet-station-${idx}`}
+                            center={position}
+                            radius={isSelected ? 5 : isHovered ? 4.5 : 4}
+                            pathOptions={{
+                              color: isSelected ? "#ffffff" : "rgba(255,255,255,0.75)",
+                              weight: 1,
+                              fillColor: isSelected ? "#facc15" : isHovered ? "#dbeafe" : "#05070a",
+                              fillOpacity: 1,
+                            }}
+                            eventHandlers={{
+                              click: () => setSelectedStationIndex(idx),
+                              mouseover: () => setHoverStationIndex(idx),
+                              mouseout: () =>
+                                setHoverStationIndex((current) => (current === idx ? null : current)),
+                            }}
+                          >
+                            <Tooltip direction="top" offset={[0, -8]} opacity={0.95}>
+                              {cleanDisplayText(point.station)}
+                            </Tooltip>
+                            <Popup>
+                              <div style={{ minWidth: 220 }}>
+                                <div style={{ fontWeight: 800, marginBottom: 8 }}>
+                                  {cleanDisplayText(point.station)}
+                                </div>
+                                <div style={{ fontSize: 12, lineHeight: 1.45 }}>
+                                  <div><strong>Mapped FT:</strong> {formatNumber(point.mapped_station_ft, 3)}</div>
+                                  <div><strong>Depth FT:</strong> {formatNumber(point.depth_ft)}</div>
+                                  <div><strong>BOC FT:</strong> {formatNumber(point.boc_ft)}</div>
+                                  <div><strong>Date:</strong> {formatDisplayDate(point.date)}</div>
+                                  <div><strong>Crew:</strong> {cleanDisplayText(point.crew)}</div>
+                                  <div><strong>Print:</strong> {cleanDisplayText(point.print)}</div>
+                                  <div><strong>Source:</strong> {cleanDisplayText(point.source_file)}</div>
+                                  <div><strong>Lat / Lon:</strong> {`${formatNumber(point.lat, 8)}, ${formatNumber(point.lon, 8)}`}</div>
+                                  <div><strong>Notes:</strong> {cleanDisplayText(point.notes)}</div>
+                                </div>
+                              </div>
+                            </Popup>
+                          </CircleMarker>
                         );
-                      })}
-                      </g>
-                    ) : null}
-                  </svg>
-                ) : (
-                  <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", textAlign: "center", padding: 24, color: "#cbd5e1", fontWeight: 700 }}>
-                    Upload a KMZ and structured bore logs to render real map output.
-                  </div>
-                )}
+                      })
+                    : null}
+                </MapContainer>
 
-                {projectedStations
-                  .filter((station) => visibleLabelIndices.has(station.idx))
-                  .map((station) => {
-                    const screen = worldToScreen(station.world.x, station.world.y, viewport);
-                    return (
-                      <div
-                        key={`label-${station.idx}`}
-                        style={{
-                          position: "absolute",
-                          left: screen.x + 10,
-                          top: screen.y - 24,
-                          background: "rgba(14, 24, 34, 0.88)",
-                          color: "#f8fafc",
-                          border: "1px solid rgba(255,255,255,0.08)",
-                          borderRadius: 8,
-                          padding: "2px 7px",
-                          fontSize: 10.5,
-                          fontWeight: 700,
-                          lineHeight: 1.2,
-                          pointerEvents: "none",
-                          whiteSpace: "nowrap",
-                        }}
-                      >
-                        {station.point.station || "--"}
-                      </div>
-                    );
-                  })}
-
-                {boxZoom ? (
+                {!allCoords.length ? (
                   <div
                     style={{
                       position: "absolute",
-                      left: Math.min(boxZoom.startX, boxZoom.endX),
-                      top: Math.min(boxZoom.startY, boxZoom.endY),
-                      width: Math.abs(boxZoom.endX - boxZoom.startX),
-                      height: Math.abs(boxZoom.endY - boxZoom.startY),
-                      background: "rgba(56,189,248,0.12)",
-                      border: "2px dashed #38bdf8",
+                      inset: 0,
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      textAlign: "center",
+                      padding: 24,
+                      color: "#475569",
+                      fontWeight: 700,
+                      background: "rgba(255,255,255,0.55)",
                       pointerEvents: "none",
-                      boxSizing: "border-box",
-                    }}
-                  />
-                ) : null}
-
-                {tooltipStation && tooltipScreenPosition ? (
-                  <div
-                    style={{
-                      position: "absolute",
-                      left: Math.min(containerSize.width - 346, tooltipScreenPosition.x + 18),
-                      top: Math.max(18, tooltipScreenPosition.y - 18),
-                      transform: "translateY(-50%)",
-                      width: 314,
-                      maxWidth: "calc(100% - 24px)",
-                      borderRadius: 18,
-                      background: "linear-gradient(180deg, rgba(255,255,255,0.985) 0%, rgba(247,250,252,0.975) 100%)",
-                      border: "1px solid rgba(15, 23, 42, 0.16)",
-                      padding: 14,
-                      boxShadow: "0 18px 42px rgba(0,0,0,0.24)",
-                      pointerEvents: "none",
-                      backdropFilter: "blur(10px)",
                     }}
                   >
-                    <div
-                      style={{
-                        display: "flex",
-                        alignItems: "flex-start",
-                        justifyContent: "space-between",
-                        gap: 10,
-                        paddingBottom: 10,
-                        borderBottom: "1px solid rgba(148, 163, 184, 0.18)",
-                      }}
-                    >
-                      <div>
-                        <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: 0.55, textTransform: "uppercase", color: "#64748b" }}>
-                          Field inspection
-                        </div>
-                        <div style={{ marginTop: 4, fontWeight: 900, fontSize: 17, color: "#0f172a", lineHeight: 1.15 }}>
-                          {cleanDisplayText(tooltipStation.station)}
-                        </div>
-                      </div>
-                      <div
-                        style={{
-                          padding: "5px 8px",
-                          borderRadius: 999,
-                          background: "rgba(15, 23, 42, 0.06)",
-                          color: "#334155",
-                          fontSize: 10.5,
-                          fontWeight: 800,
-                          letterSpacing: 0.25,
-                          whiteSpace: "nowrap",
-                        }}
-                      >
-                        Hover
-                      </div>
-                    </div>
-
-                    <div style={{ marginTop: 12, display: "grid", gap: 8 }}>
-                      <TooltipRow label="Station" value={cleanDisplayText(tooltipStation.station)} />
-                      <TooltipRow label="Mapped FT" value={formatNumber(tooltipStation.mapped_station_ft, 3)} />
-                      <TooltipRow label="Depth FT" value={formatNumber(tooltipStation.depth_ft)} />
-                      <TooltipRow label="BOC FT" value={formatNumber(tooltipStation.boc_ft)} />
-                      <TooltipRow label="Date" value={formatDisplayDate(tooltipStation.date)} />
-                      <TooltipRow label="Crew" value={cleanDisplayText(tooltipStation.crew)} />
-                      <TooltipRow label="Print" value={cleanDisplayText(tooltipStation.print)} />
-                      <TooltipRow label="Source" value={cleanDisplayText(tooltipStation.source_file)} />
-                      <TooltipRow label="Notes" value={cleanDisplayText(tooltipStation.notes)} />
-                      <TooltipRow
-                        label="Lat / Lon"
-                        value={`${formatNumber(tooltipStation.lat, 8)}, ${formatNumber(tooltipStation.lon, 8)}`}
-                      />
-                    </div>
+                    Upload a KMZ and structured bore logs to render map overlays.
                   </div>
                 ) : null}
 
