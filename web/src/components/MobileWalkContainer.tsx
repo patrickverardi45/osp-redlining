@@ -1,26 +1,45 @@
 "use client";
 
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import MobileWalkUI, {
   MobileWalkNorthCompass,
   type MobileWalkAddEntryPayload,
 } from "@/components/MobileWalkUI";
+import RouteContextMap from "@/components/walk/RouteContextMap";
 import { defaultWalkService, type WalkSessionSnapshot, type WalkService } from "@/lib/walk/service";
 import { useGeolocation } from "@/lib/walk/useGeolocation";
+import {
+  defaultOfficeContextService,
+  EMPTY_ROUTE_CONTEXT,
+  type OfficeContextService,
+  type RouteContext,
+} from "@/lib/walk/officeContextService";
 
 type Props = {
   /** Optional service override; defaults to the module-scoped in-memory service. */
   service?: WalkService;
+  /** Optional read-only office adapter for route/design awareness. */
+  officeContextService?: OfficeContextService;
 };
+
+function formatFeet(value: number | null): string {
+  if (value === null || !Number.isFinite(value)) return "—";
+  return `${value.toFixed(0)} ft`;
+}
 
 /**
  * Full-viewport container for the mobile walk experience.
  *
  * Owns walk session state and wires every MobileWalkUI callback to the walk service
- * adapter. No backend calls. No office chrome. When backend walk endpoints ship,
- * swapping the service is the only change.
+ * adapter. Fetches read-only route context from the office backend on mount so the
+ * field user can orient against the assigned route.
+ *
+ * No office chrome. No upload panels. No billing / review / analytics.
  */
-export default function MobileWalkContainer({ service = defaultWalkService }: Props) {
+export default function MobileWalkContainer({
+  service = defaultWalkService,
+  officeContextService = defaultOfficeContextService,
+}: Props) {
   const [busy, setBusy] = useState(false);
   const [activeSession, setActiveSession] = useState<WalkSessionSnapshot | null>(null);
   const [showAddEntryModal, setShowAddEntryModal] = useState(false);
@@ -28,12 +47,16 @@ export default function MobileWalkContainer({ service = defaultWalkService }: Pr
   const [statusMessage, setStatusMessage] = useState<string>("");
   const [statusTone, setStatusTone] = useState<"neutral" | "success" | "error">("neutral");
 
+  const [routeContext, setRouteContext] = useState<RouteContext>(EMPTY_ROUTE_CONTEXT);
+  const [routeContextLoaded, setRouteContextLoaded] = useState(false);
+  const [routeContextError, setRouteContextError] = useState<string | null>(null);
+
   // GPS runs only while a session is active, to save battery.
   const { currentGps, error: gpsError } = useGeolocation(
     activeSession !== null && activeSession.status === "active"
   );
 
-  // Rehydrate any in-flight session on mount (no-op for LocalWalkService, real work once remote).
+  // Rehydrate any in-flight session on mount (no-op for LocalWalkService).
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -49,6 +72,32 @@ export default function MobileWalkContainer({ service = defaultWalkService }: Pr
     };
   }, [service]);
 
+  // Fetch the assigned route context on mount.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const ctx = await officeContextService.fetchRouteContext();
+        if (!cancelled) {
+          setRouteContext(ctx);
+          setRouteContextLoaded(true);
+          setRouteContextError(null);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setRouteContext(EMPTY_ROUTE_CONTEXT);
+          setRouteContextLoaded(true);
+          setRouteContextError(err instanceof Error ? err.message : "Failed to load route.");
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [officeContextService]);
+
+  const hasAssignedRoute = routeContext.routeCoords.length >= 2;
+
   const handleStartWalk = useCallback(() => {
     setWalkPreflightOpen(true);
   }, []);
@@ -61,9 +110,9 @@ export default function MobileWalkContainer({ service = defaultWalkService }: Pr
     setBusy(true);
     try {
       const session = await service.startSession({
-        route_name: null,
-        route_length_ft: null,
-        design_snapshot_label: null,
+        route_name: routeContext.routeName,
+        route_length_ft: routeContext.routeLengthFt,
+        design_snapshot_label: routeContext.capturedAt,
       });
       setActiveSession(session);
       setWalkPreflightOpen(false);
@@ -75,7 +124,7 @@ export default function MobileWalkContainer({ service = defaultWalkService }: Pr
     } finally {
       setBusy(false);
     }
-  }, [service]);
+  }, [service, routeContext]);
 
   const handleOpenAddEntry = useCallback(() => {
     setShowAddEntryModal(true);
@@ -90,7 +139,6 @@ export default function MobileWalkContainer({ service = defaultWalkService }: Pr
       setBusy(true);
       try {
         const entry = await service.addEntry({ ...payload, currentGps });
-        // Re-read the session so entry_count stays the source of truth.
         const session = await service.getActiveSession();
         if (session) setActiveSession(session);
         setShowAddEntryModal(false);
@@ -136,12 +184,19 @@ export default function MobileWalkContainer({ service = defaultWalkService }: Pr
     }
   }, [service]);
 
-  // MobileWalkUI expects a narrower session shape; adapt our snapshot to it.
   const adaptedSession = activeSession
     ? { status: activeSession.status, entry_count: activeSession.entry_count }
     : null;
 
   const canSendHome = activeSession !== null;
+
+  const routeLengthLabel = useMemo(() => formatFeet(routeContext.routeLengthFt), [routeContext.routeLengthFt]);
+
+  const noRouteMessage = routeContextLoaded
+    ? routeContextError
+      ? "Office unreachable"
+      : "No route assigned"
+    : "Loading route…";
 
   return (
     <div
@@ -155,55 +210,68 @@ export default function MobileWalkContainer({ service = defaultWalkService }: Pr
         color: "#f8fafc",
       }}
     >
-      {/* Placeholder map canvas area. Backend walks + full map rendering land in a follow-up batch. */}
+      <RouteContextMap
+        routeCoords={routeContext.routeCoords}
+        currentGps={currentGps}
+        noRouteMessage={noRouteMessage}
+      />
+
+      <MobileWalkNorthCompass />
+
+      {/* Route header strip, top-center. Stays minimal. */}
       <div
         style={{
           position: "absolute",
-          inset: 0,
-          background:
-            "radial-gradient(ellipse at 50% 40%, rgba(30, 64, 125, 0.55) 0%, rgba(15, 23, 42, 1) 75%)",
+          top: 12,
+          left: 76,
+          right: 76,
+          zIndex: 998,
           display: "flex",
-          alignItems: "center",
           justifyContent: "center",
           pointerEvents: "none",
         }}
       >
         <div
           style={{
+            maxWidth: 360,
+            padding: "8px 12px",
+            borderRadius: 12,
+            background: "rgba(15, 23, 42, 0.78)",
+            border: "1px solid rgba(148, 163, 184, 0.35)",
+            boxShadow: "0 6px 16px rgba(0,0,0,0.35)",
             textAlign: "center",
-            maxWidth: 320,
-            padding: 16,
-            opacity: 0.85,
-            pointerEvents: "none",
+            color: "#f8fafc",
           }}
         >
-          <div style={{ fontSize: 20, fontWeight: 800, letterSpacing: -0.4 }}>Walk mode</div>
-          <div style={{ marginTop: 8, fontSize: 13, color: "#cbd5e1", lineHeight: 1.5 }}>
-            {activeSession && activeSession.status === "active"
-              ? "Session active. Use the controls below to record stations."
-              : "Tap Start Walk to begin a session."}
+          <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: 0.8, color: "#94a3b8", textTransform: "uppercase" }}>
+            Route
           </div>
-          {currentGps ? (
-            <div style={{ marginTop: 10, fontSize: 12, color: "#94a3b8" }}>
-              GPS {currentGps.lat.toFixed(5)}, {currentGps.lon.toFixed(5)} • ±
-              {Math.round(currentGps.accuracy_m)}m
-            </div>
-          ) : gpsError ? (
-            <div style={{ marginTop: 10, fontSize: 12, color: "#fca5a5" }}>GPS: {gpsError}</div>
-          ) : null}
+          <div style={{ marginTop: 2, fontSize: 14, fontWeight: 800, letterSpacing: -0.2 }}>
+            {routeContext.routeName || "—"}
+          </div>
+          <div style={{ marginTop: 2, fontSize: 11, color: "#cbd5e1" }}>
+            {routeLengthLabel}
+            {currentGps ? (
+              <>
+                {" • "}GPS ±{Math.round(currentGps.accuracy_m)}m
+              </>
+            ) : gpsError ? (
+              <>
+                {" • "}GPS: {gpsError}
+              </>
+            ) : null}
+          </div>
         </div>
       </div>
 
-      <MobileWalkNorthCompass />
-
-      {/* Status toast — top-left so it doesn't collide with the compass. */}
+      {/* Status toast, top-left under the route header. */}
       {statusMessage ? (
         <div
           role="status"
           aria-live="polite"
           style={{
             position: "absolute",
-            top: 12,
+            top: 76,
             left: 12,
             zIndex: 999,
             maxWidth: 260,
@@ -235,11 +303,11 @@ export default function MobileWalkContainer({ service = defaultWalkService }: Pr
         activeSession={adaptedSession}
         showAddEntryModal={showAddEntryModal}
         currentGps={currentGps}
-        designRouteReady={true}
+        designRouteReady={hasAssignedRoute}
         walkPreflightOpen={walkPreflightOpen}
-        walkPreflightRouteName={null}
-        walkPreflightRouteLengthLabel="—"
-        walkPreflightSnapshotLabel=""
+        walkPreflightRouteName={routeContext.routeName}
+        walkPreflightRouteLengthLabel={routeLengthLabel}
+        walkPreflightSnapshotLabel={routeContext.capturedAt}
         onStartWalk={handleStartWalk}
         onConfirmWalkPreflight={handleConfirmWalkPreflight}
         onDismissWalkPreflight={handleDismissWalkPreflight}
