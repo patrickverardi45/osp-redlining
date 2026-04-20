@@ -38,6 +38,16 @@ export type AddEntryInput = MobileWalkAddEntryPayload & {
   currentGps: { lat: number; lon: number; accuracy_m: number } | null;
 };
 
+/**
+ * Returned atomically from addEntry so the container never has to make a
+ * second round-trip to refresh the session. If entry succeeds but session
+ * read fails, state gets out of sync — this shape prevents that class of bug.
+ */
+export type AddEntryResult = {
+  entry: WalkEntrySnapshot;
+  session: WalkSessionSnapshot;
+};
+
 export interface WalkService {
   /** Look up any existing active session (e.g. after page reload). */
   getActiveSession(): Promise<WalkSessionSnapshot | null>;
@@ -49,8 +59,8 @@ export interface WalkService {
     design_snapshot_label: string | null;
   }): Promise<WalkSessionSnapshot>;
 
-  /** Persist (or locally record) a new entry on the active session. */
-  addEntry(input: AddEntryInput): Promise<WalkEntrySnapshot>;
+  /** Persist (or locally record) a new entry and return it plus the updated session. */
+  addEntry(input: AddEntryInput): Promise<AddEntryResult>;
 
   /** Mark the active session ended. */
   endSession(): Promise<WalkSessionSnapshot>;
@@ -95,9 +105,12 @@ class LocalWalkService implements WalkService {
     return this.session;
   }
 
-  async addEntry(input: AddEntryInput): Promise<WalkEntrySnapshot> {
-    if (!this.session || this.session.status !== "active") {
-      throw new Error("No active walk session.");
+  async addEntry(input: AddEntryInput): Promise<AddEntryResult> {
+    if (!this.session) {
+      throw new Error("No active walk session. Start a walk before adding entries.");
+    }
+    if (this.session.status !== "active") {
+      throw new Error("Walk session is not active. Start a new walk to continue.");
     }
     const entry: WalkEntrySnapshot = {
       id: makeId("entry"),
@@ -113,7 +126,7 @@ class LocalWalkService implements WalkService {
     };
     this.entries = [...this.entries, entry];
     this.session = { ...this.session, entry_count: this.entries.length };
-    return entry;
+    return { entry, session: this.session };
   }
 
   async endSession(): Promise<WalkSessionSnapshot> {
