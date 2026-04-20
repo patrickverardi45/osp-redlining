@@ -573,7 +573,11 @@ function deriveDesignProjectName(
   return "--";
 }
 
-export default function RedlineMap() {
+type RedlineMapProps = {
+  mode?: "mobileWalk" | "default";
+};
+
+export default function RedlineMap({ mode = "default" }: RedlineMapProps) {
   const [state, setState] = useState<BackendState | null>(null);
   const [busy, setBusy] = useState(false);
   const [statusTone, setStatusTone] = useState<NoteTone>("neutral");
