@@ -30,6 +30,7 @@ import {
   LOW_ZOOM_LABEL_THRESHOLD,
   MID_ZOOM_LABEL_THRESHOLD,
 } from "@/lib/map/constants";
+import MobileWalkContainer from "@/components/MobileWalkContainer";
 
 const API_BASE =
   process.env.NEXT_PUBLIC_API_BASE?.replace(/\/+$/, "") ||
@@ -431,7 +432,7 @@ type RedlineMapProps = {
   mode?: "mobileWalk" | "default";
 };
 
-export default function RedlineMap({ mode = "default" }: RedlineMapProps) {
+function OfficeRedlineMapInner({ mode = "default" }: RedlineMapProps) {
   const [state, setState] = useState<BackendState | null>(null);
   const [busy, setBusy] = useState(false);
   const [statusTone, setStatusTone] = useState<NoteTone>("neutral");
@@ -2183,4 +2184,11 @@ export default function RedlineMap({ mode = "default" }: RedlineMapProps) {
       </div>
     </div>
   );
+}
+
+export default function RedlineMap({ mode = "default" }: RedlineMapProps) {
+  if (mode === "mobileWalk") {
+    return <MobileWalkContainer />;
+  }
+  return <OfficeRedlineMapInner mode={mode} />;
 }
