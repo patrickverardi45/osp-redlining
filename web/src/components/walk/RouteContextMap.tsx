@@ -3,21 +3,6 @@
 import React, { useMemo } from "react";
 import type { CurrentGps } from "@/components/MobileWalkUI";
 
-/**
- * Simplified route-awareness map for the field app.
- *
- * Renders just a route polyline and (optionally) a GPS pin inside an SVG.
- * No pan/zoom, no KMZ reference layers, no stations, no tooltips.
- *
- * viewBox is fit to the UNION of route bounds + current GPS so the crew can
- * always see "where I am" relative to "where the route is" — even if they've
- * driven off-route.
- *
- * Projection helpers are inlined locally and match components/RedlineMap.tsx
- * exactly. When Phase 1 Commit 4 extracts them to lib/map/, swap these three
- * functions for imports.
- */
-
 type Bounds = {
   minLat: number;
   maxLat: number;
@@ -35,7 +20,7 @@ type ProjectionMetrics = {
 };
 
 const PROJECTION_BASE_WIDTH = 1000;
-const DEFAULT_ASPECT = 9 / 16; // portrait phone viewport approximation
+const DEFAULT_ASPECT = 9 / 16;
 
 function getBoundsFromCoords(coords: number[][]): Bounds | null {
   if (!coords.length) return null;
@@ -88,9 +73,14 @@ function getProjectionMetrics(bounds: Bounds, widthPx: number, heightPx: number)
 
 function projectWorldPoint(lat: number, lon: number, bounds: Bounds, metrics: ProjectionMetrics) {
   const latSpan = Math.max(bounds.maxLat - bounds.minLat, 0.000001);
-  const lonSpan = Math.max(bounds.maxLon - bounds.minLon, 0.000001);
+  const midLatRad = ((bounds.minLat + bounds.maxLat) / 2) * (Math.PI / 180);
+  const lonScale = Math.max(Math.cos(midLatRad), 0.000001);
+  const lonSpanAdjusted = Math.max((bounds.maxLon - bounds.minLon) * lonScale, 0.000001);
+
   return {
-    x: metrics.offsetX + ((lon - bounds.minLon) / lonSpan) * metrics.contentWidth,
+    x:
+      metrics.offsetX +
+      (((lon - bounds.minLon) * lonScale) / lonSpanAdjusted) * metrics.contentWidth,
     y: metrics.offsetY + (1 - (lat - bounds.minLat) / latSpan) * metrics.contentHeight,
   };
 }
@@ -108,7 +98,6 @@ function buildWorldPath(coords: number[][], bounds: Bounds, metrics: ProjectionM
 type Props = {
   routeCoords: number[][];
   currentGps: CurrentGps | null;
-  /** Shown when routeCoords is empty. */
   noRouteMessage?: string;
 };
 
@@ -117,7 +106,6 @@ export default function RouteContextMap({
   currentGps,
   noRouteMessage = "No route assigned",
 }: Props) {
-  // Build the combined bounds: route extent + GPS point, if either is present.
   const combinedBounds = useMemo<Bounds | null>(() => {
     const pointsForBounds: number[][] = [];
     for (const pt of routeCoords) pointsForBounds.push(pt);
@@ -126,8 +114,6 @@ export default function RouteContextMap({
     return raw ? expandBounds(raw) : null;
   }, [routeCoords, currentGps]);
 
-  // Approximate the SVG viewport aspect using a portrait phone shape; the SVG
-  // itself is responsive (100% width/height of its parent).
   const metrics = useMemo<ProjectionMetrics | null>(() => {
     if (!combinedBounds) return null;
     const fakeWidth = 360;
@@ -171,7 +157,6 @@ export default function RouteContextMap({
       >
         {hasRoute && routePath ? (
           <>
-            {/* Subtle halo under the route for contrast on dark background. */}
             <path
               d={routePath}
               fill="none"
@@ -193,7 +178,6 @@ export default function RouteContextMap({
 
         {gpsProjected ? (
           <>
-            {/* Accuracy halo (purely decorative at this projection scale). */}
             <circle cx={gpsProjected.x} cy={gpsProjected.y} r={14} fill="rgba(16, 185, 129, 0.18)" />
             <circle cx={gpsProjected.x} cy={gpsProjected.y} r={6} fill="#10b981" stroke="#f0fdf4" strokeWidth={2} />
           </>
