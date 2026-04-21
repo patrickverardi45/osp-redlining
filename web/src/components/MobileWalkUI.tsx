@@ -4,9 +4,27 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 
 export type CurrentGps = { lat: number; lon: number; accuracy_m: number };
 
+/**
+ * Extended payload shape for a walk entry. The UI collects every field the
+ * field workflow requires. The container is responsible for deciding what
+ * reaches the service boundary — in this pass, the container forwards only
+ * the original narrow fields to `service.addEntry` and keeps the extras
+ * (depth, boc, date, crew, print) in local state for future persistence.
+ */
 export type MobileWalkAddEntryPayload = {
   stationText: string;
+  /** Worker-entered depth. Free-text on mobile (e.g. "36" inches). */
+  depth: string;
+  /** Worker-entered Back Of Curb offset (free-text, e.g. "5", "5.5"). */
+  boc: string;
+  /** Worker-entered free-form note. */
   note: string;
+  /** Auto-populated ISO timestamp captured when the sheet opened. */
+  date: string;
+  /** Auto-populated crew identifier passed in from the container. */
+  crew: string;
+  /** Auto-populated print / drawing identifier passed in from the container. */
+  print: string;
   photoFile: File | null;
 };
 
@@ -34,6 +52,31 @@ function stationAppend(prev: string, ch: string): string {
   }
   if (ch >= "0" && ch <= "9") return prev + ch;
   return prev;
+}
+
+/** Shared text-input style — 16px font to stop iOS Safari auto-zoom on focus. */
+const TEXT_INPUT_STYLE: React.CSSProperties = {
+  borderRadius: 12,
+  border: "1px solid #cfd8e3",
+  padding: "10px 12px",
+  fontSize: 16,
+  width: "100%",
+  boxSizing: "border-box",
+  lineHeight: 1.4,
+  background: "#ffffff",
+  color: "#0f172a",
+};
+
+/** Format an ISO string as a short human label (local time). */
+function formatDateForDisplay(iso: string): string {
+  if (!iso) return "—";
+  const t = Date.parse(iso);
+  if (Number.isNaN(t)) return iso;
+  try {
+    return new Date(t).toLocaleString(undefined, { dateStyle: "short", timeStyle: "short" });
+  } catch {
+    return iso;
+  }
 }
 
 /** Static north-up reference; map must not rotate with device heading. */
@@ -74,6 +117,11 @@ type EntrySheetProps = {
   busy: boolean;
   entryCountLabel: string;
   currentGps: CurrentGps | null;
+  gpsBlocked?: boolean;
+  /** Auto-populated crew identifier — displayed read-only. */
+  crew: string;
+  /** Auto-populated print identifier — displayed read-only. */
+  print: string;
   onCancel: () => void;
   onSave: (payload: MobileWalkAddEntryPayload) => void | Promise<void>;
 };
@@ -118,13 +166,79 @@ function StationKeypadButton({
   );
 }
 
-/** Mounted only while the add-entry sheet is visible so no stray overlay nodes remain after close. */
-export function EntrySheet({ busy, entryCountLabel, currentGps, onCancel, onSave }: EntrySheetProps) {
+/** Read-only auto-field row used for date / crew / print. */
+function AutoFieldRow({ label, value }: { label: string; value: string }) {
+  const display = value && value.trim().length ? value : "—";
+  return (
+    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, minHeight: 22 }}>
+      <span style={{ fontSize: 11, fontWeight: 800, color: "#64748b", letterSpacing: 0.3, textTransform: "uppercase" }}>
+        {label}
+      </span>
+      <span
+        style={{
+          fontSize: 13,
+          fontWeight: 700,
+          color: "#0f172a",
+          textAlign: "right",
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          whiteSpace: "nowrap",
+          maxWidth: "70%",
+        }}
+        title={display}
+      >
+        {display}
+      </span>
+    </div>
+  );
+}
+
+/**
+ * Mounted only while the add-entry sheet is visible so no stray overlay nodes
+ * remain after close.
+ *
+ * iPhone Safari fixes (preserved from previous pass):
+ *  - Outer wrapper uses `position: fixed` with top + bottom anchors so the sheet
+ *    is always bounded by the current visual viewport, not the parent's oversized
+ *    touch-blocked container.
+ *  - Bottom inset respects `env(safe-area-inset-bottom)` so the Save button clears
+ *    the home-indicator area and the Safari bottom chrome bar.
+ *  - Inner body is `overflow-y: auto` with momentum scrolling enabled, so the
+ *    keypad and input fields can scroll independently.
+ *  - Save + Cancel live in a sticky footer pinned inside the sheet — always
+ *    visible, never hidden behind the browser chrome.
+ *  - `touchAction: "manipulation"` on the sheet overrides the parent's
+ *    `touchAction: "none"` so scrolling inside the sheet works.
+ *
+ * Field workflow in this pass:
+ *  - Station (keypad, existing)
+ *  - Depth (numeric text input)
+ *  - BOC / Back Of Curb (numeric text input)
+ *  - Notes (textarea, existing)
+ *  - Read-only block: Date (captured on open), Crew, Print
+ *  - Photo (existing, optional)
+ */
+export function EntrySheet({
+  busy,
+  entryCountLabel,
+  currentGps,
+  gpsBlocked = false,
+  crew,
+  print,
+  onCancel,
+  onSave,
+}: EntrySheetProps) {
   const [stationText, setStationText] = useState("");
+  const [depth, setDepth] = useState("");
+  const [boc, setBoc] = useState("");
   const [note, setNote] = useState("");
   const [photoFile, setPhotoFile] = useState<File | null>(null);
   const [noteExpanded, setNoteExpanded] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  // Capture the entry time once when the sheet mounts so it represents when
+  // the worker started recording — not when they hit Save.
+  const [capturedAt] = useState<string>(() => new Date().toISOString());
 
   const append = useCallback((ch: string) => {
     setStationText((prev) => stationAppend(prev, ch));
@@ -140,6 +254,8 @@ export function EntrySheet({ busy, entryCountLabel, currentGps, onCancel, onSave
 
   useEffect(() => {
     setStationText("");
+    setDepth("");
+    setBoc("");
     setNote("");
     setPhotoFile(null);
     setNoteExpanded(false);
@@ -147,179 +263,333 @@ export function EntrySheet({ busy, entryCountLabel, currentGps, onCancel, onSave
 
   const stationDisplay = stationText.length ? stationText : "—";
   const hasPlusSlot = !stationText.includes("+");
+  const saveDisabled = busy || !stationText.trim();
 
   return (
     <div
+      // Outer positioner — fixed to viewport so Safari chrome bars don't clip it.
       style={{
-        position: "absolute",
+        position: "fixed",
         left: 10,
         right: 10,
-        top: 72,
+        top: "max(12px, env(safe-area-inset-top))",
+        bottom: "max(12px, env(safe-area-inset-bottom))",
         zIndex: 1007,
         maxWidth: 480,
         marginLeft: "auto",
         marginRight: "auto",
+        display: "flex",
+        flexDirection: "column",
         borderRadius: 16,
         background: "#ffffff",
         border: "1px solid #dbe4ee",
         boxShadow: "0 18px 42px rgba(0,0,0,0.28)",
-        padding: 14,
         pointerEvents: "auto",
+        overflow: "hidden",
+        touchAction: "manipulation",
       }}
       onPointerDown={(e) => e.stopPropagation()}
     >
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", pointerEvents: "auto" }}>
-        <div style={{ fontWeight: 800, fontSize: 16 }}>Add Walk Entry</div>
-        <div style={{ fontSize: 12, color: "#64748b" }}>{entryCountLabel}</div>
-      </div>
-      {currentGps ? (
-        <div style={{ marginTop: 6, fontSize: 11, color: "#64748b" }}>
-          Location from walk GPS (±{Math.round(currentGps.accuracy_m)}m)
+      {/* Sticky header */}
+      <div
+        style={{
+          flex: "0 0 auto",
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          padding: "12px 14px 8px 14px",
+          borderBottom: "1px solid #eef2f7",
+          background: "#ffffff",
+          pointerEvents: "auto",
+        }}
+      >
+        <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+          <div style={{ fontWeight: 800, fontSize: 16, color: "#0f172a" }}>Add Walk Entry</div>
+          <div style={{ fontSize: 11, color: "#64748b" }}>{entryCountLabel}</div>
         </div>
-      ) : (
-        <div style={{ marginTop: 6, fontSize: 11, color: "#b45309" }}>No accepted GPS fix yet — save will try a one-time fix if needed.</div>
-      )}
-
-      <div style={{ marginTop: 12, display: "grid", gap: 12, pointerEvents: "auto" }}>
-        <div style={{ display: "grid", gap: 8 }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
-            <span style={{ fontSize: 12, fontWeight: 800, color: "#475569" }}>Station</span>
-            <button
-              type="button"
-              disabled={busy || !stationText}
-              onPointerDown={(e) => e.stopPropagation()}
-              onClick={clearStation}
-              style={{
-                ...mobileButtonStyle("#ffffff", "#64748b", "#94a3b8", busy || !stationText),
-                padding: "8px 12px",
-                fontSize: 13,
-                minHeight: 0,
-              }}
-            >
-              Clear
-            </button>
-          </div>
-          <div style={{ fontSize: 11, color: "#64748b", lineHeight: 1.35 }}>Digits and one + (e.g. 01+00, 012+050, 1234+0567).</div>
-          <div
-            role="status"
-            aria-live="polite"
-            style={{
-              borderRadius: 12,
-              border: "2px solid #0f172a",
-              padding: "14px 14px",
-              fontSize: 22,
-              fontWeight: 800,
-              width: "100%",
-              boxSizing: "border-box",
-              textAlign: "center",
-              letterSpacing: 1,
-              fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
-              color: stationText.length ? "#0f172a" : "#94a3b8",
-              background: "#f8fafc",
-              minHeight: 54,
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              userSelect: "none",
-              WebkitUserSelect: "none",
-              wordBreak: "break-all",
-            }}
-          >
-            {stationDisplay}
-          </div>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8 }}>
-            {(["1", "2", "3", "4", "5", "6", "7", "8", "9"] as const).map((d) => (
-              <StationKeypadButton key={d} label={d} disabled={busy} onPress={() => append(d)} />
-            ))}
-            <StationKeypadButton label="+" disabled={busy || !hasPlusSlot} onPress={() => append("+")} />
-            <StationKeypadButton label="0" disabled={busy} onPress={() => append("0")} />
-            <StationKeypadButton label="⌫" disabled={busy || !stationText} onPress={backspace} />
-          </div>
-        </div>
-
-        <label style={{ display: "grid", gap: 6 }}>
-          <span style={{ fontSize: 12, fontWeight: 800, color: "#475569" }}>Note</span>
-          <textarea
-            value={note}
-            onChange={(e) => setNote(e.target.value)}
-            placeholder="Optional note"
-            rows={noteExpanded ? 5 : 2}
-            onFocus={() => setNoteExpanded(true)}
-            style={{
-              borderRadius: 12,
-              border: "1px solid #cfd8e3",
-              padding: "10px 12px",
-              fontSize: 15,
-              minHeight: noteExpanded ? 100 : 52,
-              resize: "vertical",
-              width: "100%",
-              boxSizing: "border-box",
-              lineHeight: 1.45,
-            }}
-          />
-        </label>
-
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept="image/*"
-          capture="environment"
-          style={{ display: "none" }}
-          onChange={(e) => {
-            const f = e.target.files?.[0] ?? null;
-            setPhotoFile(f);
-            try {
-              e.currentTarget.value = "";
-            } catch {
-              /* ignore */
-            }
-          }}
-        />
-
         <button
           type="button"
+          aria-label="Close"
+          disabled={busy}
           onPointerDown={(e) => e.stopPropagation()}
-          onClick={() => fileInputRef.current?.click()}
+          onClick={() => {
+            if (!busy) onCancel();
+          }}
           style={{
-            ...mobileButtonStyle("#f8fafc", "#0f172a", "#cbd5e1", false),
+            width: 44,
+            height: 44,
+            borderRadius: 12,
+            border: "1px solid #cbd5e1",
+            background: "#f8fafc",
+            color: "#0f172a",
+            fontSize: 22,
+            fontWeight: 800,
+            lineHeight: 1,
+            cursor: busy ? "not-allowed" : "pointer",
+            opacity: busy ? 0.55 : 1,
+            WebkitTapHighlightColor: "transparent",
+            touchAction: "manipulation",
+          }}
+        >
+          ×
+        </button>
+      </div>
+
+      {/* Scrollable body */}
+      <div
+        style={{
+          flex: "1 1 auto",
+          minHeight: 0,
+          overflowY: "auto",
+          WebkitOverflowScrolling: "touch",
+          padding: "12px 14px",
+          touchAction: "pan-y",
+        }}
+      >
+        {/* Auto-populated read-only summary */}
+        <div
+          style={{
+            marginBottom: 12,
+            padding: "10px 12px",
+            borderRadius: 12,
+            background: "#f1f5f9",
+            border: "1px solid #e2e8f0",
+            display: "grid",
+            gap: 6,
+          }}
+        >
+          <AutoFieldRow label="Date" value={formatDateForDisplay(capturedAt)} />
+          <AutoFieldRow label="Crew" value={crew} />
+          <AutoFieldRow label="Print" value={print} />
+        </div>
+
+        {gpsBlocked ? (
+          <div
+            style={{
+              marginBottom: 10,
+              padding: "8px 10px",
+              borderRadius: 10,
+              background: "#fef3c7",
+              border: "1px solid #f59e0b",
+              color: "#92400e",
+              fontSize: 12,
+              fontWeight: 700,
+              lineHeight: 1.4,
+            }}
+          >
+            GPS unavailable on this device/browser. You can still save the entry — location will be left blank.
+          </div>
+        ) : currentGps ? (
+          <div style={{ marginBottom: 10, fontSize: 11, color: "#64748b" }}>
+            Location from walk GPS (±{Math.round(currentGps.accuracy_m)}m)
+          </div>
+        ) : (
+          <div style={{ marginBottom: 10, fontSize: 11, color: "#b45309" }}>
+            No GPS fix yet — entry will save without coordinates.
+          </div>
+        )}
+
+        <div style={{ display: "grid", gap: 14, pointerEvents: "auto" }}>
+          {/* Station */}
+          <div style={{ display: "grid", gap: 8 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+              <span style={{ fontSize: 12, fontWeight: 800, color: "#475569" }}>Station</span>
+              <button
+                type="button"
+                disabled={busy || !stationText}
+                onPointerDown={(e) => e.stopPropagation()}
+                onClick={clearStation}
+                style={{
+                  ...mobileButtonStyle("#ffffff", "#64748b", "#94a3b8", busy || !stationText),
+                  padding: "8px 12px",
+                  fontSize: 13,
+                  minHeight: 0,
+                }}
+              >
+                Clear
+              </button>
+            </div>
+            <div style={{ fontSize: 11, color: "#64748b", lineHeight: 1.35 }}>
+              Digits and one + (e.g. 01+00, 012+050, 1234+0567).
+            </div>
+            <div
+              role="status"
+              aria-live="polite"
+              style={{
+                borderRadius: 12,
+                border: "2px solid #0f172a",
+                padding: "14px 14px",
+                fontSize: 22,
+                fontWeight: 800,
+                width: "100%",
+                boxSizing: "border-box",
+                textAlign: "center",
+                letterSpacing: 1,
+                fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+                color: stationText.length ? "#0f172a" : "#94a3b8",
+                background: "#f8fafc",
+                minHeight: 54,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                userSelect: "none",
+                WebkitUserSelect: "none",
+                wordBreak: "break-all",
+              }}
+            >
+              {stationDisplay}
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8 }}>
+              {(["1", "2", "3", "4", "5", "6", "7", "8", "9"] as const).map((d) => (
+                <StationKeypadButton key={d} label={d} disabled={busy} onPress={() => append(d)} />
+              ))}
+              <StationKeypadButton label="+" disabled={busy || !hasPlusSlot} onPress={() => append("+")} />
+              <StationKeypadButton label="0" disabled={busy} onPress={() => append("0")} />
+              <StationKeypadButton label="⌫" disabled={busy || !stationText} onPress={backspace} />
+            </div>
+          </div>
+
+          {/* Depth + BOC side-by-side */}
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+            <label style={{ display: "grid", gap: 6 }}>
+              <span style={{ fontSize: 12, fontWeight: 800, color: "#475569" }}>Depth</span>
+              <input
+                type="text"
+                inputMode="decimal"
+                autoCapitalize="off"
+                autoCorrect="off"
+                spellCheck={false}
+                value={depth}
+                onChange={(e) => setDepth(e.target.value)}
+                placeholder='e.g. 36"'
+                maxLength={24}
+                disabled={busy}
+                style={TEXT_INPUT_STYLE}
+              />
+            </label>
+            <label style={{ display: "grid", gap: 6 }}>
+              <span style={{ fontSize: 12, fontWeight: 800, color: "#475569" }}>BOC</span>
+              <input
+                type="text"
+                inputMode="decimal"
+                autoCapitalize="off"
+                autoCorrect="off"
+                spellCheck={false}
+                value={boc}
+                onChange={(e) => setBoc(e.target.value)}
+                placeholder="ft from curb"
+                maxLength={24}
+                disabled={busy}
+                style={TEXT_INPUT_STYLE}
+              />
+            </label>
+          </div>
+
+          {/* Notes */}
+          <label style={{ display: "grid", gap: 6 }}>
+            <span style={{ fontSize: 12, fontWeight: 800, color: "#475569" }}>Notes</span>
+            <textarea
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              placeholder="Optional notes"
+              rows={noteExpanded ? 5 : 2}
+              onFocus={() => setNoteExpanded(true)}
+              disabled={busy}
+              style={{
+                ...TEXT_INPUT_STYLE,
+                minHeight: noteExpanded ? 100 : 52,
+                resize: "vertical",
+                lineHeight: 1.45,
+              }}
+            />
+          </label>
+
+          {/* Photo */}
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*"
+            capture="environment"
+            style={{ display: "none" }}
+            onChange={(e) => {
+              const f = e.target.files?.[0] ?? null;
+              setPhotoFile(f);
+              try {
+                e.currentTarget.value = "";
+              } catch {
+                /* ignore */
+              }
+            }}
+          />
+          <button
+            type="button"
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={() => fileInputRef.current?.click()}
+            style={{
+              ...mobileButtonStyle("#f8fafc", "#0f172a", "#cbd5e1", false),
+              width: "100%",
+              minHeight: 48,
+              fontSize: 15,
+            }}
+          >
+            {photoFile ? `Photo: ${photoFile.name}` : "Add photo (optional)"}
+          </button>
+        </div>
+      </div>
+
+      {/* Sticky footer — Save + Cancel always visible */}
+      <div
+        style={{
+          flex: "0 0 auto",
+          borderTop: "1px solid #eef2f7",
+          padding: "10px 14px calc(10px + env(safe-area-inset-bottom)) 14px",
+          background: "#ffffff",
+          display: "flex",
+          flexDirection: "column",
+          gap: 8,
+          pointerEvents: "auto",
+        }}
+      >
+        <button
+          type="button"
+          disabled={saveDisabled}
+          onPointerDown={(e) => e.stopPropagation()}
+          onClick={() => {
+            if (saveDisabled) return;
+            onSave({
+              stationText,
+              depth,
+              boc,
+              note,
+              date: capturedAt,
+              crew,
+              print,
+              photoFile,
+            });
+          }}
+          style={{
+            ...mobileButtonStyle("#0f172a", "#ffffff", "#000000", saveDisabled),
             width: "100%",
-            minHeight: 48,
+            minHeight: 52,
+            fontSize: 17,
+          }}
+        >
+          {busy ? "Saving…" : "Save Entry"}
+        </button>
+        <button
+          type="button"
+          disabled={busy}
+          onPointerDown={(e) => e.stopPropagation()}
+          onClick={onCancel}
+          style={{
+            ...mobileButtonStyle("#ffffff", "#64748b", "#94a3b8", busy),
+            width: "100%",
+            minHeight: 44,
             fontSize: 15,
           }}
         >
-          {photoFile ? `Photo: ${photoFile.name}` : "Add photo (optional)"}
+          Cancel
         </button>
-
-        <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 4 }}>
-          <button
-            type="button"
-            disabled={busy}
-            onPointerDown={(e) => e.stopPropagation()}
-            onClick={() => onSave({ stationText, note, photoFile })}
-            style={{
-              ...mobileButtonStyle("#0f172a", "#ffffff", "#000000", busy),
-              width: "100%",
-              minHeight: 52,
-              fontSize: 17,
-            }}
-          >
-            Save Entry
-          </button>
-          <button
-            type="button"
-            disabled={busy}
-            onPointerDown={(e) => e.stopPropagation()}
-            onClick={onCancel}
-            style={{
-              ...mobileButtonStyle("#ffffff", "#64748b", "#94a3b8", busy),
-              width: "100%",
-              minHeight: 46,
-              fontSize: 15,
-            }}
-          >
-            Cancel
-          </button>
-        </div>
       </div>
     </div>
   );
@@ -330,12 +600,18 @@ type MobileWalkUIProps = {
   activeSession: { status: "active" | "ended"; entry_count: number } | null;
   showAddEntryModal: boolean;
   currentGps: CurrentGps | null;
+  /** True when geolocation is known blocked/denied (e.g. permission denied on iOS Safari). */
+  gpsBlocked?: boolean;
   /** When false, Start Walk stays disabled (e.g. mobile /walk before KMZ loads route_coords). */
   designRouteReady?: boolean;
   walkPreflightOpen?: boolean;
   walkPreflightRouteName?: string | null;
   walkPreflightRouteLengthLabel?: string;
   walkPreflightSnapshotLabel?: string;
+  /** Auto-populated crew identifier shown read-only in the Add Entry sheet. */
+  crew?: string;
+  /** Auto-populated print identifier shown read-only in the Add Entry sheet. */
+  print?: string;
   onStartWalk: () => void;
   onConfirmWalkPreflight?: () => void;
   onDismissWalkPreflight?: () => void;
@@ -353,11 +629,14 @@ export default function MobileWalkUI({
   activeSession,
   showAddEntryModal,
   currentGps,
+  gpsBlocked = false,
   designRouteReady = true,
   walkPreflightOpen = false,
   walkPreflightRouteName = null,
   walkPreflightRouteLengthLabel = "—",
   walkPreflightSnapshotLabel = "",
+  crew = "",
+  print = "",
   onStartWalk,
   onConfirmWalkPreflight = () => {},
   onDismissWalkPreflight = () => {},
@@ -370,6 +649,7 @@ export default function MobileWalkUI({
   canSendHome = false,
 }: MobileWalkUIProps) {
   const sendHomeDisabled = busy || sendHomeBusy || !canSendHome;
+  // Start Walk does NOT depend on GPS — manual entry is supported when GPS is blocked.
   const startWalkDisabled =
     busy || (!!activeSession && activeSession.status === "active") || !designRouteReady || walkPreflightOpen;
   const routeNameDisplay = walkPreflightRouteName?.trim() ? walkPreflightRouteName : "—";
@@ -385,7 +665,7 @@ export default function MobileWalkUI({
           <div
             role="presentation"
             style={{
-              position: "absolute",
+              position: "fixed",
               inset: 0,
               zIndex: 1005,
               background: "rgba(15,23,42,0.28)",
@@ -401,6 +681,9 @@ export default function MobileWalkUI({
             busy={busy}
             entryCountLabel={activeSession ? `${activeSession.entry_count} entries` : "No active session"}
             currentGps={currentGps}
+            gpsBlocked={gpsBlocked}
+            crew={crew}
+            print={print}
             onCancel={onCloseAddEntryModal}
             onSave={onAddEntry}
           />
@@ -457,6 +740,23 @@ export default function MobileWalkUI({
                 {snapshotLabel}
               </div>
             </div>
+            {gpsBlocked ? (
+              <div
+                style={{
+                  marginTop: 10,
+                  padding: "8px 10px",
+                  borderRadius: 10,
+                  background: "#fef3c7",
+                  border: "1px solid #f59e0b",
+                  color: "#92400e",
+                  fontSize: 12,
+                  fontWeight: 700,
+                  lineHeight: 1.4,
+                }}
+              >
+                GPS is blocked on this device. Walk will run in manual-entry mode.
+              </div>
+            ) : null}
             <div style={{ marginTop: 14, display: "grid", gap: 10 }}>
               <button
                 type="button"
@@ -498,7 +798,7 @@ export default function MobileWalkUI({
           position: "absolute",
           left: 10,
           right: 10,
-          bottom: 10,
+          bottom: "max(10px, env(safe-area-inset-bottom))",
           zIndex: 1001,
           display: "flex",
           flexDirection: "column",

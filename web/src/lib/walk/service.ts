@@ -1,15 +1,20 @@
 // Walk service adapter.
 //
-// Intentionally frontend-only for this batch. The interface is shaped to match
-// what a future FastAPI walk module will expose (start / end / addEntry / sendHome),
-// so when backend walk endpoints ship, the only change is swapping
-// `defaultWalkService` from `LocalWalkService` to a `RemoteWalkService`
-// implementation in this file. `MobileWalkContainer` does not change.
+// addEntry now posts to the backend connectivity-test endpoint
+// POST /api/walk/test-event. The POST is authoritative for this step: if it
+// fails (network or non-2xx HTTP), the save fails visibly in the UI and no
+// local state is mutated. On success, local session bookkeeping is updated
+// so MobileWalkContainer keeps working unchanged.
 //
-// NOTHING in this file calls fetch(). Do not add network code here without
-// first confirming the actual backend route shapes.
+// No real persistence yet. The endpoint just logs the payload and returns
+// {"success": true}. This is a smoke test of the network path only.
 
 import type { MobileWalkAddEntryPayload } from "@/components/MobileWalkUI";
+
+const API_BASE =
+  process.env.NEXT_PUBLIC_API_BASE?.replace(/\/+$/, "") ||
+  process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/+$/, "") ||
+  "http://127.0.0.1:8000";
 
 export type WalkSessionSnapshot = {
   id: string;
@@ -38,40 +43,27 @@ export type AddEntryInput = MobileWalkAddEntryPayload & {
   currentGps: { lat: number; lon: number; accuracy_m: number } | null;
 };
 
-/**
- * Returned atomically from addEntry so the container never has to make a
- * second round-trip to refresh the session. If entry succeeds but session
- * read fails, state gets out of sync — this shape prevents that class of bug.
- */
 export type AddEntryResult = {
   entry: WalkEntrySnapshot;
   session: WalkSessionSnapshot;
 };
 
 export interface WalkService {
-  /** Look up any existing active session (e.g. after page reload). */
   getActiveSession(): Promise<WalkSessionSnapshot | null>;
-
-  /** Start a new walk session. The preflight context is informational only for the local service. */
   startSession(input: {
     route_name: string | null;
     route_length_ft: number | null;
     design_snapshot_label: string | null;
   }): Promise<WalkSessionSnapshot>;
-
-  /** Persist (or locally record) a new entry and return it plus the updated session. */
   addEntry(input: AddEntryInput): Promise<AddEntryResult>;
-
-  /** Mark the active session ended. */
   endSession(): Promise<WalkSessionSnapshot>;
-
-  /** Crew's "wrap up" action. Semantics finalized when backend ships; locally it ends the session if active. */
   sendHome(): Promise<WalkSessionSnapshot | null>;
 }
 
 /* ------------------------------------------------------------------ */
-/* LocalWalkService — in-memory only, used until backend walk routes  */
-/* ship. Persists nothing across page reloads.                         */
+/* LocalWalkService — local session bookkeeping only. addEntry performs */
+/* a network POST before mutating state; everything else stays local   */
+/* until real walk backend routes ship.                                 */
 /* ------------------------------------------------------------------ */
 
 function makeId(prefix: string): string {
@@ -112,6 +104,53 @@ class LocalWalkService implements WalkService {
     if (this.session.status !== "active") {
       throw new Error("Walk session is not active. Start a new walk to continue.");
     }
+
+    // Build the POST body. Minimal — matches what the backend test endpoint
+    // expects to log: station, optional note, optional gps.
+    const body: Record<string, unknown> = {
+      station: input.stationText,
+    };
+    if (input.note && input.note.trim()) {
+      body.note = input.note;
+    }
+    if (input.currentGps) {
+      body.gps = {
+        lat: input.currentGps.lat,
+        lon: input.currentGps.lon,
+        accuracy_m: input.currentGps.accuracy_m,
+      };
+    }
+
+    // POST-first. If the network or HTTP call fails, we throw BEFORE mutating
+    // local state. MobileWalkContainer catches and surfaces a toast.
+    let response: Response;
+    try {
+      response = await fetch(`${API_BASE}/api/walk/test-event`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : "network error";
+      throw new Error(`Failed to reach backend: ${reason}`);
+    }
+
+    if (!response.ok) {
+      throw new Error(`Backend rejected entry (HTTP ${response.status}).`);
+    }
+
+    // Surface any JSON payload the backend returned for debugging, but we
+    // don't depend on its shape — the contract is just the 2xx status.
+    try {
+      const parsed = await response.json();
+      if (typeof console !== "undefined" && console.log) {
+        console.log("[walk] test-event response:", parsed);
+      }
+    } catch {
+      /* ignore: endpoint contract is HTTP status only */
+    }
+
+    // POST succeeded → update local session bookkeeping.
     const entry: WalkEntrySnapshot = {
       id: makeId("entry"),
       session_id: this.session.id,
@@ -144,8 +183,4 @@ class LocalWalkService implements WalkService {
   }
 }
 
-/**
- * Module-scoped default instance. The container imports this; swapping the
- * implementation later is a one-line change here.
- */
 export const defaultWalkService: WalkService = new LocalWalkService();

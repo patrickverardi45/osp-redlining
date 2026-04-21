@@ -31,44 +31,13 @@ import {
   MID_ZOOM_LABEL_THRESHOLD,
 } from "@/lib/map/constants";
 import MobileWalkContainer from "@/components/MobileWalkContainer";
+import { clamp, formatNumber, cleanDisplayText, formatDisplayDate } from "@/lib/format/text";
+import { toMoney } from "@/lib/format/money";
 
 const API_BASE =
   process.env.NEXT_PUBLIC_API_BASE?.replace(/\/+$/, "") ||
   process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/+$/, "") ||
   "http://127.0.0.1:8000";
-
-function clamp(value: number, min: number, max: number): number {
-  return Math.max(min, Math.min(max, value));
-}
-
-function formatNumber(value: number | null | undefined, digits = 2): string {
-  if (value === null || value === undefined || Number.isNaN(value)) return "--";
-  return value.toFixed(digits);
-}
-
-function cleanDisplayText(value: unknown): string {
-  const raw = String(value ?? "").trim();
-  if (!raw) return "--";
-  const lower = raw.toLowerCase();
-  if (lower === "nan" || lower === "null" || lower === "undefined") return "--";
-  return raw;
-}
-
-function formatDisplayDate(value: string | null | undefined): string {
-  const raw = String(value || "").trim();
-  if (!raw) return "--";
-  const match = raw.match(/^(\d{4}-\d{2}-\d{2})/);
-  if (match) return match[1];
-  const parsed = new Date(raw);
-  if (!Number.isNaN(parsed.getTime())) {
-    const year = parsed.getFullYear();
-    const month = String(parsed.getMonth() + 1).padStart(2, "0");
-    const day = String(parsed.getDate()).padStart(2, "0");
-    return `${year}-${month}-${day}`;
-  }
-  return raw.replace(/\s+\d{2}:\d{2}:\d{2}(?:\.\d+)?$/, "");
-}
-
 
 function stationIdentityPart(value: unknown, digits?: number): string {
   if (value === null || value === undefined) return "";
@@ -401,10 +370,6 @@ function Pill({ label, value }: { label: string; value: React.ReactNode }) {
       <strong>{label}:</strong> {value}
     </div>
   );
-}
-
-function toMoney(value: number): string {
-  return `$${value.toFixed(2)}`;
 }
 
 function deriveDesignProjectName(

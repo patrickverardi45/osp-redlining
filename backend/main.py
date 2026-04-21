@@ -6048,3 +6048,39 @@ async def get_station_photo_file(photo_id: str):
             filename=str(record.get("original_filename") or os.path.basename(stored_path)),
         )
     return _err("Photo file was not found.", status_code=404)
+
+
+# ---------------------------------------------------------------------------
+# Walk connectivity test endpoint (temporary, no persistence).
+# Added as a minimal self-contained block at the bottom of the file so nothing
+# above this line is modified. Remove this section once the real walk module ships.
+# ---------------------------------------------------------------------------
+
+import logging as _walk_test_logging
+from typing import Any as _WalkTestAny, Dict as _WalkTestDict
+
+_walk_test_logger = _walk_test_logging.getLogger("walk.test_event")
+if not _walk_test_logger.handlers:
+    _walk_test_handler = _walk_test_logging.StreamHandler()
+    _walk_test_handler.setFormatter(
+        _walk_test_logging.Formatter("%(asctime)s [%(name)s] %(message)s")
+    )
+    _walk_test_logger.addHandler(_walk_test_handler)
+    _walk_test_logger.setLevel(_walk_test_logging.INFO)
+    _walk_test_logger.propagate = False
+
+
+@app.post("/api/walk/test-event")
+def walk_test_event(payload: _WalkTestDict[str, _WalkTestAny] = Body(default={})) -> JSONResponse:
+    """
+    Connectivity probe for the mobile walk app.
+
+    Accepts any JSON body, logs it to stdout/server logs, and returns
+    {"success": true}. No persistence. No session bookkeeping. Do not depend
+    on this endpoint for anything beyond smoke-testing the network path.
+    """
+    try:
+        _walk_test_logger.info("walk test event received: %s", json.dumps(payload, default=str))
+    except Exception:
+        _walk_test_logger.info("walk test event received (unserializable payload)")
+    return _ok(received=payload)

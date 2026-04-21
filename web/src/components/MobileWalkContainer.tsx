@@ -20,6 +20,37 @@ type Props = {
   service?: WalkService;
   /** Optional read-only office adapter for route/design awareness. */
   officeContextService?: OfficeContextService;
+  /**
+   * Optional auto-populated crew identifier shown read-only on the entry form.
+   * Falls back to routeContext.crew (if present), then "".
+   */
+  crew?: string;
+  /**
+   * Optional auto-populated print / drawing identifier shown read-only on the
+   * entry form. Falls back to routeContext.print (if present), then the route
+   * name, then "".
+   */
+  print?: string;
+};
+
+/**
+ * Shape of the mobile-only extras the UI collects but the current service
+ * contract does not yet accept. Kept in local container state so the data
+ * structure is locked and verifiable NOW; backend persistence is a
+ * follow-up batch and deliberately not part of this pass.
+ */
+type EntryExtras = {
+  sequence: number;
+  stationText: string;
+  depth: string;
+  boc: string;
+  note: string;
+  date: string;
+  crew: string;
+  print: string;
+  hasPhoto: boolean;
+  gps: { lat: number; lon: number; accuracy_m: number } | null;
+  savedAt: string;
 };
 
 function formatFeet(value: number | null): string {
@@ -34,6 +65,78 @@ function describeError(err: unknown, fallback: string): string {
 }
 
 /**
+ * Safely read an optional string field from an unknown-shaped record without
+ * requiring the source type to declare it. Used so the container can pick up
+ * crew / print from routeContext if the office adapter supplies them, without
+ * modifying the RouteContext type.
+ */
+function readOptionalString(source: unknown, key: string): string {
+  if (!source || typeof source !== "object") return "";
+  const v = (source as Record<string, unknown>)[key];
+  return typeof v === "string" ? v : "";
+}
+
+/**
+ * Classify a raw geolocation error message into one of a few coarse buckets
+ * so the field UI can show a clear, calm message instead of a raw browser
+ * error string. Matching is intentionally loose — Safari, Chrome and the WebView
+ * each phrase these slightly differently.
+ */
+function classifyGpsError(raw: string | null | undefined): {
+  blocked: boolean;
+  label: string;
+} | null {
+  if (!raw) return null;
+  const s = raw.toLowerCase();
+
+  // Permission denied / origin not permitted — the user (or the browser's
+  // insecure-origin policy) has blocked geolocation for this page.
+  // iOS Safari on non-HTTPS LAN origins emits: "Origin does not have permission to use Geolocation service".
+  if (
+    s.includes("permission") ||
+    s.includes("denied") ||
+    s.includes("not have permission") ||
+    s.includes("user denied") ||
+    s.includes("secure origin")
+  ) {
+    return {
+      blocked: true,
+      label: "GPS blocked — allow Location for this site, or use HTTPS. Manual entry still works.",
+    };
+  }
+
+  // Position unavailable — hardware failure, no sky view, airplane mode, etc.
+  if (s.includes("unavailable") || s.includes("position unavailable")) {
+    return {
+      blocked: true,
+      label: "GPS unavailable on this device. Manual entry still works.",
+    };
+  }
+
+  // Timeout — took too long to get a fix.
+  if (s.includes("timeout") || s.includes("timed out")) {
+    return {
+      blocked: false,
+      label: "GPS slow to acquire. Manual entry still works.",
+    };
+  }
+
+  // Not supported at all (very old browsers).
+  if (s.includes("not supported") || s.includes("unsupported")) {
+    return {
+      blocked: true,
+      label: "This browser has no GPS support. Manual entry still works.",
+    };
+  }
+
+  // Unknown — surface the raw short form but still treat as non-fatal.
+  return {
+    blocked: false,
+    label: `GPS: ${raw}`,
+  };
+}
+
+/**
  * Full-viewport container for the mobile walk experience.
  *
  * Owns walk session state and wires every MobileWalkUI callback to the walk service
@@ -45,6 +148,8 @@ function describeError(err: unknown, fallback: string): string {
 export default function MobileWalkContainer({
   service = defaultWalkService,
   officeContextService = defaultOfficeContextService,
+  crew: crewProp,
+  print: printProp,
 }: Props) {
   const [busy, setBusy] = useState(false);
   const [activeSession, setActiveSession] = useState<WalkSessionSnapshot | null>(null);
@@ -57,10 +162,34 @@ export default function MobileWalkContainer({
   const [routeContextLoaded, setRouteContextLoaded] = useState(false);
   const [routeContextError, setRouteContextError] = useState<string | null>(null);
 
+  // Dismissible GPS banner — set when we classify a blocked/unavailable state,
+  // cleared when the user taps it or GPS starts working.
+  const [gpsBannerDismissed, setGpsBannerDismissed] = useState(false);
+
+  /**
+   * Local capture of the extended field set for each saved entry, keyed by
+   * the service-assigned sequence number. This is the deliberate scope of
+   * this pass: the mobile data structure is captured and verifiable in the
+   * browser (console + component state) without touching the service or
+   * backend contracts. Persistence will be wired in a follow-up batch.
+   */
+  const [entryExtras, setEntryExtras] = useState<Record<number, EntryExtras>>({});
+
   // GPS runs only while a session is active, to save battery.
   const { currentGps, error: gpsError } = useGeolocation(
     activeSession !== null && activeSession.status === "active"
   );
+
+  const gpsClassification = useMemo(() => classifyGpsError(gpsError), [gpsError]);
+  const gpsBlocked = gpsClassification?.blocked ?? false;
+
+  // If GPS starts working again, un-dismiss so the banner can reappear on a
+  // later failure.
+  useEffect(() => {
+    if (currentGps) {
+      setGpsBannerDismissed(false);
+    }
+  }, [currentGps]);
 
   // Rehydrate any in-flight session on mount (no-op for LocalWalkService).
   useEffect(() => {
@@ -104,6 +233,28 @@ export default function MobileWalkContainer({
 
   const hasAssignedRoute = routeContext.routeCoords.length >= 2;
 
+  // Resolve crew/print from (in priority order) explicit props, routeContext
+  // extension fields, or empty. Using readOptionalString keeps us from having
+  // to modify the RouteContext type definition.
+  const resolvedCrew = useMemo(() => {
+    if (typeof crewProp === "string" && crewProp.trim().length) return crewProp;
+    const fromCtx = readOptionalString(routeContext, "crew");
+    if (fromCtx) return fromCtx;
+    return "";
+  }, [crewProp, routeContext]);
+
+  const resolvedPrint = useMemo(() => {
+    if (typeof printProp === "string" && printProp.trim().length) return printProp;
+    const fromCtx =
+      readOptionalString(routeContext, "print") ||
+      readOptionalString(routeContext, "printName") ||
+      readOptionalString(routeContext, "drawing") ||
+      readOptionalString(routeContext, "drawingName");
+    if (fromCtx) return fromCtx;
+    // Last resort: the route name itself identifies the print for simple jobs.
+    return routeContext.routeName || "";
+  }, [printProp, routeContext]);
+
   const handleStartWalk = useCallback(() => {
     setWalkPreflightOpen(true);
   }, []);
@@ -121,6 +272,9 @@ export default function MobileWalkContainer({
         design_snapshot_label: routeContext.capturedAt,
       });
       setActiveSession(session);
+      // Starting a new session clears any local extras from a prior session
+      // so sequence numbers don't collide across walks.
+      setEntryExtras({});
       setWalkPreflightOpen(false);
       setStatusMessage("Walk started.");
       setStatusTone("success");
@@ -150,14 +304,22 @@ export default function MobileWalkContainer({
   }, [busy]);
 
   /**
-   * Defensive save flow:
-   *  1. Validate session state before calling the service.
-   *  2. Validate the payload (at minimum, station text) before calling the service.
-   *  3. Use the atomic {entry, session} returned by service.addEntry so the UI
-   *     can never be in a state where the entry exists but entry_count didn't update.
-   *  4. Any error ALWAYS surfaces in the status toast. Modal stays open on error
-   *     so the user can retry without losing their keypad input.
-   *  5. `busy` is cleared in finally so the UI cannot get stuck disabled.
+   * Save flow for a walk entry.
+   *
+   * CONTRACT: service.addEntry accepts ONLY
+   *   { stationText, note, photoFile, currentGps }
+   * The mobile form collects additional fields (depth, boc, date, crew,
+   * print). In THIS pass we deliberately do NOT send those extras through
+   * the service — the backend contract is unchanged. Instead:
+   *
+   *   1. The service call goes through with exactly the supported shape,
+   *      so the existing working pipeline is not broken.
+   *   2. On a successful save, the container logs the full field set to
+   *      the console tagged as `[walk] entry extras` for verification.
+   *   3. The container also records the extras in local state
+   *      (`entryExtras`), keyed by the service-assigned sequence number,
+   *      so the data is inspectable in-memory while the UI is running.
+   *   4. Persistence of the extras to the backend is a later batch.
    */
   const handleAddEntry = useCallback(
     async (payload: MobileWalkAddEntryPayload): Promise<void> => {
@@ -180,6 +342,7 @@ export default function MobileWalkContainer({
 
       setBusy(true);
       try {
+        // ---- Service call: original narrow shape ONLY. ----
         const result = await service.addEntry({
           stationText: stationTrimmed,
           note: payload.note || "",
@@ -189,6 +352,31 @@ export default function MobileWalkContainer({
 
         // Atomic: service returns both the entry and the refreshed session.
         setActiveSession(result.session);
+
+        // ---- Capture extras locally, keyed by sequence. ----
+        const extras: EntryExtras = {
+          sequence: result.entry.sequence,
+          stationText: stationTrimmed,
+          depth: (payload.depth || "").trim(),
+          boc: (payload.boc || "").trim(),
+          note: payload.note || "",
+          date: payload.date || new Date().toISOString(),
+          crew: payload.crew || "",
+          print: payload.print || "",
+          hasPhoto: !!payload.photoFile,
+          gps: currentGps
+            ? { lat: currentGps.lat, lon: currentGps.lon, accuracy_m: currentGps.accuracy_m }
+            : null,
+          savedAt: new Date().toISOString(),
+        };
+
+        setEntryExtras((prev) => ({ ...prev, [extras.sequence]: extras }));
+
+        // ---- Verification log. Visible in Safari Web Inspector. ----
+        if (typeof console !== "undefined" && console.log) {
+          console.log("[walk] entry extras", extras);
+        }
+
         setShowAddEntryModal(false);
         setStatusMessage(`Entry #${result.entry.sequence} saved.`);
         setStatusTone("success");
@@ -254,6 +442,8 @@ export default function MobileWalkContainer({
       : "No route assigned"
     : "Loading route…";
 
+  const showGpsBanner = !gpsBannerDismissed && !!gpsClassification && !currentGps;
+
   return (
     <div
       style={{
@@ -278,7 +468,7 @@ export default function MobileWalkContainer({
       <div
         style={{
           position: "absolute",
-          top: 12,
+          top: "max(12px, env(safe-area-inset-top))",
           left: 76,
           right: 76,
           zIndex: 998,
@@ -311,9 +501,9 @@ export default function MobileWalkContainer({
               <>
                 {" • "}GPS ±{Math.round(currentGps.accuracy_m)}m
               </>
-            ) : gpsError ? (
+            ) : gpsBlocked ? (
               <>
-                {" • "}GPS: {gpsError}
+                {" • "}GPS off
               </>
             ) : null}
           </div>
@@ -327,7 +517,7 @@ export default function MobileWalkContainer({
           aria-live="polite"
           style={{
             position: "absolute",
-            top: 76,
+            top: "calc(max(12px, env(safe-area-inset-top)) + 64px)",
             left: 12,
             zIndex: 999,
             maxWidth: 260,
@@ -354,16 +544,52 @@ export default function MobileWalkContainer({
         </div>
       ) : null}
 
+      {/* GPS banner — dismissible. Never blocks the walk flow. */}
+      {showGpsBanner ? (
+        <button
+          type="button"
+          onPointerDown={(e) => e.stopPropagation()}
+          onClick={() => setGpsBannerDismissed(true)}
+          aria-label="Dismiss GPS warning"
+          style={{
+            position: "absolute",
+            top: "calc(max(12px, env(safe-area-inset-top)) + 64px)",
+            right: 12,
+            zIndex: 999,
+            maxWidth: 280,
+            borderRadius: 12,
+            padding: "10px 12px",
+            fontSize: 12,
+            fontWeight: 700,
+            lineHeight: 1.4,
+            color: "#92400e",
+            background: "#fef3c7",
+            border: "1px solid #f59e0b",
+            boxShadow: "0 6px 16px rgba(0,0,0,0.35)",
+            textAlign: "left",
+            cursor: "pointer",
+            WebkitTapHighlightColor: "transparent",
+            touchAction: "manipulation",
+          }}
+        >
+          <div>{gpsClassification?.label}</div>
+          <div style={{ marginTop: 4, fontSize: 10, fontWeight: 700, color: "#a16207" }}>Tap to dismiss</div>
+        </button>
+      ) : null}
+
       <MobileWalkUI
         busy={busy}
         activeSession={adaptedSession}
         showAddEntryModal={showAddEntryModal}
         currentGps={currentGps}
+        gpsBlocked={gpsBlocked}
         designRouteReady={hasAssignedRoute}
         walkPreflightOpen={walkPreflightOpen}
         walkPreflightRouteName={routeContext.routeName}
         walkPreflightRouteLengthLabel={routeLengthLabel}
         walkPreflightSnapshotLabel={routeContext.capturedAt}
+        crew={resolvedCrew}
+        print={resolvedPrint}
         onStartWalk={handleStartWalk}
         onConfirmWalkPreflight={handleConfirmWalkPreflight}
         onDismissWalkPreflight={handleDismissWalkPreflight}
