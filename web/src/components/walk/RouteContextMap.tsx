@@ -17,10 +17,10 @@ type ProjectionMetrics = {
   contentHeight: number;
   offsetX: number;
   offsetY: number;
+  lonScale: number;
 };
 
 const PROJECTION_BASE_WIDTH = 1000;
-const DEFAULT_ASPECT = 9 / 16;
 
 function getBoundsFromCoords(coords: number[][]): Bounds | null {
   if (!coords.length) return null;
@@ -43,49 +43,63 @@ function expandBounds(bounds: Bounds, factor = 0.08): Bounds {
   };
 }
 
-function getProjectionMetrics(bounds: Bounds, widthPx: number, heightPx: number): ProjectionMetrics {
-  const safeWidth = Math.max(1, widthPx);
-  const safeHeight = Math.max(1, heightPx);
+/**
+ * Produce a world box whose aspect matches the cosine-corrected data aspect.
+ * The real on-screen aspect of the <svg> is handled by preserveAspectRatio,
+ * so we do NOT assume any particular device/viewport dimensions here.
+ */
+function getProjectionMetrics(bounds: Bounds): ProjectionMetrics {
   const latSpan = Math.max(bounds.maxLat - bounds.minLat, 0.000001);
   const midLatRad = ((bounds.minLat + bounds.maxLat) / 2) * (Math.PI / 180);
   const lonScale = Math.max(Math.cos(midLatRad), 0.000001);
-  const lonSpanAdjusted = Math.max((bounds.maxLon - bounds.minLon) * lonScale, 0.000001);
+  const lonSpanAdjusted = Math.max(
+    (bounds.maxLon - bounds.minLon) * lonScale,
+    0.000001
+  );
 
   const dataAspect = lonSpanAdjusted / latSpan;
-  const viewportAspect = safeWidth / safeHeight;
 
   const worldWidth = PROJECTION_BASE_WIDTH;
-  const worldHeight = PROJECTION_BASE_WIDTH / viewportAspect;
-
-  let contentWidth = worldWidth;
-  let contentHeight = contentWidth / dataAspect;
-
-  if (contentHeight > worldHeight) {
-    contentHeight = worldHeight;
-    contentWidth = contentHeight * dataAspect;
-  }
-
-  const offsetX = (worldWidth - contentWidth) / 2;
-  const offsetY = (worldHeight - contentHeight) / 2;
-
-  return { worldWidth, worldHeight, contentWidth, contentHeight, offsetX, offsetY };
-}
-
-function projectWorldPoint(lat: number, lon: number, bounds: Bounds, metrics: ProjectionMetrics) {
-  const latSpan = Math.max(bounds.maxLat - bounds.minLat, 0.000001);
-  const midLatRad = ((bounds.minLat + bounds.maxLat) / 2) * (Math.PI / 180);
-  const lonScale = Math.max(Math.cos(midLatRad), 0.000001);
-  const lonSpanAdjusted = Math.max((bounds.maxLon - bounds.minLon) * lonScale, 0.000001);
+  const worldHeight = worldWidth / dataAspect;
 
   return {
-    x:
-      metrics.offsetX +
-      (((lon - bounds.minLon) * lonScale) / lonSpanAdjusted) * metrics.contentWidth,
-    y: metrics.offsetY + (1 - (lat - bounds.minLat) / latSpan) * metrics.contentHeight,
+    worldWidth,
+    worldHeight,
+    contentWidth: worldWidth,
+    contentHeight: worldHeight,
+    offsetX: 0,
+    offsetY: 0,
+    lonScale,
   };
 }
 
-function buildWorldPath(coords: number[][], bounds: Bounds, metrics: ProjectionMetrics): string {
+function projectWorldPoint(
+  lat: number,
+  lon: number,
+  bounds: Bounds,
+  metrics: ProjectionMetrics
+) {
+  const latSpan = Math.max(bounds.maxLat - bounds.minLat, 0.000001);
+  const lonSpanAdjusted = Math.max(
+    (bounds.maxLon - bounds.minLon) * metrics.lonScale,
+    0.000001
+  );
+  return {
+    x:
+      metrics.offsetX +
+      (((lon - bounds.minLon) * metrics.lonScale) / lonSpanAdjusted) *
+        metrics.contentWidth,
+    y:
+      metrics.offsetY +
+      (1 - (lat - bounds.minLat) / latSpan) * metrics.contentHeight,
+  };
+}
+
+function buildWorldPath(
+  coords: number[][],
+  bounds: Bounds,
+  metrics: ProjectionMetrics
+): string {
   if (coords.length < 2) return "";
   return coords
     .map((pt, idx) => {
@@ -98,38 +112,50 @@ function buildWorldPath(coords: number[][], bounds: Bounds, metrics: ProjectionM
 type Props = {
   routeCoords: number[][];
   currentGps: CurrentGps | null;
+  /** Breadcrumb trail of GPS fixes captured this session, oldest-first. */
+  walkTrail?: number[][];
+  /** Shown when routeCoords is empty. */
   noRouteMessage?: string;
 };
 
 export default function RouteContextMap({
   routeCoords,
   currentGps,
+  walkTrail = [],
   noRouteMessage = "No route assigned",
 }: Props) {
-  const combinedBounds = useMemo<Bounds | null>(() => {
-    const pointsForBounds: number[][] = [];
-    for (const pt of routeCoords) pointsForBounds.push(pt);
-    if (currentGps) pointsForBounds.push([currentGps.lat, currentGps.lon]);
-    const raw = getBoundsFromCoords(pointsForBounds);
+  // Framing bounds are STABLE — derived from the route only, not from GPS.
+  // This prevents the viewBox from rescaling every time a GPS fix arrives,
+  // which was making the map appear to "twitch" or "zoom" as the user walked.
+  const routeBounds = useMemo<Bounds | null>(() => {
+    const raw = getBoundsFromCoords(routeCoords);
     return raw ? expandBounds(raw) : null;
-  }, [routeCoords, currentGps]);
+  }, [routeCoords]);
 
   const metrics = useMemo<ProjectionMetrics | null>(() => {
-    if (!combinedBounds) return null;
-    const fakeWidth = 360;
-    const fakeHeight = fakeWidth / DEFAULT_ASPECT;
-    return getProjectionMetrics(combinedBounds, fakeWidth, fakeHeight);
-  }, [combinedBounds]);
+    if (!routeBounds) return null;
+    return getProjectionMetrics(routeBounds);
+  }, [routeBounds]);
 
   const routePath = useMemo(() => {
-    if (!combinedBounds || !metrics) return "";
-    return buildWorldPath(routeCoords, combinedBounds, metrics);
-  }, [routeCoords, combinedBounds, metrics]);
+    if (!routeBounds || !metrics) return "";
+    return buildWorldPath(routeCoords, routeBounds, metrics);
+  }, [routeCoords, routeBounds, metrics]);
+
+  const trailPath = useMemo(() => {
+    if (!routeBounds || !metrics || walkTrail.length < 2) return "";
+    return buildWorldPath(walkTrail, routeBounds, metrics);
+  }, [walkTrail, routeBounds, metrics]);
 
   const gpsProjected = useMemo(() => {
-    if (!currentGps || !combinedBounds || !metrics) return null;
-    return projectWorldPoint(currentGps.lat, currentGps.lon, combinedBounds, metrics);
-  }, [currentGps, combinedBounds, metrics]);
+    if (!currentGps || !routeBounds || !metrics) return null;
+    return projectWorldPoint(
+      currentGps.lat,
+      currentGps.lon,
+      routeBounds,
+      metrics
+    );
+  }, [currentGps, routeBounds, metrics]);
 
   const viewBox = metrics
     ? `0 0 ${metrics.worldWidth.toFixed(2)} ${metrics.worldHeight.toFixed(2)}`
@@ -176,10 +202,44 @@ export default function RouteContextMap({
           </>
         ) : null}
 
+        {/* Blue tracer — path of collected GPS points this session. */}
+        {trailPath ? (
+          <>
+            <path
+              d={trailPath}
+              fill="none"
+              stroke="rgba(59, 130, 246, 0.35)"
+              strokeWidth={6}
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+            <path
+              d={trailPath}
+              fill="none"
+              stroke="#3b82f6"
+              strokeWidth={3}
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </>
+        ) : null}
+
         {gpsProjected ? (
           <>
-            <circle cx={gpsProjected.x} cy={gpsProjected.y} r={14} fill="rgba(16, 185, 129, 0.18)" />
-            <circle cx={gpsProjected.x} cy={gpsProjected.y} r={6} fill="#10b981" stroke="#f0fdf4" strokeWidth={2} />
+            <circle
+              cx={gpsProjected.x}
+              cy={gpsProjected.y}
+              r={14}
+              fill="rgba(16, 185, 129, 0.18)"
+            />
+            <circle
+              cx={gpsProjected.x}
+              cy={gpsProjected.y}
+              r={6}
+              fill="#10b981"
+              stroke="#f0fdf4"
+              strokeWidth={2}
+            />
           </>
         ) : null}
       </svg>

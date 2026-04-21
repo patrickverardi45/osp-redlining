@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import MobileWalkUI, {
   type MobileWalkAddEntryPayload,
 } from "@/components/MobileWalkUI";
@@ -35,6 +35,10 @@ type EntryExtras = {
   savedAt: string;
 };
 
+/** Minimum movement in degrees (~1.1m at equator, less at higher lat) before adding a trail point. */
+const TRAIL_MIN_DELTA_DEG = 0.00001;
+const TRAIL_MAX_POINTS = 2000;
+
 function formatFeet(value: number | null): string {
   if (value === null || !Number.isFinite(value)) return "—";
   return `${value.toFixed(0)} ft`;
@@ -49,6 +53,12 @@ function describeError(err: unknown, fallback: string): string {
 function readOptionalString(source: unknown, key: string): string {
   if (!source || typeof source !== "object") return "";
   const v = (source as Record<string, unknown>)[key];
+  return typeof v === "string" ? v : "";
+}
+
+function readOptionalPayloadString(payload: MobileWalkAddEntryPayload, key: string): string {
+  const rec = payload as unknown as Record<string, unknown>;
+  const v = rec[key];
   return typeof v === "string" ? v : "";
 }
 
@@ -119,6 +129,10 @@ export default function MobileWalkContainer({
   const [gpsBannerDismissed, setGpsBannerDismissed] = useState(false);
   const [entryExtras, setEntryExtras] = useState<Record<number, EntryExtras>>({});
 
+  // Breadcrumb trail of GPS fixes for the active session. Rendered as the
+  // blue tracer on the map. Cleared when a new session starts.
+  const [walkTrail, setWalkTrail] = useState<number[][]>([]);
+
   const { currentGps, error: gpsError } = useGeolocation(
     activeSession !== null && activeSession.status === "active"
   );
@@ -130,13 +144,37 @@ export default function MobileWalkContainer({
     if (currentGps) setGpsBannerDismissed(false);
   }, [currentGps]);
 
+  // Append each sufficiently-distinct GPS fix to the walk trail while a
+  // session is active. Deduplication prevents jitter from filling the trail.
+  useEffect(() => {
+    if (!currentGps) return;
+    if (!activeSession || activeSession.status !== "active") return;
+    setWalkTrail((prev) => {
+      const last = prev[prev.length - 1];
+      if (last) {
+        const dLat = Math.abs(last[0] - currentGps.lat);
+        const dLon = Math.abs(last[1] - currentGps.lon);
+        if (dLat < TRAIL_MIN_DELTA_DEG && dLon < TRAIL_MIN_DELTA_DEG) {
+          return prev;
+        }
+      }
+      const next = [...prev, [currentGps.lat, currentGps.lon]];
+      if (next.length > TRAIL_MAX_POINTS) {
+        return next.slice(next.length - TRAIL_MAX_POINTS);
+      }
+      return next;
+    });
+  }, [currentGps, activeSession]);
+
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
         const existing = await service.getActiveSession();
         if (!cancelled) setActiveSession(existing);
-      } catch {}
+      } catch {
+        /* ignore rehydrate errors */
+      }
     })();
     return () => {
       cancelled = true;
@@ -166,14 +204,17 @@ export default function MobileWalkContainer({
     };
   }, [officeContextService]);
 
+  // Auto-clear only SUCCESS/NEUTRAL status toasts. Errors stick until the
+  // next action so the user cannot miss them.
   useEffect(() => {
     if (!statusMessage) return;
+    if (statusTone === "error") return;
     const timer = window.setTimeout(() => {
       setStatusMessage("");
       setStatusTone("neutral");
     }, 2500);
     return () => window.clearTimeout(timer);
-  }, [statusMessage]);
+  }, [statusMessage, statusTone]);
 
   const hasAssignedRoute = routeContext.routeCoords.length >= 2;
 
@@ -191,10 +232,11 @@ export default function MobileWalkContainer({
     );
   }, [printProp, routeContext]);
 
-  const handleStartWalk = () => setWalkPreflightOpen(true);
-  const handleDismissWalkPreflight = () => setWalkPreflightOpen(false);
+  const handleStartWalk = useCallback(() => setWalkPreflightOpen(true), []);
+  const handleDismissWalkPreflight = useCallback(() => setWalkPreflightOpen(false), []);
 
-  const handleConfirmWalkPreflight = async () => {
+  const handleConfirmWalkPreflight = useCallback(async () => {
+    if (busy) return;
     setBusy(true);
     try {
       const session = await service.startSession({
@@ -204,8 +246,9 @@ export default function MobileWalkContainer({
       });
       setActiveSession(session);
       setEntryExtras({});
-      setStatusMessage("");
-      setStatusTone("neutral");
+      setWalkTrail([]); // fresh trail per session
+      setStatusMessage("Walk started.");
+      setStatusTone("success");
       setWalkPreflightOpen(false);
     } catch (err) {
       setStatusMessage(describeError(err, "Failed to start walk."));
@@ -213,91 +256,149 @@ export default function MobileWalkContainer({
     } finally {
       setBusy(false);
     }
-  };
+  }, [busy, service, routeContext]);
 
-  const handleAddEntry = async (payload: MobileWalkAddEntryPayload) => {
-    if (!activeSession || activeSession.status !== "active") return;
-
-    setBusy(true);
-    setStatusMessage("");
-    setStatusTone("neutral");
-
-    try {
-      const trimmedStation = payload.stationText.trim();
-      const result = await service.addEntry({
-        stationText: trimmedStation,
-        note: payload.note || "",
-        photoFile: payload.photoFile ?? null,
-        currentGps,
-      });
-
-      const extra: EntryExtras = {
-        sequence: result.entry.sequence,
-        stationText: trimmedStation,
-        depth: (payload as Record<string, unknown>).depth && typeof (payload as Record<string, unknown>).depth === "string"
-          ? ((payload as Record<string, unknown>).depth as string)
-          : "",
-        boc: (payload as Record<string, unknown>).boc && typeof (payload as Record<string, unknown>).boc === "string"
-          ? ((payload as Record<string, unknown>).boc as string)
-          : "",
-        note: payload.note || "",
-        date: (payload as Record<string, unknown>).date && typeof (payload as Record<string, unknown>).date === "string"
-          ? ((payload as Record<string, unknown>).date as string)
-          : "",
-        crew: resolvedCrew,
-        print: resolvedPrint,
-        hasPhoto: Boolean(payload.photoFile),
-        gps: currentGps
-          ? {
-              lat: currentGps.lat,
-              lon: currentGps.lon,
-              accuracy_m: currentGps.accuracy_m,
-            }
-          : null,
-        savedAt: result.entry.created_at,
-      };
-
-      setEntryExtras((prev) => ({
-        ...prev,
-        [result.entry.sequence]: extra,
-      }));
-      setActiveSession(result.session);
-      setShowAddEntryModal(false);
-      setStatusMessage("Entry saved");
-      setStatusTone("success");
-    } catch (err) {
-      setStatusMessage(describeError(err, "Failed to save entry."));
+  const handleOpenAddEntry = useCallback(() => {
+    if (!activeSession || activeSession.status !== "active") {
+      setStatusMessage("Start a walk before adding an entry.");
       setStatusTone("error");
-    } finally {
-      setBusy(false);
+      return;
     }
-  };
+    setShowAddEntryModal(true);
+  }, [activeSession]);
 
-  const handleEndWalk = async () => {
+  const handleCloseAddEntryModal = useCallback(() => {
+    if (busy) return;
+    setShowAddEntryModal(false);
+  }, [busy]);
+
+  /**
+   * Save flow — hardened.
+   *
+   * Ordering is strict so the UI never ends up in a confusing state:
+   *   1. Re-entrancy guard via `busy` AND a ref, so a double-tap cannot
+   *      fire two concurrent saves.
+   *   2. Validate session + station before touching the service.
+   *   3. Call service.addEntry with the ORIGINAL narrow contract only.
+   *   4. ONLY on success: update session, record extras, close modal,
+   *      show success toast. Any thrown error keeps the modal open,
+   *      shows an error toast, and clears busy in `finally`.
+   *   5. Success toast is ALWAYS set so the user sees confirmation.
+   */
+  const saveInFlightRef = useRef(false);
+  const handleAddEntry = useCallback(
+    async (payload: MobileWalkAddEntryPayload) => {
+      if (saveInFlightRef.current || busy) return;
+
+      if (!activeSession || activeSession.status !== "active") {
+        setStatusMessage("No active walk session.");
+        setStatusTone("error");
+        return;
+      }
+
+      const trimmedStation = (payload.stationText || "").trim();
+      if (!trimmedStation) {
+        setStatusMessage("Enter a station value before saving.");
+        setStatusTone("error");
+        return;
+      }
+
+      saveInFlightRef.current = true;
+      setBusy(true);
+      try {
+        const result = await service.addEntry({
+          stationText: trimmedStation,
+          note: payload.note || "",
+          photoFile: payload.photoFile ?? null,
+          currentGps,
+        });
+
+        if (!result || !result.entry || !result.session) {
+          throw new Error("Service returned an invalid save result.");
+        }
+
+        const extra: EntryExtras = {
+          sequence: result.entry.sequence,
+          stationText: trimmedStation,
+          depth: readOptionalPayloadString(payload, "depth"),
+          boc: readOptionalPayloadString(payload, "boc"),
+          note: payload.note || "",
+          date: readOptionalPayloadString(payload, "date") || new Date().toISOString(),
+          crew: resolvedCrew,
+          print: resolvedPrint,
+          hasPhoto: Boolean(payload.photoFile),
+          gps: currentGps
+            ? {
+                lat: currentGps.lat,
+                lon: currentGps.lon,
+                accuracy_m: currentGps.accuracy_m,
+              }
+            : null,
+          savedAt:
+            (result.entry as unknown as { created_at?: string }).created_at ||
+            new Date().toISOString(),
+        };
+
+        // Commit state in one logical batch:
+        setEntryExtras((prev) => ({ ...prev, [result.entry.sequence]: extra }));
+        setActiveSession(result.session);
+        setShowAddEntryModal(false);
+        setStatusMessage(`Entry #${result.entry.sequence} saved.`);
+        setStatusTone("success");
+
+        if (typeof console !== "undefined" && console.log) {
+          console.log("[walk] entry saved", {
+            sequence: result.entry.sequence,
+            extras: extra,
+          });
+        }
+      } catch (err) {
+        // Modal stays open, keypad input intact, error visible.
+        const message = describeError(err, "Failed to save entry.");
+        setStatusMessage(message);
+        setStatusTone("error");
+        if (typeof console !== "undefined" && console.error) {
+          console.error("[walk] addEntry failed:", err);
+        }
+      } finally {
+        saveInFlightRef.current = false;
+        setBusy(false);
+      }
+    },
+    [busy, activeSession, service, currentGps, resolvedCrew, resolvedPrint]
+  );
+
+  const handleEndWalk = useCallback(async () => {
+    if (busy) return;
     setBusy(true);
     try {
       const session = await service.endSession();
       setActiveSession(session);
+      setStatusMessage("Walk ended.");
+      setStatusTone("success");
     } catch (err) {
       setStatusMessage(describeError(err, "Failed to end walk."));
       setStatusTone("error");
     } finally {
       setBusy(false);
     }
-  };
+  }, [busy, service]);
 
-  const handleSendHome = async () => {
+  const handleSendHome = useCallback(async () => {
+    if (busy) return;
     setBusy(true);
     try {
       const session = await service.sendHome();
       setActiveSession(session);
+      setStatusMessage("Sent home.");
+      setStatusTone("success");
     } catch (err) {
       setStatusMessage(describeError(err, "Failed to send home."));
       setStatusTone("error");
     } finally {
       setBusy(false);
     }
-  };
+  }, [busy, service]);
 
   const adaptedSession = activeSession
     ? {
@@ -309,12 +410,21 @@ export default function MobileWalkContainer({
       }
     : null;
 
+  const canSendHome = activeSession !== null;
+
   return (
     <div style={{ position: "fixed", inset: 0 }}>
       <RouteContextMap
         routeCoords={routeContext.routeCoords}
         currentGps={currentGps}
-        noRouteMessage="No route"
+        walkTrail={walkTrail}
+        noRouteMessage={
+          routeContextLoaded
+            ? routeContextError
+              ? "Office unreachable"
+              : "No route assigned"
+            : "Loading route…"
+        }
       />
 
       <MobileWalkUI
@@ -334,13 +444,46 @@ export default function MobileWalkContainer({
         onConfirmWalkPreflight={handleConfirmWalkPreflight}
         onDismissWalkPreflight={handleDismissWalkPreflight}
         onEndWalk={handleEndWalk}
-        onOpenAddEntry={() => setShowAddEntryModal(true)}
-        onCloseAddEntryModal={() => setShowAddEntryModal(false)}
+        onOpenAddEntry={handleOpenAddEntry}
+        onCloseAddEntryModal={handleCloseAddEntryModal}
         onAddEntry={handleAddEntry}
         onSendHome={handleSendHome}
         sendHomeBusy={busy}
-        canSendHome={true}
+        canSendHome={canSendHome}
       />
+
+      {!gpsBannerDismissed && gpsClassification && !currentGps ? (
+        <button
+          type="button"
+          onClick={() => setGpsBannerDismissed(true)}
+          aria-label="Dismiss GPS warning"
+          style={{
+            position: "absolute",
+            top: "calc(max(12px, env(safe-area-inset-top)) + 64px)",
+            right: 12,
+            zIndex: 999,
+            maxWidth: 280,
+            borderRadius: 12,
+            padding: "10px 12px",
+            fontSize: 12,
+            fontWeight: 700,
+            lineHeight: 1.4,
+            color: "#92400e",
+            background: "#fef3c7",
+            border: "1px solid #f59e0b",
+            boxShadow: "0 6px 16px rgba(0,0,0,0.35)",
+            textAlign: "left",
+            cursor: "pointer",
+            WebkitTapHighlightColor: "transparent",
+            touchAction: "manipulation",
+          }}
+        >
+          <div>{gpsClassification.label}</div>
+          <div style={{ marginTop: 4, fontSize: 10, fontWeight: 700, color: "#a16207" }}>
+            Tap to dismiss
+          </div>
+        </button>
+      ) : null}
 
       {statusMessage ? (
         <div
@@ -349,7 +492,7 @@ export default function MobileWalkContainer({
           style={{
             position: "absolute",
             left: "50%",
-            bottom: 20,
+            bottom: "calc(20px + env(safe-area-inset-bottom))",
             transform: "translateX(-50%)",
             padding: "10px 14px",
             borderRadius: 12,
@@ -359,10 +502,10 @@ export default function MobileWalkContainer({
             color: "#f8fafc",
             background:
               statusTone === "success"
-                ? "rgba(22, 163, 74, 0.92)"
+                ? "rgba(22, 163, 74, 0.94)"
                 : statusTone === "error"
-                  ? "rgba(220, 38, 38, 0.92)"
-                  : "rgba(30, 41, 59, 0.92)",
+                  ? "rgba(220, 38, 38, 0.94)"
+                  : "rgba(30, 41, 59, 0.94)",
             border:
               statusTone === "success"
                 ? "1px solid rgba(134, 239, 172, 0.45)"
@@ -372,6 +515,8 @@ export default function MobileWalkContainer({
             boxShadow: "0 10px 30px rgba(0,0,0,0.25)",
             pointerEvents: "none",
             zIndex: 1200,
+            maxWidth: "86%",
+            textAlign: "center",
           }}
         >
           {statusMessage}
