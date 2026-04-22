@@ -6084,3 +6084,211 @@ def walk_test_event(payload: _WalkTestDict[str, _WalkTestAny] = Body(default={})
     except Exception:
         _walk_test_logger.info("walk test event received (unserializable payload)")
     return _ok(received=payload)
+
+
+# ---------------------------------------------------------------------------
+# Temporary office dashboard endpoints.
+# Added as a minimal self-contained block at the bottom of the file so nothing
+# above this line is modified. Remove or replace this section once the real
+# jobs/session/station persistence layer ships.
+# ---------------------------------------------------------------------------
+
+def _office_iso_now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _office_routes_payload() -> List[Dict[str, Any]]:
+    routes: List[Dict[str, Any]] = []
+    for route in STATE.get("route_catalog", []) or []:
+        coords = route.get("coords") or []
+        geometry = {
+            "type": "LineString",
+            "coordinates": [[float(pt[1]), float(pt[0])] for pt in coords if len(pt) >= 2],
+        }
+        routes.append(
+            {
+                "id": str(route.get("route_id") or ""),
+                "route_name": str(route.get("route_name") or route.get("name") or "Unnamed Route"),
+                "length_ft": float(route.get("length_ft") or 0.0),
+                "segment_count": max(0, len(coords) - 1),
+                "geometry": geometry,
+            }
+        )
+
+    if routes:
+        return routes
+
+    synthetic_coords = [
+        [-96.39862, 30.16654],
+        [-96.39815, 30.16691],
+        [-96.39771, 30.16725],
+        [-96.39731, 30.16757],
+    ]
+    return [
+        {
+            "id": "route-demo-1",
+            "route_name": "Demo Mainline A",
+            "length_ft": 420.0,
+            "segment_count": max(0, len(synthetic_coords) - 1),
+            "geometry": {
+                "type": "LineString",
+                "coordinates": synthetic_coords,
+            },
+        }
+    ]
+
+
+def _office_sessions_payload(job_id: str) -> List[Dict[str, Any]]:
+    # Temporary mocked session derived from current route presence so the office
+    # UI can render with believable data before the real walk/session backend is ready.
+    routes = _office_routes_payload()
+    track_geometry = None
+    if routes and routes[0].get("geometry", {}).get("coordinates"):
+        coords = routes[0]["geometry"]["coordinates"]
+        track_geometry = {"type": "LineString", "coordinates": coords[: min(len(coords), 8)]}
+    if not routes:
+        return []
+    station_count = len(STATE.get("station_points") or []) or 3
+    return [
+        {
+            "id": f"{job_id}-session-1",
+            "crew_name": "Crew A",
+            "status": "ended",
+            "started_at": _office_iso_now(),
+            "ended_at": _office_iso_now(),
+            "station_count": station_count,
+            "photo_count": 1,
+            "track_point_count": len(track_geometry.get("coordinates", [])) if track_geometry else 0,
+            "track_geometry": track_geometry,
+        }
+    ]
+
+
+def _office_stations_payload(job_id: str, routes: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    station_points = list(STATE.get("station_points") or [])
+    stations: List[Dict[str, Any]] = []
+    if station_points:
+        for idx, point in enumerate(station_points[:10], start=1):
+            stations.append(
+                {
+                    "id": str(point.get("station_id") or f"{job_id}-station-{idx}"),
+                    "station_number": str(point.get("station") or point.get("station_label") or f"{10+idx}+00"),
+                    "depth_ft": point.get("depth_ft"),
+                    "boc_ft": point.get("boc_ft"),
+                    "latitude": float(point.get("lat") or 0.0),
+                    "longitude": float(point.get("lon") or 0.0),
+                    "review_status": str(point.get("review_status") or "auto_ok"),
+                }
+            )
+    elif routes:
+        coords = routes[0].get("geometry", {}).get("coordinates") or []
+        for idx, coord in enumerate(coords[:3], start=1):
+            stations.append(
+                {
+                    "id": f"{job_id}-station-{idx}",
+                    "station_number": f"{10+idx}+00",
+                    "depth_ft": 4.0 + idx * 0.5,
+                    "boc_ft": 2.0,
+                    "latitude": float(coord[1]),
+                    "longitude": float(coord[0]),
+                    "review_status": "auto_ok" if idx < 3 else "needs_review",
+                }
+            )
+    return stations
+
+
+def _office_photos_payload(job_id: str, stations: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    if not stations:
+        return []
+    first = stations[0]
+    return [
+        {
+            "id": f"{job_id}-photo-1",
+            "station_id": first.get("id"),
+            "latitude": first.get("latitude"),
+            "longitude": first.get("longitude"),
+            "thumbnail_url": None,
+        }
+    ]
+
+
+def _office_exceptions_payload(job_id: str, stations: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    for station in stations:
+        if str(station.get("review_status") or "") == "needs_review":
+            return [
+                {
+                    "id": f"{job_id}-exception-1",
+                    "exception_type": "station_needs_review",
+                    "severity": "medium",
+                    "status": "open",
+                    "description": f"Station {station.get('station_number')} needs review.",
+                    "latitude": station.get("latitude"),
+                    "longitude": station.get("longitude"),
+                }
+            ]
+    return []
+
+
+def _office_artifacts_payload(job_id: str) -> List[Dict[str, Any]]:
+    return [
+        {
+            "id": f"{job_id}-artifact-closeout-1",
+            "artifact_type": "closeout_pdf",
+            "version_number": 1,
+            "generation_status": "complete",
+            "file_url": None,
+            "created_at": _office_iso_now(),
+        },
+        {
+            "id": f"{job_id}-artifact-qa-1",
+            "artifact_type": "qa_summary_pdf",
+            "version_number": 1,
+            "generation_status": "queued",
+            "file_url": None,
+            "created_at": _office_iso_now(),
+        },
+    ]
+
+
+@app.get("/jobs")
+def get_jobs() -> List[Dict[str, Any]]:
+    routes = _office_routes_payload()
+    stations = _office_stations_payload("test-job", routes)
+    exceptions = _office_exceptions_payload("test-job", stations)
+    sessions = _office_sessions_payload("test-job")
+    return [
+        {
+            "id": "test-job",
+            "job_code": "TEST-001",
+            "job_name": "Test Job",
+            "status": "in_progress",
+            "route_count": len(routes),
+            "session_count": len(sessions),
+            "exception_count": len(exceptions),
+            "last_sync_at": _office_iso_now(),
+        }
+    ]
+
+
+@app.get("/jobs/{job_id}")
+def get_job_by_id(job_id: str) -> Dict[str, Any]:
+    safe_job_id = str(job_id or "test-job").strip() or "test-job"
+    routes = _office_routes_payload()
+    sessions = _office_sessions_payload(safe_job_id)
+    stations = _office_stations_payload(safe_job_id, routes)
+    photos = _office_photos_payload(safe_job_id, stations)
+    exceptions = _office_exceptions_payload(safe_job_id, stations)
+    artifacts = _office_artifacts_payload(safe_job_id)
+
+    return {
+        "id": safe_job_id,
+        "job_code": "TEST-001",
+        "job_name": "Test Job",
+        "status": "in_progress",
+        "routes": routes,
+        "sessions": sessions,
+        "stations": stations,
+        "photos": photos,
+        "exceptions": exceptions,
+        "artifacts": artifacts,
+    }
