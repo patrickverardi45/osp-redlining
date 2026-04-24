@@ -6144,22 +6144,24 @@ def _office_sessions_payload(job_id: str) -> List[Dict[str, Any]]:
     routes = _office_routes_payload()
     track_geometry = None
     latest_photo_url: Optional[str] = None
+    photo_count = 0
 
     station_photo_index = _load_station_photo_index()
     station_photo_records = list(station_photo_index.get("photos") or [])
+    photo_count = len(station_photo_records)
     if station_photo_records:
-        latest_photo = max(
+        sorted_photos = sorted(
             station_photo_records,
             key=lambda record: str(record.get("uploaded_at") or ""),
+            reverse=True,
         )
-        station_identity_hash = str(latest_photo.get("station_identity_hash") or "").strip()
-        stored_filename = str(latest_photo.get("stored_filename") or "").strip()
-        photo_id = str(latest_photo.get("photo_id") or "").strip()
-
-        if station_identity_hash and stored_filename:
-            latest_photo_url = f"/uploads/station_photos/{station_identity_hash}/{stored_filename}"
-        elif photo_id:
-            latest_photo_url = f"/api/station-photos/file/{photo_id}"
+        for record in sorted_photos:
+            station_identity_hash = str(record.get("station_identity_hash") or "").strip()
+            stored_filename = str(record.get("stored_filename") or "").strip()
+            stored_path = str(record.get("stored_path") or "").strip()
+            if station_identity_hash and stored_filename and stored_path and os.path.exists(stored_path):
+                latest_photo_url = f"/uploads/station_photos/{station_identity_hash}/{stored_filename}"
+                break
 
     if routes and routes[0].get("geometry", {}).get("coordinates"):
         coords = routes[0]["geometry"]["coordinates"]
@@ -6175,7 +6177,7 @@ def _office_sessions_payload(job_id: str) -> List[Dict[str, Any]]:
             "started_at": _office_iso_now(),
             "ended_at": _office_iso_now(),
             "station_count": station_count,
-            "photo_count": 1,
+            "photo_count": photo_count,
             "latest_photo_url": latest_photo_url,
             "track_point_count": len(track_geometry.get("coordinates", [])) if track_geometry else 0,
             "track_geometry": track_geometry,
