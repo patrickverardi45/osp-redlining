@@ -12,6 +12,7 @@ import type { JobDetail } from "@/lib/api";
 
 // ─── Existing panels ──────────────────────────────────────────────────────────
 import JobHeader from "@/components/office/JobHeader";
+import DesignSetupPanel from "@/components/office/DesignSetupPanel";
 import RouteListPanel from "@/components/office/RouteListPanel";
 import SessionListPanel from "@/components/office/SessionListPanel";
 import ExceptionSummaryPanel from "@/components/office/ExceptionSummaryPanel";
@@ -139,6 +140,11 @@ export default function JobDetailPage() {
           currentStatus={job.status}
           onMutated={fetchJob}
         />
+
+        <hr className="border-gray-200" />
+
+        {/* Design / KMZ setup */}
+        <DesignSetupPanel onMutated={fetchJob} />
 
         <hr className="border-gray-200" />
 
