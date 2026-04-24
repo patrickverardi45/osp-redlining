@@ -6179,26 +6179,36 @@ def _office_sessions_payload(job_id: str) -> List[Dict[str, Any]]:
 
     station_photo_index = _load_station_photo_index()
     station_photo_records = list(station_photo_index.get("photos") or [])
-    matched_photo_records = [
+    valid_photo_records = [
         record
         for record in station_photo_records
+        if str(record.get("station_identity_hash") or "").strip()
+        and str(record.get("stored_filename") or "").strip()
+        and str(record.get("stored_path") or "").strip()
+        and os.path.exists(str(record.get("stored_path") or "").strip())
+    ]
+
+    matched_photo_records = [
+        record
+        for record in valid_photo_records
         if str(record.get("station_identity_hash") or "").strip() in station_identity_hashes
     ]
-    photo_count = len(matched_photo_records)
 
-    if matched_photo_records:
+    # V1 office proof fallback: if exact station identity matching yields no
+    # photos, show recent valid uploaded station photos for the job view.
+    selected_photo_records = matched_photo_records if matched_photo_records else valid_photo_records
+    photo_count = len(selected_photo_records)
+
+    if selected_photo_records:
         sorted_photos = sorted(
-            matched_photo_records,
+            selected_photo_records,
             key=lambda record: str(record.get("uploaded_at") or ""),
             reverse=True,
         )
-        for record in sorted_photos:
-            station_identity_hash = str(record.get("station_identity_hash") or "").strip()
-            stored_filename = str(record.get("stored_filename") or "").strip()
-            stored_path = str(record.get("stored_path") or "").strip()
-            if station_identity_hash and stored_filename and stored_path and os.path.exists(stored_path):
-                latest_photo_url = f"/uploads/station_photos/{station_identity_hash}/{stored_filename}"
-                break
+        newest = sorted_photos[0]
+        station_identity_hash = str(newest.get("station_identity_hash") or "").strip()
+        stored_filename = str(newest.get("stored_filename") or "").strip()
+        latest_photo_url = f"/uploads/station_photos/{station_identity_hash}/{stored_filename}"
 
     if routes and routes[0].get("geometry", {}).get("coordinates"):
         coords = routes[0]["geometry"]["coordinates"]
