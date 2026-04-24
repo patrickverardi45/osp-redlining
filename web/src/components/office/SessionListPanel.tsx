@@ -1,9 +1,15 @@
-// web/src/components/office/SessionListPanel.tsx
-
 import type { Session } from "@/lib/api";
 
 interface SessionListPanelProps {
   sessions: Session[];
+}
+
+const API_BASE_URL = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000").replace(/\/+$/, "");
+
+function resolvePhotoUrl(photoUrl: string): string {
+  if (/^https?:\/\//i.test(photoUrl)) return photoUrl;
+  const normalizedPath = photoUrl.startsWith("/") ? photoUrl : `/${photoUrl}`;
+  return `${API_BASE_URL}${normalizedPath}`;
 }
 
 const SESSION_STATUS_CONFIG: Record<string, { label: string; className: string }> = {
@@ -102,6 +108,9 @@ export default function SessionListPanel({ sessions }: SessionListPanelProps) {
                 <th className="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase tracking-wider">
                   Photos
                 </th>
+                <th className="px-4 py-3 text-center text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                  View
+                </th>
                 <th className="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase tracking-wider">
                   Track Pts
                 </th>
@@ -131,8 +140,25 @@ export default function SessionListPanel({ sessions }: SessionListPanelProps) {
                   <td className="px-4 py-3 text-right text-gray-700 tabular-nums">
                     {session.photo_count}
                   </td>
+
+                  {/* 🔥 NEW: VIEW PHOTO */}
+                  <td className="px-4 py-3 text-center">
+                    {session.latest_photo_url ? (
+                      <a
+                        href={resolvePhotoUrl(session.latest_photo_url)}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-blue-600 hover:underline text-xs font-medium"
+                      >
+                        View Photo
+                      </a>
+                    ) : (
+                      <span className="text-gray-300 text-xs">—</span>
+                    )}
+                  </td>
+
                   <td className="px-4 py-3 text-right text-gray-700 tabular-nums">
-                    {session.track_point_count.toLocaleString()}
+                    {session.track_point_count?.toLocaleString?.() ?? 0}
                   </td>
                 </tr>
               ))}

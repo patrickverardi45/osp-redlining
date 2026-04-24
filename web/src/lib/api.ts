@@ -111,6 +111,7 @@ export interface Session {
   ended_at: string | null;
   station_count: number;
   photo_count: number;
+  latest_photo_url?: string | null;
   track_point_count: number;
   track_geometry?: GeoLineString | null;
 }

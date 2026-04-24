@@ -6143,6 +6143,24 @@ def _office_sessions_payload(job_id: str) -> List[Dict[str, Any]]:
     # UI can render with believable data before the real walk/session backend is ready.
     routes = _office_routes_payload()
     track_geometry = None
+    latest_photo_url: Optional[str] = None
+
+    station_photo_index = _load_station_photo_index()
+    station_photo_records = list(station_photo_index.get("photos") or [])
+    if station_photo_records:
+        latest_photo = max(
+            station_photo_records,
+            key=lambda record: str(record.get("uploaded_at") or ""),
+        )
+        station_identity_hash = str(latest_photo.get("station_identity_hash") or "").strip()
+        stored_filename = str(latest_photo.get("stored_filename") or "").strip()
+        photo_id = str(latest_photo.get("photo_id") or "").strip()
+
+        if station_identity_hash and stored_filename:
+            latest_photo_url = f"/uploads/station_photos/{station_identity_hash}/{stored_filename}"
+        elif photo_id:
+            latest_photo_url = f"/api/station-photos/file/{photo_id}"
+
     if routes and routes[0].get("geometry", {}).get("coordinates"):
         coords = routes[0]["geometry"]["coordinates"]
         track_geometry = {"type": "LineString", "coordinates": coords[: min(len(coords), 8)]}
@@ -6158,6 +6176,7 @@ def _office_sessions_payload(job_id: str) -> List[Dict[str, Any]]:
             "ended_at": _office_iso_now(),
             "station_count": station_count,
             "photo_count": 1,
+            "latest_photo_url": latest_photo_url,
             "track_point_count": len(track_geometry.get("coordinates", [])) if track_geometry else 0,
             "track_geometry": track_geometry,
         }
