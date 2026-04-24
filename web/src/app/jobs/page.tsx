@@ -127,10 +127,10 @@ export default function JobsPage() {
 
             {/* Pipeline or flat view */}
             {viewMode === "pipeline" ? (
-              <JobsPipelineView jobs={jobs} />
+              <JobsPipelineView jobs={jobs} onRefresh={fetchJobs} />
             ) : (
               <>
-                <JobsTable jobs={jobs} />
+                <JobsTable jobs={jobs} onRefresh={fetchJobs} />
                 {jobs.length > 0 && (
                   <p className="text-xs text-gray-400 text-right">
                     {jobs.length} job{jobs.length !== 1 ? "s" : ""} total
