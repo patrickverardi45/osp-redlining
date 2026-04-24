@@ -4,12 +4,31 @@ interface SessionListPanelProps {
   sessions: Session[];
 }
 
-const API_BASE_URL = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000").replace(/\/+$/, "");
+const API_BASE_URL = (
+  process.env.NEXT_PUBLIC_API_BASE ||
+  process.env.NEXT_PUBLIC_API_BASE_URL ||
+  "https://walkv1-backend.onrender.com"
+).replace(/\/+$/, "");
 
 function resolvePhotoUrl(photoUrl: string): string {
-  if (/^https?:\/\//i.test(photoUrl)) return photoUrl;
+  if (/^https?:\/\//i.test(photoUrl)) {
+    try {
+      const parsed = new URL(photoUrl);
+      const isLocalhostHost =
+        parsed.hostname === "localhost" ||
+        parsed.hostname === "127.0.0.1" ||
+        parsed.hostname === "0.0.0.0";
+      if (isLocalhostHost) {
+        const normalizedPath = `${parsed.pathname}${parsed.search}${parsed.hash}`;
+        return API_BASE_URL ? `${API_BASE_URL}${normalizedPath}` : normalizedPath;
+      }
+      return photoUrl;
+    } catch {
+      return photoUrl;
+    }
+  }
   const normalizedPath = photoUrl.startsWith("/") ? photoUrl : `/${photoUrl}`;
-  return `${API_BASE_URL}${normalizedPath}`;
+  return API_BASE_URL ? `${API_BASE_URL}${normalizedPath}` : normalizedPath;
 }
 
 const SESSION_STATUS_CONFIG: Record<string, { label: string; className: string }> = {
