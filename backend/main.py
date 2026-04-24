@@ -22,11 +22,12 @@ from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 BASE_DIR = Path(__file__).resolve().parent
-UPLOADS_DIR = BASE_DIR / "uploads"
-UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
+BASE_UPLOAD_DIR = "/data/uploads"
+UPLOADS_DIR = Path(BASE_UPLOAD_DIR)
+os.makedirs(BASE_UPLOAD_DIR, exist_ok=True)
 
 app = FastAPI(title="OSP Redlining Mapping Layer")
-app.mount("/uploads", StaticFiles(directory=str(UPLOADS_DIR)), name="uploads")
+app.mount("/uploads", StaticFiles(directory=BASE_UPLOAD_DIR), name="uploads")
 
 app.add_middleware(
     CORSMiddleware,
@@ -5842,7 +5843,7 @@ def report_bug(payload: Dict[str, Any] = Body(...)) -> JSONResponse:
 def get_bug_reports() -> JSONResponse:
     return _ok(bug_reports=STATE.get("bug_reports", []) or [])
 
-STATION_PHOTO_ROOT = BASE_DIR / "uploads" / "station_photos"
+STATION_PHOTO_ROOT = UPLOADS_DIR / "station_photos"
 STATION_PHOTO_INDEX_PATH = STATION_PHOTO_ROOT / "index.json"
 STATION_PHOTO_MAX_FILES_PER_UPLOAD = 10
 STATION_PHOTO_STORAGE = str(os.getenv("STATION_PHOTO_STORAGE") or "local").strip().lower()
