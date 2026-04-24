@@ -35,9 +35,25 @@ type EntryExtras = {
   savedAt: string;
 };
 
-/** Minimum movement in degrees (~1.1m at equator, less at higher lat) before adding a trail point. */
-const TRAIL_MIN_DELTA_DEG = 0.00001;
+const TRAIL_MIN_DISTANCE_M = 2;
+const TRAIL_MAX_SEGMENT_M = 45;
 const TRAIL_MAX_POINTS = 2000;
+
+function toRadians(value: number): number {
+  return (value * Math.PI) / 180;
+}
+
+function distanceMeters(a: number[], b: number[]): number {
+  const earthRadiusM = 6371000;
+  const dLat = toRadians(b[0] - a[0]);
+  const dLon = toRadians(b[1] - a[1]);
+  const lat1 = toRadians(a[0]);
+  const lat2 = toRadians(b[0]);
+  const h =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLon / 2) * Math.sin(dLon / 2);
+  return 2 * earthRadiusM * Math.atan2(Math.sqrt(h), Math.sqrt(1 - h));
+}
 
 function formatFeet(value: number | null): string {
   if (value === null || !Number.isFinite(value)) return "—";
@@ -150,15 +166,15 @@ export default function MobileWalkContainer({
     if (!currentGps) return;
     if (!activeSession || activeSession.status !== "active") return;
     setWalkTrail((prev) => {
+      const nextPoint = [currentGps.lat, currentGps.lon];
       const last = prev[prev.length - 1];
       if (last) {
-        const dLat = Math.abs(last[0] - currentGps.lat);
-        const dLon = Math.abs(last[1] - currentGps.lon);
-        if (dLat < TRAIL_MIN_DELTA_DEG && dLon < TRAIL_MIN_DELTA_DEG) {
+        const distanceM = distanceMeters(last, nextPoint);
+        if (distanceM < TRAIL_MIN_DISTANCE_M || distanceM > TRAIL_MAX_SEGMENT_M) {
           return prev;
         }
       }
-      const next = [...prev, [currentGps.lat, currentGps.lon]];
+      const next = [...prev, nextPoint];
       if (next.length > TRAIL_MAX_POINTS) {
         return next.slice(next.length - TRAIL_MAX_POINTS);
       }
