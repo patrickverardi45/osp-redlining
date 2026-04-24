@@ -36,7 +36,8 @@ type EntryExtras = {
 };
 
 const TRAIL_MIN_DISTANCE_M = 2;
-const TRAIL_MAX_SEGMENT_M = 45;
+const TRAIL_MAX_SEGMENT_M = 25;
+const TRAIL_STABLE_START_POINTS = 3;
 const TRAIL_MAX_POINTS = 2000;
 
 function toRadians(value: number): number {
@@ -148,6 +149,7 @@ export default function MobileWalkContainer({
   // Breadcrumb trail of GPS fixes for the active session. Rendered as the
   // blue tracer on the map. Cleared when a new session starts.
   const [walkTrail, setWalkTrail] = useState<number[][]>([]);
+  const stableTrailStartRef = useRef<number[][]>([]);
 
   const { currentGps, error: gpsError } = useGeolocation(
     activeSession !== null && activeSession.status === "active"
@@ -167,13 +169,23 @@ export default function MobileWalkContainer({
     if (!activeSession || activeSession.status !== "active") return;
     setWalkTrail((prev) => {
       const nextPoint = [currentGps.lat, currentGps.lon];
-      const last = prev[prev.length - 1];
+      const last = prev[prev.length - 1] || stableTrailStartRef.current[stableTrailStartRef.current.length - 1];
       if (last) {
         const distanceM = distanceMeters(last, nextPoint);
         if (distanceM < TRAIL_MIN_DISTANCE_M || distanceM > TRAIL_MAX_SEGMENT_M) {
           return prev;
         }
       }
+
+      if (prev.length === 0) {
+        const buffered = [...stableTrailStartRef.current, nextPoint];
+        stableTrailStartRef.current = buffered.slice(-TRAIL_STABLE_START_POINTS);
+        if (stableTrailStartRef.current.length < TRAIL_STABLE_START_POINTS) {
+          return prev;
+        }
+        return stableTrailStartRef.current;
+      }
+
       const next = [...prev, nextPoint];
       if (next.length > TRAIL_MAX_POINTS) {
         return next.slice(next.length - TRAIL_MAX_POINTS);
@@ -262,6 +274,7 @@ export default function MobileWalkContainer({
       });
       setActiveSession(session);
       setEntryExtras({});
+      stableTrailStartRef.current = [];
       setWalkTrail([]); // fresh trail per session
       setStatusMessage("Walk started.");
       setStatusTone("success");
@@ -426,7 +439,7 @@ export default function MobileWalkContainer({
       }
     : null;
 
-  const canSendHome = activeSession !== null;
+  const canSendHome = activeSession !== null && activeSession.status === "ended";
 
   return (
     <div style={{ position: "fixed", inset: 0 }}>

@@ -872,21 +872,23 @@ export default function MobileWalkUI({
           >
             End Walk
           </button>
-          <button
-            onPointerDown={(e) => e.stopPropagation()}
-            onClick={() => void onSendHome()}
-            disabled={sendHomeDisabled}
-            style={{
-              flex: 1,
-              ...mobileButtonStyle("#10b981", "#ffffff", "#10b981", sendHomeDisabled),
-              fontSize: 17,
-              minHeight: 54,
-              paddingTop: 12,
-              paddingBottom: 12,
-            }}
-          >
-            Send Home
-          </button>
+          {canSendHome ? (
+            <button
+              onPointerDown={(e) => e.stopPropagation()}
+              onClick={() => void onSendHome()}
+              disabled={sendHomeDisabled}
+              style={{
+                flex: 1,
+                ...mobileButtonStyle("#10b981", "#ffffff", "#10b981", sendHomeDisabled),
+                fontSize: 17,
+                minHeight: 54,
+                paddingTop: 12,
+                paddingBottom: 12,
+              }}
+            >
+              Send Home
+            </button>
+          ) : null}
         </div>
       </div>
     </>

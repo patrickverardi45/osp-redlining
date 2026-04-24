@@ -14,10 +14,10 @@ const DEFAULT_OPTIONS: PositionOptions = {
   timeout: 5000,
 };
 
-const MAX_ACCEPTED_ACCURACY_M = 30;
+const MAX_ACCEPTED_ACCURACY_M = 25;
 const MIN_ACCEPTED_MOVEMENT_M = 1.5;
-const MAX_REASONABLE_SPEED_MPS = 12;
-const MAX_SINGLE_JUMP_M = 60;
+const MAX_REASONABLE_SPEED_MPS = 4.5;
+const MAX_SINGLE_JUMP_M = 30;
 
 type AcceptedFix = CurrentGps & {
   timestamp: number;
