@@ -1,6 +1,6 @@
 // web/src/lib/api.ts
 
-const BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+const BASE_URL = process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8000";
 
 // ─── Allowed statuses ─────────────────────────────────────────────────────────
 
