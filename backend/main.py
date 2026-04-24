@@ -6146,12 +6146,49 @@ def _office_sessions_payload(job_id: str) -> List[Dict[str, Any]]:
     latest_photo_url: Optional[str] = None
     photo_count = 0
 
+    stations = _office_stations_payload(job_id, routes)
+    station_identity_hashes: set[str] = set()
+
+    default_route_name = str(STATE.get("route_name") or (routes[0].get("route_name") if routes else "") or "").strip()
+
+    for station in stations:
+        identity_raw = _station_photo_identity_raw(
+            default_route_name,
+            station.get("source_file"),
+            station.get("station_number"),
+            station.get("mapped_station_ft"),
+            station.get("latitude"),
+            station.get("longitude"),
+        )
+        identity_hash = _station_photo_identity_hash(identity_raw)
+        if identity_hash:
+            station_identity_hashes.add(identity_hash)
+
+    for point in list(STATE.get("station_points") or []):
+        identity_raw = _station_photo_identity_raw(
+            point.get("route_name") or default_route_name,
+            point.get("source_file"),
+            point.get("station") or point.get("station_label"),
+            point.get("mapped_station_ft"),
+            point.get("lat"),
+            point.get("lon"),
+        )
+        identity_hash = _station_photo_identity_hash(identity_raw)
+        if identity_hash:
+            station_identity_hashes.add(identity_hash)
+
     station_photo_index = _load_station_photo_index()
     station_photo_records = list(station_photo_index.get("photos") or [])
-    photo_count = len(station_photo_records)
-    if station_photo_records:
+    matched_photo_records = [
+        record
+        for record in station_photo_records
+        if str(record.get("station_identity_hash") or "").strip() in station_identity_hashes
+    ]
+    photo_count = len(matched_photo_records)
+
+    if matched_photo_records:
         sorted_photos = sorted(
-            station_photo_records,
+            matched_photo_records,
             key=lambda record: str(record.get("uploaded_at") or ""),
             reverse=True,
         )
