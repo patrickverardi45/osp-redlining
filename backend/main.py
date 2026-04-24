@@ -9,14 +9,16 @@ import os
 import shutil
 import zipfile
 import xml.etree.ElementTree as ET
+from urllib.parse import quote
 from pathlib import Path
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
+import boto3
 import pandas as pd
 from fastapi import Body, FastAPI, File, Form, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -5843,6 +5845,77 @@ def get_bug_reports() -> JSONResponse:
 STATION_PHOTO_ROOT = BASE_DIR / "uploads" / "station_photos"
 STATION_PHOTO_INDEX_PATH = STATION_PHOTO_ROOT / "index.json"
 STATION_PHOTO_MAX_FILES_PER_UPLOAD = 10
+STATION_PHOTO_STORAGE = str(os.getenv("STATION_PHOTO_STORAGE") or "local").strip().lower()
+S3_ENDPOINT_URL = str(os.getenv("S3_ENDPOINT_URL") or "").strip()
+S3_REGION = str(os.getenv("S3_REGION") or "").strip() or "auto"
+S3_BUCKET = str(os.getenv("S3_BUCKET") or "").strip()
+S3_ACCESS_KEY_ID = str(os.getenv("S3_ACCESS_KEY_ID") or "").strip()
+S3_SECRET_ACCESS_KEY = str(os.getenv("S3_SECRET_ACCESS_KEY") or "").strip()
+S3_PUBLIC_BASE_URL = str(os.getenv("S3_PUBLIC_BASE_URL") or "").strip().rstrip("/")
+_station_photo_s3_client: Optional[Any] = None
+
+
+def _station_photo_use_s3() -> bool:
+    return STATION_PHOTO_STORAGE == "s3"
+
+
+def _station_photo_s3_required_missing() -> List[str]:
+    missing: List[str] = []
+    if not S3_ENDPOINT_URL:
+        missing.append("S3_ENDPOINT_URL")
+    if not S3_BUCKET:
+        missing.append("S3_BUCKET")
+    if not S3_ACCESS_KEY_ID:
+        missing.append("S3_ACCESS_KEY_ID")
+    if not S3_SECRET_ACCESS_KEY:
+        missing.append("S3_SECRET_ACCESS_KEY")
+    return missing
+
+
+def _station_photo_get_s3_client():
+    global _station_photo_s3_client
+    if _station_photo_s3_client is not None:
+        return _station_photo_s3_client
+
+    missing = _station_photo_s3_required_missing()
+    if missing:
+        raise RuntimeError(f"Missing S3 config: {', '.join(missing)}")
+
+    _station_photo_s3_client = boto3.client(
+        "s3",
+        endpoint_url=S3_ENDPOINT_URL,
+        region_name=S3_REGION,
+        aws_access_key_id=S3_ACCESS_KEY_ID,
+        aws_secret_access_key=S3_SECRET_ACCESS_KEY,
+    )
+    return _station_photo_s3_client
+
+
+def _station_photo_public_url_for_key(object_key: str) -> str:
+    if S3_PUBLIC_BASE_URL:
+        return f"{S3_PUBLIC_BASE_URL}/{quote(object_key)}"
+    if not S3_ENDPOINT_URL or not S3_BUCKET:
+        return ""
+    return f"{S3_ENDPOINT_URL.rstrip('/')}/{S3_BUCKET}/{quote(object_key)}"
+
+
+def _station_photo_record_public_url(record: Dict[str, Any]) -> Optional[str]:
+    direct = str(record.get("public_url") or "").strip()
+    if direct:
+        return direct
+
+    station_identity_hash = str(record.get("station_identity_hash") or "").strip()
+    stored_filename = str(record.get("stored_filename") or "").strip()
+    if station_identity_hash and stored_filename:
+        return f"/uploads/station_photos/{station_identity_hash}/{stored_filename}"
+    return None
+
+
+def _station_photo_record_is_valid(record: Dict[str, Any]) -> bool:
+    if str(record.get("public_url") or "").strip():
+        return True
+    stored_path = str(record.get("stored_path") or "").strip()
+    return bool(stored_path and os.path.exists(stored_path))
 
 
 def _ensure_station_photo_storage() -> None:
@@ -5922,6 +5995,7 @@ def _station_photo_public_record(record: Dict[str, Any]) -> Dict[str, Any]:
         "content_type": str(record.get("content_type") or ""),
         "uploaded_at": str(record.get("uploaded_at") or ""),
         "relative_url": f"/api/station-photos/file/{photo_id}",
+        "public_url": str(record.get("public_url") or ""),
     }
 
 
@@ -5977,7 +6051,8 @@ async def upload_station_photos(
 
     _ensure_station_photo_storage()
     station_folder = _station_photo_folder(station_identity_hash)
-    station_folder.mkdir(parents=True, exist_ok=True)
+    if not _station_photo_use_s3():
+        station_folder.mkdir(parents=True, exist_ok=True)
 
     index_data = _load_station_photo_index()
     photo_records: List[Dict[str, Any]] = index_data.setdefault("photos", [])
@@ -5996,9 +6071,24 @@ async def upload_station_photos(
         ).hexdigest()[:24]
         stored_filename = f"{timestamp}_{photo_id}{extension}"
         stored_path = station_folder / stored_filename
+        object_key = f"station_photos/{station_identity_hash}/{stored_filename}"
+        public_url = ""
 
-        with open(stored_path, "wb") as handle:
-            shutil.copyfileobj(upload.file, handle)
+        file_bytes = await upload.read()
+        if _station_photo_use_s3():
+            s3 = _station_photo_get_s3_client()
+            put_kwargs: Dict[str, Any] = {
+                "Bucket": S3_BUCKET,
+                "Key": object_key,
+                "Body": file_bytes,
+            }
+            if content_type:
+                put_kwargs["ContentType"] = content_type
+            s3.put_object(**put_kwargs)
+            public_url = _station_photo_public_url_for_key(object_key)
+        else:
+            with open(stored_path, "wb") as handle:
+                handle.write(file_bytes)
 
         record = {
             "photo_id": photo_id,
@@ -6013,7 +6103,10 @@ async def upload_station_photos(
             "lon": str(lon or "").strip(),
             "original_filename": original_filename,
             "stored_filename": stored_filename,
-            "stored_path": str(stored_path),
+            "stored_path": str(stored_path) if not _station_photo_use_s3() else "",
+            "object_key": object_key if _station_photo_use_s3() else "",
+            "public_url": public_url,
+            "storage": "s3" if _station_photo_use_s3() else "local",
             "content_type": content_type,
             "uploaded_at": datetime.now(timezone.utc).isoformat(),
         }
@@ -6038,6 +6131,9 @@ async def get_station_photo_file(photo_id: str):
     for record in index_data.get("photos", []):
         if str(record.get("photo_id") or "").strip() != target:
             continue
+        public_url = str(record.get("public_url") or "").strip()
+        if public_url:
+            return RedirectResponse(url=public_url, status_code=307)
         stored_path = str(record.get("stored_path") or "").strip()
         if not stored_path or not os.path.exists(stored_path):
             return _err("Photo file was not found.", status_code=404)
@@ -6184,8 +6280,7 @@ def _office_sessions_payload(job_id: str) -> List[Dict[str, Any]]:
         for record in station_photo_records
         if str(record.get("station_identity_hash") or "").strip()
         and str(record.get("stored_filename") or "").strip()
-        and str(record.get("stored_path") or "").strip()
-        and os.path.exists(str(record.get("stored_path") or "").strip())
+        and _station_photo_record_is_valid(record)
     ]
 
     matched_photo_records = [
@@ -6206,9 +6301,7 @@ def _office_sessions_payload(job_id: str) -> List[Dict[str, Any]]:
             reverse=True,
         )
         newest = sorted_photos[0]
-        station_identity_hash = str(newest.get("station_identity_hash") or "").strip()
-        stored_filename = str(newest.get("stored_filename") or "").strip()
-        latest_photo_url = f"/uploads/station_photos/{station_identity_hash}/{stored_filename}"
+        latest_photo_url = _station_photo_record_public_url(newest)
 
     if routes and routes[0].get("geometry", {}).get("coordinates"):
         coords = routes[0]["geometry"]["coordinates"]
