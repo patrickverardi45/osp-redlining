@@ -96,6 +96,7 @@ export type KmzPolygonFeature = {
 
 export type BackendState = {
   success?: boolean;
+  session_id?: string;
   message?: string;
   warning?: string;
   error?: string;

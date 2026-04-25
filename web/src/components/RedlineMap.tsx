@@ -34,6 +34,7 @@ import MobileWalkContainer from "@/components/MobileWalkContainer";
 import { clamp, formatNumber, cleanDisplayText, formatDisplayDate } from "@/lib/format/text";
 import { toMoney } from "@/lib/format/money";
 import { extractGps } from "@/lib/photos/exif";
+import { appendSessionId, appendSessionIdToForm, rememberSessionFromResponse } from "@/lib/session";
 
 const API_BASE =
   process.env.NEXT_PUBLIC_API_BASE?.replace(/\/+$/, "") ||
@@ -987,8 +988,9 @@ function OfficeRedlineMapInner({ mode = "default" }: RedlineMapProps) {
       setStatusTone("neutral");
     }
     try {
-      const response = await fetch(`${API_BASE}/api/current-state`);
+      const response = await fetch(appendSessionId(`${API_BASE}/api/current-state`));
       const data: BackendState = await response.json();
+      rememberSessionFromResponse(data);
       if (!response.ok || data.success === false) throw new Error(data.error || "Unable to load current state.");
       setState(data);
       if (data.warning) {
@@ -1016,8 +1018,9 @@ function OfficeRedlineMapInner({ mode = "default" }: RedlineMapProps) {
   async function handleReset() {
     setBusy(true);
     try {
-      const response = await fetch(`${API_BASE}/api/reset-state`, { method: "POST" });
+      const response = await fetch(appendSessionId(`${API_BASE}/api/reset-state`), { method: "POST" });
       const data: BackendState = await response.json();
+      rememberSessionFromResponse(data);
       if (!response.ok || data.success === false) throw new Error(data.error || "Reset failed.");
       setState(data);
       setDidInitialFit(false);
@@ -1054,8 +1057,10 @@ function OfficeRedlineMapInner({ mode = "default" }: RedlineMapProps) {
     try {
       const form = new FormData();
       form.append("file", file);
+      appendSessionIdToForm(form);
       const response = await fetch(`${API_BASE}/api/upload-design`, { method: "POST", body: form });
       const data: BackendState = await response.json();
+      rememberSessionFromResponse(data);
       if (!response.ok || data.success === false) throw new Error(data.error || "Design upload failed.");
       setState(data);
       setDidInitialFit(false);
@@ -1087,8 +1092,10 @@ function OfficeRedlineMapInner({ mode = "default" }: RedlineMapProps) {
     try {
       const form = new FormData();
       Array.from(files).forEach((file) => form.append("files", file));
+      appendSessionIdToForm(form);
       const response = await fetch(`${API_BASE}/api/upload-structured-bore-files`, { method: "POST", body: form });
       const data: BackendState = await response.json();
+      rememberSessionFromResponse(data);
       if (!response.ok || data.success === false) throw new Error(data.error || "Structured bore upload failed.");
       setState(data);
       setDidInitialFit(false);
@@ -1129,12 +1136,13 @@ function OfficeRedlineMapInner({ mode = "default" }: RedlineMapProps) {
           stationPointCount: (state?.station_points || []).length,
         },
       };
-      const response = await fetch(`${API_BASE}/api/report-bug`, {
+      const response = await fetch(appendSessionId(`${API_BASE}/api/report-bug`), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
       const data = await response.json();
+      rememberSessionFromResponse(data);
       if (!response.ok || data.success === false) throw new Error(data.error || "Note submission failed.");
       setStatusText(String(data.message || "Operator note submitted."));
       setStatusTone("success");
@@ -1168,9 +1176,10 @@ function OfficeRedlineMapInner({ mode = "default" }: RedlineMapProps) {
     setStationPhotosLoading(true);
     try {
       const response = await fetch(
-        `${API_BASE}/api/station-photos?station_identity=${encodeURIComponent(stationIdentity)}`
+        appendSessionId(`${API_BASE}/api/station-photos?station_identity=${encodeURIComponent(stationIdentity)}`)
       );
       const data = await response.json();
+      rememberSessionFromResponse(data);
       if (!response.ok || data.success === false) {
         throw new Error(data.error || "Unable to load station photos.");
       }
@@ -1209,12 +1218,14 @@ function OfficeRedlineMapInner({ mode = "default" }: RedlineMapProps) {
         stationIdentityPart(selectedStation.lon, 8)
       );
       Array.from(files).forEach((file) => form.append("files", file));
+      appendSessionIdToForm(form);
 
       const response = await fetch(`${API_BASE}/api/station-photos/upload`, {
         method: "POST",
         body: form,
       });
       const data = await response.json();
+      rememberSessionFromResponse(data);
       if (!response.ok || data.success === false) {
         throw new Error(data.error || "Station photo upload failed.");
       }

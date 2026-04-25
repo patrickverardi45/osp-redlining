@@ -1,6 +1,7 @@
 "use client";
 
 import type { CurrentGps } from "@/components/MobileWalkUI";
+import { appendSessionIdToForm, rememberSessionFromResponse } from "@/lib/session";
 
 const API_BASE =
   process.env.NEXT_PUBLIC_API_BASE?.replace(/\/+$/, "") ||
@@ -179,6 +180,7 @@ class InMemoryWalkService implements WalkService {
       form.append("lat", lat);
       form.append("lon", lon);
       form.append("files", input.photoFile);
+      appendSessionIdToForm(form);
 
       const uploadUrl = `${API_BASE}/api/station-photos/upload`;
       if (typeof console !== "undefined" && console.log) {
@@ -194,6 +196,7 @@ class InMemoryWalkService implements WalkService {
         body: form,
       });
       const uploadData = await uploadResponse.json();
+      rememberSessionFromResponse(uploadData);
 
       if (typeof console !== "undefined" && console.log) {
         console.log("[walk] station photo upload response", {

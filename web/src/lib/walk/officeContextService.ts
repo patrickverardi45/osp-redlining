@@ -10,6 +10,7 @@
 // POST here, put it in `service.ts` (the walk service) instead.
 
 import type { BackendState } from "@/lib/types/backend";
+import { appendSessionId, rememberSessionFromResponse } from "@/lib/session";
 
 const API_BASE =
   process.env.NEXT_PUBLIC_API_BASE?.replace(/\/+$/, "") ||
@@ -54,11 +55,12 @@ export interface OfficeContextService {
 
 class HttpOfficeContextService implements OfficeContextService {
   async fetchRouteContext(): Promise<RouteContext> {
-    const response = await fetch(`${API_BASE}/api/current-state`);
+    const response = await fetch(appendSessionId(`${API_BASE}/api/current-state`));
     if (!response.ok) {
       throw new Error(`current-state request failed: ${response.status}`);
     }
     const data: BackendState = await response.json();
+    rememberSessionFromResponse(data);
 
     const selectedName =
       (typeof data.selected_route_name === "string" && data.selected_route_name.trim()) ||

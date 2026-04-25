@@ -7,6 +7,8 @@ import json
 import math
 import os
 import shutil
+import threading
+import uuid
 import zipfile
 import xml.etree.ElementTree as ET
 from urllib.parse import quote
@@ -117,6 +119,80 @@ def _reset_workspace_state() -> None:
             "matching_debug": [],
         }
     )
+
+
+def _default_session_state() -> Dict[str, Any]:
+    return {
+        "route_name": None,
+        "route_id": None,
+        "route_coords": [],
+        "route_length_ft": 0.0,
+        "route_catalog": [],
+        "map_points": [],
+        "committed_rows": [],
+        "station_points": [],
+        "redline_segments": [],
+        "loaded_field_data_files": 0,
+        "latest_structured_file": None,
+        "station_mapping_mode": None,
+        "station_mapping_min_ft": None,
+        "station_mapping_max_ft": None,
+        "station_mapping_range_ft": None,
+        "selected_route_match": None,
+        "route_match_candidates": [],
+        "verification_summary": {},
+        "kmz_reference": {
+            "folder_summary": [],
+            "line_role_summary": [],
+            "point_role_summary": [],
+            "line_layers": [],
+            "explicit_redline_layers": [],
+            "visual_reference": {},
+            "line_features": [],
+            "polygon_features": [],
+            "point_features": [],
+        },
+        "bug_reports": [],
+        "matching_debug": [],
+    }
+
+
+_SESSIONS: Dict[str, Dict[str, Any]] = {}
+_SESSION_LOCK = threading.RLock()
+
+
+def _resolve_session_id(value: Any) -> str:
+    candidate = str(value or "").strip()
+    if candidate:
+        return candidate
+    return uuid.uuid4().hex
+
+
+def _get_session(session_id: str) -> Dict[str, Any]:
+    with _SESSION_LOCK:
+        session = _SESSIONS.get(session_id)
+        if session is None:
+            session = _default_session_state()
+            _SESSIONS[session_id] = session
+        return session
+
+
+class _session_scope:
+    def __init__(self, session_id: str) -> None:
+        self.session_id = session_id
+
+    def __enter__(self) -> str:
+        _SESSION_LOCK.acquire()
+        session = _get_session(self.session_id)
+        STATE.clear()
+        STATE.update(session)
+        return self.session_id
+
+    def __exit__(self, exc_type, exc_value, traceback) -> None:
+        try:
+            _SESSIONS[self.session_id] = dict(STATE)
+        finally:
+            _SESSION_LOCK.release()
 
 
 CURRENT_PACKET_PRINT_SHEET_INDEX: Dict[str, Dict[str, Any]] = {
@@ -5705,143 +5781,172 @@ def _summary_payload(include_debug: bool = False) -> Dict[str, Any]:
 
 
 @app.post("/api/upload-design")
-async def upload_design(file: UploadFile = File(...)) -> JSONResponse:
+async def upload_design(
+    file: UploadFile = File(...),
+    session_id: Optional[str] = Form(None),
+) -> JSONResponse:
+    resolved_session_id = _resolve_session_id(session_id)
     try:
         file_bytes = await file.read()
-        route_catalog = _build_route_catalog(file_bytes, file.filename or "design.kmz")
-        STATE["route_catalog"] = route_catalog
-        STATE["kmz_reference"] = _build_kmz_reference(file_bytes, file.filename or "design.kmz")
+        with _session_scope(resolved_session_id):
+            route_catalog = _build_route_catalog(file_bytes, file.filename or "design.kmz")
+            STATE["route_catalog"] = route_catalog
+            STATE["kmz_reference"] = _build_kmz_reference(file_bytes, file.filename or "design.kmz")
 
-        default_route = _choose_default_route(route_catalog)
-        _set_active_route(default_route)
+            default_route = _choose_default_route(route_catalog)
+            _set_active_route(default_route)
 
-        rebuild_warning: Optional[str] = None
+            rebuild_warning: Optional[str] = None
 
-        if STATE.get("committed_rows"):
-            try:
-                _rebuild_field_data_outputs()
-            except Exception as rebuild_exc:
+            if STATE.get("committed_rows"):
+                try:
+                    _rebuild_field_data_outputs()
+                except Exception as rebuild_exc:
+                    STATE["station_points"] = []
+                    STATE["redline_segments"] = []
+                    STATE["selected_route_match"] = None
+                    STATE["route_match_candidates"] = []
+                    STATE["matching_debug"] = []
+                    STATE["verification_summary"] = {
+                        "status": "kmz_loaded_rebuild_pending",
+                        "version": "v2",
+                        "route_selection_method": "independent_candidate_scoring_per_group",
+                        "route_selection_reason": "KMZ loaded successfully, but existing bore-log data needs to be re-uploaded after route rebuild failed.",
+                        "group_count": 0,
+                        "unique_matched_routes": 0,
+                    }
+                    rebuild_warning = f"KMZ uploaded, but previous bore-log overlays were cleared because rebuild failed: {rebuild_exc}"
+            else:
                 STATE["station_points"] = []
                 STATE["redline_segments"] = []
                 STATE["selected_route_match"] = None
                 STATE["route_match_candidates"] = []
                 STATE["matching_debug"] = []
                 STATE["verification_summary"] = {
-                    "status": "kmz_loaded_rebuild_pending",
+                    "status": "awaiting_bore_logs",
                     "version": "v2",
                     "route_selection_method": "independent_candidate_scoring_per_group",
-                    "route_selection_reason": "KMZ loaded successfully, but existing bore-log data needs to be re-uploaded after route rebuild failed.",
+                    "route_selection_reason": "KMZ candidate routes loaded. Bore-log matching will happen independently per group after field data upload.",
                     "group_count": 0,
                     "unique_matched_routes": 0,
                 }
-                rebuild_warning = f"KMZ uploaded, but previous bore-log overlays were cleared because rebuild failed: {rebuild_exc}"
-        else:
-            STATE["station_points"] = []
-            STATE["redline_segments"] = []
-            STATE["selected_route_match"] = None
-            STATE["route_match_candidates"] = []
-            STATE["matching_debug"] = []
-            STATE["verification_summary"] = {
-                "status": "awaiting_bore_logs",
-                "version": "v2",
-                "route_selection_method": "independent_candidate_scoring_per_group",
-                "route_selection_reason": "KMZ candidate routes loaded. Bore-log matching will happen independently per group after field data upload.",
-                "group_count": 0,
-                "unique_matched_routes": 0,
-            }
 
-        payload = _summary_payload()
-        if rebuild_warning:
-            payload["warning"] = rebuild_warning
-            payload["message"] = "Design uploaded successfully with previous overlays cleared."
-            return _ok(**payload)
+            payload = _summary_payload()
+            if rebuild_warning:
+                payload["warning"] = rebuild_warning
+                payload["message"] = "Design uploaded successfully with previous overlays cleared."
+                return _ok(session_id=resolved_session_id, **payload)
 
-        return _ok(message="Design uploaded successfully", **payload)
+            return _ok(session_id=resolved_session_id, message="Design uploaded successfully", **payload)
     except Exception as exc:
-        return _err(str(exc))
+        return _err(str(exc), session_id=resolved_session_id)
 
 
 @app.post("/api/select-active-route")
-async def select_active_route(route_id: str = Form(...)) -> JSONResponse:
+async def select_active_route(
+    route_id: str = Form(...),
+    session_id: Optional[str] = Form(None),
+) -> JSONResponse:
+    resolved_session_id = _resolve_session_id(session_id)
     try:
-        matched_route = _find_route_by_id(route_id)
-        if not matched_route:
-            return _err("Route not found.", status_code=404)
+        with _session_scope(resolved_session_id):
+            matched_route = _find_route_by_id(route_id)
+            if not matched_route:
+                return _err("Route not found.", status_code=404, session_id=resolved_session_id)
 
-        _set_active_route(matched_route)
-        return _ok(message="Active route updated", **_summary_payload())
+            _set_active_route(matched_route)
+            return _ok(session_id=resolved_session_id, message="Active route updated", **_summary_payload())
     except Exception as exc:
-        return _err(str(exc))
+        return _err(str(exc), session_id=resolved_session_id)
 
 
 @app.post("/api/upload-structured-bore-files")
-async def upload_structured_bore_files(files: List[UploadFile] = File(...)) -> JSONResponse:
+async def upload_structured_bore_files(
+    files: List[UploadFile] = File(...),
+    session_id: Optional[str] = Form(None),
+) -> JSONResponse:
+    resolved_session_id = _resolve_session_id(session_id)
     try:
-        existing_rows = list(STATE.get("committed_rows", []) or [])
-        existing_by_file: Dict[str, List[Dict[str, Any]]] = {}
-        for row in existing_rows:
-            source_file = str(row.get("source_file") or "").strip()
-            if not source_file:
-                continue
-            existing_by_file.setdefault(source_file, []).append(row)
-
+        prepared_files: List[Tuple[str, bytes]] = []
         latest_name: Optional[str] = None
-
         for file in files:
             file_bytes = await file.read()
             latest_name = file.filename or "structured_file"
-            existing_by_file[latest_name] = _read_bore_log_rows(file_bytes, latest_name)
+            prepared_files.append((latest_name, file_bytes))
 
-        merged_rows: List[Dict[str, Any]] = []
-        for source_file in sorted(existing_by_file.keys()):
-            merged_rows.extend(existing_by_file[source_file])
+        with _session_scope(resolved_session_id):
+            existing_rows = list(STATE.get("committed_rows", []) or [])
+            existing_by_file: Dict[str, List[Dict[str, Any]]] = {}
+            for row in existing_rows:
+                source_file = str(row.get("source_file") or "").strip()
+                if not source_file:
+                    continue
+                existing_by_file.setdefault(source_file, []).append(row)
 
-        STATE["committed_rows"] = merged_rows
-        STATE["loaded_field_data_files"] = len(existing_by_file)
-        STATE["latest_structured_file"] = latest_name
+            for filename, file_bytes in prepared_files:
+                existing_by_file[filename] = _read_bore_log_rows(file_bytes, filename)
 
-        _rebuild_field_data_outputs()
-        return _ok(message="Bore logs uploaded successfully", **_summary_payload())
+            merged_rows: List[Dict[str, Any]] = []
+            for source_file in sorted(existing_by_file.keys()):
+                merged_rows.extend(existing_by_file[source_file])
+
+            STATE["committed_rows"] = merged_rows
+            STATE["loaded_field_data_files"] = len(existing_by_file)
+            STATE["latest_structured_file"] = latest_name
+
+            _rebuild_field_data_outputs()
+            return _ok(session_id=resolved_session_id, message="Bore logs uploaded successfully", **_summary_payload())
     except Exception as exc:
-        return _err(str(exc))
+        return _err(str(exc), session_id=resolved_session_id)
 
 
 
 @app.post("/api/reset-state")
-def reset_state() -> JSONResponse:
-    _reset_workspace_state()
-    return _ok(message="Workspace reset successfully", **_summary_payload())
+def reset_state(session_id: Optional[str] = None) -> JSONResponse:
+    resolved_session_id = _resolve_session_id(session_id)
+    with _session_scope(resolved_session_id):
+        _reset_workspace_state()
+        return _ok(session_id=resolved_session_id, message="Workspace reset successfully", **_summary_payload())
 
 
 @app.get("/api/current-state")
-def current_state() -> JSONResponse:
-    return _ok(**_summary_payload(include_debug=False))
+def current_state(session_id: Optional[str] = None) -> JSONResponse:
+    resolved_session_id = _resolve_session_id(session_id)
+    with _session_scope(resolved_session_id):
+        return _ok(session_id=resolved_session_id, **_summary_payload(include_debug=False))
 
 
 @app.get("/api/debug-state")
-def debug_state() -> JSONResponse:
-    return _ok(**_summary_payload(include_debug=True))
+def debug_state(session_id: Optional[str] = None) -> JSONResponse:
+    resolved_session_id = _resolve_session_id(session_id)
+    with _session_scope(resolved_session_id):
+        return _ok(session_id=resolved_session_id, **_summary_payload(include_debug=True))
 
 
 @app.post("/api/report-bug")
-def report_bug(payload: Dict[str, Any] = Body(...)) -> JSONResponse:
-    bug_reports = list(STATE.get("bug_reports", []) or [])
-    entry = {
-        "id": str(payload.get("id") or ""),
-        "timestamp": str(payload.get("timestamp") or ""),
-        "level": str(payload.get("level") or "info"),
-        "category": str(payload.get("category") or "ui"),
-        "message": str(payload.get("message") or ""),
-        "details": payload.get("details") if isinstance(payload.get("details"), dict) else {},
-    }
-    bug_reports.insert(0, entry)
-    STATE["bug_reports"] = bug_reports[:200]
-    return _ok(message="Bug report captured", bug_report_count=len(STATE["bug_reports"]))
+def report_bug(payload: Dict[str, Any] = Body(...), session_id: Optional[str] = None) -> JSONResponse:
+    body_session_id = payload.get("session_id") if isinstance(payload, dict) else None
+    resolved_session_id = _resolve_session_id(session_id or body_session_id)
+    with _session_scope(resolved_session_id):
+        bug_reports = list(STATE.get("bug_reports", []) or [])
+        entry = {
+            "id": str(payload.get("id") or ""),
+            "timestamp": str(payload.get("timestamp") or ""),
+            "level": str(payload.get("level") or "info"),
+            "category": str(payload.get("category") or "ui"),
+            "message": str(payload.get("message") or ""),
+            "details": payload.get("details") if isinstance(payload.get("details"), dict) else {},
+        }
+        bug_reports.insert(0, entry)
+        STATE["bug_reports"] = bug_reports[:200]
+        return _ok(session_id=resolved_session_id, message="Bug report captured", bug_report_count=len(STATE["bug_reports"]))
 
 
 @app.get("/api/bug-reports")
-def get_bug_reports() -> JSONResponse:
-    return _ok(bug_reports=STATE.get("bug_reports", []) or [])
+def get_bug_reports(session_id: Optional[str] = None) -> JSONResponse:
+    resolved_session_id = _resolve_session_id(session_id)
+    with _session_scope(resolved_session_id):
+        return _ok(session_id=resolved_session_id, bug_reports=STATE.get("bug_reports", []) or [])
 
 STATION_PHOTO_ROOT = UPLOADS_DIR / "station_photos"
 STATION_PHOTO_INDEX_PATH = STATION_PHOTO_ROOT / "index.json"
@@ -5901,14 +6006,11 @@ def _station_photo_public_url_for_key(object_key: str) -> str:
 
 
 def _station_photo_record_public_url(record: Dict[str, Any]) -> Optional[str]:
-    direct = str(record.get("public_url") or "").strip()
-    if direct:
-        return direct
-
-    station_identity_hash = str(record.get("station_identity_hash") or "").strip()
-    stored_filename = str(record.get("stored_filename") or "").strip()
-    if station_identity_hash and stored_filename:
-        return f"/uploads/station_photos/{station_identity_hash}/{stored_filename}"
+    photo_id = str(record.get("photo_id") or "").strip()
+    if photo_id:
+        session_id = str(record.get("session_id") or "").strip()
+        suffix = f"?session_id={quote(session_id)}" if session_id else ""
+        return f"/api/station-photos/file/{photo_id}{suffix}"
     return None
 
 
@@ -5974,11 +6076,16 @@ def _station_photo_identity_raw(
     return "|".join(key_parts)
 
 
-def _station_photo_identity_hash(raw_identity: Any) -> str:
+def _station_photo_identity_hash(raw_identity: Any, session_id: Optional[str] = None) -> str:
     raw = str(raw_identity or "").strip()
     if not raw:
         return ""
-    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+    scoped_raw = f"{str(session_id or '').strip()}|{raw}" if session_id else raw
+    return hashlib.sha256(scoped_raw.encode("utf-8")).hexdigest()
+
+
+def _station_photo_record_matches_session(record: Dict[str, Any], session_id: str) -> bool:
+    return str(record.get("session_id") or "").strip() == str(session_id or "").strip()
 
 
 def _station_photo_folder(station_identity_hash: str) -> Path:
@@ -5987,33 +6094,39 @@ def _station_photo_folder(station_identity_hash: str) -> Path:
 
 def _station_photo_public_record(record: Dict[str, Any]) -> Dict[str, Any]:
     photo_id = str(record.get("photo_id") or "").strip()
+    session_id = str(record.get("session_id") or "").strip()
+    session_query = f"?session_id={quote(session_id)}" if session_id else ""
     return {
         "photo_id": photo_id,
+        "session_id": session_id,
         "station_identity": str(record.get("station_identity") or ""),
         "station_summary": str(record.get("station_summary") or ""),
         "original_filename": str(record.get("original_filename") or ""),
         "stored_filename": str(record.get("stored_filename") or ""),
         "content_type": str(record.get("content_type") or ""),
         "uploaded_at": str(record.get("uploaded_at") or ""),
-        "relative_url": f"/api/station-photos/file/{photo_id}",
+        "relative_url": f"/api/station-photos/file/{photo_id}{session_query}",
         "public_url": str(record.get("public_url") or ""),
     }
 
 
 @app.get("/api/station-photos")
-async def get_station_photos(station_identity: str) -> JSONResponse:
+async def get_station_photos(station_identity: str, session_id: Optional[str] = None) -> JSONResponse:
+    resolved_session_id = _resolve_session_id(session_id)
     station_identity_raw = str(station_identity or "").strip()
     if not station_identity_raw:
-        return _err("station_identity is required.")
-    station_identity_hash = _station_photo_identity_hash(station_identity_raw)
+        return _err("station_identity is required.", session_id=resolved_session_id)
+    station_identity_hash = _station_photo_identity_hash(station_identity_raw, resolved_session_id)
     index_data = _load_station_photo_index()
     matches = [
         _station_photo_public_record(record)
         for record in index_data.get("photos", [])
-        if str(record.get("station_identity_hash") or "").strip() == station_identity_hash
+        if _station_photo_record_matches_session(record, resolved_session_id)
+        and str(record.get("station_identity_hash") or "").strip() == station_identity_hash
     ]
     matches.sort(key=lambda item: str(item.get("uploaded_at") or ""), reverse=True)
     return _ok(
+        session_id=resolved_session_id,
         photos=matches,
         station_identity=station_identity_raw,
         station_identity_hash=station_identity_hash,
@@ -6023,6 +6136,7 @@ async def get_station_photos(station_identity: str) -> JSONResponse:
 @app.post("/api/station-photos/upload")
 async def upload_station_photos(
     station_identity: str = Form(...),
+    session_id: Optional[str] = Form(None),
     station_summary: str = Form(""),
     route_name: str = Form(""),
     source_file: str = Form(""),
@@ -6032,23 +6146,24 @@ async def upload_station_photos(
     lon: str = Form(""),
     files: List[UploadFile] = File(...),
 ) -> JSONResponse:
+    resolved_session_id = _resolve_session_id(session_id)
     station_identity_raw = str(station_identity or "").strip()
     if not station_identity_raw:
-        return _err("station_identity is required.")
+        return _err("station_identity is required.", session_id=resolved_session_id)
 
     expected_identity_raw = _station_photo_identity_raw(
         route_name, source_file, station_label, mapped_station_ft, lat, lon
     )
     if station_identity_raw != expected_identity_raw:
-        return _err("Selected station identity did not match the upload payload.")
+        return _err("Selected station identity did not match the upload payload.", session_id=resolved_session_id)
 
-    station_identity_hash = _station_photo_identity_hash(station_identity_raw)
+    station_identity_hash = _station_photo_identity_hash(station_identity_raw, resolved_session_id)
 
     upload_files = list(files or [])
     if not upload_files:
-        return _err("At least one image file is required.")
+        return _err("At least one image file is required.", session_id=resolved_session_id)
     if len(upload_files) > STATION_PHOTO_MAX_FILES_PER_UPLOAD:
-        return _err(f"Upload up to {STATION_PHOTO_MAX_FILES_PER_UPLOAD} files at a time.")
+        return _err(f"Upload up to {STATION_PHOTO_MAX_FILES_PER_UPLOAD} files at a time.", session_id=resolved_session_id)
 
     _ensure_station_photo_storage()
     station_folder = _station_photo_folder(station_identity_hash)
@@ -6093,6 +6208,7 @@ async def upload_station_photos(
 
         record = {
             "photo_id": photo_id,
+            "session_id": resolved_session_id,
             "station_identity": station_identity_raw,
             "station_identity_hash": station_identity_hash,
             "station_summary": str(station_summary or "").strip(),
@@ -6116,6 +6232,7 @@ async def upload_station_photos(
 
     _save_station_photo_index(index_data)
     return _ok(
+        session_id=resolved_session_id,
         message=f"Uploaded {len(created)} station photo{'s' if len(created) != 1 else ''}.",
         station_identity=station_identity_raw,
         station_identity_hash=station_identity_hash,
@@ -6124,27 +6241,30 @@ async def upload_station_photos(
 
 
 @app.get("/api/station-photos/file/{photo_id}")
-async def get_station_photo_file(photo_id: str):
+async def get_station_photo_file(photo_id: str, session_id: Optional[str] = None):
+    resolved_session_id = _resolve_session_id(session_id)
     target = str(photo_id or "").strip()
     if not target:
-        return _err("photo_id is required.")
+        return _err("photo_id is required.", session_id=resolved_session_id)
     index_data = _load_station_photo_index()
     for record in index_data.get("photos", []):
         if str(record.get("photo_id") or "").strip() != target:
+            continue
+        if not _station_photo_record_matches_session(record, resolved_session_id):
             continue
         public_url = str(record.get("public_url") or "").strip()
         if public_url:
             return RedirectResponse(url=public_url, status_code=307)
         stored_path = str(record.get("stored_path") or "").strip()
         if not stored_path or not os.path.exists(stored_path):
-            return _err("Photo file was not found.", status_code=404)
+            return _err("Photo file was not found.", status_code=404, session_id=resolved_session_id)
         content_type = str(record.get("content_type") or "").strip() or None
         return FileResponse(
             stored_path,
             media_type=content_type,
             filename=str(record.get("original_filename") or os.path.basename(stored_path)),
         )
-    return _err("Photo file was not found.", status_code=404)
+    return _err("Photo file was not found.", status_code=404, session_id=resolved_session_id)
 
 
 # ---------------------------------------------------------------------------
@@ -6235,7 +6355,7 @@ def _office_routes_payload() -> List[Dict[str, Any]]:
     ]
 
 
-def _office_sessions_payload(job_id: str) -> List[Dict[str, Any]]:
+def _office_sessions_payload(job_id: str, session_id: str) -> List[Dict[str, Any]]:
     # Temporary mocked session derived from current route presence so the office
     # UI can render with believable data before the real walk/session backend is ready.
     routes = _office_routes_payload()
@@ -6257,7 +6377,7 @@ def _office_sessions_payload(job_id: str) -> List[Dict[str, Any]]:
             station.get("latitude"),
             station.get("longitude"),
         )
-        identity_hash = _station_photo_identity_hash(identity_raw)
+        identity_hash = _station_photo_identity_hash(identity_raw, session_id)
         if identity_hash:
             station_identity_hashes.add(identity_hash)
 
@@ -6270,7 +6390,7 @@ def _office_sessions_payload(job_id: str) -> List[Dict[str, Any]]:
             point.get("lat"),
             point.get("lon"),
         )
-        identity_hash = _station_photo_identity_hash(identity_raw)
+        identity_hash = _station_photo_identity_hash(identity_raw, session_id)
         if identity_hash:
             station_identity_hashes.add(identity_hash)
 
@@ -6279,7 +6399,8 @@ def _office_sessions_payload(job_id: str) -> List[Dict[str, Any]]:
     valid_photo_records = [
         record
         for record in station_photo_records
-        if str(record.get("station_identity_hash") or "").strip()
+        if _station_photo_record_matches_session(record, session_id)
+        and str(record.get("station_identity_hash") or "").strip()
         and str(record.get("stored_filename") or "").strip()
         and _station_photo_record_is_valid(record)
     ]
@@ -6290,8 +6411,7 @@ def _office_sessions_payload(job_id: str) -> List[Dict[str, Any]]:
         if str(record.get("station_identity_hash") or "").strip() in station_identity_hashes
     ]
 
-    # V1 office proof fallback: if exact station identity matching yields no
-    # photos, show recent valid uploaded station photos for the job view.
+    # V1 office proof fallback stays within the active anonymous browser session.
     selected_photo_records = matched_photo_records if matched_photo_records else valid_photo_records
     photo_count = len(selected_photo_records)
 
@@ -6413,44 +6533,48 @@ def _office_artifacts_payload(job_id: str) -> List[Dict[str, Any]]:
 
 
 @app.get("/jobs")
-def get_jobs() -> List[Dict[str, Any]]:
-    routes = _office_routes_payload()
-    stations = _office_stations_payload("test-job", routes)
-    exceptions = _office_exceptions_payload("test-job", stations)
-    sessions = _office_sessions_payload("test-job")
-    return [
-        {
-            "id": "test-job",
-            "job_code": "TEST-001",
-            "job_name": "Test Job",
-            "status": "in_progress",
-            "route_count": len(routes),
-            "session_count": len(sessions),
-            "exception_count": len(exceptions),
-            "last_sync_at": _office_iso_now(),
-        }
-    ]
+def get_jobs(session_id: Optional[str] = None) -> List[Dict[str, Any]]:
+    resolved_session_id = _resolve_session_id(session_id)
+    with _session_scope(resolved_session_id):
+        routes = _office_routes_payload()
+        stations = _office_stations_payload("test-job", routes)
+        exceptions = _office_exceptions_payload("test-job", stations)
+        sessions = _office_sessions_payload("test-job", resolved_session_id)
+        return [
+            {
+                "id": "test-job",
+                "job_code": "TEST-001",
+                "job_name": "Test Job",
+                "status": "in_progress",
+                "route_count": len(routes),
+                "session_count": len(sessions),
+                "exception_count": len(exceptions),
+                "last_sync_at": _office_iso_now(),
+            }
+        ]
 
 
 @app.get("/jobs/{job_id}")
-def get_job_by_id(job_id: str) -> Dict[str, Any]:
-    safe_job_id = str(job_id or "test-job").strip() or "test-job"
-    routes = _office_routes_payload()
-    sessions = _office_sessions_payload(safe_job_id)
-    stations = _office_stations_payload(safe_job_id, routes)
-    photos = _office_photos_payload(safe_job_id, stations)
-    exceptions = _office_exceptions_payload(safe_job_id, stations)
-    artifacts = _office_artifacts_payload(safe_job_id)
+def get_job_by_id(job_id: str, session_id: Optional[str] = None) -> Dict[str, Any]:
+    resolved_session_id = _resolve_session_id(session_id)
+    with _session_scope(resolved_session_id):
+        safe_job_id = str(job_id or "test-job").strip() or "test-job"
+        routes = _office_routes_payload()
+        sessions = _office_sessions_payload(safe_job_id, resolved_session_id)
+        stations = _office_stations_payload(safe_job_id, routes)
+        photos = _office_photos_payload(safe_job_id, stations)
+        exceptions = _office_exceptions_payload(safe_job_id, stations)
+        artifacts = _office_artifacts_payload(safe_job_id)
 
-    return {
-        "id": safe_job_id,
-        "job_code": "TEST-001",
-        "job_name": "Test Job",
-        "status": "in_progress",
-        "routes": routes,
-        "sessions": sessions,
-        "stations": stations,
-        "photos": photos,
-        "exceptions": exceptions,
-        "artifacts": artifacts,
-    }
+        return {
+            "id": safe_job_id,
+            "job_code": "TEST-001",
+            "job_name": "Test Job",
+            "status": "in_progress",
+            "routes": routes,
+            "sessions": sessions,
+            "stations": stations,
+            "photos": photos,
+            "exceptions": exceptions,
+            "artifacts": artifacts,
+        }

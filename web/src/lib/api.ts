@@ -1,5 +1,7 @@
 // web/src/lib/api.ts
 
+import { appendSessionId } from "@/lib/session";
+
 const BASE_URL = process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8000";
 
 // ─── Allowed statuses ─────────────────────────────────────────────────────────
@@ -170,13 +172,13 @@ export interface GenerateReportResult {
 // ─── API calls ────────────────────────────────────────────────────────────────
 
 export async function getJobs(): Promise<Job[]> {
-  const res = await fetch(`${BASE_URL}/jobs`, { cache: "no-store" });
+  const res = await fetch(appendSessionId(`${BASE_URL}/jobs`), { cache: "no-store" });
   if (!res.ok) throw new Error(`Failed to fetch jobs: ${res.status} ${res.statusText}`);
   return res.json();
 }
 
 export async function getJobById(jobId: string): Promise<JobDetail> {
-  const res = await fetch(`${BASE_URL}/jobs/${jobId}`, { cache: "no-store" });
+  const res = await fetch(appendSessionId(`${BASE_URL}/jobs/${jobId}`), { cache: "no-store" });
   if (!res.ok) throw new Error(`Failed to fetch job ${jobId}: ${res.status} ${res.statusText}`);
   return res.json();
 }
@@ -185,7 +187,7 @@ export async function updateJobStatus(
   jobId: string,
   status: JobStatus
 ): Promise<void> {
-  const res = await fetch(`${BASE_URL}/jobs/${jobId}`, {
+  const res = await fetch(appendSessionId(`${BASE_URL}/jobs/${jobId}`), {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ status }),
@@ -197,7 +199,7 @@ export async function updateExceptionStatus(
   exceptionId: string,
   status: "resolved" | "dismissed"
 ): Promise<void> {
-  const res = await fetch(`${BASE_URL}/exceptions/${exceptionId}`, {
+  const res = await fetch(appendSessionId(`${BASE_URL}/exceptions/${exceptionId}`), {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ status }),
@@ -206,19 +208,19 @@ export async function updateExceptionStatus(
 }
 
 export async function generateQaSummary(jobId: string): Promise<GenerateReportResult> {
-  const res = await fetch(`${BASE_URL}/jobs/${jobId}/reports/qa-summary`, { method: "POST" });
+  const res = await fetch(appendSessionId(`${BASE_URL}/jobs/${jobId}/reports/qa-summary`), { method: "POST" });
   if (!res.ok) throw new Error(`Failed to generate QA summary: ${res.status} ${res.statusText}`);
   return res.json();
 }
 
 export async function generateRedlineReport(jobId: string): Promise<GenerateReportResult> {
-  const res = await fetch(`${BASE_URL}/jobs/${jobId}/reports/redline`, { method: "POST" });
+  const res = await fetch(appendSessionId(`${BASE_URL}/jobs/${jobId}/reports/redline`), { method: "POST" });
   if (!res.ok) throw new Error(`Failed to generate redline report: ${res.status} ${res.statusText}`);
   return res.json();
 }
 
 export async function generateCloseoutReport(jobId: string): Promise<GenerateReportResult> {
-  const res = await fetch(`${BASE_URL}/jobs/${jobId}/reports/closeout`, { method: "POST" });
+  const res = await fetch(appendSessionId(`${BASE_URL}/jobs/${jobId}/reports/closeout`), { method: "POST" });
   if (!res.ok) throw new Error(`Failed to generate closeout report: ${res.status} ${res.statusText}`);
   return res.json();
 }
