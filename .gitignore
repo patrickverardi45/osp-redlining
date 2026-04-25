@@ -34,3 +34,5 @@ outputs/
 .git_old/
 web/.git_old/
 backend/.git_old/
+.vercel
+.env*.local

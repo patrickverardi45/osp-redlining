@@ -201,10 +201,10 @@ function kmzLineStroke(feature: KmzLineFeature): string {
     feature.stroke ||
     feature.color ||
     (feature.role === "backbone"
-      ? "rgba(186, 168, 96, 0.16)"
+      ? "rgba(140, 195, 230, 0.22)"
       : feature.role === "terminal_tail"
-      ? "rgba(166, 178, 190, 0.14)"
-      : "rgba(176, 188, 198, 0.12)")
+      ? "rgba(160, 190, 215, 0.18)"
+      : "rgba(150, 180, 205, 0.16)")
   );
 }
 
@@ -1725,8 +1725,8 @@ function OfficeRedlineMapInner({ mode = "default" }: RedlineMapProps) {
                   height: MAP_HEIGHT,
                   borderRadius: 18,
                   overflow: "hidden",
-                  background: "linear-gradient(180deg, #102535 0%, #0a1824 58%, #07111a 100%)",
-                  border: "1px solid #1a3650",
+                  background: "linear-gradient(180deg, #0b1a2a 0%, #060f1c 60%, #03080f 100%)",
+                  border: "1px solid #1f3a5e",
                   cursor: boxZoom ? "crosshair" : isPanning ? "grabbing" : "grab",
                   overscrollBehavior: "contain",
                   touchAction: "none",
@@ -1756,8 +1756,88 @@ function OfficeRedlineMapInner({ mode = "default" }: RedlineMapProps) {
                       }
                     }}
                   >
+                    {/* ─── Visual polish — SVG defs ───────────────────────── */}
+                    {/* Grid pattern: faint cool-blue dots/lines that pan and  */}
+                    {/* zoom with the map (they live in world coords). Sized   */}
+                    {/* in world units; the visual frequency stays roughly     */}
+                    {/* constant because the SVG viewBox scales with zoom.     */}
+                    {/* Redline glow: feGaussianBlur + feMerge so the bright   */}
+                    {/* red stroke gets a soft red bloom around it.            */}
+                    <defs>
+                      <pattern
+                        id="map-grid-pattern"
+                        x="0"
+                        y="0"
+                        width="40"
+                        height="40"
+                        patternUnits="userSpaceOnUse"
+                      >
+                        <path
+                          d="M 40 0 L 0 0 0 40"
+                          fill="none"
+                          stroke="rgba(120, 180, 220, 0.05)"
+                          strokeWidth="0.6"
+                          vectorEffect="non-scaling-stroke"
+                        />
+                      </pattern>
+                      <pattern
+                        id="map-grid-pattern-coarse"
+                        x="0"
+                        y="0"
+                        width="200"
+                        height="200"
+                        patternUnits="userSpaceOnUse"
+                      >
+                        <path
+                          d="M 200 0 L 0 0 0 200"
+                          fill="none"
+                          stroke="rgba(140, 195, 235, 0.08)"
+                          strokeWidth="0.9"
+                          vectorEffect="non-scaling-stroke"
+                        />
+                      </pattern>
+                      <filter
+                        id="redline-glow"
+                        x="-20%"
+                        y="-20%"
+                        width="140%"
+                        height="140%"
+                      >
+                        <feGaussianBlur stdDeviation="1.6" result="redBlur" />
+                        <feMerge>
+                          <feMergeNode in="redBlur" />
+                          <feMergeNode in="SourceGraphic" />
+                        </feMerge>
+                      </filter>
+                    </defs>
+
                     <g id="kmz-design-layer">
-                      <rect x={0} y={0} width={projectionMetrics?.worldWidth || PROJECTION_BASE_WIDTH} height={projectionMetrics?.worldHeight || PROJECTION_BASE_WIDTH} fill="rgba(8,18,26,0.96)" />
+                      {/* Base dark wash */}
+                      <rect
+                        x={0}
+                        y={0}
+                        width={projectionMetrics?.worldWidth || PROJECTION_BASE_WIDTH}
+                        height={projectionMetrics?.worldHeight || PROJECTION_BASE_WIDTH}
+                        fill="rgba(4,10,18,0.97)"
+                      />
+                      {/* Fine grid */}
+                      <rect
+                        x={0}
+                        y={0}
+                        width={projectionMetrics?.worldWidth || PROJECTION_BASE_WIDTH}
+                        height={projectionMetrics?.worldHeight || PROJECTION_BASE_WIDTH}
+                        fill="url(#map-grid-pattern)"
+                        pointerEvents="none"
+                      />
+                      {/* Coarse grid for stronger structure at low zoom */}
+                      <rect
+                        x={0}
+                        y={0}
+                        width={projectionMetrics?.worldWidth || PROJECTION_BASE_WIDTH}
+                        height={projectionMetrics?.worldHeight || PROJECTION_BASE_WIDTH}
+                        fill="url(#map-grid-pattern-coarse)"
+                        pointerEvents="none"
+                      />
 
                       {kmzPolygonPaths.map((poly, idx) => {
                         const feature = kmzPolygonFeatures[idx];
@@ -1825,6 +1905,7 @@ function OfficeRedlineMapInner({ mode = "default" }: RedlineMapProps) {
                               strokeLinecap="round"
                               strokeLinejoin="round"
                               vectorEffect="non-scaling-stroke"
+                              filter="url(#redline-glow)"
                             />
                           </g>
                         ) : null
@@ -2149,10 +2230,12 @@ function OfficeRedlineMapInner({ mode = "default" }: RedlineMapProps) {
                         left: cardLeft,
                         top: cardTop,
                         width: cardWidth,
-                        background: "#ffffff",
-                        border: "1px solid rgba(15, 23, 42, 0.18)",
+                        background: "rgba(10, 18, 30, 0.78)",
+                        backdropFilter: "blur(14px) saturate(140%)",
+                        WebkitBackdropFilter: "blur(14px) saturate(140%)",
+                        border: "1px solid rgba(255, 255, 255, 0.16)",
                         borderRadius: 14,
-                        boxShadow: "0 20px 45px rgba(2,6,23,0.38)",
+                        boxShadow: "0 20px 45px rgba(0,0,0,0.55), 0 0 0 1px rgba(56, 189, 248, 0.08) inset",
                         overflow: "hidden",
                         zIndex: 900,
                       }}
@@ -2165,11 +2248,11 @@ function OfficeRedlineMapInner({ mode = "default" }: RedlineMapProps) {
                           alignItems: "center",
                           justifyContent: "space-between",
                           padding: "8px 10px 6px 12px",
-                          borderBottom: "1px solid #eef2f7",
-                          background: "#fbfdff",
+                          borderBottom: "1px solid rgba(255,255,255,0.08)",
+                          background: "rgba(255,255,255,0.03)",
                         }}
                       >
-                        <div style={{ fontSize: 11, fontWeight: 800, color: "#b45309", letterSpacing: 0.3 }}>
+                        <div style={{ fontSize: 11, fontWeight: 800, color: "#fbbf24", letterSpacing: 0.4 }}>
                           GEOTAGGED PHOTO
                         </div>
                         <button
@@ -2183,7 +2266,7 @@ function OfficeRedlineMapInner({ mode = "default" }: RedlineMapProps) {
                             border: "none",
                             background: "transparent",
                             cursor: "pointer",
-                            color: "#64748b",
+                            color: "#cbd5e1",
                             fontSize: 18,
                             lineHeight: 1,
                             padding: "2px 6px",
@@ -2196,11 +2279,11 @@ function OfficeRedlineMapInner({ mode = "default" }: RedlineMapProps) {
                       <div
                         style={{
                           height: 150,
-                          background: "#e5e7eb",
+                          background: "rgba(0,0,0,0.35)",
                           display: "flex",
                           alignItems: "center",
                           justifyContent: "center",
-                          color: "#64748b",
+                          color: "#cbd5e1",
                           fontSize: 12,
                           fontWeight: 600,
                           padding: 8,
@@ -2221,14 +2304,14 @@ function OfficeRedlineMapInner({ mode = "default" }: RedlineMapProps) {
                         )}
                       </div>
                       <div style={{ padding: "10px 12px 12px" }}>
-                        <div style={{ fontSize: 13, fontWeight: 700, color: "#0f172a", wordBreak: "break-word" }}>
+                        <div style={{ fontSize: 13, fontWeight: 700, color: "#f1f5f9", wordBreak: "break-word" }}>
                           {photo.filename}
                         </div>
                         <div
                           style={{
                             marginTop: 6,
                             fontSize: 11,
-                            color: "#475569",
+                            color: "#94a3b8",
                             fontFamily: "ui-monospace, SFMono-Regular, monospace",
                           }}
                         >
@@ -2244,9 +2327,10 @@ function OfficeRedlineMapInner({ mode = "default" }: RedlineMapProps) {
                             fontSize: 12,
                             fontWeight: 700,
                             color: "#0f172a",
+                            background: "#fbbf24",
                             textDecoration: "none",
                             padding: "6px 10px",
-                            border: "1px solid #0f172a",
+                            border: "1px solid rgba(251, 191, 36, 0.6)",
                             borderRadius: 8,
                           }}
                         >
