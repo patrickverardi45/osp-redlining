@@ -24,9 +24,9 @@ from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 BASE_DIR = Path(__file__).resolve().parent
-BASE_UPLOAD_DIR = "/data/uploads"
+BASE_UPLOAD_DIR = os.getenv("OSP_UPLOAD_DIR") or str(BASE_DIR / "uploads")
 UPLOADS_DIR = Path(BASE_UPLOAD_DIR)
-os.makedirs(BASE_UPLOAD_DIR, exist_ok=True)
+os.makedirs(UPLOADS_DIR, exist_ok=True)
 
 app = FastAPI(title="OSP Redlining Mapping Layer")
 app.mount("/uploads", StaticFiles(directory=BASE_UPLOAD_DIR), name="uploads")
