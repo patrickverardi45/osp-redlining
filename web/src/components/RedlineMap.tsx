@@ -33,6 +33,7 @@ import {
 import MobileWalkContainer from "@/components/MobileWalkContainer";
 import { clamp, formatNumber, cleanDisplayText, formatDisplayDate } from "@/lib/format/text";
 import { toMoney } from "@/lib/format/money";
+import { extractGps } from "@/lib/photos/exif";
 
 const API_BASE =
   process.env.NEXT_PUBLIC_API_BASE?.replace(/\/+$/, "") ||
@@ -397,6 +398,23 @@ type RedlineMapProps = {
   mode?: "mobileWalk" | "default";
 };
 
+// V1 Photo GPS Mapping — client-only photo marker.
+// Not persisted: resets on refresh. See "Geotagged photos" panel in Section 3.
+// `reason` is set at upload time; the render-time bounds check may still hide
+// a "mapped" photo if it falls outside the current KMZ design area.
+type GpsPhoto = {
+  id: string;
+  file: File;
+  previewUrl: string; // object URL, revoked on clear/unmount
+  filename: string;
+  sizeBytes: number;
+  contentType: string;
+  lat: number | null;
+  lon: number | null;
+  reason: "mapped" | "no_gps" | "unreadable";
+  addedAt: number; // Date.now()
+};
+
 function OfficeRedlineMapInner({ mode = "default" }: RedlineMapProps) {
   const [state, setState] = useState<BackendState | null>(null);
   const [busy, setBusy] = useState(false);
@@ -416,6 +434,11 @@ function OfficeRedlineMapInner({ mode = "default" }: RedlineMapProps) {
   const [stationPhotos, setStationPhotos] = useState<StationPhoto[]>([]);
   const [stationPhotosLoading, setStationPhotosLoading] = useState(false);
   const [stationPhotoBusy, setStationPhotoBusy] = useState(false);
+  // V1 Photo GPS Mapping — client-only, resets on refresh.
+  const [gpsPhotos, setGpsPhotos] = useState<GpsPhoto[]>([]);
+  const [gpsPhotoBusy, setGpsPhotoBusy] = useState(false);
+  const [selectedGpsPhotoId, setSelectedGpsPhotoId] = useState<string | null>(null);
+  const [hoverGpsPhotoId, setHoverGpsPhotoId] = useState<string | null>(null);
   const [viewport, setViewport] = useState<Viewport>({ zoom: 1, panX: 0, panY: 0 });
   const [didInitialFit, setDidInitialFit] = useState(false);
   const [isPanning, setIsPanning] = useState(false);
@@ -579,6 +602,38 @@ function OfficeRedlineMapInner({ mode = "default" }: RedlineMapProps) {
       })
       .filter((item): item is { idx: number; point: StationPoint; world: ScreenPoint } => Boolean(item));
   }, [stationPoints, renderBounds, projectionMetrics]);
+
+  // V1 Photo GPS Mapping — render-time projection.
+  // Only photos with valid GPS AND lat/lon falling inside the current
+  // renderBounds are projected to SVG world coordinates. Photos outside the
+  // bounds are filtered here (they stay in gpsPhotos state with reason="mapped"
+  // but don't appear on the map; the UI classifies them as "outside design
+  // area" in the Unmapped list by comparing the two arrays).
+  // IMPORTANT: photo coords are NOT added to the bounds union (`allCoords`), so
+  // a rogue EXIF reading cannot reshape the map fit.
+  const projectedPhotos = useMemo(() => {
+    if (!renderBounds || !projectionMetrics) {
+      return [] as Array<{ photo: GpsPhoto; world: ScreenPoint }>;
+    }
+    return gpsPhotos
+      .map((photo) => {
+        if (photo.reason !== "mapped") return null;
+        if (typeof photo.lat !== "number" || typeof photo.lon !== "number") return null;
+        if (
+          photo.lat < renderBounds.minLat ||
+          photo.lat > renderBounds.maxLat ||
+          photo.lon < renderBounds.minLon ||
+          photo.lon > renderBounds.maxLon
+        ) {
+          return null;
+        }
+        return {
+          photo,
+          world: projectWorldPoint(photo.lat, photo.lon, renderBounds, projectionMetrics),
+        };
+      })
+      .filter((item): item is { photo: GpsPhoto; world: ScreenPoint } => Boolean(item));
+  }, [gpsPhotos, renderBounds, projectionMetrics]);
 
   const visibleLabelIndices = useMemo(() => {
     const result = new Set<number>();
@@ -984,6 +1039,10 @@ function OfficeRedlineMapInner({ mode = "default" }: RedlineMapProps) {
       setStatusText(error instanceof Error ? error.message : "Reset failed.");
       setStatusTone("error");
     } finally {
+      // V1 Photo GPS Mapping — Clear Workspace is a true clean slate, so
+      // geotagged photos are cleared alongside KMZ/redline/station state,
+      // regardless of whether the backend reset succeeded.
+      clearGpsPhotos();
       setBusy(false);
     }
   }
@@ -1169,6 +1228,84 @@ function OfficeRedlineMapInner({ mode = "default" }: RedlineMapProps) {
       setStationPhotoBusy(false);
     }
   }
+
+  // ─── V1 Photo GPS Mapping — upload handler ──────────────────────────────────
+  // Client-only: reads EXIF GPS from each image, creates a blob URL for preview,
+  // and adds a GpsPhoto row to local state. No network calls. No mutation of
+  // BackendState. Photos with valid GPS are flagged `mapped` and will render as
+  // markers; photos without GPS are flagged `no_gps` and appear in the
+  // "Unmapped Photos" list.
+
+  async function handleGpsPhotoUpload(files: FileList | null) {
+    if (!files || !files.length) return;
+    setGpsPhotoBusy(true);
+    setStatusText(`Reading GPS from ${files.length} photo${files.length > 1 ? "s" : ""}...`);
+    setStatusTone("neutral");
+
+    const fileArray = Array.from(files);
+    const newPhotos: GpsPhoto[] = [];
+
+    for (const file of fileArray) {
+      let gps: { lat: number; lon: number } | null = null;
+      let reason: GpsPhoto["reason"] = "no_gps";
+      try {
+        gps = await extractGps(file);
+        reason = gps ? "mapped" : "no_gps";
+      } catch {
+        gps = null;
+        reason = "unreadable";
+      }
+
+      newPhotos.push({
+        id: `gpsphoto-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+        file,
+        previewUrl: URL.createObjectURL(file),
+        filename: file.name,
+        sizeBytes: file.size,
+        contentType: file.type || "",
+        lat: gps?.lat ?? null,
+        lon: gps?.lon ?? null,
+        reason,
+        addedAt: Date.now(),
+      });
+    }
+
+    setGpsPhotos((prev) => [...prev, ...newPhotos]);
+
+    const mappedCount = newPhotos.filter((p) => p.reason === "mapped").length;
+    const unmappedCount = newPhotos.length - mappedCount;
+    setStatusTone("success");
+    setStatusText(
+      `Added ${newPhotos.length} photo${newPhotos.length > 1 ? "s" : ""}: ` +
+      `${mappedCount} with GPS, ${unmappedCount} unmapped.`
+    );
+    setGpsPhotoBusy(false);
+  }
+
+  function clearGpsPhotos() {
+    setGpsPhotos((prev) => {
+      prev.forEach((p) => {
+        try { URL.revokeObjectURL(p.previewUrl); } catch { /* noop */ }
+      });
+      return [];
+    });
+    setSelectedGpsPhotoId(null);
+    setHoverGpsPhotoId(null);
+  }
+
+  // Revoke object URLs on unmount. We use a ref so the cleanup sees the
+  // latest photo list, not the initial empty array captured by closure.
+  const gpsPhotosRef = useRef<GpsPhoto[]>([]);
+  useEffect(() => {
+    gpsPhotosRef.current = gpsPhotos;
+  }, [gpsPhotos]);
+  useEffect(() => {
+    return () => {
+      gpsPhotosRef.current.forEach((p) => {
+        try { URL.revokeObjectURL(p.previewUrl); } catch { /* noop */ }
+      });
+    };
+  }, []);
 
 
 
@@ -1614,6 +1751,9 @@ function OfficeRedlineMapInner({ mode = "default" }: RedlineMapProps) {
                       if (selectedStationIndex !== null) {
                         setSelectedStationIndex(null);
                       }
+                      if (selectedGpsPhotoId !== null) {
+                        setSelectedGpsPhotoId(null);
+                      }
                     }}
                   >
                     <g id="kmz-design-layer">
@@ -1771,6 +1911,89 @@ function OfficeRedlineMapInner({ mode = "default" }: RedlineMapProps) {
                       </g>
                     ) : null}
 
+                    {/* ─── V1 Photo GPS Mapping — photo marker layer ───── */}
+                    {/* Renders above stations, below the station tooltip.  */}
+                    {/* Distinct amber pin shape so photos never visually    */}
+                    {/* collide with the black station dots.                 */}
+                    {projectedPhotos.length > 0 ? (
+                      <g id="photo-marker-layer">
+                        {projectedPhotos.map(({ photo, world }) => {
+                          const isSelected = selectedGpsPhotoId === photo.id;
+                          const isHovered = hoverGpsPhotoId === photo.id;
+                          // Mirror the zoom-aware sizing used by stations so
+                          // photo pins don't get huge at low zoom or tiny at
+                          // high zoom. Photo pins are slightly larger than
+                          // station dots so they read as "pins" not "dots".
+                          const baseRadius = viewport.zoom < 4 ? 2.6 : viewport.zoom < 12 ? 2.1 : 1.7;
+                          const radius = isSelected ? baseRadius + 1.0 : isHovered ? baseRadius + 0.5 : baseRadius;
+                          const tailHeight = radius * 1.4;
+                          // Pin body is centered above the actual coordinate;
+                          // the tail points down to (world.x, world.y).
+                          const bodyCx = world.x;
+                          const bodyCy = world.y - tailHeight;
+                          return (
+                            <g
+                              key={`gpsphoto-${photo.id}`}
+                              style={{ cursor: "pointer" }}
+                              onPointerDown={(e) => {
+                                e.stopPropagation();
+                              }}
+                              onPointerEnter={() => setHoverGpsPhotoId(photo.id)}
+                              onPointerLeave={() =>
+                                setHoverGpsPhotoId((current) => (current === photo.id ? null : current))
+                              }
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setSelectedGpsPhotoId(photo.id);
+                              }}
+                            >
+                              {/* Pin tail: triangle from body down to the exact coord */}
+                              <path
+                                d={`M ${bodyCx - radius * 0.55} ${bodyCy + radius * 0.65} L ${world.x} ${world.y} L ${bodyCx + radius * 0.55} ${bodyCy + radius * 0.65} Z`}
+                                fill={isSelected ? "#b45309" : "#f59e0b"}
+                                stroke="rgba(255,255,255,0.9)"
+                                strokeWidth={0.45}
+                                vectorEffect="non-scaling-stroke"
+                              />
+                              {/* Halo for hover/selected */}
+                              {(isSelected || isHovered) ? (
+                                <circle
+                                  cx={bodyCx}
+                                  cy={bodyCy}
+                                  r={radius + (isSelected ? 2.4 : 1.6)}
+                                  fill={isSelected ? "rgba(245, 158, 11, 0.28)" : "rgba(245, 158, 11, 0.18)"}
+                                  pointerEvents="none"
+                                />
+                              ) : null}
+                              {/* Pin body — outer amber ring */}
+                              <circle
+                                cx={bodyCx}
+                                cy={bodyCy}
+                                r={radius}
+                                fill={isSelected ? "#b45309" : "#f59e0b"}
+                                stroke="rgba(255,255,255,0.95)"
+                                strokeWidth={0.8}
+                                vectorEffect="non-scaling-stroke"
+                              />
+                              {/* Inner lens dot — evokes a camera aperture */}
+                              <circle
+                                cx={bodyCx}
+                                cy={bodyCy}
+                                r={radius * 0.45}
+                                fill="#ffffff"
+                              />
+                              <circle
+                                cx={bodyCx}
+                                cy={bodyCy}
+                                r={radius * 0.22}
+                                fill={isSelected ? "#b45309" : "#f59e0b"}
+                              />
+                            </g>
+                          );
+                        })}
+                      </g>
+                    ) : null}
+
                     {tooltipStation && tooltipWorldGeometry ? (
                       <g id="station-tooltip-layer" pointerEvents="none">
                         <path
@@ -1875,6 +2098,164 @@ function OfficeRedlineMapInner({ mode = "default" }: RedlineMapProps) {
                     }}
                   />
                 ) : null}
+
+                {/* ─── V1 Photo GPS Mapping — selected-photo preview popup ──── */}
+                {/* HTML overlay (not SVG) so we can use a native <img> tag for   */}
+                {/* JPEG/PNG thumbnails. Anchored to the marker's on-screen       */}
+                {/* pixel position computed from current viewport + projection.   */}
+                {(() => {
+                  if (!selectedGpsPhotoId) return null;
+                  if (!projectionMetrics) return null;
+                  const hit = projectedPhotos.find(({ photo }) => photo.id === selectedGpsPhotoId);
+                  if (!hit) return null;
+                  const { photo, world } = hit;
+
+                  // World → screen pixel conversion, mirroring the viewBox in
+                  // viewBoxToString(). The SVG fills the container 100x100%, so
+                  // we can derive pixel coords without querying the DOM.
+                  const vbWidth = projectionMetrics.worldWidth / viewport.zoom;
+                  const vbHeight = projectionMetrics.worldHeight / viewport.zoom;
+                  const vbX = -viewport.panX / viewport.zoom;
+                  const vbY = -viewport.panY / viewport.zoom;
+                  const screenX = ((world.x - vbX) / vbWidth) * containerSize.width;
+                  const screenY = ((world.y - vbY) / vbHeight) * containerSize.height;
+
+                  // Card dimensions. We pick a side (right of marker by
+                  // default, left if too close to the right edge) and a
+                  // vertical anchor (above if enough room, else below).
+                  const cardWidth = 260;
+                  const cardHeightEstimate = 260;
+                  const margin = 12;
+                  const placeRight = screenX + margin + cardWidth < containerSize.width;
+                  const cardLeft = placeRight
+                    ? Math.min(screenX + margin, containerSize.width - cardWidth - 4)
+                    : Math.max(screenX - cardWidth - margin, 4);
+                  const cardTop = Math.max(
+                    4,
+                    Math.min(
+                      screenY - cardHeightEstimate / 2,
+                      containerSize.height - cardHeightEstimate - 4
+                    )
+                  );
+
+                  const isHeic = /heic|heif/i.test(photo.contentType) || /\.heic$|\.heif$/i.test(photo.filename);
+                  const latText = typeof photo.lat === "number" ? photo.lat.toFixed(6) : "--";
+                  const lonText = typeof photo.lon === "number" ? photo.lon.toFixed(6) : "--";
+
+                  return (
+                    <div
+                      style={{
+                        position: "absolute",
+                        left: cardLeft,
+                        top: cardTop,
+                        width: cardWidth,
+                        background: "#ffffff",
+                        border: "1px solid rgba(15, 23, 42, 0.18)",
+                        borderRadius: 14,
+                        boxShadow: "0 20px 45px rgba(2,6,23,0.38)",
+                        overflow: "hidden",
+                        zIndex: 900,
+                      }}
+                      onPointerDown={(e) => e.stopPropagation()}
+                      onWheel={(e) => e.stopPropagation()}
+                    >
+                      <div
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "space-between",
+                          padding: "8px 10px 6px 12px",
+                          borderBottom: "1px solid #eef2f7",
+                          background: "#fbfdff",
+                        }}
+                      >
+                        <div style={{ fontSize: 11, fontWeight: 800, color: "#b45309", letterSpacing: 0.3 }}>
+                          GEOTAGGED PHOTO
+                        </div>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setSelectedGpsPhotoId(null);
+                          }}
+                          aria-label="Close photo preview"
+                          style={{
+                            border: "none",
+                            background: "transparent",
+                            cursor: "pointer",
+                            color: "#64748b",
+                            fontSize: 18,
+                            lineHeight: 1,
+                            padding: "2px 6px",
+                            borderRadius: 6,
+                          }}
+                        >
+                          ×
+                        </button>
+                      </div>
+                      <div
+                        style={{
+                          height: 150,
+                          background: "#e5e7eb",
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          color: "#64748b",
+                          fontSize: 12,
+                          fontWeight: 600,
+                          padding: 8,
+                          textAlign: "center",
+                        }}
+                      >
+                        {isHeic ? (
+                          "HEIC file — download to view"
+                        ) : (
+                          // Plain <img> intentional: blob URL, no Next Image optimization.
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img
+                            src={photo.previewUrl}
+                            alt={photo.filename}
+                            loading="lazy"
+                            style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
+                          />
+                        )}
+                      </div>
+                      <div style={{ padding: "10px 12px 12px" }}>
+                        <div style={{ fontSize: 13, fontWeight: 700, color: "#0f172a", wordBreak: "break-word" }}>
+                          {photo.filename}
+                        </div>
+                        <div
+                          style={{
+                            marginTop: 6,
+                            fontSize: 11,
+                            color: "#475569",
+                            fontFamily: "ui-monospace, SFMono-Regular, monospace",
+                          }}
+                        >
+                          {latText}, {lonText}
+                        </div>
+                        <a
+                          href={photo.previewUrl}
+                          download={photo.filename}
+                          onClick={(e) => e.stopPropagation()}
+                          style={{
+                            display: "inline-block",
+                            marginTop: 10,
+                            fontSize: 12,
+                            fontWeight: 700,
+                            color: "#0f172a",
+                            textDecoration: "none",
+                            padding: "6px 10px",
+                            border: "1px solid #0f172a",
+                            borderRadius: 8,
+                          }}
+                        >
+                          Download original
+                        </a>
+                      </div>
+                    </div>
+                  );
+                })()}
 
                               </div>
 
@@ -1988,6 +2369,176 @@ function OfficeRedlineMapInner({ mode = "default" }: RedlineMapProps) {
                     Select a station on the map first. Photos only attach to the currently selected station.
                   </div>
                 )}
+              </div>
+
+              {/* ─── V1 Photo GPS Mapping — Geotagged photos panel ─────────── */}
+              {/* Client-only. Resets on refresh. Sibling of Station photos    */}
+              {/* above; does not interact with it or with the backend.        */}
+              <div
+                style={{
+                  border: "1px solid #dbe4ee",
+                  borderRadius: 16,
+                  background: "#ffffff",
+                  padding: 16,
+                  display: "grid",
+                  gap: 14,
+                }}
+              >
+                <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start", flexWrap: "wrap" }}>
+                  <div>
+                    <div style={{ fontSize: 15, fontWeight: 800, color: "#0f172a" }}>
+                      Geotagged photos <span style={{ fontSize: 11, fontWeight: 700, color: "#b45309", marginLeft: 6, padding: "2px 6px", borderRadius: 6, background: "#fef3c7" }}>BETA</span>
+                    </div>
+                    <div style={{ marginTop: 6, fontSize: 13, color: "#64748b", lineHeight: 1.55 }}>
+                      Upload customer photos. Photos with GPS metadata are placed on the map at their coordinates. Photos without GPS appear below in &quot;Unmapped Photos.&quot; Resets on page refresh.
+                    </div>
+                  </div>
+                  <div style={{ fontSize: 12, color: "#475569", fontWeight: 700, textAlign: "right" }}>
+                    {gpsPhotos.length > 0 ? (
+                      <>
+                        <div>{projectedPhotos.length} on map</div>
+                        <div style={{ marginTop: 2, color: "#64748b" }}>{gpsPhotos.length - projectedPhotos.length} unmapped</div>
+                      </>
+                    ) : (
+                      <div style={{ color: "#94a3b8", fontWeight: 600 }}>No photos yet</div>
+                    )}
+                  </div>
+                </div>
+
+                <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
+                  <label
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      padding: "10px 14px",
+                      borderRadius: 12,
+                      border: "1px solid #0f172a",
+                      background: gpsPhotoBusy ? "#e5e7eb" : "#0f172a",
+                      color: "#ffffff",
+                      fontWeight: 800,
+                      cursor: gpsPhotoBusy ? "not-allowed" : "pointer",
+                      opacity: gpsPhotoBusy ? 0.7 : 1,
+                    }}
+                  >
+                    <input
+                      type="file"
+                      accept="image/*,.heic,.heif"
+                      multiple
+                      style={{ display: "none" }}
+                      disabled={gpsPhotoBusy}
+                      onChange={(e) => {
+                        handleGpsPhotoUpload(e.target.files);
+                        e.currentTarget.value = "";
+                      }}
+                    />
+                    {gpsPhotoBusy ? "Reading GPS..." : "Upload Geotagged Photos"}
+                  </label>
+
+                  {gpsPhotos.length > 0 ? (
+                    <button
+                      type="button"
+                      onClick={clearGpsPhotos}
+                      disabled={gpsPhotoBusy}
+                      style={{
+                        padding: "10px 14px",
+                        borderRadius: 12,
+                        border: "1px solid #dbe4ee",
+                        background: "#ffffff",
+                        color: "#475569",
+                        fontWeight: 700,
+                        fontSize: 13,
+                        cursor: gpsPhotoBusy ? "not-allowed" : "pointer",
+                      }}
+                    >
+                      Clear all
+                    </button>
+                  ) : null}
+
+                  <div style={{ fontSize: 12, color: "#64748b" }}>
+                    Accepts JPEG, PNG, HEIC. GPS read client-side (no upload).
+                  </div>
+                </div>
+
+                {/* Unmapped Photos list: anything in gpsPhotos that did NOT make it
+                    into projectedPhotos. Reasons:
+                      - no_gps: EXIF had no usable GPS tags
+                      - unreadable: exifr threw while parsing
+                      - has GPS but outside current KMZ design bounds (or KMZ not loaded yet) */}
+                {(() => {
+                  const mappedIds = new Set(projectedPhotos.map((p) => p.photo.id));
+                  const unmapped = gpsPhotos.filter((p) => !mappedIds.has(p.id));
+                  if (unmapped.length === 0) {
+                    return gpsPhotos.length > 0 ? (
+                      <div style={{ fontSize: 13, color: "#64748b" }}>
+                        All uploaded photos have valid GPS and are placed on the map.
+                      </div>
+                    ) : null;
+                  }
+                  return (
+                    <div style={{ display: "grid", gap: 8 }}>
+                      <div style={{ fontSize: 13, fontWeight: 800, color: "#0f172a" }}>
+                        Unmapped Photos ({unmapped.length})
+                      </div>
+                      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))", gap: 12 }}>
+                        {unmapped.map((photo) => {
+                          const hasGps = photo.reason === "mapped" && typeof photo.lat === "number" && typeof photo.lon === "number";
+                          const noteText = hasGps
+                            ? "GPS present but outside design area"
+                            : photo.reason === "unreadable"
+                            ? "Could not read photo metadata"
+                            : "No GPS metadata";
+                          const isHeic = /heic|heif/i.test(photo.contentType) || /\.heic$|\.heif$/i.test(photo.filename);
+                          return (
+                            <div
+                              key={photo.id}
+                              style={{
+                                border: "1px solid #dbe4ee",
+                                borderRadius: 14,
+                                overflow: "hidden",
+                                background: "#fbfdff",
+                              }}
+                            >
+                              <div
+                                style={{
+                                  height: 112,
+                                  backgroundImage: isHeic ? undefined : `url(${photo.previewUrl})`,
+                                  backgroundSize: "cover",
+                                  backgroundPosition: "center",
+                                  backgroundRepeat: "no-repeat",
+                                  backgroundColor: "#e5e7eb",
+                                  display: "flex",
+                                  alignItems: "center",
+                                  justifyContent: "center",
+                                  color: "#64748b",
+                                  fontSize: 11,
+                                  fontWeight: 700,
+                                  textAlign: "center",
+                                  padding: 8,
+                                }}
+                              >
+                                {isHeic ? "HEIC — download to view" : null}
+                              </div>
+                              <div style={{ padding: 10 }}>
+                                <div style={{ fontSize: 12, fontWeight: 700, color: "#0f172a", wordBreak: "break-word" }}>
+                                  {photo.filename}
+                                </div>
+                                <div style={{ marginTop: 4, fontSize: 11, color: "#b45309", fontWeight: 600 }}>
+                                  {noteText}
+                                </div>
+                                {hasGps ? (
+                                  <div style={{ marginTop: 2, fontSize: 10, color: "#64748b", fontFamily: "ui-monospace, SFMono-Regular, monospace" }}>
+                                    {photo.lat?.toFixed(5)}, {photo.lon?.toFixed(5)}
+                                  </div>
+                                ) : null}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  );
+                })()}
               </div>
 
             </div>
