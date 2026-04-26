@@ -177,6 +177,9 @@ export type ExceptionCost = {
   id: string;
   label: string;
   amount: string;
+  note?: string;
+  station?: string;
+  billing_relevant?: boolean;
 };
 
 export type NoteTone = "neutral" | "success" | "warning" | "error";

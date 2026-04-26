@@ -82,25 +82,25 @@ STATE: Dict[str, Any] = {
 }
 
 
-def _clear_engineering_plans_for_session(session_id: str) -> None:
-    """Remove all engineering plan index records belonging to session_id from the
-    disk-backed plan index.  Called by _reset_workspace_state so Clear Workspace
-    also purges plan uploads for the active session.  Non-fatal: swallows errors."""
-    if not session_id:
-        return
+def _clear_engineering_plan_storage() -> None:
+    """Remove uploaded engineering plans and reset their disk-backed index."""
     try:
-        index_data = _load_engineering_plan_index()
-        kept = [p for p in (index_data.get("plans") or [])
-                if not _engineering_plan_record_matches_session(p, session_id)]
-        index_data["plans"] = kept
-        _save_engineering_plan_index(index_data)
+        if ENGINEERING_PLAN_ROOT.exists():
+            for child in ENGINEERING_PLAN_ROOT.iterdir():
+                if child.is_dir():
+                    shutil.rmtree(child)
+                else:
+                    child.unlink(missing_ok=True)
+        _save_engineering_plan_index({"plans": []})
     except Exception:
-        pass  # non-fatal — plans may linger but workspace is still reset
+        pass  # non-fatal: workspace state still resets if disk cleanup fails
 
 
 def _reset_workspace_state() -> None:
-    # Purge this session's engineering plans from the disk index before wiping STATE.
-    _clear_engineering_plans_for_session(str(STATE.get("_session_id_hint") or "").strip())
+    # Clear uploaded engineering plan evidence before wiping STATE.
+    _clear_engineering_plan_storage()
+    # Clear persisted Nova override decisions for this session.
+    _clear_nova_overrides_for_session(STATE.get("_session_id_hint", ""))
     preserved_bug_reports = list(STATE.get("bug_reports", []) or [])
     STATE.clear()
     STATE.update(
@@ -136,6 +136,8 @@ def _reset_workspace_state() -> None:
             },
             "bug_reports": preserved_bug_reports,
             "matching_debug": [],
+            "engineering_plans": [],
+            "engineering_plan_signals": [],
         }
     )
 
@@ -174,6 +176,7 @@ def _default_session_state() -> Dict[str, Any]:
         "bug_reports": [],
         "matching_debug": [],
         "engineering_plans": [],
+        "engineering_plan_signals": [],
     }
 
 
@@ -4963,160 +4966,597 @@ def _fallback_rankings_geometry_only(
 
 
 # ---------------------------------------------------------------------------
-# Plan-aware ranking bias
-# Applies a lightweight, additive score boost to route candidates that are
-# consistent with uploaded engineering plans.  Never removes candidates, never
-# overrides validation gates.  Boost is capped at +0.10 per ranking entry.
+# Engineering Plan Signal Extraction — Phase 1
+# Parses structured metadata/signals from uploaded engineering plan records
+# using only filename text and fields already stored at upload time.
+# No OCR, no external services, no PDF content parsing.
+# Signals are stored in STATE["engineering_plan_signals"] for Phase 2 use.
 # ---------------------------------------------------------------------------
 
-def _plan_aware_ranking_boost(
-    rankings: List[Dict[str, Any]],
-    normalized_group: Dict[str, Any],
-    eng_plans: List[Dict[str, Any]],
-) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
-    """Return (boosted_rankings_resorted, plan_bias_meta).
+# ── Pattern constants (compiled once at import time) ─────────────────────────
 
-    Association criteria (any combination adds to confidence):
-      1. Print-token overlap  — plan.print_numbers vs group.print_tokens  (+0.60)
-         Filename-digit overlap (weak fallback)                           (+0.20)
-      2. Date exact match     — plan.plan_date[:10] == group date         (+0.30)
-         Date within 7 days   — linear decay to +0.15                    (+0.00..0.15)
+# Explicit print/sheet markers in filenames
+_EP_PRINT_PATS: List[re.Pattern] = [
+    re.compile(r'\bprint[.\-_ ]?(\d{1,2})\b', re.IGNORECASE),   # Print3, print-2
+    re.compile(r'\bsht[.\-_ ]?(\d{1,2})\b',   re.IGNORECASE),   # Sht04, sht_3
+    re.compile(r'\bsheet[.\-_ ]?(\d{1,2})\b', re.IGNORECASE),   # Sheet04, sheet 3
+    re.compile(r'\b[pP][.\-_](\d{1,2})\b'),                      # P-3, P_02
+    re.compile(r'\b[sS][.\-_](\d{1,2})\b'),                      # S-12, s_4
+]
 
-    Score boost per ranking = min(1.0, old_score + association_confidence * 0.10).
-    Rankings are re-sorted after boosting so the anchor loop sees the best order.
+# Phase / document-type keywords → canonical label
+_EP_PHASE_PATS: List[Tuple[str, re.Pattern]] = [
+    ("phase_{n}",    re.compile(r'\bphase[.\-_ ]?(\d+)\b',    re.IGNORECASE)),
+    ("permit",       re.compile(r'\bpermit\b',                  re.IGNORECASE)),
+    ("construction", re.compile(r'\bconstruction\b',            re.IGNORECASE)),
+    ("redline",      re.compile(r'\bredlines?\b',               re.IGNORECASE)),
+    ("asbuilt",      re.compile(r'\bas[.\-_]?built\b',          re.IGNORECASE)),
+    ("revision",     re.compile(r'\brevisions?\b',              re.IGNORECASE)),
+    ("preliminary",  re.compile(r'\bpreliminary\b',             re.IGNORECASE)),
+    ("final",        re.compile(r'\bfinal\b',                   re.IGNORECASE)),
+    ("approved",     re.compile(r'\bapproved\b',                re.IGNORECASE)),
+    ("draft",        re.compile(r'\bdraft\b',                   re.IGNORECASE)),
+]
+
+# Route / infrastructure-type keywords
+_EP_ROUTE_KEYWORDS: List[str] = [
+    "underground", "ug", "aerial", "ohg", "ohp", "bore", "boring",
+    "trench", "trenching", "fiber", "fibre", "mainline", "lateral",
+    "backbone", "drop", "conduit", "duct", "cable", "osp",
+    "splice", "splicing", "riser", "vault", "handhole",
+]
+
+# Date patterns: (compiled, is_ymd_order)
+_EP_DATE_PATS: List[Tuple[re.Pattern, bool]] = [
+    (re.compile(r'(\d{4})[.\-_/](\d{2})[.\-_/](\d{2})'), True),   # 2024-01-15
+    (re.compile(r'(\d{2})[.\-_/](\d{2})[.\-_/](\d{4})'), False),  # 01-15-2024
+]
+
+# Revision marker
+_EP_REVISION_RE: re.Pattern = re.compile(
+    r'\brev(?:ision)?[.\-_ ]?([a-zA-Z0-9]{1,3})\b', re.IGNORECASE
+)
+
+# Tokens to discard from raw text (file-extension fragments, stop words)
+_EP_NOISE_TOKENS: set = {
+    "", "pdf", "png", "jpg", "jpeg", "tif", "tiff", "dwg", "dxf",
+    "the", "and", "for", "of", "to", "a", "an", "in", "on", "at",
+    "by", "be", "is", "it", "as",
+}
+
+
+def _extract_engineering_plan_signals(plan: Dict[str, Any]) -> Dict[str, Any]:
+    """Extract structured signals from a single engineering plan record.
+
+    Inputs used:
+      - original_filename    (primary text source)
+      - plan_date            (user-supplied date — highest priority)
+      - print_numbers        (user-supplied — highest priority for print tokens)
+      - sheet_numbers        (user-supplied — secondary print tokens)
+      - street_hints         (user-supplied route context)
+      - notes                (user-supplied free text)
+
+    Returns a signal dict with keys:
+      plan_id, source_file, print_tokens, route_hints, phase_hints,
+      date, revision, raw_text_tokens
     """
-    if not rankings or not eng_plans:
-        return rankings, {"applied": False, "reason": "no_rankings_or_no_plans"}
+    plan_id = str(plan.get("plan_id") or "").strip()
+    source_file = str(plan.get("original_filename") or "").strip()
 
-    group_print_tokens: set = {str(t) for t in (normalized_group.get("print_tokens") or [])}
-    group_date: str = str(normalized_group.get("evidence_layer_date") or "").strip()[:10]
+    # Strip file extension and normalise separators to spaces for scanning
+    fname_stem = re.sub(r'\.[^.]+$', '', source_file)
+    fname_scan = fname_stem  # keep original casing for pattern matching
 
-    # Build per-plan association: plan_id -> (confidence, hint_route_ids)
-    plan_assoc: Dict[str, Tuple[float, List[str], List[str]]] = {}
-    best_plan_id: Optional[str] = None
-    best_plan_name: Optional[str] = None
-    best_conf = 0.0
-    best_reasons: List[str] = []
+    # Aggregate all available text for phase/route keyword scanning
+    extra_text = " ".join(filter(None, [
+        str(plan.get("street_hints") or ""),
+        str(plan.get("notes") or ""),
+    ]))
+    full_scan = f"{fname_scan} {extra_text}"
 
-    for plan in eng_plans:
-        plan_id = str(plan.get("plan_id") or "").strip()
+    # ── 1. Print / sheet tokens ───────────────────────────────────────────────
+    print_tokens: List[str] = []
+
+    # User-provided fields are highest-priority — process first
+    for field in ("print_numbers", "sheet_numbers"):
+        raw = str(plan.get(field) or "").strip()
+        if raw:
+            for tok in _parse_print_tokens(raw):
+                if tok not in print_tokens:
+                    print_tokens.append(tok)
+
+    # Explicit patterns in filename (only add tokens not already from metadata)
+    for pat in _EP_PRINT_PATS:
+        for m in pat.finditer(fname_scan):
+            raw_num = m.group(1).lstrip("0") or "0"
+            try:
+                num_val = int(raw_num)
+            except ValueError:
+                continue
+            if 1 <= num_val <= 30:
+                tok = str(num_val)
+                if tok not in print_tokens:
+                    print_tokens.append(tok)
+
+    # Last resort: bare 1–2-digit numbers from filename when nothing else matched
+    if not print_tokens:
+        for m in re.finditer(r'\b(\d{1,2})\b', fname_scan):
+            raw_num = m.group(1).lstrip("0") or "0"
+            try:
+                num_val = int(raw_num)
+            except ValueError:
+                continue
+            if 1 <= num_val <= 30:
+                tok = str(num_val)
+                if tok not in print_tokens:
+                    print_tokens.append(tok)
+
+    # Sort numerically for stable output
+    print_tokens = sorted(set(print_tokens), key=lambda x: int(x))
+
+    # ── 2. Phase / document-type hints ───────────────────────────────────────
+    phase_hints: List[str] = []
+    for label, pat in _EP_PHASE_PATS:
+        m = pat.search(full_scan)
+        if m:
+            if "{n}" in label:
+                resolved = label.replace("{n}", m.group(1))
+            else:
+                resolved = label
+            if resolved not in phase_hints:
+                phase_hints.append(resolved)
+
+    # ── 3. Route / infrastructure hints ──────────────────────────────────────
+    route_hints: List[str] = []
+    full_lower = full_scan.lower()
+    for kw in _EP_ROUTE_KEYWORDS:
+        if re.search(r'\b' + re.escape(kw) + r'\b', full_lower):
+            if kw not in route_hints:
+                route_hints.append(kw)
+
+    # Preserve street_hints verbatim as a route context hint (truncated)
+    street_raw = str(plan.get("street_hints") or "").strip()
+    if street_raw:
+        route_hints.append(f"street:{street_raw[:80]}")
+
+    # ── 4. Date and revision ──────────────────────────────────────────────────
+    extracted_date: Optional[str] = None
+    extracted_revision: Optional[str] = None
+
+    # plan_date field is highest-priority (user-confirmed)
+    plan_date_raw = str(plan.get("plan_date") or "").strip()
+    if plan_date_raw:
+        extracted_date = plan_date_raw[:10]
+
+    # Fall back to scanning the filename for date patterns
+    if not extracted_date:
+        for dpat, is_ymd in _EP_DATE_PATS:
+            m = dpat.search(fname_scan)
+            if m:
+                g = m.groups()
+                try:
+                    if is_ymd:
+                        candidate = f"{g[0]}-{g[1]}-{g[2]}"
+                    else:
+                        candidate = f"{g[2]}-{g[0]}-{g[1]}"
+                    datetime.strptime(candidate, "%Y-%m-%d")  # validate
+                    extracted_date = candidate
+                    break
+                except Exception:
+                    continue
+
+    # Revision token
+    rev_m = _EP_REVISION_RE.search(fname_scan)
+    if rev_m:
+        extracted_revision = f"rev_{rev_m.group(1).lower()}"
+
+    # ── 5. Raw text tokens ────────────────────────────────────────────────────
+    all_text = f"{fname_stem} {extra_text}"
+    token_parts = re.split(r'[^a-z0-9]+', all_text.lower())
+    raw_text_tokens: List[str] = sorted({
+        p for p in token_parts
+        if p and p not in _EP_NOISE_TOKENS and len(p) >= 2
+    })[:60]  # cap to keep output bounded
+
+    return {
+        "plan_id": plan_id,
+        "source_file": source_file,
+        "print_tokens": print_tokens,
+        "route_hints": route_hints,
+        "phase_hints": phase_hints,
+        "date": extracted_date,
+        "revision": extracted_revision,
+        "raw_text_tokens": raw_text_tokens,
+    }
+
+
+def _build_engineering_plan_signals_for_session(session_id: str) -> List[Dict[str, Any]]:
+    """Load all engineering plans for a session and extract signals from each.
+    Non-fatal — returns [] on any error."""
+    if not session_id:
+        return []
+    try:
+        plans = _load_engineering_plan_index_for_session(session_id)
+        return [_extract_engineering_plan_signals(p) for p in plans]
+    except Exception:
+        return []
+
+
+# ---------------------------------------------------------------------------
+# Phase 3 — Ambiguity classification using plan signals
+# Diagnostic-only. Never changes selected_route_id or render_allowed.
+# ---------------------------------------------------------------------------
+
+# Render-block / gate reasons that indicate a chain/route ambiguity Phase 3 can assess.
+_PHASE3_AMBIGUOUS_REASONS: frozenset = frozenset({
+    "multiple_possible_chain_links",
+    "chain_gate:multiple_possible_chain_links",
+    "route_uniqueness_gate:multiple_billable_routes",
+    "node_resolution_gate:chain_gate_failed_first",
+})
+
+
+def _classify_group_ambiguity(
+    render_block_reasons: List[str],
+    normalized_group: Dict[str, Any],
+    validation: Dict[str, Any],
+    matched_route: Dict[str, Any],
+    plan_signals: List[Dict[str, Any]],
+) -> Tuple[str, Dict[str, Any]]:
+    """Classify the ambiguity status of a bore-log group using plan signals.
+
+    Returns (status, meta) where status is one of:
+      "not_ambiguous"           — no target chain/route-uniqueness reasons present
+      "not_applicable"          — ambiguous but no matched route to evaluate
+      "not_enough_plan_evidence"— ambiguous, but plan signals can't resolve it
+      "still_review_required"   — ambiguous, plan exists but doesn't confirm selection
+      "resolved_by_plan_signal" — plan's numeric tokens clearly confirm selected route
+
+    NEVER changes render_allowed, render_block_reasons, selected_route_id, or
+    any gate state. Purely diagnostic.
+    """
+    # ── 1. Detect target ambiguity reasons ───────────────────────────────────
+    block_reasons: List[str] = list(render_block_reasons or [])
+    detected: List[str] = [r for r in block_reasons if r in _PHASE3_AMBIGUOUS_REASONS]
+
+    # Also check validation gates directly — groups that were rescued by the
+    # ambiguous-chain render override still carry the chain failure in validation
+    # but their render_block_reasons may have been partially stripped.
+    chain_gate = dict((validation or {}).get("chain_gate") or {})
+    chain_gate_reason = str(chain_gate.get("reason") or "")
+    if (chain_gate_reason in _PHASE3_AMBIGUOUS_REASONS
+            and chain_gate_reason not in detected
+            and chain_gate.get("passed") is False):
+        detected.append(chain_gate_reason)
+
+    ru_gate = dict((validation or {}).get("route_uniqueness_gate") or {})
+    ru_gate_reason = str(ru_gate.get("reason") or "")
+    if (ru_gate_reason in _PHASE3_AMBIGUOUS_REASONS
+            and ru_gate_reason not in detected
+            and ru_gate.get("passed") is False):
+        detected.append(ru_gate_reason)
+
+    if not detected:
+        return "not_ambiguous", {
+            "ambiguous_reasons_detected": [],
+            "plan_signal_used": False,
+            "reason": "no_target_ambiguity_reasons_present",
+        }
+
+    # ── 2. Need a selected route to compare against ──────────────────────────
+    selected_route_id = str((matched_route or {}).get("route_id") or "").strip()
+    if not selected_route_id:
+        return "not_applicable", {
+            "ambiguous_reasons_detected": detected,
+            "plan_signal_used": False,
+            "reason": "no_selected_route_available",
+            "matched_plan_id": None,
+            "matched_plan_name": None,
+            "matched_tokens": [],
+            "candidate_route_ids_considered": [],
+            "selected_route_id_before": None,
+            "selected_route_id_after": None,
+            "route_changed": False,
+            "confidence_note": "cannot_evaluate_without_selected_route",
+        }
+
+    # ── 3. Require numeric print tokens in the group ──────────────────────────
+    numeric_group_tokens: set = {
+        str(t) for t in (normalized_group.get("print_tokens") or [])
+        if str(t).isdigit()
+    }
+
+    _no_evidence_base: Dict[str, Any] = {
+        "ambiguous_reasons_detected": detected,
+        "plan_signal_used": False,
+        "matched_plan_id": None,
+        "matched_plan_name": None,
+        "matched_tokens": [],
+        "candidate_route_ids_considered": [],
+        "selected_route_id_before": selected_route_id,
+        "selected_route_id_after": selected_route_id,
+        "route_changed": False,
+    }
+
+    if not plan_signals:
+        return "not_enough_plan_evidence", {
+            **_no_evidence_base,
+            "reason": "no_plan_signals_uploaded",
+            "confidence_note": "upload_engineering_plans_to_enable_resolution",
+        }
+
+    if not numeric_group_tokens:
+        return "not_enough_plan_evidence", {
+            **_no_evidence_base,
+            "reason": "no_numeric_print_tokens_in_group",
+            "confidence_note": "group_has_no_numeric_tokens_to_match_plans",
+        }
+
+    # ── 4. Find best plan with numeric token overlap → route hint ─────────────
+    best_plan_id:     Optional[str] = None
+    best_plan_name:   Optional[str] = None
+    best_matched_toks: List[str] = []
+    best_hint_routes:  List[str] = []
+
+    for signal in plan_signals:
+        plan_id = str(signal.get("plan_id") or "").strip()
         if not plan_id:
             continue
 
-        conf = 0.0
-        reasons: List[str] = []
+        plan_print = {str(t) for t in (signal.get("print_tokens") or [])}
+        plan_raw   = {str(t) for t in (signal.get("raw_text_tokens") or [])}
+        numeric_plan_toks: set = {t for t in (plan_print | plan_raw) if t.isdigit()}
 
-        # ── 1. Print-token overlap ────────────────────────────────────────────
-        plan_print_raw = str(plan.get("print_numbers") or "").strip()
-        explicit_plan_prints: set = set(_parse_print_tokens(plan_print_raw)) if plan_print_raw else set()
-
-        # Extract 1–2-digit numbers from original_filename as weak fallback hints.
-        # Filter to the plausible print-number range (1–30) to avoid serial numbers.
-        fname = str(plan.get("original_filename") or "").lower()
-        fname_digits: set = {t for t in re.findall(r"\b(\d{1,2})\b", fname) if 1 <= int(t) <= 30}
-        all_plan_prints: set = explicit_plan_prints | fname_digits
-
-        overlap = group_print_tokens & all_plan_prints
-        if overlap:
-            explicit_overlap = overlap & explicit_plan_prints
-            if explicit_overlap:
-                conf += 0.60
-                reasons.append(f"print_overlap:{sorted(explicit_overlap)}")
-            else:
-                conf += 0.20
-                reasons.append(f"filename_digit_overlap:{sorted(overlap)}")
-
-        # ── 2. Date proximity ─────────────────────────────────────────────────
-        plan_date_str = str(plan.get("plan_date") or "").strip()[:10]
-        if plan_date_str and group_date:
-            if plan_date_str == group_date:
-                conf += 0.30
-                reasons.append(f"date_exact:{plan_date_str}")
-            elif len(plan_date_str) == 10 and len(group_date) == 10:
-                try:
-                    pd_dt = datetime.strptime(plan_date_str, "%Y-%m-%d")
-                    gd_dt = datetime.strptime(group_date, "%Y-%m-%d")
-                    delta_days = abs((pd_dt - gd_dt).days)
-                    if delta_days <= 7:
-                        proximity_bonus = round(0.15 * max(0.0, 1.0 - delta_days / 7.0), 4)
-                        if proximity_bonus > 0:
-                            conf += proximity_bonus
-                            reasons.append(f"date_proximity:{delta_days}d:+{proximity_bonus}")
-                except Exception:
-                    pass
-
-        if conf <= 0.0:
+        overlap = numeric_group_tokens & numeric_plan_toks
+        if not overlap:
             continue
 
-        # Resolve which route_ids this plan's print tokens point to via the index.
+        # Resolve overlap tokens to route_ids via the print index.
         hint_route_ids: List[str] = []
-        for token in sorted(all_plan_prints):
+        for token in sorted(overlap):
             entry = CURRENT_PACKET_PRINT_SHEET_INDEX.get(token)
             if entry:
                 for rid in (entry.get("route_ids") or []):
                     if rid not in hint_route_ids:
                         hint_route_ids.append(rid)
 
-        plan_assoc[plan_id] = (min(1.0, conf), hint_route_ids, reasons)
-        if conf > best_conf:
-            best_conf = conf
-            best_plan_id = plan_id
-            best_plan_name = str(plan.get("original_filename") or "")
-            best_reasons = reasons
+        if not hint_route_ids:
+            continue  # tokens overlapped but don't resolve to any known route
+
+        if len(overlap) > len(best_matched_toks):
+            best_plan_id    = plan_id
+            best_plan_name  = str(signal.get("source_file") or "")
+            best_matched_toks = sorted(overlap)
+            best_hint_routes  = hint_route_ids
+
+    if not best_plan_id:
+        return "not_enough_plan_evidence", {
+            **_no_evidence_base,
+            "reason": "numeric_overlap_found_but_no_plan_resolves_to_route",
+            "confidence_note": "plan_tokens_do_not_map_to_known_route_ids",
+        }
+
+    # ── 5. Classify: does the plan confirm the selected route? ────────────────
+    plan_supports_selected = selected_route_id in best_hint_routes
+    single_hint_route      = len(best_hint_routes) == 1
+
+    meta: Dict[str, Any] = {
+        "ambiguous_reasons_detected":    detected,
+        "plan_signal_used":              True,
+        "matched_plan_id":               best_plan_id,
+        "matched_plan_name":             best_plan_name,
+        "matched_tokens":                best_matched_toks,
+        "candidate_route_ids_considered": best_hint_routes,
+        "selected_route_id_before":      selected_route_id,
+        "selected_route_id_after":       selected_route_id,  # Phase 3: never changes route
+        "route_changed":                 False,
+    }
+
+    if plan_supports_selected:
+        if single_hint_route:
+            confidence_note = "plan_uniquely_confirms_selected_route"
+        else:
+            confidence_note = "plan_supports_selected_route_among_multiple_candidates"
+        return "resolved_by_plan_signal", {
+            **meta,
+            "confidence_note": confidence_note,
+            "reason": "plan_numeric_tokens_confirm_selected_route",
+        }
+    else:
+        return "still_review_required", {
+            **meta,
+            "confidence_note": "plan_tokens_point_to_different_route_than_selected",
+            "reason": "plan_does_not_confirm_selected_route_manual_review_needed",
+        }
+
+
+# ---------------------------------------------------------------------------
+# Plan-aware ranking bias — Phase 2
+# Controlled, numeric-only, capped at +0.03 per entry.
+# Reorder gate: only allowed when top-2 gap ≤ 0.10 before bias.
+# Consumes already-extracted plan_signals (not raw plan records).
+# Never removes candidates. Never touches validation/render gates.
+# ---------------------------------------------------------------------------
+
+_PLAN_BIAS_MAX_BOOST: float = 0.03     # hard cap per ranking entry
+_PLAN_BIAS_REORDER_GAP: float = 0.10  # max top-2 gap that permits reorder
+
+
+def _plan_aware_ranking_boost(
+    rankings: List[Dict[str, Any]],
+    normalized_group: Dict[str, Any],
+    plan_signals: List[Dict[str, Any]],
+) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+    """Phase 2 controlled plan-aware ranking bias.
+
+    Eligibility rules:
+      - Overlap must be on STRICTLY NUMERIC tokens only (e.g. "18", "3").
+        Non-numeric words (phase, brenham, report, etc.) are ignored entirely.
+      - Overlap must appear in plan print_tokens OR plan raw_text_tokens.
+      - Route hint is resolved via CURRENT_PACKET_PRINT_SHEET_INDEX for each
+        overlapping token; only routes in the hint set receive a boost.
+
+    Scoring rules:
+      - Boost per entry = min(_PLAN_BIAS_MAX_BOOST, len(overlap) * 0.01).
+        So 1 shared token → +0.01, 2 → +0.02, 3+ → capped at +0.03.
+      - original_score and plan_adjusted_score are both written to the entry.
+      - combined_score / score are updated with the boosted value.
+
+    Reorder gate:
+      - Re-sort is only applied when top-2 gap ≤ _PLAN_BIAS_REORDER_GAP before bias.
+      - If only one candidate exists, diagnostics are still recorded but ordering
+        is irrelevant and re-sort is skipped.
+
+    Returns (rankings_possibly_reordered, plan_bias_meta).
+    plan_bias_meta.applied is True only when at least one entry received a boost.
+    """
+    _no_plans_meta: Dict[str, Any] = {
+        "applied": False,
+        "plans_checked": len(plan_signals),
+        "reason_if_not_applied": "no_rankings_or_no_plan_signals",
+    }
+    if not rankings or not plan_signals:
+        return rankings, _no_plans_meta
+
+    # ── Numeric token filter ─────────────────────────────────────────────────
+    group_print_tokens: set = {str(t) for t in (normalized_group.get("print_tokens") or [])}
+    numeric_group_tokens: set = {t for t in group_print_tokens if t.isdigit()}
+
+    if not numeric_group_tokens:
+        return rankings, {
+            "applied": False,
+            "plans_checked": len(plan_signals),
+            "reason_if_not_applied": "no_numeric_print_tokens_in_group",
+            "group_print_tokens": sorted(group_print_tokens),
+        }
+
+    # ── Build per-plan association map ────────────────────────────────────────
+    # plan_id -> (matched_numeric_tokens, hint_route_ids)
+    plan_assoc: Dict[str, Tuple[set, List[str]]] = {}
+
+    for signal in plan_signals:
+        plan_id = str(signal.get("plan_id") or "").strip()
+        if not plan_id:
+            continue
+
+        # Candidate token pool: plan print_tokens UNION raw_text_tokens,
+        # filtered to strictly numeric values.
+        plan_print = {str(t) for t in (signal.get("print_tokens") or [])}
+        plan_raw   = {str(t) for t in (signal.get("raw_text_tokens") or [])}
+        numeric_plan_tokens: set = {t for t in (plan_print | plan_raw) if t.isdigit()}
+
+        overlap = numeric_group_tokens & numeric_plan_tokens
+        if not overlap:
+            continue  # no numeric overlap → skip this plan
+
+        # Resolve route_ids for each overlapping token via the print index.
+        hint_route_ids: List[str] = []
+        for token in sorted(overlap):
+            entry = CURRENT_PACKET_PRINT_SHEET_INDEX.get(token)
+            if entry:
+                for rid in (entry.get("route_ids") or []):
+                    if rid not in hint_route_ids:
+                        hint_route_ids.append(rid)
+
+        if not hint_route_ids:
+            continue  # tokens matched but don't resolve to any known route
+
+        plan_assoc[plan_id] = (overlap, hint_route_ids)
 
     if not plan_assoc:
         return rankings, {
             "applied": False,
-            "reason": "no_plan_associated",
-            "plans_checked": len(eng_plans),
+            "plans_checked": len(plan_signals),
+            "reason_if_not_applied": "no_numeric_token_overlap_resolves_to_route",
+            "group_numeric_tokens": sorted(numeric_group_tokens),
         }
 
-    # ── Apply additive boost to each ranking entry ────────────────────────────
+    # ── Gap gate: measure top-2 spread before any boost ──────────────────────
+    top_score    = float(rankings[0].get("combined_score") or rankings[0].get("score") or 0.0)
+    second_score = float(rankings[1].get("combined_score") or rankings[1].get("score") or 0.0) \
+                   if len(rankings) > 1 else top_score
+    gap_before_bias  = round(top_score - second_score, 6)
+    allowed_to_reorder = len(rankings) > 1 and gap_before_bias <= _PLAN_BIAS_REORDER_GAP
+
+    # ── Collect best-plan metadata for diagnostics ────────────────────────────
+    all_matched_tokens: set = set()
+    best_plan_id:   Optional[str] = None
+    best_plan_name: Optional[str] = None
+    best_overlap_count = 0
+
+    for pid, (overlap_toks, _) in plan_assoc.items():
+        all_matched_tokens |= overlap_toks
+        if len(overlap_toks) > best_overlap_count:
+            best_overlap_count = len(overlap_toks)
+            best_plan_id = pid
+            for sig in plan_signals:
+                if str(sig.get("plan_id") or "") == pid:
+                    best_plan_name = str(sig.get("source_file") or "")
+                    break
+
+    # ── Apply boost ───────────────────────────────────────────────────────────
     boosted: List[Dict[str, Any]] = []
+    any_boosted = False
+
     for ranking in rankings:
         ranking = dict(ranking)
         route_id = str(ranking.get("route_id") or "").strip()
-        max_boost = 0.0
-        boost_reasons: List[str] = []
 
-        for plan_id, (p_conf, hint_route_ids, _) in plan_assoc.items():
+        route_boost = 0.0
+        entry_boost_reasons: List[str] = []
+
+        for pid, (overlap_toks, hint_route_ids) in plan_assoc.items():
             if route_id in hint_route_ids:
-                route_boost = round(p_conf * 0.10, 6)  # max +0.10 per plan
-                if route_boost > max_boost:
-                    max_boost = route_boost
-                    boost_reasons.append(f"plan:{plan_id[:8]}|conf:{p_conf:.2f}|boost:+{route_boost:.3f}")
+                # +0.01 per overlapping numeric token, capped at _PLAN_BIAS_MAX_BOOST
+                candidate_boost = round(
+                    min(_PLAN_BIAS_MAX_BOOST, len(overlap_toks) * 0.01), 6
+                )
+                if candidate_boost > route_boost:
+                    route_boost = candidate_boost
+                    entry_boost_reasons.append(
+                        f"plan:{pid[:8]}|tokens:{sorted(overlap_toks)}"
+                        f"|boost:+{candidate_boost:.3f}"
+                    )
 
-        if max_boost > 0:
+        if route_boost > 0:
             old_score = float(ranking.get("combined_score") or ranking.get("score") or 0.0)
-            new_score = round(min(1.0, old_score + max_boost), 6)
-            ranking["combined_score"] = new_score
-            ranking["score"] = new_score
+            new_score = round(min(1.0, old_score + route_boost), 6)
+            ranking["original_score"]      = round(old_score, 6)
+            ranking["plan_adjusted_score"] = new_score
+            ranking["combined_score"]      = new_score
+            ranking["score"]               = new_score
             ranking["plan_bias"] = {
                 "applied": True,
-                "boost": round(max_boost, 6),
-                "reasons": boost_reasons,
+                "boost":   round(route_boost, 6),
+                "reasons": entry_boost_reasons,
             }
+            any_boosted = True
         else:
             ranking.setdefault("plan_bias", {"applied": False})
 
         boosted.append(ranking)
 
-    # Re-sort so the anchor loop sees the plan-informed order.
-    boosted.sort(key=lambda item: (
-        -float(item.get("combined_score") or item.get("score") or 0.0),
-        float(item.get("length_gap_ft") or 0.0),
-        float(item.get("route_length_ft") or 0.0),
-        str(item.get("route_name") or ""),
-    ))
+    # ── Conditional re-sort ───────────────────────────────────────────────────
+    if allowed_to_reorder and any_boosted:
+        boosted.sort(key=lambda item: (
+            -float(item.get("combined_score") or item.get("score") or 0.0),
+            float(item.get("length_gap_ft") or 0.0),
+            float(item.get("route_length_ft") or 0.0),
+            str(item.get("route_name") or ""),
+        ))
 
     return boosted, {
-        "applied": True,
-        "best_plan_id": best_plan_id,
-        "best_plan_name": best_plan_name,
-        "best_plan_confidence": round(best_conf, 3),
-        "association_reasons": best_reasons,
-        "plans_checked": len(eng_plans),
-        "plans_associated": len(plan_assoc),
+        "applied":              any_boosted,
+        "best_plan_id":         best_plan_id,
+        "best_plan_name":       best_plan_name,
+        "matched_tokens":       sorted(all_matched_tokens),
+        "association_reasons":  [f"numeric_print_overlap:{sorted(all_matched_tokens)}"],
+        "plans_checked":        len(plan_signals),
+        "plans_associated":     len(plan_assoc),
+        "max_boost":            _PLAN_BIAS_MAX_BOOST,
+        "allowed_to_reorder":   allowed_to_reorder,
+        "top_score_gap_before_bias": gap_before_bias,
+        "reason_if_not_applied": None if any_boosted else "no_ranking_matched_hint_route_ids",
     }
 
 
@@ -5133,6 +5573,14 @@ def _rebuild_field_data_outputs() -> None:
             _eng_plans_for_session = _load_engineering_plan_index_for_session(_session_id_hint)
     except Exception:
         _eng_plans_for_session = []
+
+    # Extract and store structured plan signals in STATE for Phase 2 access.
+    # This is Phase 1 only — signals are NOT yet used in scoring.
+    try:
+        _plan_signals = [_extract_engineering_plan_signals(p) for p in _eng_plans_for_session]
+    except Exception:
+        _plan_signals = []
+    STATE["engineering_plan_signals"] = _plan_signals
 
     group_matches: List[Dict[str, Any]] = []
     matching_debug: List[Dict[str, Any]] = []
@@ -5174,6 +5622,8 @@ def _rebuild_field_data_outputs() -> None:
             "render_block_reasons": [],
             "plan_bias_applied": False,
             "plan_bias_meta": None,
+            "ambiguity_resolution_status": "not_applicable",
+            "ambiguity_resolution_meta": None,
         }
 
         # ── Diagnostic checkpoint B: strict candidate rankings ─────────────────
@@ -5212,14 +5662,16 @@ def _rebuild_field_data_outputs() -> None:
             pipeline_diag.append(_diag)
             continue
 
-        # ── Plan-aware ranking boost (pre-anchor) ─────────────────────────────
-        # Applies BEFORE the anchor loop so the plan-informed order affects which
-        # top-3 routes get anchored.  Never removes candidates; only re-weights.
-        if _eng_plans_for_session:
-            rankings, _pb_meta = _plan_aware_ranking_boost(rankings, normalized_group, _eng_plans_for_session)
+        # ── Phase 2: plan-aware ranking boost (pre-anchor pass 1) ────────────
+        # Uses already-extracted plan signals (numeric tokens only, cap +0.03).
+        # Reorder only if top-2 gap ≤ 0.10 before bias.
+        if _plan_signals:
+            rankings, _pb_meta = _plan_aware_ranking_boost(rankings, normalized_group, _plan_signals)
             if _pb_meta.get("applied"):
                 _diag["plan_bias_applied"] = True
                 _diag["plan_bias_meta"] = _pb_meta
+            else:
+                _diag["plan_bias_meta"] = _pb_meta  # always record diagnostics even when not applied
 
         anchored_hypotheses: List[Dict[str, Any]] = []
         for ranking in rankings[:3]:
@@ -5245,9 +5697,9 @@ def _rebuild_field_data_outputs() -> None:
                  "route_length_ft": round(float(r.get("route_length_ft", 0.0) or 0.0), 1)}
                 for r in rankings[:5]
             ]
-            # Apply plan-aware boost to fallback pass 2 rankings as well.
-            if _eng_plans_for_session:
-                rankings, _pb_meta2 = _plan_aware_ranking_boost(rankings, normalized_group, _eng_plans_for_session)
+            # ── Phase 2: plan-aware boost also applied to fallback pass 2 ──────
+            if _plan_signals:
+                rankings, _pb_meta2 = _plan_aware_ranking_boost(rankings, normalized_group, _plan_signals)
                 if _pb_meta2.get("applied") and not _diag.get("plan_bias_applied"):
                     _diag["plan_bias_applied"] = True
                     _diag["plan_bias_meta"] = _pb_meta2
@@ -5548,6 +6000,14 @@ def _rebuild_field_data_outputs() -> None:
         _diag["render_allowed"] = bool(render_allowed)
         _diag["render_block_reasons"] = list(render_block_reasons)
         _diag["stopped_at"] = None if bool(render_allowed) else "render_gate_blocked"
+
+        # ── Diagnostic checkpoint G: Phase 3 ambiguity classification ──────────
+        _amb_status, _amb_meta = _classify_group_ambiguity(
+            render_block_reasons, normalized_group, validation, matched_route, _plan_signals
+        )
+        _diag["ambiguity_resolution_status"] = _amb_status
+        _diag["ambiguity_resolution_meta"] = _amb_meta
+
         pipeline_diag.append(_diag)
 
     STATE["pipeline_diag"] = pipeline_diag
@@ -6424,31 +6884,53 @@ def debug_state(session_id: Optional[str] = None) -> JSONResponse:
 @app.get("/api/debug/pipeline-diag")
 def debug_pipeline_diag(session_id: Optional[str] = None, source_file: Optional[str] = None) -> JSONResponse:
     """Read-only diagnostic endpoint.  Returns per-group pipeline traces written by
-    _rebuild_field_data_outputs.
+    _rebuild_field_data_outputs, plus extracted engineering plan signals (Phase 1).
     - Pass session_id= to read a specific session (same behaviour as /api/current-state).
     - Omit session_id to scan ALL active sessions without minting a new one.
-    - Use source_file= to filter to a single source file in either mode."""
+    - Use source_file= to filter pipeline_diag to a single source file in either mode.
+    Engineering plan signals are always returned unfiltered."""
     sid = str(session_id or "").strip()
     if sid:
         # Exact-session path — identical to how every other endpoint works.
         with _session_scope(sid):
             diag: List[Dict[str, Any]] = list(STATE.get("pipeline_diag") or [])
+            # Read plan signals from STATE if already extracted; otherwise derive fresh.
+            plan_signals: List[Dict[str, Any]] = list(STATE.get("engineering_plan_signals") or [])
+            if not plan_signals:
+                plan_signals = _build_engineering_plan_signals_for_session(sid)
         if source_file:
             diag = [d for d in diag if str(d.get("source_file") or "").lower() == source_file.lower()]
-        return JSONResponse(content={"success": True, "session_id": sid, "pipeline_diag": diag})
+        return JSONResponse(content={
+            "success": True,
+            "session_id": sid,
+            "pipeline_diag": diag,
+            "engineering_plan_signal_count": len(plan_signals),
+            "engineering_plan_signals": plan_signals,
+        })
     else:
         # No session_id — scan all sessions already in memory. Never mints a new session.
         with _SESSION_LOCK:
             all_diag: List[Dict[str, Any]] = []
+            all_plan_signals: List[Dict[str, Any]] = []
             for stored_sid, sess in _SESSIONS.items():
                 for record in (sess.get("pipeline_diag") or []):
                     entry = dict(record)
                     entry["_session_id"] = stored_sid
                     all_diag.append(entry)
+                for signal in (sess.get("engineering_plan_signals") or []):
+                    entry = dict(signal)
+                    entry["_session_id"] = stored_sid
+                    all_plan_signals.append(entry)
         if source_file:
             all_diag = [d for d in all_diag
                         if str(d.get("source_file") or "").lower() == source_file.lower()]
-        return JSONResponse(content={"success": True, "session_id": None, "pipeline_diag": all_diag})
+        return JSONResponse(content={
+            "success": True,
+            "session_id": None,
+            "pipeline_diag": all_diag,
+            "engineering_plan_signal_count": len(all_plan_signals),
+            "engineering_plan_signals": all_plan_signals,
+        })
 
 
 @app.post("/api/report-bug")
@@ -6803,9 +7285,56 @@ async def get_station_photo_file(photo_id: str, session_id: Optional[str] = None
 
 ENGINEERING_PLAN_ROOT = UPLOADS_DIR / "engineering_plans"
 ENGINEERING_PLAN_INDEX_PATH = ENGINEERING_PLAN_ROOT / "index.json"
+
+NOVA_OVERRIDES_ROOT = UPLOADS_DIR / "nova_overrides"
+NOVA_OVERRIDES_INDEX_PATH = NOVA_OVERRIDES_ROOT / "index.json"
 ENGINEERING_PLAN_ALLOWED_EXTENSIONS = {".pdf", ".png", ".jpg", ".jpeg"}
 ENGINEERING_PLAN_MAX_FILES_PER_UPLOAD = 20
 
+
+# ── Nova override persistence helpers ────────────────────────────────────────
+
+def _ensure_nova_overrides_storage() -> None:
+    NOVA_OVERRIDES_ROOT.mkdir(parents=True, exist_ok=True)
+    if not NOVA_OVERRIDES_INDEX_PATH.exists():
+        NOVA_OVERRIDES_INDEX_PATH.write_text(json.dumps({"overrides": []}, indent=2), encoding="utf-8")
+
+
+def _load_nova_overrides_index() -> Dict[str, Any]:
+    _ensure_nova_overrides_storage()
+    try:
+        data = json.loads(NOVA_OVERRIDES_INDEX_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        data = {"overrides": []}
+    if not isinstance(data.get("overrides"), list):
+        data["overrides"] = []
+    return data
+
+
+def _save_nova_overrides_index(data: Dict[str, Any]) -> None:
+    _ensure_nova_overrides_storage()
+    temp_path = NOVA_OVERRIDES_INDEX_PATH.with_suffix(".tmp")
+    temp_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    temp_path.replace(NOVA_OVERRIDES_INDEX_PATH)
+
+
+def _clear_nova_overrides_for_session(session_id: str) -> None:
+    """Remove all Nova override records belonging to session_id. Non-fatal."""
+    if not str(session_id or "").strip():
+        return
+    try:
+        data = _load_nova_overrides_index()
+        sid = str(session_id).strip()
+        data["overrides"] = [
+            r for r in data["overrides"]
+            if str(r.get("session_id") or "").strip() != sid
+        ]
+        _save_nova_overrides_index(data)
+    except Exception:
+        pass  # non-fatal — workspace state resets even if disk cleanup fails
+
+
+# ── Engineering plan storage helpers ────────────────────────────��────────────
 
 def _ensure_engineering_plan_storage() -> None:
     ENGINEERING_PLAN_ROOT.mkdir(parents=True, exist_ok=True)
@@ -6942,6 +7471,16 @@ async def upload_engineering_plans(
 
     _save_engineering_plan_index(index_data)
 
+    # If bore logs are already loaded for this session, rebuild the pipeline so
+    # plan signals and plan-aware bias/ambiguity classification reflect the new plans.
+    # Non-fatal: a rebuild failure leaves bore log data intact.
+    with _session_scope(resolved_session_id):
+        if STATE.get("committed_rows"):
+            try:
+                _rebuild_field_data_outputs()
+            except Exception:
+                pass  # non-fatal — committed_rows and redline data remain unchanged
+
     all_session_plans = _load_engineering_plan_index_for_session(resolved_session_id)
 
     return _ok(
@@ -6957,6 +7496,120 @@ async def get_engineering_plans(session_id: Optional[str] = None) -> JSONRespons
     resolved_session_id = _resolve_session_id(session_id)
     plans = _load_engineering_plan_index_for_session(resolved_session_id)
     return _ok(session_id=resolved_session_id, engineering_plans=plans)
+
+
+# ── Nova override decision endpoints ─────────────────────────────────────────
+
+@app.get("/api/nova-overrides")
+def get_nova_overrides(session_id: Optional[str] = None) -> JSONResponse:
+    """Return all persisted Nova QA override decisions for this session."""
+    resolved_session_id = _resolve_session_id(session_id)
+    if not str(session_id or "").strip():
+        # No session provided — return empty rather than minting a new session.
+        return JSONResponse(content={"success": True, "session_id": None, "overrides": []})
+    try:
+        data = _load_nova_overrides_index()
+        sid = resolved_session_id.strip()
+        session_overrides = [
+            r for r in data.get("overrides", [])
+            if str(r.get("session_id") or "").strip() == sid
+        ]
+    except Exception:
+        session_overrides = []
+    return JSONResponse(content={
+        "success": True,
+        "session_id": resolved_session_id,
+        "overrides": session_overrides,
+    })
+
+
+@app.post("/api/nova-overrides")
+def save_nova_override(
+    payload: Dict[str, Any] = Body(...),
+    session_id: Optional[str] = None,
+) -> JSONResponse:
+    """Upsert one Nova QA override decision (matched by id + session_id)."""
+    body_session_id = payload.get("session_id") if isinstance(payload, dict) else None
+    resolved_session_id = _resolve_session_id(session_id or body_session_id)
+
+    issue_key = str(payload.get("issue_key") or "").strip()
+    decision  = str(payload.get("decision") or "").strip()
+    reason    = str(payload.get("reason") or "").strip()
+
+    if not issue_key:
+        return _err("issue_key is required.", session_id=resolved_session_id)
+    if not decision:
+        return _err("decision is required.", session_id=resolved_session_id)
+    if not reason:
+        return _err("reason is required.", session_id=resolved_session_id)
+    if decision not in ("Reviewed", "Accepted Override", "Needs Rework"):
+        return _err(f"Invalid decision value: {decision!r}.", session_id=resolved_session_id)
+
+    record: Dict[str, Any] = {
+        "id":          str(payload.get("id") or issue_key),
+        "session_id":  resolved_session_id,
+        "source_file": str(payload.get("source_file") or ""),
+        "group_idx":   payload.get("group_idx"),
+        "issue_key":   issue_key,
+        "decision":    decision,
+        "reason":      reason,
+        "created_by":  str(payload.get("created_by") or "unknown"),
+        "role":        str(payload.get("role") or ""),
+        "created_at":  str(payload.get("created_at") or ""),
+    }
+
+    try:
+        data = _load_nova_overrides_index()
+        overrides = data.get("overrides", [])
+        upserted = False
+        for i, r in enumerate(overrides):
+            if (
+                str(r.get("id") or "") == record["id"]
+                and str(r.get("session_id") or "").strip() == resolved_session_id.strip()
+            ):
+                overrides[i] = record
+                upserted = True
+                break
+        if not upserted:
+            overrides.append(record)
+        data["overrides"] = overrides
+        _save_nova_overrides_index(data)
+    except Exception as exc:
+        return _err(f"Failed to persist override: {exc}", session_id=resolved_session_id)
+
+    return JSONResponse(content={
+        "success": True,
+        "session_id": resolved_session_id,
+        "override": record,
+    })
+
+
+@app.delete("/api/nova-overrides/{issue_id}")
+def delete_nova_override(
+    issue_id: str,
+    session_id: Optional[str] = None,
+) -> JSONResponse:
+    """Remove one Nova override by id, scoped to the caller's session."""
+    resolved_session_id = _resolve_session_id(session_id)
+    try:
+        data = _load_nova_overrides_index()
+        before = len(data.get("overrides", []))
+        data["overrides"] = [
+            r for r in data.get("overrides", [])
+            if not (
+                str(r.get("id") or "") == issue_id
+                and str(r.get("session_id") or "").strip() == resolved_session_id.strip()
+            )
+        ]
+        _save_nova_overrides_index(data)
+        removed = before - len(data["overrides"])
+    except Exception as exc:
+        return _err(f"Failed to delete override: {exc}", session_id=resolved_session_id)
+    return JSONResponse(content={
+        "success": True,
+        "session_id": resolved_session_id,
+        "removed": removed,
+    })
 
 
 # ---------------------------------------------------------------------------

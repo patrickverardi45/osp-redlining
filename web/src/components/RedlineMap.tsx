@@ -37,6 +37,9 @@ import { clamp, formatNumber, cleanDisplayText, formatDisplayDate } from "@/lib/
 import { toMoney } from "@/lib/format/money";
 import { extractGps } from "@/lib/photos/exif";
 import { appendSessionId, appendSessionIdToForm, rememberSessionFromResponse } from "@/lib/session";
+import type { PipelineDiagEntry, EngineeringPlanSignal, QaFlagItem } from "@/lib/types/nova";
+import { buildNovaSummary } from "@/lib/nova/buildNovaSummary";
+import NovaDrawer from "@/components/NovaDrawer";
 
 const API_BASE =
   process.env.NEXT_PUBLIC_API_BASE?.replace(/\/+$/, "") ||
@@ -84,6 +87,15 @@ function cleanCoords(coords: number[][] | undefined | null): number[][] {
       Number.isFinite(pt[0]) &&
       Number.isFinite(pt[1])
   );
+}
+
+function normalizeSourceFileKey(value: unknown): string {
+  return String(value ?? "")
+    .trim()
+    .replace(/\\/g, "/")
+    .split("/")
+    .pop()
+    ?.toLowerCase() ?? "";
 }
 
 function getBoundsFromCoords(coords: number[][]): Bounds | null {
@@ -445,6 +457,23 @@ type RedlineMapProps = {
   mode?: "mobileWalk" | "default";
 };
 
+type NovaIssueFocusPayload = {
+  issueId: string;
+  source_file: string;
+  group_idx: number | null;
+  issue_key: string;
+  severity: QaFlagItem["severity"];
+  raw_reasons?: string[];
+  item: QaFlagItem;
+};
+
+type FocusedNovaIssue = {
+  sourceFile: string;
+  sourceKey: string;
+  layerId: string | null;
+  issueKey: string;
+};
+
 // V1 Photo GPS Mapping — client-only photo marker.
 // Not persisted: resets on refresh. See "Geotagged photos" panel in Section 3.
 // `reason` is set at upload time; the render-time bounds check may still hide
@@ -478,6 +507,10 @@ function OfficeRedlineMapInner({ mode = "default" }: RedlineMapProps) {
   ]);
   const [extraExceptionLabel, setExtraExceptionLabel] = useState("");
   const [extraExceptionAmount, setExtraExceptionAmount] = useState("");
+  const [extraExceptionNote, setExtraExceptionNote] = useState("");
+  // Nova Phase 1 — read-only job intelligence state. Never mutates other state.
+  const [pipelineDiag, setPipelineDiag] = useState<PipelineDiagEntry[]>([]);
+  const [engineeringPlanSignals, setEngineeringPlanSignals] = useState<EngineeringPlanSignal[]>([]);
   const [stationPhotos, setStationPhotos] = useState<StationPhoto[]>([]);
   const [stationPhotosLoading, setStationPhotosLoading] = useState(false);
   const [stationPhotoBusy, setStationPhotoBusy] = useState(false);
@@ -499,10 +532,14 @@ function OfficeRedlineMapInner({ mode = "default" }: RedlineMapProps) {
   const [showStations, setShowStations] = useState(false);
   // Evidence-layer visibility: Set of hidden layer ids. Empty = all visible.
   const [hiddenLayers, setHiddenLayers] = useState<Set<string>>(new Set());
+  const [focusedNovaIssue, setFocusedNovaIssue] = useState<FocusedNovaIssue | null>(null);
+  const [novaOverrideSourceKeys, setNovaOverrideSourceKeys] = useState<Set<string>>(new Set());
   const userHasAdjustedViewportRef = useRef(false);
   const lastAutoFitSignatureRef = useRef<string>("");
   const initialFitRafRef = useRef<number | null>(null);
   const initialFitTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const focusedNovaIssueTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const focusStatusTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const routeCoords = useMemo(() => cleanCoords(state?.route_coords || []), [state]);
   const redlineSegments = state?.redline_segments || [];
@@ -636,8 +673,10 @@ function OfficeRedlineMapInner({ mode = "default" }: RedlineMapProps) {
         id: segment.segment_id || `${segment.start_station || "start"}-${segment.end_station || "end"}`,
         path: buildWorldPath(cleanCoords(segment.coords), renderBounds, projectionMetrics),
         evidenceLayerId: (segment as { evidence_layer_id?: string }).evidence_layer_id ?? null,
+        sourceFile: segment.source_file ?? "",
+        sourceKey: normalizeSourceFileKey(segment.source_file),
       })),
-    [redlineSegments, renderBounds]
+    [redlineSegments, renderBounds, projectionMetrics]
   );
 
   // Derive source_file → evidence_layer_id from bore_log_summary so stations
@@ -647,6 +686,17 @@ function OfficeRedlineMapInner({ mode = "default" }: RedlineMapProps) {
     for (const entry of state?.bore_log_summary ?? []) {
       if (entry.source_file && entry.evidence_layer_id) {
         map.set(entry.source_file, entry.evidence_layer_id);
+      }
+    }
+    return map;
+  }, [state?.bore_log_summary]);
+
+  const sourceKeyToLayerId = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const entry of state?.bore_log_summary ?? []) {
+      const key = normalizeSourceFileKey(entry.source_file);
+      if (key && entry.evidence_layer_id) {
+        map.set(key, entry.evidence_layer_id);
       }
     }
     return map;
@@ -922,6 +972,13 @@ function OfficeRedlineMapInner({ mode = "default" }: RedlineMapProps) {
   const baseBillingTotal = useMemo(() => effectiveFootage * numericCostPerFoot, [effectiveFootage, numericCostPerFoot]);
   const finalBillingTotal = useMemo(() => baseBillingTotal + exceptionTotal, [baseBillingTotal, exceptionTotal]);
 
+  // Nova Phase 1 — deterministic read-only summary. Recomputes after any upload.
+  const novaSummary = useMemo(() => {
+    const hasKmz = (state?.kmz_reference?.line_features || []).length > 0;
+    const hasBoreLogs = (state?.bore_log_summary || []).length > 0;
+    return buildNovaSummary(pipelineDiag, engineeringPlanSignals, exceptions, exceptionTotal, hasKmz, hasBoreLogs);
+  }, [pipelineDiag, engineeringPlanSignals, exceptions, exceptionTotal, state?.kmz_reference?.line_features, state?.bore_log_summary]);
+
   const drillPathRows = useMemo(() => {
     type DrillPathRow = {
       id: string;
@@ -980,20 +1037,27 @@ function OfficeRedlineMapInner({ mode = "default" }: RedlineMapProps) {
 
     const nextExceptions: ExceptionCost[] = [
       ...exceptions,
-      { id: `custom-${Date.now()}`, label, amount: extraExceptionAmount.trim() },
+      {
+        id: `custom-${Date.now()}`,
+        label,
+        amount: extraExceptionAmount.trim(),
+        note: extraExceptionNote.trim() || undefined,
+        billing_relevant: true,
+      },
     ];
 
     setExceptions(nextExceptions);
     setExtraExceptionLabel("");
     setExtraExceptionAmount("");
-  }, [exceptions, extraExceptionLabel, extraExceptionAmount]);
+    setExtraExceptionNote("");
+  }, [exceptions, extraExceptionLabel, extraExceptionAmount, extraExceptionNote]);
 
   const handleRemoveException = useCallback((id: string) => {
     const nextExceptions: ExceptionCost[] = exceptions.filter((item) => item.id !== id);
     setExceptions(nextExceptions);
   }, [exceptions]);
 
-  const handleExceptionChange = useCallback((id: string, field: "label" | "amount", value: string) => {
+  const handleExceptionChange = useCallback((id: string, field: "label" | "amount" | "note", value: string) => {
     const nextExceptions: ExceptionCost[] = exceptions.map((item) =>
       item.id === id ? { ...item, [field]: value } : item
     );
@@ -1047,6 +1111,137 @@ function OfficeRedlineMapInner({ mode = "default" }: RedlineMapProps) {
     });
   }, []);
 
+  const focusMapCoords = useCallback((coords: number[][]): boolean => {
+    if (!renderBounds || !projectionMetrics || coords.length === 0) return false;
+    const rawBounds = getBoundsFromCoords(coords);
+    if (!rawBounds) return false;
+
+    const targetBounds = expandBounds(rawBounds, 0.22);
+    const topLeft = projectWorldPoint(targetBounds.maxLat, targetBounds.minLon, renderBounds, projectionMetrics);
+    const bottomRight = projectWorldPoint(targetBounds.minLat, targetBounds.maxLon, renderBounds, projectionMetrics);
+
+    const contentWidth = Math.max(1, Math.abs(bottomRight.x - topLeft.x));
+    const contentHeight = Math.max(1, Math.abs(bottomRight.y - topLeft.y));
+    const usableWidth = Math.max(1, projectionMetrics.worldWidth - FIT_PADDING * 2);
+    const usableHeight = Math.max(1, projectionMetrics.worldHeight - FIT_PADDING * 2);
+    const zoom = clamp(Math.min(usableWidth / contentWidth, usableHeight / contentHeight), MIN_ZOOM, MAX_ZOOM);
+    const centerWorldX = (topLeft.x + bottomRight.x) / 2;
+    const centerWorldY = (topLeft.y + bottomRight.y) / 2;
+
+    userHasAdjustedViewportRef.current = true;
+    setViewport({
+      zoom,
+      panX: projectionMetrics.worldWidth / 2 - centerWorldX * zoom,
+      panY: projectionMetrics.worldHeight / 2 - centerWorldY * zoom,
+    });
+    return true;
+  }, [projectionMetrics, renderBounds]);
+
+  const handleFocusNovaIssue = useCallback((issue: NovaIssueFocusPayload) => {
+    const sourceFile = String(issue.source_file || issue.item.sourceFile || "").trim();
+    const previousStatusText = statusText;
+    const previousStatusTone = statusTone;
+    if (focusStatusTimeoutRef.current) {
+      clearTimeout(focusStatusTimeoutRef.current);
+      focusStatusTimeoutRef.current = null;
+    }
+    setStatusTone("neutral");
+    setStatusText(`Focusing: ${sourceFile || "issue"}`);
+
+    const sourceKey = normalizeSourceFileKey(sourceFile);
+    if (!sourceKey) {
+      setStatusTone("warning");
+      setStatusText("No map geometry available for this issue.");
+      return;
+    }
+
+    const layerId = sourceKeyToLayerId.get(sourceKey) ?? null;
+    const matchingSegments = redlineSegments.filter((segment) => {
+      const segmentLayerId = (segment as { evidence_layer_id?: string }).evidence_layer_id ?? null;
+      return normalizeSourceFileKey(segment.source_file) === sourceKey || Boolean(layerId && segmentLayerId === layerId);
+    });
+    const matchingStationEntries = stationPoints
+      .map((point, idx) => ({ point, idx }))
+      .filter(({ point }) => {
+        const pointKey = normalizeSourceFileKey(point.source_file);
+        const pointLayerId = sourceKeyToLayerId.get(pointKey) ?? null;
+        return pointKey === sourceKey || Boolean(layerId && pointLayerId === layerId);
+      });
+
+    const focusCoords: number[][] = [];
+    for (const segment of matchingSegments) {
+      cleanCoords(segment.coords).forEach((pt) => focusCoords.push(pt));
+    }
+    for (const { point } of matchingStationEntries) {
+      if (typeof point.lat === "number" && typeof point.lon === "number") {
+        focusCoords.push([point.lat, point.lon]);
+      }
+    }
+
+    if (focusCoords.length === 0) {
+      setStatusTone("warning");
+      setStatusText("No map geometry available for this issue.");
+      return;
+    }
+
+    if (layerId) {
+      setHiddenLayers((prev) => {
+        if (!prev.has(layerId)) return prev;
+        const next = new Set(prev);
+        next.delete(layerId);
+        return next;
+      });
+    }
+
+    if (matchingStationEntries.length > 0) {
+      setShowStations(true);
+      setSelectedStationIndex(matchingStationEntries[0].idx);
+    } else {
+      setSelectedStationIndex(null);
+    }
+    setSelectedGpsPhotoId(null);
+    setFocusedNovaIssue({
+      sourceFile,
+      sourceKey,
+      layerId,
+      issueKey: issue.issue_key || issue.issueId,
+    });
+
+    if (focusedNovaIssueTimeoutRef.current) {
+      clearTimeout(focusedNovaIssueTimeoutRef.current);
+    }
+    focusedNovaIssueTimeoutRef.current = setTimeout(() => {
+      setFocusedNovaIssue(null);
+      focusedNovaIssueTimeoutRef.current = null;
+    }, 9000);
+
+    const didFocus = focusMapCoords(focusCoords);
+    mapContainerRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+    if (!didFocus) {
+      setStatusTone("success");
+      setStatusText(`Focusing: ${sourceFile}`);
+    }
+    focusStatusTimeoutRef.current = setTimeout(() => {
+      setStatusText(previousStatusText);
+      setStatusTone(previousStatusTone);
+      focusStatusTimeoutRef.current = null;
+    }, 1600);
+  }, [focusMapCoords, redlineSegments, sourceKeyToLayerId, stationPoints, statusText, statusTone]);
+
+  const handleNovaOverrideSourcesChange = useCallback((sourceFiles: string[]) => {
+    const next = new Set(
+      sourceFiles
+        .map((sourceFile) => normalizeSourceFileKey(sourceFile))
+        .filter((sourceKey) => sourceKey.length > 0)
+    );
+    setNovaOverrideSourceKeys((prev) => {
+      if (prev.size === next.size && Array.from(prev).every((sourceKey) => next.has(sourceKey))) {
+        return prev;
+      }
+      return next;
+    });
+  }, []);
+
   async function fetchState(message?: string) {
     if (message) {
       setStatusText(message);
@@ -1058,6 +1253,7 @@ function OfficeRedlineMapInner({ mode = "default" }: RedlineMapProps) {
       rememberSessionFromResponse(data);
       if (!response.ok || data.success === false) throw new Error(data.error || "Unable to load current state.");
       setState(data);
+      fetchPipelineDiag(); // Nova Phase 1 — non-blocking refresh
       if (data.warning) {
         setStatusText(String(data.warning));
         setStatusTone("warning");
@@ -1080,6 +1276,19 @@ function OfficeRedlineMapInner({ mode = "default" }: RedlineMapProps) {
     }
   }
 
+  // Nova Phase 1 — fire-and-forget. Non-fatal. Nova degrades gracefully if unavailable.
+  async function fetchPipelineDiag(): Promise<void> {
+    try {
+      const res = await fetch(appendSessionId(`${API_BASE}/api/debug/pipeline-diag`));
+      if (!res.ok) return;
+      const data = await res.json();
+      if (Array.isArray(data.pipeline_diag)) setPipelineDiag(data.pipeline_diag);
+      if (Array.isArray(data.engineering_plan_signals)) setEngineeringPlanSignals(data.engineering_plan_signals);
+    } catch {
+      // non-fatal — Nova works with whatever data it already has
+    }
+  }
+
   async function handleReset() {
     setBusy(true);
     try {
@@ -1088,6 +1297,9 @@ function OfficeRedlineMapInner({ mode = "default" }: RedlineMapProps) {
       rememberSessionFromResponse(data);
       if (!response.ok || data.success === false) throw new Error(data.error || "Reset failed.");
       setState(data);
+      // Nova Phase 1 — clear diagnostics on workspace reset
+      setPipelineDiag([]);
+      setEngineeringPlanSignals([]);
       setDidInitialFit(false);
       userHasAdjustedViewportRef.current = false;
       lastAutoFitSignatureRef.current = "";
@@ -1099,8 +1311,14 @@ function OfficeRedlineMapInner({ mode = "default" }: RedlineMapProps) {
         clearTimeout(initialFitTimeoutRef.current);
         initialFitTimeoutRef.current = null;
       }
+      if (focusStatusTimeoutRef.current) {
+        clearTimeout(focusStatusTimeoutRef.current);
+        focusStatusTimeoutRef.current = null;
+      }
       setSelectedStationIndex(null);
       setHoverStationIndex(null);
+      setFocusedNovaIssue(null);
+      setNovaOverrideSourceKeys(new Set());
       setStatusText(String(data.message || "Workspace reset successfully."));
       setStatusTone("success");
     } catch (error) {
@@ -1163,6 +1381,7 @@ function OfficeRedlineMapInner({ mode = "default" }: RedlineMapProps) {
       rememberSessionFromResponse(data);
       if (!response.ok || data.success === false) throw new Error(data.error || "Structured bore upload failed.");
       setState(data);
+      fetchPipelineDiag(); // Nova Phase 1 — refresh diagnostics after bore log upload
       setDidInitialFit(false);
       userHasAdjustedViewportRef.current = false;
       lastAutoFitSignatureRef.current = "";
@@ -1198,6 +1417,7 @@ function OfficeRedlineMapInner({ mode = "default" }: RedlineMapProps) {
       rememberSessionFromResponse(data);
       if (!response.ok || data.success === false) throw new Error(data.error || "Engineering plan upload failed.");
       setState((prev) => prev ? { ...prev, engineering_plans: data.engineering_plans ?? prev.engineering_plans } : prev);
+      fetchPipelineDiag(); // Nova Phase 1 — refresh plan signals after engineering plan upload
       setStatusText(String(data.message || "Engineering plans uploaded successfully."));
       setStatusTone("success");
     } catch (error) {
@@ -1453,6 +1673,19 @@ function OfficeRedlineMapInner({ mode = "default" }: RedlineMapProps) {
         clearTimeout(resizeTimeout);
       }
       observer.disconnect();
+    };
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (focusedNovaIssueTimeoutRef.current) {
+        clearTimeout(focusedNovaIssueTimeoutRef.current);
+        focusedNovaIssueTimeoutRef.current = null;
+      }
+      if (focusStatusTimeoutRef.current) {
+        clearTimeout(focusStatusTimeoutRef.current);
+        focusStatusTimeoutRef.current = null;
+      }
     };
   }, []);
 
@@ -2330,10 +2563,27 @@ function OfficeRedlineMapInner({ mode = "default" }: RedlineMapProps) {
                         if (!line.path) return null;
                         // Respect layer visibility toggle.
                         if (line.evidenceLayerId && hiddenLayers.has(line.evidenceLayerId)) return null;
+                        const isNovaFocused =
+                          Boolean(focusedNovaIssue) &&
+                          (line.sourceKey === focusedNovaIssue?.sourceKey ||
+                            Boolean(line.evidenceLayerId && line.evidenceLayerId === focusedNovaIssue?.layerId));
+                        const hasOverrideCue = novaOverrideSourceKeys.has(line.sourceKey);
                         const segStroke = getColorForLayer(line.evidenceLayerId);
                         const segCasing = getCasingForLayer(line.evidenceLayerId);
                         return (
                           <g key={line.id}>
+                            {hasOverrideCue && (
+                              <path
+                                d={line.path}
+                                fill="none"
+                                stroke="rgba(196, 181, 253, 0.48)"
+                                strokeWidth={7.1}
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                                vectorEffect="non-scaling-stroke"
+                                pointerEvents="none"
+                              />
+                            )}
                             <path
                               d={line.path}
                               fill="none"
@@ -2353,6 +2603,19 @@ function OfficeRedlineMapInner({ mode = "default" }: RedlineMapProps) {
                               vectorEffect="non-scaling-stroke"
                               filter="url(#redline-glow)"
                             />
+                            {isNovaFocused && (
+                              <path
+                                d={line.path}
+                                fill="none"
+                                stroke="#facc15"
+                                strokeWidth={8.5}
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                                strokeOpacity={0.9}
+                                vectorEffect="non-scaling-stroke"
+                                pointerEvents="none"
+                              />
+                            )}
                           </g>
                         );
                       })}
@@ -2363,10 +2626,17 @@ function OfficeRedlineMapInner({ mode = "default" }: RedlineMapProps) {
                         {projectedStations.map(({ idx, world, point }) => {
                           const isSelected = selectedStationIndex === idx;
                           const isHovered = hoverStationIndex === idx;
+                          const pointSourceKey = normalizeSourceFileKey(point.source_file);
+                          const pointLayerId = sourceKeyToLayerId.get(pointSourceKey) ?? null;
+                          const isNovaFocused =
+                            Boolean(focusedNovaIssue) &&
+                            (pointSourceKey === focusedNovaIssue?.sourceKey ||
+                              Boolean(pointLayerId && pointLayerId === focusedNovaIssue?.layerId));
+                          const hasOverrideCue = novaOverrideSourceKeys.has(pointSourceKey);
                           // Smaller, less dominant markers so redline colors read first.
                           // Base sizes tuned by zoom level; selected/hover add modest bump only.
                           const baseRadius = viewport.zoom < 4 ? 1.1 : viewport.zoom < 12 ? 0.95 : 0.8;
-                          const radius = isSelected ? baseRadius + 0.55 : isHovered ? baseRadius + 0.3 : baseRadius;
+                          const radius = isSelected ? baseRadius + 0.55 : isHovered || isNovaFocused ? baseRadius + 0.3 : baseRadius;
                           // Halo only on select/hover — no ambient white ring on idle markers.
                           const halo = isSelected ? radius + 2.2 : radius + 1.4;
                           const showLabel = visibleLabelIndices.has(idx);
@@ -2386,12 +2656,24 @@ function OfficeRedlineMapInner({ mode = "default" }: RedlineMapProps) {
                                 setSelectedStationIndex(idx);
                               }}
                             >
-                              {(isSelected || isHovered) ? (
+                              {(isSelected || isHovered || isNovaFocused) ? (
                                 <circle
                                   cx={world.x}
                                   cy={world.y}
                                   r={halo}
-                                  fill={isSelected ? "rgba(250, 204, 21, 0.18)" : "rgba(255,255,255,0.10)"}
+                                  fill={isSelected || isNovaFocused ? "rgba(250, 204, 21, 0.18)" : "rgba(255,255,255,0.10)"}
+                                  pointerEvents="none"
+                                />
+                              ) : null}
+                              {hasOverrideCue && !isSelected && !isNovaFocused ? (
+                                <circle
+                                  cx={world.x}
+                                  cy={world.y}
+                                  r={radius + 1.6}
+                                  fill="rgba(196, 181, 253, 0.12)"
+                                  stroke="rgba(196, 181, 253, 0.42)"
+                                  strokeWidth={0.45}
+                                  vectorEffect="non-scaling-stroke"
                                   pointerEvents="none"
                                 />
                               ) : null}
@@ -2400,8 +2682,8 @@ function OfficeRedlineMapInner({ mode = "default" }: RedlineMapProps) {
                                 cx={world.x}
                                 cy={world.y}
                                 r={radius}
-                                fill={isSelected ? "#facc15" : isHovered ? "#93c5fd" : "#1e293b"}
-                                stroke={isSelected ? "rgba(255,255,255,0.9)" : isHovered ? "rgba(255,255,255,0.75)" : "rgba(255,255,255,0.45)"}
+                                fill={isSelected || isNovaFocused ? "#facc15" : isHovered ? "#93c5fd" : "#1e293b"}
+                                stroke={isSelected || isNovaFocused ? "rgba(255,255,255,0.9)" : isHovered ? "rgba(255,255,255,0.75)" : "rgba(255,255,255,0.45)"}
                                 strokeWidth={0.6}
                                 vectorEffect="non-scaling-stroke"
                               />
@@ -3390,16 +3672,32 @@ function OfficeRedlineMapInner({ mode = "default" }: RedlineMapProps) {
                   >
                     <div style={{ display: "grid", gap: 10 }}>
                       {exceptions.map((item) => (
-                        <div key={item.id} style={{ display: "grid", gridTemplateColumns: "1.4fr 0.8fr auto", gap: 10, alignItems: "center" }}>
-                          <input value={item.label} onChange={(e) => handleExceptionChange(item.id, "label", e.target.value)} style={{ borderRadius: 12, border: "1px solid #cfd8e3", padding: "10px 12px", background: "#ffffff", fontSize: 14 }} />
-                          <input value={item.amount} onChange={(e) => handleExceptionChange(item.id, "amount", e.target.value)} placeholder="0.00" style={{ borderRadius: 12, border: "1px solid #cfd8e3", padding: "10px 12px", background: "#ffffff", fontSize: 14 }} />
-                          <button onClick={() => handleRemoveException(item.id)} style={buttonStyle("#ffffff", "#0f172a", "#000000", false)}>Remove</button>
+                        <div key={item.id} style={{ display: "grid", gap: 6 }}>
+                          <div style={{ display: "grid", gridTemplateColumns: "1.4fr 0.8fr auto", gap: 10, alignItems: "center" }}>
+                            <input value={item.label} onChange={(e) => handleExceptionChange(item.id, "label", e.target.value)} style={{ borderRadius: 12, border: "1px solid #cfd8e3", padding: "10px 12px", background: "#ffffff", fontSize: 14 }} />
+                            <input value={item.amount} onChange={(e) => handleExceptionChange(item.id, "amount", e.target.value)} placeholder="0.00" style={{ borderRadius: 12, border: "1px solid #cfd8e3", padding: "10px 12px", background: "#ffffff", fontSize: 14 }} />
+                            <button onClick={() => handleRemoveException(item.id)} style={buttonStyle("#ffffff", "#0f172a", "#000000", false)}>Remove</button>
+                          </div>
+                          <input
+                            value={item.note || ""}
+                            onChange={(e) => handleExceptionChange(item.id, "note", e.target.value)}
+                            placeholder="Note / context (optional)"
+                            style={{ borderRadius: 8, border: "1px solid #e2e8f0", padding: "6px 10px", background: "#f8fafc", fontSize: 12, color: "#475569" }}
+                          />
                         </div>
                       ))}
-                      <div style={{ display: "grid", gridTemplateColumns: "1.4fr 0.8fr auto", gap: 10, alignItems: "center" }}>
-                        <input value={extraExceptionLabel} onChange={(e) => setExtraExceptionLabel(e.target.value)} placeholder="Add exception label" style={{ borderRadius: 12, border: "1px solid #cfd8e3", padding: "10px 12px", background: "#ffffff", fontSize: 14 }} />
-                        <input value={extraExceptionAmount} onChange={(e) => setExtraExceptionAmount(e.target.value)} placeholder="0.00" style={{ borderRadius: 12, border: "1px solid #cfd8e3", padding: "10px 12px", background: "#ffffff", fontSize: 14 }} />
-                        <button onClick={handleAddException} style={buttonStyle("#0f172a", "#ffffff", "#000000", false)}>Add</button>
+                      <div style={{ display: "grid", gap: 6 }}>
+                        <div style={{ display: "grid", gridTemplateColumns: "1.4fr 0.8fr auto", gap: 10, alignItems: "center" }}>
+                          <input value={extraExceptionLabel} onChange={(e) => setExtraExceptionLabel(e.target.value)} placeholder="Add exception label" style={{ borderRadius: 12, border: "1px solid #cfd8e3", padding: "10px 12px", background: "#ffffff", fontSize: 14 }} />
+                          <input value={extraExceptionAmount} onChange={(e) => setExtraExceptionAmount(e.target.value)} placeholder="0.00" style={{ borderRadius: 12, border: "1px solid #cfd8e3", padding: "10px 12px", background: "#ffffff", fontSize: 14 }} />
+                          <button onClick={handleAddException} style={buttonStyle("#0f172a", "#ffffff", "#000000", false)}>Add</button>
+                        </div>
+                        <input
+                          value={extraExceptionNote}
+                          onChange={(e) => setExtraExceptionNote(e.target.value)}
+                          placeholder="Note / context (optional)"
+                          style={{ borderRadius: 8, border: "1px solid #e2e8f0", padding: "6px 10px", background: "#f8fafc", fontSize: 12, color: "#475569" }}
+                        />
                       </div>
                     </div>
                   </ShellCard>
@@ -3414,6 +3712,13 @@ function OfficeRedlineMapInner({ mode = "default" }: RedlineMapProps) {
                     <SmallRow label="Exception total" value={toMoney(exceptionTotal)} />
                     <SmallRow label="Final total" value={toMoney(finalBillingTotal)} />
                   </ShellCard>
+
+                  {/* Nova — compact launcher + slide-out panel */}
+                  <NovaDrawer
+                    summary={novaSummary}
+                    onFocusIssue={handleFocusNovaIssue}
+                    onOverrideSourcesChange={handleNovaOverrideSourcesChange}
+                  />
                 </div>
               </Section>
 
@@ -3557,7 +3862,12 @@ function OfficeRedlineMapInner({ mode = "default" }: RedlineMapProps) {
                   .filter(e => e.amount.trim() && Number.isFinite(Number.parseFloat(e.amount)))
                   .map(e => (
                     <tr key={e.id}>
-                      <td>{e.label}</td>
+                      <td>
+                        {e.label}
+                        {e.note && (
+                          <div style={{ fontSize: "0.82em", color: "#64748b", fontStyle: "italic", marginTop: 2 }}>{e.note}</div>
+                        )}
+                      </td>
                       <td>{toMoney(Number.parseFloat(e.amount))}</td>
                     </tr>
                   ))}
