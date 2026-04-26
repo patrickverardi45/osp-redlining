@@ -6,6 +6,7 @@ import io
 import json
 import math
 import os
+import re
 import shutil
 import threading
 import uuid
@@ -4961,9 +4962,177 @@ def _fallback_rankings_geometry_only(
     return rankings, filter_meta, all_rankings
 
 
+# ---------------------------------------------------------------------------
+# Plan-aware ranking bias
+# Applies a lightweight, additive score boost to route candidates that are
+# consistent with uploaded engineering plans.  Never removes candidates, never
+# overrides validation gates.  Boost is capped at +0.10 per ranking entry.
+# ---------------------------------------------------------------------------
+
+def _plan_aware_ranking_boost(
+    rankings: List[Dict[str, Any]],
+    normalized_group: Dict[str, Any],
+    eng_plans: List[Dict[str, Any]],
+) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+    """Return (boosted_rankings_resorted, plan_bias_meta).
+
+    Association criteria (any combination adds to confidence):
+      1. Print-token overlap  — plan.print_numbers vs group.print_tokens  (+0.60)
+         Filename-digit overlap (weak fallback)                           (+0.20)
+      2. Date exact match     — plan.plan_date[:10] == group date         (+0.30)
+         Date within 7 days   — linear decay to +0.15                    (+0.00..0.15)
+
+    Score boost per ranking = min(1.0, old_score + association_confidence * 0.10).
+    Rankings are re-sorted after boosting so the anchor loop sees the best order.
+    """
+    if not rankings or not eng_plans:
+        return rankings, {"applied": False, "reason": "no_rankings_or_no_plans"}
+
+    group_print_tokens: set = {str(t) for t in (normalized_group.get("print_tokens") or [])}
+    group_date: str = str(normalized_group.get("evidence_layer_date") or "").strip()[:10]
+
+    # Build per-plan association: plan_id -> (confidence, hint_route_ids)
+    plan_assoc: Dict[str, Tuple[float, List[str], List[str]]] = {}
+    best_plan_id: Optional[str] = None
+    best_plan_name: Optional[str] = None
+    best_conf = 0.0
+    best_reasons: List[str] = []
+
+    for plan in eng_plans:
+        plan_id = str(plan.get("plan_id") or "").strip()
+        if not plan_id:
+            continue
+
+        conf = 0.0
+        reasons: List[str] = []
+
+        # ── 1. Print-token overlap ────────────────────────────────────────────
+        plan_print_raw = str(plan.get("print_numbers") or "").strip()
+        explicit_plan_prints: set = set(_parse_print_tokens(plan_print_raw)) if plan_print_raw else set()
+
+        # Extract 1–2-digit numbers from original_filename as weak fallback hints.
+        # Filter to the plausible print-number range (1–30) to avoid serial numbers.
+        fname = str(plan.get("original_filename") or "").lower()
+        fname_digits: set = {t for t in re.findall(r"\b(\d{1,2})\b", fname) if 1 <= int(t) <= 30}
+        all_plan_prints: set = explicit_plan_prints | fname_digits
+
+        overlap = group_print_tokens & all_plan_prints
+        if overlap:
+            explicit_overlap = overlap & explicit_plan_prints
+            if explicit_overlap:
+                conf += 0.60
+                reasons.append(f"print_overlap:{sorted(explicit_overlap)}")
+            else:
+                conf += 0.20
+                reasons.append(f"filename_digit_overlap:{sorted(overlap)}")
+
+        # ── 2. Date proximity ─────────────────────────────────────────────────
+        plan_date_str = str(plan.get("plan_date") or "").strip()[:10]
+        if plan_date_str and group_date:
+            if plan_date_str == group_date:
+                conf += 0.30
+                reasons.append(f"date_exact:{plan_date_str}")
+            elif len(plan_date_str) == 10 and len(group_date) == 10:
+                try:
+                    pd_dt = datetime.strptime(plan_date_str, "%Y-%m-%d")
+                    gd_dt = datetime.strptime(group_date, "%Y-%m-%d")
+                    delta_days = abs((pd_dt - gd_dt).days)
+                    if delta_days <= 7:
+                        proximity_bonus = round(0.15 * max(0.0, 1.0 - delta_days / 7.0), 4)
+                        if proximity_bonus > 0:
+                            conf += proximity_bonus
+                            reasons.append(f"date_proximity:{delta_days}d:+{proximity_bonus}")
+                except Exception:
+                    pass
+
+        if conf <= 0.0:
+            continue
+
+        # Resolve which route_ids this plan's print tokens point to via the index.
+        hint_route_ids: List[str] = []
+        for token in sorted(all_plan_prints):
+            entry = CURRENT_PACKET_PRINT_SHEET_INDEX.get(token)
+            if entry:
+                for rid in (entry.get("route_ids") or []):
+                    if rid not in hint_route_ids:
+                        hint_route_ids.append(rid)
+
+        plan_assoc[plan_id] = (min(1.0, conf), hint_route_ids, reasons)
+        if conf > best_conf:
+            best_conf = conf
+            best_plan_id = plan_id
+            best_plan_name = str(plan.get("original_filename") or "")
+            best_reasons = reasons
+
+    if not plan_assoc:
+        return rankings, {
+            "applied": False,
+            "reason": "no_plan_associated",
+            "plans_checked": len(eng_plans),
+        }
+
+    # ── Apply additive boost to each ranking entry ────────────────────────────
+    boosted: List[Dict[str, Any]] = []
+    for ranking in rankings:
+        ranking = dict(ranking)
+        route_id = str(ranking.get("route_id") or "").strip()
+        max_boost = 0.0
+        boost_reasons: List[str] = []
+
+        for plan_id, (p_conf, hint_route_ids, _) in plan_assoc.items():
+            if route_id in hint_route_ids:
+                route_boost = round(p_conf * 0.10, 6)  # max +0.10 per plan
+                if route_boost > max_boost:
+                    max_boost = route_boost
+                    boost_reasons.append(f"plan:{plan_id[:8]}|conf:{p_conf:.2f}|boost:+{route_boost:.3f}")
+
+        if max_boost > 0:
+            old_score = float(ranking.get("combined_score") or ranking.get("score") or 0.0)
+            new_score = round(min(1.0, old_score + max_boost), 6)
+            ranking["combined_score"] = new_score
+            ranking["score"] = new_score
+            ranking["plan_bias"] = {
+                "applied": True,
+                "boost": round(max_boost, 6),
+                "reasons": boost_reasons,
+            }
+        else:
+            ranking.setdefault("plan_bias", {"applied": False})
+
+        boosted.append(ranking)
+
+    # Re-sort so the anchor loop sees the plan-informed order.
+    boosted.sort(key=lambda item: (
+        -float(item.get("combined_score") or item.get("score") or 0.0),
+        float(item.get("length_gap_ft") or 0.0),
+        float(item.get("route_length_ft") or 0.0),
+        str(item.get("route_name") or ""),
+    ))
+
+    return boosted, {
+        "applied": True,
+        "best_plan_id": best_plan_id,
+        "best_plan_name": best_plan_name,
+        "best_plan_confidence": round(best_conf, 3),
+        "association_reasons": best_reasons,
+        "plans_checked": len(eng_plans),
+        "plans_associated": len(plan_assoc),
+    }
+
+
 def _rebuild_field_data_outputs() -> None:
     rows = STATE.get("committed_rows", []) or []
     groups = _group_rows_for_matching(rows)
+
+    # Load engineering plans once for the whole rebuild pass.
+    # Used by _plan_aware_ranking_boost — non-fatal if unavailable.
+    _session_id_hint = str(STATE.get("_session_id_hint") or "").strip()
+    _eng_plans_for_session: List[Dict[str, Any]] = []
+    try:
+        if _session_id_hint:
+            _eng_plans_for_session = _load_engineering_plan_index_for_session(_session_id_hint)
+    except Exception:
+        _eng_plans_for_session = []
 
     group_matches: List[Dict[str, Any]] = []
     matching_debug: List[Dict[str, Any]] = []
@@ -5003,6 +5172,8 @@ def _rebuild_field_data_outputs() -> None:
             "segments_zero_reason": None,
             "render_allowed": None,
             "render_block_reasons": [],
+            "plan_bias_applied": False,
+            "plan_bias_meta": None,
         }
 
         # ── Diagnostic checkpoint B: strict candidate rankings ─────────────────
@@ -5041,6 +5212,15 @@ def _rebuild_field_data_outputs() -> None:
             pipeline_diag.append(_diag)
             continue
 
+        # ── Plan-aware ranking boost (pre-anchor) ─────────────────────────────
+        # Applies BEFORE the anchor loop so the plan-informed order affects which
+        # top-3 routes get anchored.  Never removes candidates; only re-weights.
+        if _eng_plans_for_session:
+            rankings, _pb_meta = _plan_aware_ranking_boost(rankings, normalized_group, _eng_plans_for_session)
+            if _pb_meta.get("applied"):
+                _diag["plan_bias_applied"] = True
+                _diag["plan_bias_meta"] = _pb_meta
+
         anchored_hypotheses: List[Dict[str, Any]] = []
         for ranking in rankings[:3]:
             matched_route = _find_route_by_id(ranking.get("route_id"))
@@ -5065,6 +5245,12 @@ def _rebuild_field_data_outputs() -> None:
                  "route_length_ft": round(float(r.get("route_length_ft", 0.0) or 0.0), 1)}
                 for r in rankings[:5]
             ]
+            # Apply plan-aware boost to fallback pass 2 rankings as well.
+            if _eng_plans_for_session:
+                rankings, _pb_meta2 = _plan_aware_ranking_boost(rankings, normalized_group, _eng_plans_for_session)
+                if _pb_meta2.get("applied") and not _diag.get("plan_bias_applied"):
+                    _diag["plan_bias_applied"] = True
+                    _diag["plan_bias_meta"] = _pb_meta2
             for ranking in rankings[:3]:
                 matched_route = _find_route_by_id(ranking.get("route_id"))
                 if not matched_route:
