@@ -81,7 +81,25 @@ STATE: Dict[str, Any] = {
 }
 
 
+def _clear_engineering_plans_for_session(session_id: str) -> None:
+    """Remove all engineering plan index records belonging to session_id from the
+    disk-backed plan index.  Called by _reset_workspace_state so Clear Workspace
+    also purges plan uploads for the active session.  Non-fatal: swallows errors."""
+    if not session_id:
+        return
+    try:
+        index_data = _load_engineering_plan_index()
+        kept = [p for p in (index_data.get("plans") or [])
+                if not _engineering_plan_record_matches_session(p, session_id)]
+        index_data["plans"] = kept
+        _save_engineering_plan_index(index_data)
+    except Exception:
+        pass  # non-fatal — plans may linger but workspace is still reset
+
+
 def _reset_workspace_state() -> None:
+    # Purge this session's engineering plans from the disk index before wiping STATE.
+    _clear_engineering_plans_for_session(str(STATE.get("_session_id_hint") or "").strip())
     preserved_bug_reports = list(STATE.get("bug_reports", []) or [])
     STATE.clear()
     STATE.update(
@@ -4039,11 +4057,13 @@ def _build_redline_segments_for_group(
     total = float(chainage[-1])
     confidence, reason = _confidence_from_rankings(str(mapping.get("mode") or "absolute"), rankings)
 
-    # Compute evidence_layer_id for this group from the first row.
-    _seg_first = rows[0] if rows else {}
-    _seg_src = str(_seg_first.get("source_file") or "").strip().lower()
-    _seg_print = "|".join(sorted(_parse_print_tokens(_seg_first.get("print"))))
-    _seg_date = str(_seg_first.get("date") or "").strip().lower()
+    # Compute evidence_layer_id using the full row set — mirrors _bore_log_summary_from_rows()
+    # so the layer toggle key is consistent between bore_log_summary and redline_segments.
+    _seg_src = str(rows[0].get("source_file") if rows else "").strip().lower()
+    _seg_print_tokens = sorted({t for r in rows for t in _parse_print_tokens(r.get("print"))})
+    _seg_dates = sorted({str(r.get("date") or "").strip() for r in rows if str(r.get("date") or "").strip()})
+    _seg_print = "|".join(_seg_print_tokens)
+    _seg_date = _seg_dates[0].lower() if _seg_dates else ""
     _seg_layer_raw = f"{_seg_src}|{_seg_print}|{_seg_date}"
     _group_evidence_layer_id = hashlib.sha256(_seg_layer_raw.encode()).hexdigest()[:16]
 
@@ -4092,7 +4112,7 @@ def _build_redline_segments_for_group(
                     "reason": reason,
                     "route_selection_method": "independent_candidate_scoring",
                     "mapping_mode": mapping.get("mode"),
-                    "anchor_type": "print_filtered_route_pool" if filter_meta.get("applied") else ("print_included_in_group_scoring" if str(start_row.get("print") or "").strip() else "station_range_group_scoring"),
+                    "anchor_type": "ambiguous_print_fallback" if filter_meta.get("ambiguous_print_fallback") else ("print_filtered_route_pool" if filter_meta.get("applied") else ("print_included_in_group_scoring" if str(start_row.get("print") or "").strip() else "station_range_group_scoring")),
                     "print_present": bool(str(start_row.get("print") or "").strip()),
                     "route_name": matched_route.get("route_name", ""),
                     "route_length_ft": round(total, 2),
@@ -4915,17 +4935,110 @@ def _resolve_batch_route_ownership(group_matches: Sequence[Dict[str, Any]]) -> L
 
     return resolved_matches
 
+def _is_ambiguous_print_group(normalized_group: Dict[str, Any]) -> bool:
+    """Returns True when a bore-log group carries 3+ distinct print tokens.
+    Broad print spans make strict print-to-route filtering unreliable, so these
+    groups are eligible for the geometry-proximity fallback pass."""
+    return len(list(normalized_group.get("print_tokens") or [])) >= 3
+
+
+def _fallback_rankings_geometry_only(
+    group_rows: Sequence[Dict[str, Any]],
+    normalized_group: Dict[str, Any],
+) -> Tuple[List[Dict[str, Any]], Dict[str, Any], List[Dict[str, Any]]]:
+    """Geometry-proximity fallback for groups whose print hints are too broad.
+    Strips print_tokens so _build_candidate_pool_for_group uses the full route
+    catalog and relies on spatial/span scoring only.  The returned filter_meta
+    carries ambiguous_print_fallback=True so downstream code can mark segments.
+    Does NOT modify normalized_group (the original evidence_layer_id is preserved)."""
+    fallback_group = dict(normalized_group)
+    fallback_group["print_tokens"] = []          # bypass print filter — geometry only
+    rankings, filter_meta, all_rankings = _candidate_rankings_for_group_v2(group_rows, fallback_group)
+    filter_meta = dict(filter_meta)
+    filter_meta["ambiguous_print_fallback"] = True
+    filter_meta["original_print_tokens"] = list(normalized_group.get("print_tokens") or [])
+    filter_meta["fallback_reason"] = "ambiguous_print_hints_geometry_only"
+    return rankings, filter_meta, all_rankings
+
+
 def _rebuild_field_data_outputs() -> None:
     rows = STATE.get("committed_rows", []) or []
     groups = _group_rows_for_matching(rows)
 
     group_matches: List[Dict[str, Any]] = []
     matching_debug: List[Dict[str, Any]] = []
+    # Per-group pipeline diagnostics — written unconditionally so dropped groups are visible.
+    pipeline_diag: List[Dict[str, Any]] = []
 
     for group_idx, group in enumerate(groups):
         normalized_group = _normalize_bore_group(group, group_idx)
+
+        # ── Diagnostic checkpoint A: group normalisation ───────────────────────
+        _diag: Dict[str, Any] = {
+            "group_idx": group_idx,
+            "source_file": normalized_group.get("source_file"),
+            "row_count": normalized_group.get("row_count"),
+            "min_station_ft": normalized_group.get("min_station_ft"),
+            "max_station_ft": normalized_group.get("max_station_ft"),
+            "span_ft": normalized_group.get("span_ft"),
+            "print_tokens": list(normalized_group.get("print_tokens") or []),
+            "evidence_layer_id": normalized_group.get("evidence_layer_id"),
+            # filled in below
+            "strict_allowed_route_ids": None,
+            "catalog_size": len(STATE.get("route_catalog", []) or []),
+            "strict_candidate_count_after_filter": None,
+            "strict_candidate_count_after_span_gate": None,
+            "strict_top5": [],
+            "strict_rankings_empty": None,
+            "ambiguous_fallback_triggered": False,
+            "fallback_candidate_count": None,
+            "fallback_top5": [],
+            "fallback_rankings_empty": None,
+            "anchored_hypotheses_count": None,
+            "stopped_at": None,
+            "selected_route_id": None,
+            "selected_route_name": None,
+            "segments_builder_called": False,
+            "segments_returned": None,
+            "segments_zero_reason": None,
+            "render_allowed": None,
+            "render_block_reasons": [],
+        }
+
+        # ── Diagnostic checkpoint B: strict candidate rankings ─────────────────
         rankings, filter_meta, _all_rankings = _candidate_rankings_for_group_v2(group, normalized_group)
+        _diag["strict_allowed_route_ids"] = list(filter_meta.get("allowed_route_ids") or [])
+        _diag["strict_candidate_count_after_filter"] = len(list(filter_meta.get("allowed_route_ids") or [])) or None
+        _diag["strict_candidate_count_after_span_gate"] = len(rankings)
+        _diag["strict_rankings_empty"] = len(rankings) == 0
+        _diag["strict_top5"] = [
+            {"route_id": r.get("route_id"), "route_name": r.get("route_name"),
+             "score": round(float(r.get("score", 0.0) or 0.0), 4),
+             "route_length_ft": round(float(r.get("route_length_ft", 0.0) or 0.0), 1)}
+            for r in rankings[:5]
+        ]
+
+        # Fallback pass 1: no candidates survived strict print filtering.
+        # If the group spans 3+ prints, retry with geometry proximity only.
+        # Groups that already produced rankings are untouched.
+        _ambiguous_fallback_used = False
+        if not rankings and _is_ambiguous_print_group(normalized_group):
+            rankings, filter_meta, _all_rankings = _fallback_rankings_geometry_only(group, normalized_group)
+            _ambiguous_fallback_used = bool(rankings)
+            # ── Diagnostic checkpoint C: fallback pass 1 ──────────────────────
+            _diag["ambiguous_fallback_triggered"] = True
+            _diag["fallback_candidate_count"] = len(rankings)
+            _diag["fallback_rankings_empty"] = len(rankings) == 0
+            _diag["fallback_top5"] = [
+                {"route_id": r.get("route_id"), "route_name": r.get("route_name"),
+                 "score": round(float(r.get("score", 0.0) or 0.0), 4),
+                 "route_length_ft": round(float(r.get("route_length_ft", 0.0) or 0.0), 1)}
+                for r in rankings[:5]
+            ]
+
         if not rankings:
+            _diag["stopped_at"] = "no_rankings_after_all_passes"
+            pipeline_diag.append(_diag)
             continue
 
         anchored_hypotheses: List[Dict[str, Any]] = []
@@ -4936,7 +5049,34 @@ def _rebuild_field_data_outputs() -> None:
             anchored_hypotheses.append(_anchor_route_subsection(matched_route, normalized_group, ranking, filter_meta))
 
         anchored_hypotheses.sort(key=lambda item: (-float(item.get("combined_score", 0.0) or 0.0), -float(item.get("route_score", 0.0) or 0.0), str(item.get("route_name", ""))))
+
+        # Fallback pass 2: candidates existed but none anchored successfully.
+        # Only triggers if the geometry-only pass was not already attempted.
+        if not anchored_hypotheses and not _ambiguous_fallback_used and _is_ambiguous_print_group(normalized_group):
+            rankings, filter_meta, _all_rankings = _fallback_rankings_geometry_only(group, normalized_group)
+            _ambiguous_fallback_used = bool(rankings)
+            # ── Diagnostic checkpoint D: fallback pass 2 ──────────────────────
+            _diag["ambiguous_fallback_triggered"] = True
+            _diag["fallback_candidate_count"] = len(rankings)
+            _diag["fallback_rankings_empty"] = len(rankings) == 0
+            _diag["fallback_top5"] = [
+                {"route_id": r.get("route_id"), "route_name": r.get("route_name"),
+                 "score": round(float(r.get("score", 0.0) or 0.0), 4),
+                 "route_length_ft": round(float(r.get("route_length_ft", 0.0) or 0.0), 1)}
+                for r in rankings[:5]
+            ]
+            for ranking in rankings[:3]:
+                matched_route = _find_route_by_id(ranking.get("route_id"))
+                if not matched_route:
+                    continue
+                anchored_hypotheses.append(_anchor_route_subsection(matched_route, normalized_group, ranking, filter_meta))
+            anchored_hypotheses.sort(key=lambda item: (-float(item.get("combined_score", 0.0) or 0.0), -float(item.get("route_score", 0.0) or 0.0), str(item.get("route_name", ""))))
+
+        _diag["anchored_hypotheses_count"] = len(anchored_hypotheses)
+
         if not anchored_hypotheses:
+            _diag["stopped_at"] = "no_anchored_hypotheses"
+            pipeline_diag.append(_diag)
             continue
 
         selected_hypothesis, matched_route, selected_ranking, mapping, evaluated_hypotheses = _select_best_hypothesis_with_gate(
@@ -4965,8 +5105,23 @@ def _rebuild_field_data_outputs() -> None:
             evaluated_hypotheses,
         )
 
+        # ── Diagnostic checkpoint E: selected route ────────────────────────────
+        _diag["selected_route_id"] = matched_route.get("route_id") if matched_route else None
+        _diag["selected_route_name"] = matched_route.get("route_name") if matched_route else None
+        _diag["selected_route_length_ft"] = round(float((matched_route or {}).get("length_ft") or 0.0), 1)
+
         group_station_points, mapping = _build_station_points_for_group(group, matched_route, rankings, filter_meta, mapping)
+        _diag["segments_builder_called"] = True
         group_redline_segments = _build_redline_segments_for_group(group, matched_route, rankings, mapping, filter_meta)
+        _diag["segments_returned"] = len(group_redline_segments)
+        if len(group_redline_segments) == 0:
+            route_coords = (matched_route or {}).get("coords") or []
+            if len(route_coords) < 2:
+                _diag["segments_zero_reason"] = f"route_coords_lt_2 (got {len(route_coords)})"
+            elif len(group) < 2:
+                _diag["segments_zero_reason"] = f"group_rows_lt_2 (got {len(group)})"
+            else:
+                _diag["segments_zero_reason"] = "all_row_pairs_skipped_end_lte_start_or_clip_lt_2_coords"
 
         if authoritative_route_id:
             filtered_station_points: List[Dict[str, Any]] = []
@@ -5120,6 +5275,42 @@ def _rebuild_field_data_outputs() -> None:
                     "mode": "context_stable_preview_safe",
                 }
 
+        # ── Ambiguous-chain low-confidence review rescue ───────────────────────
+        # When segments were successfully built but the ONLY reasons blocking
+        # render are chain-ambiguity (multiple_possible_chain_links + its
+        # downstream node_resolution_gate and validation_status:fail), override
+        # to render as REVIEW REQUIRED / LOW CONFIDENCE instead of dropping the
+        # group entirely.  The segments appear on the map so the foreman can
+        # visually verify; they are NOT suppressed from billing (same behaviour
+        # as the existing context_stable_preview_safe soft-block path).
+        _AMBIGUOUS_CHAIN_REASONS: set = {
+            "multiple_possible_chain_links",
+            "chain_gate:multiple_possible_chain_links",
+            "node_resolution_gate:chain_gate_failed_first",
+            "chain_gate_failed_first",
+            "validation_status:fail",
+        }
+        if (
+            not render_allowed
+            and has_geometry_output
+            and str(chain_gate.get("reason") or "") == "multiple_possible_chain_links"
+            and len(render_block_reasons) > 0
+            and all(str(r) in _AMBIGUOUS_CHAIN_REASONS for r in render_block_reasons)
+        ):
+            render_allowed = True
+            render_mode = "ambiguous_chain_review_required"
+            validation["review_required"] = True
+            validation["confidence_override"] = "low"
+            validation["review_reason"] = "ambiguous_chain_rendered_for_review"
+            validation["preview_review_gate"] = {
+                "passed": True,
+                "reason": "ambiguous_chain_rendered_for_review",
+                "review_reasons": list(render_block_reasons),
+                "mode": "ambiguous_chain_review_required",
+            }
+            # render_block_reasons intentionally preserved so callers can see
+            # exactly why this group is flagged as low-confidence.
+
         validation["render_gate"] = {
             "render_allowed": bool(render_allowed),
             "block_reasons": list(render_block_reasons),
@@ -5166,6 +5357,14 @@ def _rebuild_field_data_outputs() -> None:
         )
 
         matching_debug.append(_build_matching_debug_record(normalized_group, filter_meta, rankings, anchored_hypotheses, selected_hypothesis, validation))
+
+        # ── Diagnostic checkpoint F: render outcome ────────────────────────────
+        _diag["render_allowed"] = bool(render_allowed)
+        _diag["render_block_reasons"] = list(render_block_reasons)
+        _diag["stopped_at"] = None if bool(render_allowed) else "render_gate_blocked"
+        pipeline_diag.append(_diag)
+
+    STATE["pipeline_diag"] = pipeline_diag
 
     group_matches = _apply_batch_level_conflict_resolution(group_matches)
     all_station_points = []
@@ -6034,6 +6233,36 @@ def debug_state(session_id: Optional[str] = None) -> JSONResponse:
     resolved_session_id = _resolve_session_id(session_id)
     with _session_scope(resolved_session_id):
         return _ok(session_id=resolved_session_id, **_summary_payload(include_debug=True))
+
+
+@app.get("/api/debug/pipeline-diag")
+def debug_pipeline_diag(session_id: Optional[str] = None, source_file: Optional[str] = None) -> JSONResponse:
+    """Read-only diagnostic endpoint.  Returns per-group pipeline traces written by
+    _rebuild_field_data_outputs.
+    - Pass session_id= to read a specific session (same behaviour as /api/current-state).
+    - Omit session_id to scan ALL active sessions without minting a new one.
+    - Use source_file= to filter to a single source file in either mode."""
+    sid = str(session_id or "").strip()
+    if sid:
+        # Exact-session path — identical to how every other endpoint works.
+        with _session_scope(sid):
+            diag: List[Dict[str, Any]] = list(STATE.get("pipeline_diag") or [])
+        if source_file:
+            diag = [d for d in diag if str(d.get("source_file") or "").lower() == source_file.lower()]
+        return JSONResponse(content={"success": True, "session_id": sid, "pipeline_diag": diag})
+    else:
+        # No session_id — scan all sessions already in memory. Never mints a new session.
+        with _SESSION_LOCK:
+            all_diag: List[Dict[str, Any]] = []
+            for stored_sid, sess in _SESSIONS.items():
+                for record in (sess.get("pipeline_diag") or []):
+                    entry = dict(record)
+                    entry["_session_id"] = stored_sid
+                    all_diag.append(entry)
+        if source_file:
+            all_diag = [d for d in all_diag
+                        if str(d.get("source_file") or "").lower() == source_file.lower()]
+        return JSONResponse(content={"success": True, "session_id": None, "pipeline_diag": all_diag})
 
 
 @app.post("/api/report-bug")
