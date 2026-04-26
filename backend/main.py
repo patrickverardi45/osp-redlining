@@ -7612,6 +7612,929 @@ def delete_nova_override(
     })
 
 
+# ── Nova Chat — deterministic read-only copilot ───────────────────────────────
+# Answers questions about the current job using session STATE + persisted overrides.
+# Phase 3.1: conversational context + natural prose answers + vague follow-up resolution.
+# No external API calls. No STATE mutation. No file writes.
+
+def _nc_short_file(source_file: str) -> str:
+    """Return just the filename portion of a source_file path."""
+    name = str(source_file or "")
+    for sep in ("/", "\\"):
+        if sep in name:
+            name = name.rsplit(sep, 1)[-1]
+    return name or str(source_file or "unknown")
+
+
+def _nc_intent(question: str) -> str:
+    """
+    Classify the question into one of six intents.
+    Priority order: source_file > override > plan > next_action > blocked_readiness > general.
+    """
+    q = question.lower()
+
+    # Source-file specific: match bore_log patterns or bare filenames mentioned.
+    if re.search(r"bore[_\s\-]?log[_\s\-]?\d+|bore_log\w+|[a-z0-9_]+\.(?:csv|xlsx|xls)", q):
+        return "source_file"
+
+    if any(k in q for k in [
+        "override", "overridden", "overrode", "reviewed", "rework",
+        "decision", "accepted override", "approve", "approved",
+    ]):
+        return "override"
+
+    if any(k in q for k in ["plan", "engineering plan", "design plan", "sheet", "signal"]):
+        return "plan"
+
+    if any(k in q for k in [
+        "next", "what to do", "what do i", "what should", "what need",
+        "action", "step", "before billing", "before closeout",
+    ]):
+        return "next_action"
+
+    if any(k in q for k in [
+        "block", "billing", "bill", "ready", "readiness", "closeout",
+        "why", "stop", "prevent", "issue", "problem", "can i", "status",
+        "what is wrong", "what's wrong",
+    ]):
+        return "blocked_readiness"
+
+    return "general"
+
+
+def _nc_is_vague_followup(question: str) -> bool:
+    """
+    Detect if the question is a vague follow-up that needs recent context to resolve.
+    Returns True for phrases like "what does that mean?", "how do I fix it?", "is that bad?"
+    """
+    q = question.lower().strip().rstrip("?.")
+
+    VAGUE_PATTERNS = [
+        "what does that mean", "what does this mean", "what do you mean",
+        "what does it mean",
+        "how do i fix it", "how do i fix that", "how to fix it", "how to fix that",
+        "how do i resolve it", "how do i resolve that",
+        "how do i deal with it", "how do i deal with that",
+        "what do i do about it", "what do i do about that",
+        "what do i do", "what should i do",
+        "is that bad", "is this bad", "should i worry", "how bad is that",
+        "explain that", "explain this", "explain it",
+        "can you explain", "tell me more", "more detail", "can you elaborate",
+        "what now", "and then what", "what next",
+        "why is that", "why does that happen", "what causes that",
+    ]
+    for pattern in VAGUE_PATTERNS:
+        if pattern in q:
+            return True
+
+    # Short questions (< 35 chars) containing vague pronouns but no specific filename
+    if len(q) < 35 and any(p in q.split() for p in ["that", "this", "it", "those", "these"]):
+        if not re.search(r"bore[_\s\-]?log[_\s\-]?\d+|[a-z0-9_]+\.(?:csv|xlsx|xls)", q):
+            return True
+
+    return False
+
+
+def _nc_infer_context(
+    recent_messages: List[Dict[str, Any]],
+    pipeline_diag: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """
+    Extract conversational context from recent chat history.
+    Returns {"source_file": str|None, "last_intent": str|None}.
+    Scans messages most-recent-first so the latest reference wins.
+    """
+    all_short = list(dict.fromkeys(
+        _nc_short_file(d.get("source_file") or "")
+        for d in pipeline_diag
+        if d.get("source_file")
+    ))
+
+    source_file: Optional[str] = None
+    last_intent: Optional[str] = None
+
+    for msg in reversed(recent_messages):
+        content = str(msg.get("content") or "").lower()
+        role    = str(msg.get("role") or "")
+
+        # Extract a referenced source file from either role's message.
+        if not source_file and all_short:
+            for fname in all_short:
+                fname_key    = re.sub(r"[_\-\s]", "", fname.lower()).replace(".csv", "").replace(".xlsx", "")
+                content_key  = re.sub(r"[_\-\s]", "", content)
+                if fname_key and fname_key in content_key:
+                    source_file = fname
+                    break
+            if not source_file:
+                m = re.search(r"bore[_\s\-]?log[_\s\-]?(\d+)", content)
+                if m:
+                    num = m.group(1)
+                    for fname in all_short:
+                        if num in fname:
+                            source_file = fname
+                            break
+
+        # Extract last intent from the most recent user message.
+        if not last_intent and role == "user":
+            candidate = _nc_intent(content)
+            if candidate != "general":
+                last_intent = candidate
+
+    return {"source_file": source_file, "last_intent": last_intent}
+
+
+def _nc_blocked_answer(
+    pipeline_diag: List[Dict[str, Any]],
+    overrides: List[Dict[str, Any]],
+) -> str:
+    stopped     = [d for d in pipeline_diag
+                   if d.get("stopped_at") and d.get("stopped_at") != "render_gate_blocked"]
+    blocked     = [d for d in pipeline_diag if not d.get("render_allowed", True)]
+    render_only = [d for d in blocked if d not in stopped]
+    rendered    = [d for d in pipeline_diag if d.get("render_allowed") is True]
+    rework      = [o for o in overrides if o.get("decision") == "Needs Rework"]
+
+    if not pipeline_diag:
+        return "Upload a KMZ and structured bore logs to generate job intelligence."
+
+    if not stopped and not blocked and not rework:
+        return (
+            f"No blocking issues — {len(rendered)} group(s) rendered successfully. "
+            "This job is ready for closeout review. "
+            "Verify billing footage and exceptions before closing out."
+        )
+
+    problem_files = list(dict.fromkeys(
+        _nc_short_file(d.get("source_file") or "")
+        for d in stopped + blocked
+    ))
+    n_files = len(problem_files)
+    n_groups = len(stopped) + len(render_only)
+
+    opening = (
+        f"This job isn't ready for billing review. "
+        f"{n_groups} group(s) across {n_files} file(s) didn't complete routing."
+    )
+
+    details: List[str] = []
+    _STOP_MAP = {
+        "no_rankings_after_all_passes":
+            "no matching route was found — station points may not align with any route in the KMZ",
+        "no_anchored_hypotheses":
+            "route alignment couldn't be confirmed — station spacing didn't match any candidate",
+    }
+    for d in (stopped + render_only)[:5]:
+        f        = _nc_short_file(d.get("source_file") or "")
+        sa       = d.get("stopped_at") or ""
+        blk_rsns = list(d.get("render_block_reasons") or [])
+        if sa and sa != "render_gate_blocked":
+            msg = _STOP_MAP.get(sa) or f"stopped at '{sa}'"
+            details.append(f"• {f}: {msg}.")
+        elif blk_rsns:
+            details.append(f"• {f}: blocked — {blk_rsns[0]}.")
+        else:
+            details.append(f"• {f}: blocked at render gate.")
+
+    rework_note = ""
+    if rework:
+        rework_note = (
+            f"\n{len(rework)} item(s) also marked 'Needs Rework' by a reviewer, "
+            "which keeps them blocked until addressed."
+        )
+
+    closing = (
+        "To move forward, either fix the bore log data and re-upload, "
+        "or record override decisions in the Nova panel for each blocked item."
+    )
+
+    return opening + "\n\n" + "\n".join(details) + rework_note + "\n\n" + closing
+
+
+def _nc_next_action_answer(
+    pipeline_diag: List[Dict[str, Any]],
+    overrides: List[Dict[str, Any]],
+    plan_signals: List[Dict[str, Any]],
+) -> str:
+    stopped      = [d for d in pipeline_diag
+                    if d.get("stopped_at") and d.get("stopped_at") != "render_gate_blocked"]
+    blocked      = [d for d in pipeline_diag if not d.get("render_allowed", True) and d not in stopped]
+    needs_review = [d for d in pipeline_diag
+                    if d.get("ambiguity_resolution_status") in
+                    ("still_review_required", "not_enough_plan_evidence")]
+    rework       = [o for o in overrides if o.get("decision") == "Needs Rework"]
+
+    if not pipeline_diag:
+        return "Upload a KMZ and structured bore logs first, then upload bore log files to see job intelligence."
+
+    actions: List[str] = []
+    for d in stopped[:3]:
+        f = _nc_short_file(d.get("source_file") or "")
+        actions.append(
+            f"Resolve the pipeline failure on {f} — confirm the station range aligns with a defined route in the KMZ."
+        )
+    for d in blocked[:3]:
+        f       = _nc_short_file(d.get("source_file") or "")
+        reasons = list(d.get("render_block_reasons") or [])
+        hint    = f" ({reasons[0]})" if reasons else ""
+        actions.append(f"Clear the render block on {f}{hint}.")
+    for o in rework[:2]:
+        f = _nc_short_file(o.get("source_file") or "")
+        actions.append(f"Rework {f} — {o.get('reason') or 'see override record'}.")
+    for d in needs_review[:2]:
+        f      = _nc_short_file(d.get("source_file") or "")
+        status = d.get("ambiguity_resolution_status") or ""
+        if status == "still_review_required":
+            actions.append(
+                f"Resolve the ambiguity for {f} — upload an engineering plan or manually confirm the route."
+            )
+        elif status == "not_enough_plan_evidence":
+            actions.append(f"Upload a matching engineering plan for {f} to resolve routing ambiguity.")
+
+    if not actions:
+        rendered_count = len([d for d in pipeline_diag if d.get("render_allowed") is True])
+        return (
+            f"No blocking actions — {rendered_count} group(s) rendered successfully. "
+            "Verify billing footage and exceptions, then proceed to closeout review."
+        )
+
+    lines = ["Here's what needs to happen before this job can move forward.", ""]
+    for a in actions[:5]:
+        lines.append(f"• {a}")
+    return "\n".join(lines)
+
+
+def _nc_match_source_file(
+    question_or_name: str,
+    pipeline_diag: List[Dict[str, Any]],
+) -> Tuple[Optional[str], List[Dict[str, Any]]]:
+    """
+    Find a source file in pipeline_diag that matches the given text.
+    Returns (matched_filename, matched_groups) or (None, []).
+    """
+    q = question_or_name.lower()
+    all_short = list(dict.fromkeys(
+        _nc_short_file(d.get("source_file") or "")
+        for d in pipeline_diag
+        if d.get("source_file")
+    ))
+
+    matched_file: Optional[str] = None
+    for fname in all_short:
+        fname_key = re.sub(r"[_\-\s]", "", fname.lower()).replace(".csv", "").replace(".xlsx", "")
+        q_key     = re.sub(r"[_\-\s]", "", q)
+        if fname_key and fname_key in q_key:
+            matched_file = fname
+            break
+
+    if not matched_file:
+        m = re.search(r"bore[_\s\-]?log[_\s\-]?(\d+)", q)
+        if m:
+            num = m.group(1)
+            for fname in all_short:
+                if num in fname:
+                    matched_file = fname
+                    break
+
+    if not matched_file:
+        return None, []
+
+    matched_groups = [
+        d for d in pipeline_diag
+        if _nc_short_file(d.get("source_file") or "").lower() == matched_file.lower()
+    ]
+    return matched_file, matched_groups
+
+
+def _nc_source_file_answer(
+    question: str,
+    pipeline_diag: List[Dict[str, Any]],
+    overrides: List[Dict[str, Any]],
+) -> str:
+    matched_file, matched_groups = _nc_match_source_file(question, pipeline_diag)
+
+    if not matched_file or not matched_groups:
+        all_short = list(dict.fromkeys(
+            _nc_short_file(d.get("source_file") or "")
+            for d in pipeline_diag if d.get("source_file")
+        ))
+        if all_short:
+            return (
+                "I couldn't find a matching file. "
+                f"Available files: {', '.join(all_short[:8])}. "
+                "Try asking about one by name."
+            )
+        return "Upload structured bore logs to get per-file job intelligence."
+
+    all_ok    = [d for d in matched_groups
+                 if d.get("render_allowed") is True and (d.get("segments_returned") is None or d.get("segments_returned") > 0)]
+    stopped   = [d for d in matched_groups
+                 if d.get("stopped_at") and d.get("stopped_at") != "render_gate_blocked"]
+    blk_only  = [d for d in matched_groups if d.get("render_allowed") is False and d not in stopped]
+    n_total   = len(matched_groups)
+    n_ok      = len(all_ok)
+
+    # Conversational opening
+    if n_ok == n_total:
+        opening = f"{matched_file} looks good — all {n_total} group(s) rendered successfully."
+        if any(d.get("plan_bias_applied") for d in matched_groups):
+            opening += " An engineering plan was used to help route one or more groups."
+    elif n_ok == 0:
+        opening = (
+            f"{matched_file} has {n_total} group(s), but none of them produced map geometry. "
+            "The file is currently fully blocked."
+        )
+    else:
+        opening = (
+            f"{matched_file} has {n_total} group(s). "
+            f"{n_ok} rendered successfully, but {n_total - n_ok} had issues."
+        )
+
+    parts: List[str] = [opening]
+
+    # Per-problem-group detail (prose, not bullets)
+    _STOP_MAP = {
+        "no_rankings_after_all_passes": (
+            "no matching route was found. "
+            "This usually means the station range doesn't align with any route in the KMZ design."
+        ),
+        "no_anchored_hypotheses": (
+            "route alignment couldn't be confirmed. "
+            "The engine couldn't find a confident match for the station spacing."
+        ),
+        "render_gate_blocked": "the render gate blocked it after routing.",
+    }
+
+    for d in (stopped + blk_only)[:3]:
+        sa        = d.get("stopped_at") or ""
+        row_count = d.get("row_count") or "?"
+        blk_rsns  = list(d.get("render_block_reasons") or [])
+        ambig     = d.get("ambiguity_resolution_status") or ""
+        ambig_m   = d.get("ambiguity_resolution_meta") or {}
+        plan_bias = d.get("plan_bias_applied", False)
+        gidx      = d.get("group_idx", "?")
+
+        if sa and sa != "render_gate_blocked":
+            msg = _STOP_MAP.get(sa) or f"stopped at '{sa}'."
+            detail = f"Group {gidx} ({row_count} rows) stopped because {msg}"
+        elif blk_rsns:
+            detail = f"Group {gidx} ({row_count} rows) was blocked — {blk_rsns[0]}."
+        else:
+            detail = f"Group {gidx} ({row_count} rows) was blocked at the render gate."
+
+        if plan_bias:
+            pb   = d.get("plan_bias_meta") or {}
+            brid = pb.get("boosted_route_id") or "?"
+            detail += f" An engineering plan boosted routing toward {brid}."
+        if ambig == "still_review_required":
+            detail += f" Route ambiguity still needs manual review. {ambig_m.get('reason') or ''}".rstrip()
+        elif ambig == "not_enough_plan_evidence":
+            detail += " Not enough plan evidence to auto-resolve — upload a matching engineering plan."
+        elif ambig == "resolved_by_plan_signal":
+            detail += " Ambiguity was resolved by a plan signal."
+
+        parts.append(detail)
+
+    # Overrides
+    file_ovrs = [
+        o for o in overrides
+        if _nc_short_file(o.get("source_file") or "").lower() == matched_file.lower()
+    ]
+    for o in file_ovrs:
+        decision = o.get("decision") or ""
+        reason   = o.get("reason") or ""
+        by       = o.get("created_by") or "a reviewer"
+        role     = o.get("role") or ""
+        label    = f"{by} ({role})" if role else by
+        ovr      = f"A '{decision}' override was recorded by {label}"
+        if reason:
+            ovr += f" — their note: \"{reason}.\""
+        ovr += " The original engine issue is still present; this is a human decision, not a technical fix."
+        parts.append(ovr)
+
+    # Action guidance for problem groups
+    if stopped or blk_only:
+        g         = (stopped + blk_only)[0]
+        sa        = g.get("stopped_at") or ""
+        blk_rsns  = list(g.get("render_block_reasons") or [])
+        act_lines = ["What to do next:", ""]
+
+        if sa == "no_rankings_after_all_passes":
+            act_lines += [
+                "• Check whether the station range overlaps a defined route in the KMZ.",
+                "• Upload a matching engineering plan — it gives the engine additional route evidence.",
+                "• If the data is acceptable as-is, record an override in the Nova panel with a reason.",
+            ]
+        elif sa == "no_anchored_hypotheses":
+            act_lines += [
+                "• Verify the station spacing is sequential and covers enough distance to confirm a route.",
+                "• Upload an engineering plan for this section if one exists.",
+                "• Record an override if this group is known to be acceptable.",
+            ]
+        elif blk_rsns:
+            act_lines += [
+                f"• Review the render block reason: {blk_rsns[0]}.",
+                "• Check whether another group is already using this route segment.",
+                "• Record an override with a reason if the data is correct and acceptable.",
+            ]
+        else:
+            act_lines += [
+                "• Review the pipeline data for this group.",
+                "• Correct the bore log and re-upload if the data is wrong.",
+                "• Record an override if the issue is known and acceptable.",
+            ]
+
+        parts.append("\n".join(act_lines))
+
+    return "\n\n".join(parts)
+
+
+# ── Follow-up answer sub-functions (Phase 3.1) ────────────────────────────────
+
+def _nc_followup_explain(
+    source_file: str,
+    file_groups: List[Dict[str, Any]],
+    file_overrides: List[Dict[str, Any]],
+) -> str:
+    """Plain-English explanation of what the issue with source_file actually means."""
+    stopped  = [g for g in file_groups
+                if g.get("stopped_at") and g.get("stopped_at") != "render_gate_blocked"]
+    blk_only = [g for g in file_groups if g.get("render_allowed") is False and g not in stopped]
+
+    if not stopped and not blk_only:
+        return (
+            f"There's actually nothing wrong with {source_file} — "
+            "all its groups rendered successfully. Nothing needs explaining here."
+        )
+
+    parts: List[str] = []
+    g = (stopped + blk_only)[0]
+    sa        = g.get("stopped_at") or ""
+    row_count = g.get("row_count") or "?"
+    blk_rsns  = list(g.get("render_block_reasons") or [])
+
+    if sa == "no_rankings_after_all_passes":
+        parts.append(
+            f"{source_file} has a group ({row_count} rows) that couldn't be matched to a route. "
+            "The pipeline searched every available route candidate and none were close enough to the "
+            "station points in that group. In practical terms, this means no drill segment was drawn "
+            "for it — it won't appear on the map and won't contribute to the billing footage."
+        )
+    elif sa == "no_anchored_hypotheses":
+        parts.append(
+            f"{source_file} has a group ({row_count} rows) where route alignment couldn't be confirmed. "
+            "The engine found some candidates but couldn't confidently align the station spacing to any of them. "
+            "Without that confirmation, no geometry is produced for this group."
+        )
+    elif blk_rsns:
+        parts.append(
+            f"{source_file} has a group ({row_count} rows) that was blocked by: {blk_rsns[0]}. "
+            "The pipeline found a route candidate but it failed a quality check before the final geometry was written."
+        )
+    else:
+        parts.append(
+            f"{source_file} has a group ({row_count} rows) that didn't make it through the pipeline. "
+            "Without completing routing, no map geometry or billing footage is produced for it."
+        )
+
+    if file_overrides:
+        o        = file_overrides[0]
+        decision = o.get("decision") or ""
+        by       = o.get("created_by") or "a reviewer"
+        role     = o.get("role") or ""
+        reason   = o.get("reason") or ""
+        label    = f"{by} ({role})" if role else by
+        parts.append(
+            f"Note: this issue has been recorded as '{decision}' by {label}"
+            + (f" — their note: \"{reason}.\"" if reason else ".")
+            + " The engine finding is still there; that's a human decision, not a fix."
+        )
+
+    return "\n\n".join(parts)
+
+
+def _nc_followup_fix(
+    source_file: str,
+    file_groups: List[Dict[str, Any]],
+    file_overrides: List[Dict[str, Any]],
+) -> str:
+    """Practical fix steps for the issue with source_file."""
+    stopped  = [g for g in file_groups
+                if g.get("stopped_at") and g.get("stopped_at") != "render_gate_blocked"]
+    blk_only = [g for g in file_groups if g.get("render_allowed") is False and g not in stopped]
+
+    if not stopped and not blk_only:
+        return (
+            f"Nothing needs fixing for {source_file} — all groups rendered successfully."
+        )
+
+    g = (stopped + blk_only)[0]
+    sa       = g.get("stopped_at") or ""
+    blk_rsns = list(g.get("render_block_reasons") or [])
+
+    bullets: List[str] = []
+    if sa == "no_rankings_after_all_passes":
+        bullets = [
+            f"Check that {source_file}'s station range actually overlaps one of the defined routes in the KMZ.",
+            "Confirm the print tokens in the file match the correct sheet numbers — a mismatch blocks route filtering.",
+            "Upload an engineering plan PDF for this section — it gives the engine additional route evidence that often breaks the tie.",
+            "If the data is correct and the group is acceptable, use 'Resolve / Override' in the Nova panel to document why.",
+        ]
+    elif sa == "no_anchored_hypotheses":
+        bullets = [
+            f"Check the station spacing in {source_file} — rows should have consistent, sequential station values.",
+            "Make sure the group covers enough distance (at least 2 rows with valid, distinct stations).",
+            "Upload an engineering plan if one exists — it can anchor the hypothesis even when spacing is marginal.",
+            "Record an override in Nova if this group is known to be acceptable.",
+        ]
+    elif blk_rsns:
+        bullets = [
+            f"Review the render block reason: {blk_rsns[0]}.",
+            "Check whether another group from this file or another file is already mapped to the same route segment.",
+            "If this bore is valid and the overlap is acceptable, record an override in Nova with a clear reason.",
+        ]
+    else:
+        bullets = [
+            f"Review the pipeline data for {source_file}.",
+            "Correct the bore log file and re-upload if the data is wrong.",
+            "Record an override in Nova if the issue is known and acceptable.",
+        ]
+
+    if file_overrides:
+        bullets.append("An override is already on file — review its reason and update if needed.")
+
+    lines = [f"Here's what to try for {source_file}:", ""]
+    for b in bullets:
+        lines.append(f"• {b}")
+    lines.append("")
+    lines.append(
+        "Either correct the source data or use 'Resolve / Override' to document the decision. "
+        "The original engine finding stays on record either way."
+    )
+    return "\n".join(lines)
+
+
+def _nc_followup_severity(
+    source_file: str,
+    file_groups: List[Dict[str, Any]],
+    file_overrides: List[Dict[str, Any]],
+) -> str:
+    """Assess how serious the issue is for source_file."""
+    stopped  = [g for g in file_groups
+                if g.get("stopped_at") and g.get("stopped_at") != "render_gate_blocked"]
+    blk_only = [g for g in file_groups if g.get("render_allowed") is False and g not in stopped]
+    all_ok   = [g for g in file_groups
+                if g.get("render_allowed") is True and
+                (g.get("segments_returned") is None or g.get("segments_returned") > 0)]
+    n_issue  = len(stopped) + len(blk_only)
+    n_ok     = len(all_ok)
+    n_total  = len(file_groups)
+
+    if not stopped and not blk_only:
+        return f"No — {source_file} is fine. All {n_total} group(s) rendered without issues."
+
+    if n_ok == 0:
+        severity = (
+            f"Yes, this is significant. None of the groups in {source_file} rendered successfully. "
+            "This file contributes no geometry to the map and no footage to billing right now."
+        )
+    elif n_issue == 1:
+        severity = (
+            f"It depends on what that group represents. {source_file} has {n_ok} group(s) that rendered fine, "
+            f"but 1 group with an issue. If that group covers real field work, "
+            "it won't be counted in billing. If it's a minor or incidental group, the impact may be small."
+        )
+    else:
+        severity = (
+            f"Yes, this needs attention. {source_file} has {n_issue} groups with issues out of {n_total} total — "
+            "a significant portion of this file isn't generating geometry."
+        )
+
+    parts = [severity]
+
+    if file_overrides:
+        o        = file_overrides[0]
+        decision = o.get("decision") or ""
+        parts.append(
+            f"A '{decision}' override is already on file for this, "
+            "but the engine issue is still present — the override is a human note, not a fix."
+        )
+    else:
+        parts.append("No override has been recorded for this file yet.")
+
+    return "\n\n".join(parts)
+
+
+def _nc_followup_answer(
+    question: str,
+    source_file: str,
+    pipeline_diag: List[Dict[str, Any]],
+    overrides: List[Dict[str, Any]],
+) -> str:
+    """
+    Answer a vague follow-up in context of the last-discussed source file.
+    Routes to explain / fix / severity based on follow-up type.
+    """
+    q = question.lower()
+
+    file_groups = [
+        d for d in pipeline_diag
+        if _nc_short_file(d.get("source_file") or "").lower() == source_file.lower()
+    ]
+    file_ovrs = [
+        o for o in overrides
+        if _nc_short_file(o.get("source_file") or "").lower() == source_file.lower()
+    ]
+
+    if not file_groups:
+        return (
+            f"I don't have group data for {source_file} in this session. "
+            "Try asking about it directly by name."
+        )
+
+    is_fix      = any(k in q for k in ["fix", "resolve", "do about", "do i do", "should i do", "deal with"])
+    is_severity = any(k in q for k in ["bad", "worry", "serious", "concern", "matter", "how bad"])
+
+    if is_fix:
+        return _nc_followup_fix(source_file, file_groups, file_ovrs)
+    if is_severity:
+        return _nc_followup_severity(source_file, file_groups, file_ovrs)
+    return _nc_followup_explain(source_file, file_groups, file_ovrs)
+
+
+def _nc_override_answer(
+    overrides: List[Dict[str, Any]],
+    pipeline_diag: List[Dict[str, Any]],
+) -> str:
+    if not overrides:
+        if not pipeline_diag:
+            return (
+                "No override decisions recorded yet. "
+                "Upload job data first, then use 'Resolve / Override' in the Nova panel to record decisions."
+            )
+        return (
+            "No overrides have been recorded for this session. "
+            "To create one, expand a QA flag in the Nova panel and click 'Resolve / Override'."
+        )
+
+    n      = len(overrides)
+    rework = [o for o in overrides if o.get("decision") == "Needs Rework"]
+
+    opening = (
+        f"{n} override decision{'s have' if n > 1 else ' has'} been recorded. "
+        "Keep in mind these are human decisions — the original engine findings remain on record."
+    )
+
+    lines: List[str] = [opening, ""]
+    for o in overrides:
+        f        = _nc_short_file(o.get("source_file") or "")
+        decision = o.get("decision") or "?"
+        reason   = o.get("reason") or ""
+        by       = o.get("created_by") or "reviewer"
+        role     = o.get("role") or ""
+        ts       = o.get("created_at") or ""
+        label    = f"{by} ({role})" if role else by
+        line     = f"• {f or 'unknown file'}: {decision} (by {label})"
+        if reason:
+            line += f" — \"{reason}\""
+        lines.append(line)
+
+    if rework:
+        lines.append(
+            f"\n{len(rework)} item(s) marked 'Needs Rework' block billing until resolved."
+        )
+
+    return "\n".join(lines)
+
+
+def _nc_plan_answer(
+    plan_signals: List[Dict[str, Any]],
+    pipeline_diag: List[Dict[str, Any]],
+) -> str:
+    if not plan_signals:
+        if not pipeline_diag:
+            return (
+                "Upload a KMZ and bore logs first, then upload engineering plan PDFs "
+                "to enable plan-assisted routing."
+            )
+        return (
+            "No engineering plan signals have been detected yet. "
+            "Upload engineering plan PDFs via the 'Upload Engineering Plan' option. "
+            "Plans help resolve ambiguous bore log routing by providing route and print-sheet evidence."
+        )
+
+    bias_groups    = [d for d in pipeline_diag if d.get("plan_bias_applied")]
+    ambig_resolved = [
+        d for d in pipeline_diag
+        if d.get("ambiguity_resolution_status") == "resolved_by_plan_signal"
+    ]
+
+    plan_files = list(dict.fromkeys(
+        _nc_short_file(s.get("source_file") or s.get("plan_id") or "")
+        for s in plan_signals
+        if s.get("source_file") or s.get("plan_id")
+    ))
+
+    n       = len(plan_signals)
+    opening = f"Yes — {n} engineering plan signal{'s are' if n > 1 else ' is'} loaded."
+    if plan_files:
+        opening += f" Plan file{'s' if len(plan_files) > 1 else ''}: {', '.join(plan_files[:6])}."
+
+    parts: List[str] = [opening]
+
+    if bias_groups:
+        bias_lines = [f"Plan bias was applied to {len(bias_groups)} routing group(s):"]
+        for d in bias_groups[:4]:
+            f    = _nc_short_file(d.get("source_file") or "")
+            pb   = d.get("plan_bias_meta") or {}
+            brid = pb.get("boosted_route_id") or "?"
+            bias_lines.append(f"  • {f}: routing boosted toward {brid}")
+        parts.append("\n".join(bias_lines))
+
+    if ambig_resolved:
+        parts.append(
+            f"Plan signals resolved ambiguity in {len(ambig_resolved)} group(s) "
+            "that would otherwise have needed manual review."
+        )
+
+    if not bias_groups and not ambig_resolved:
+        parts.append(
+            "The plans were loaded but didn't directly affect routing for any groups in this run."
+        )
+
+    return "\n\n".join(parts)
+
+
+def _nc_general_answer(
+    pipeline_diag: List[Dict[str, Any]],
+    plan_signals: List[Dict[str, Any]],
+    overrides: List[Dict[str, Any]],
+) -> str:
+    if not pipeline_diag and not plan_signals and not overrides:
+        return "Upload a KMZ and structured bore logs to generate job intelligence."
+
+    total         = len(pipeline_diag)
+    rendered      = len([d for d in pipeline_diag if d.get("render_allowed") is True])
+    blocked_count = len([d for d in pipeline_diag if not d.get("render_allowed", True)])
+    stopped_count = len([
+        d for d in pipeline_diag
+        if d.get("stopped_at") and d.get("stopped_at") != "render_gate_blocked"
+    ])
+    rework_count  = len([o for o in overrides if o.get("decision") == "Needs Rework"])
+    review_count  = len(overrides) - rework_count
+
+    if blocked_count > 0 or stopped_count > 0:
+        opening = (
+            f"This job has {total} group(s) — {rendered} rendered successfully, "
+            f"{blocked_count} are blocked, and {stopped_count} stopped early in the pipeline."
+        )
+    else:
+        opening = f"This job has {total} group(s) — all {rendered} rendered successfully."
+
+    parts: List[str] = [opening]
+
+    extras: List[str] = []
+    if plan_signals:
+        extras.append(f"{len(plan_signals)} engineering plan signal(s) loaded and active.")
+    if overrides:
+        extras.append(f"{review_count} override decision(s) reviewed, {rework_count} need rework.")
+    if extras:
+        parts.append(" ".join(extras))
+
+    if blocked_count > 0 or stopped_count > 0:
+        parts.append(
+            "Ask 'Why is this job blocked?' or 'What should I do next?' for specific guidance."
+        )
+    else:
+        parts.append("Verify billing footage and exceptions, then proceed to closeout review.")
+
+    return "\n\n".join(parts)
+
+
+def _nova_deterministic_answer(
+    question: str,
+    pipeline_diag: List[Dict[str, Any]],
+    plan_signals: List[Dict[str, Any]],
+    overrides: List[Dict[str, Any]],
+    recent_context: Optional[Dict[str, Any]] = None,
+) -> str:
+    """
+    Deterministic, read-only Nova answer builder.
+    Phase 3.1: accepts recent_context for vague follow-up resolution.
+    No external API calls. Grounded entirely in current session state.
+    """
+    if not question.strip():
+        return "Please enter a question to ask Nova."
+
+    if not pipeline_diag and not plan_signals and not overrides:
+        return "Upload a KMZ and structured bore logs to generate job intelligence."
+
+    ctx = recent_context or {}
+
+    # ── Vague follow-up resolution ────────────────────────────────────────────
+    if _nc_is_vague_followup(question):
+        ctx_file   = ctx.get("source_file")
+        ctx_intent = ctx.get("last_intent")
+
+        if ctx_file:
+            return _nc_followup_answer(question, ctx_file, pipeline_diag, overrides)
+
+        # No file context — try to route to general intent from context
+        q = question.lower()
+        if ctx_intent in ("blocked_readiness",) or any(k in q for k in ["fix", "resolve", "do"]):
+            return _nc_next_action_answer(pipeline_diag, overrides, plan_signals)
+        if ctx_intent == "next_action":
+            return _nc_next_action_answer(pipeline_diag, overrides, plan_signals)
+
+        return (
+            "I'm not sure which item you're referring to. "
+            "Try asking about a specific bore log by name, or use: "
+            "'Why is this job blocked?', 'What should I do next?', or 'Which items were overridden?'"
+        )
+
+    # ── Normal intent routing ──────────────────────────────────────────────────
+    intent = _nc_intent(question)
+
+    if intent == "source_file":
+        return _nc_source_file_answer(question, pipeline_diag, overrides)
+    if intent == "override":
+        return _nc_override_answer(overrides, pipeline_diag)
+    if intent == "plan":
+        return _nc_plan_answer(plan_signals, pipeline_diag)
+    if intent == "next_action":
+        return _nc_next_action_answer(pipeline_diag, overrides, plan_signals)
+    if intent == "blocked_readiness":
+        return _nc_blocked_answer(pipeline_diag, overrides)
+    return _nc_general_answer(pipeline_diag, plan_signals, overrides)
+
+
+@app.post("/api/nova-chat")
+def nova_chat(
+    payload: Dict[str, Any] = Body(...),
+    session_id: Optional[str] = None,
+) -> JSONResponse:
+    """
+    Read-only Nova copilot (Phase 3.1).
+    Deterministic answers using session STATE + persisted overrides.
+    Accepts recent_messages for conversational context.
+    Does NOT mutate STATE, overrides, or any job data.
+    """
+    body_session_id = payload.get("session_id") if isinstance(payload, dict) else None
+    resolved_session_id = _resolve_session_id(session_id or body_session_id)
+    question = str(payload.get("question") or "").strip()
+
+    if not question:
+        return _err("question is required.", session_id=resolved_session_id)
+    if len(question) > 2000:
+        return _err("question is too long (max 2000 characters).", session_id=resolved_session_id)
+
+    # Extract recent chat history for conversational context (max 6 messages).
+    raw_recent = payload.get("recent_messages") if isinstance(payload, dict) else None
+    recent_messages: List[Dict[str, Any]] = (
+        [
+            {"role": str(m.get("role") or ""), "content": str(m.get("content") or "")}
+            for m in (raw_recent or [])
+            if isinstance(m, dict)
+        ][-6:]
+    )
+
+    # Read session state — read-only. We exit _session_scope without mutating STATE.
+    with _session_scope(resolved_session_id):
+        pipeline_diag: List[Dict[str, Any]] = list(STATE.get("pipeline_diag") or [])
+        plan_signals: List[Dict[str, Any]]  = list(STATE.get("engineering_plan_signals") or [])
+
+    # Load persisted overrides for this session.
+    try:
+        overrides_data    = _load_nova_overrides_index()
+        sid               = resolved_session_id.strip()
+        session_overrides: List[Dict[str, Any]] = [
+            r for r in overrides_data.get("overrides", [])
+            if str(r.get("session_id") or "").strip() == sid
+        ]
+    except Exception:
+        session_overrides = []
+
+    # Infer conversational context from recent history.
+    recent_context = _nc_infer_context(recent_messages, pipeline_diag)
+
+    answer = _nova_deterministic_answer(
+        question, pipeline_diag, plan_signals, session_overrides, recent_context
+    )
+
+    return JSONResponse(content={
+        "success": True,
+        "session_id": resolved_session_id,
+        "answer": answer,
+        "used_context": {
+            "has_pipeline_diag":             bool(pipeline_diag),
+            "pipeline_group_count":          len(pipeline_diag),
+            "engineering_plan_signal_count": len(plan_signals),
+            "override_count":                len(session_overrides),
+            "context_file":                  recent_context.get("source_file"),
+            "context_intent":                recent_context.get("last_intent"),
+        },
+    })
+
+
 # ---------------------------------------------------------------------------
 # Walk connectivity test endpoint (temporary, no persistence).
 # Added as a minimal self-contained block at the bottom of the file so nothing

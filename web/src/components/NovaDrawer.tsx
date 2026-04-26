@@ -7,6 +7,7 @@
 
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import NovaSummaryCard from "@/components/NovaSummaryCard";
+import NovaAskPanel from "@/components/NovaAskPanel";
 import type { NovaSummary, QaFlagItem, QaFlagSeverity } from "@/lib/types/nova";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -326,6 +327,17 @@ export default function NovaDrawer({ summary, onFocusIssue, onOverrideSourcesCha
             onOverrideSourcesChange={onOverrideSourcesChange}
             hideHeader
           />
+
+          {/* ── Ask Nova divider ────────────────────────────────────────────── */}
+          <div
+            style={{
+              margin: "22px 0 18px",
+              borderTop: "1px solid #e2e8f0",
+            }}
+          />
+
+          {/* ── Ask Nova Q&A panel ──────────────────────────────────────────── */}
+          <NovaAskPanel />
         </div>
       </div>
     </>

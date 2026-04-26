@@ -40,6 +40,7 @@ import { appendSessionId, appendSessionIdToForm, rememberSessionFromResponse } f
 import type { PipelineDiagEntry, EngineeringPlanSignal, QaFlagItem } from "@/lib/types/nova";
 import { buildNovaSummary } from "@/lib/nova/buildNovaSummary";
 import NovaDrawer from "@/components/NovaDrawer";
+import CloseoutPacket from "@/components/CloseoutPacket";
 
 const API_BASE =
   process.env.NEXT_PUBLIC_API_BASE?.replace(/\/+$/, "") ||
@@ -3724,6 +3725,40 @@ function OfficeRedlineMapInner({ mode = "default" }: RedlineMapProps) {
 
               <Section title="6. Export / Print" subtitle="Opens a clean print-only report — use browser Save as PDF for a file.">
                 <div style={{ display: "grid", gap: 14 }}>
+                  <ShellCard
+                    title="Closeout Packet V1"
+                    description="Generate a structured closeout packet from existing job data — bore logs, QA flags, overrides, billing, and plan evidence. Preview in-browser, then Print / Save as PDF."
+                  >
+                    <CloseoutPacket
+                      activeJob={activeJob}
+                      state={state}
+                      selectedMatch={selectedMatch}
+                      effectiveFootage={effectiveFootage}
+                      numericCostPerFoot={numericCostPerFoot}
+                      baseBillingTotal={baseBillingTotal}
+                      exceptionTotal={exceptionTotal}
+                      finalBillingTotal={finalBillingTotal}
+                      exceptions={exceptions}
+                      drillPathRows={drillPathRows}
+                      novaSummary={novaSummary}
+                      pipelineDiag={pipelineDiag}
+                      engineeringPlanSignals={engineeringPlanSignals}
+                      hasDesign={hasDesign}
+                      hasBoreFiles={hasBoreFiles}
+                      hasGeneratedOutput={hasGeneratedOutput}
+                      notes={notes}
+                      stationPhotos={stationPhotos}
+                      geoTaggedPhotos={gpsPhotos.map((p) => ({
+                        id: p.id,
+                        filename: p.filename,
+                        lat: p.lat,
+                        lon: p.lon,
+                        reason: p.reason,
+                        addedAt: p.addedAt,
+                        previewUrl: p.previewUrl,
+                      }))}
+                    />
+                  </ShellCard>
                   <ShellCard
                     title="Print / export report"
                     description="Use browser print to create a clean printed report or Save as PDF from the browser print dialog."
