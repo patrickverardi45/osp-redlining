@@ -11,6 +11,8 @@ import type {
   KmzPolygonFeature,
   BackendState,
   StationPhoto,
+  EngineeringPlan,
+  BoreLogSummaryEntry,
   ExceptionCost,
   NoteTone,
   Bounds,
@@ -233,6 +235,50 @@ function kmzPolygonOpacity(feature: KmzPolygonFeature): number {
   return 0.038;
 }
 
+// ─── Evidence-layer color assignment ───────────────────────────────────────
+// Deterministic: same evidence_layer_id always maps to the same color.
+// Colors are chosen for high contrast on the dark map background.
+const EVIDENCE_LAYER_PALETTE = [
+  "rgba(255, 72,  72,  1)",   // 0 red
+  "rgba( 56, 189, 248, 1)",   // 1 sky-blue
+  "rgba(251, 146,  60, 1)",   // 2 orange
+  "rgba( 52, 211, 153, 1)",   // 3 emerald
+  "rgba(232,  70, 230, 1)",   // 4 magenta
+  "rgba(250, 204,  21, 1)",   // 5 yellow
+  "rgba(129, 140, 248, 1)",   // 6 indigo
+  "rgba( 34, 211, 238, 1)",   // 7 cyan
+];
+
+const EVIDENCE_LAYER_CASING_PALETTE = [
+  "rgba(18,  4,   6,  0.82)", // 0 red casing
+  "rgba( 4,  20,  32, 0.82)", // 1 sky-blue casing
+  "rgba(20,  10,  2,  0.82)", // 2 orange casing
+  "rgba( 2,  18,  12, 0.82)", // 3 emerald casing
+  "rgba(18,   2,  18, 0.82)", // 4 magenta casing
+  "rgba(18,  14,  2,  0.82)", // 5 yellow casing
+  "rgba( 6,   6,  22, 0.82)", // 6 indigo casing
+  "rgba( 2,  18,  20, 0.82)", // 7 cyan casing
+];
+
+function layerPaletteIndex(layerId: string | undefined | null): number {
+  if (!layerId) return 0;
+  // Simple djb2-style hash over the layer id characters.
+  let h = 5381;
+  for (let i = 0; i < layerId.length; i++) {
+    h = ((h << 5) + h) ^ layerId.charCodeAt(i);
+    h = h >>> 0; // keep unsigned 32-bit
+  }
+  return h % EVIDENCE_LAYER_PALETTE.length;
+}
+
+function getColorForLayer(layerId: string | undefined | null): string {
+  return EVIDENCE_LAYER_PALETTE[layerPaletteIndex(layerId)];
+}
+
+function getCasingForLayer(layerId: string | undefined | null): string {
+  return EVIDENCE_LAYER_CASING_PALETTE[layerPaletteIndex(layerId)];
+}
+
 function SummaryCard({ title, value, subtitle }: { title: string; value: string; subtitle: string }) {
   return (
     <div
@@ -435,6 +481,7 @@ function OfficeRedlineMapInner({ mode = "default" }: RedlineMapProps) {
   const [stationPhotos, setStationPhotos] = useState<StationPhoto[]>([]);
   const [stationPhotosLoading, setStationPhotosLoading] = useState(false);
   const [stationPhotoBusy, setStationPhotoBusy] = useState(false);
+  const [engPlansBusy, setEngPlansBusy] = useState(false);
   // V1 Photo GPS Mapping — client-only, resets on refresh.
   const [gpsPhotos, setGpsPhotos] = useState<GpsPhoto[]>([]);
   const [gpsPhotoBusy, setGpsPhotoBusy] = useState(false);
@@ -450,6 +497,8 @@ function OfficeRedlineMapInner({ mode = "default" }: RedlineMapProps) {
   const [selectedStationIndex, setSelectedStationIndex] = useState<number | null>(null);
   const [hoverStationIndex, setHoverStationIndex] = useState<number | null>(null);
   const [showStations, setShowStations] = useState(false);
+  // Evidence-layer visibility: Set of hidden layer ids. Empty = all visible.
+  const [hiddenLayers, setHiddenLayers] = useState<Set<string>>(new Set());
   const userHasAdjustedViewportRef = useRef(false);
   const lastAutoFitSignatureRef = useRef<string>("");
   const initialFitRafRef = useRef<number | null>(null);
@@ -586,15 +635,31 @@ function OfficeRedlineMapInner({ mode = "default" }: RedlineMapProps) {
       redlineSegments.map((segment) => ({
         id: segment.segment_id || `${segment.start_station || "start"}-${segment.end_station || "end"}`,
         path: buildWorldPath(cleanCoords(segment.coords), renderBounds, projectionMetrics),
+        evidenceLayerId: (segment as { evidence_layer_id?: string }).evidence_layer_id ?? null,
       })),
     [redlineSegments, renderBounds]
   );
+
+  // Derive source_file → evidence_layer_id from bore_log_summary so stations
+  // can be filtered by the same layer-visibility state as redline segments.
+  const sourceFileToLayerId = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const entry of state?.bore_log_summary ?? []) {
+      if (entry.source_file && entry.evidence_layer_id) {
+        map.set(entry.source_file, entry.evidence_layer_id);
+      }
+    }
+    return map;
+  }, [state?.bore_log_summary]);
 
   const projectedStations = useMemo(() => {
     if (!renderBounds || !projectionMetrics) return [] as Array<{ idx: number; point: StationPoint; world: ScreenPoint }>;
     return stationPoints
       .map((point, idx) => {
         if (typeof point.lat !== "number" || typeof point.lon !== "number") return null;
+        // Hide station when its evidence layer is toggled off.
+        const layerId = sourceFileToLayerId.get(String(point.source_file ?? "").trim());
+        if (layerId && hiddenLayers.has(layerId)) return null;
         return {
           idx,
           point,
@@ -602,7 +667,7 @@ function OfficeRedlineMapInner({ mode = "default" }: RedlineMapProps) {
         };
       })
       .filter((item): item is { idx: number; point: StationPoint; world: ScreenPoint } => Boolean(item));
-  }, [stationPoints, renderBounds, projectionMetrics]);
+  }, [stationPoints, renderBounds, projectionMetrics, sourceFileToLayerId, hiddenLayers]);
 
   // V1 Photo GPS Mapping — render-time projection.
   // Only photos with valid GPS AND lat/lon falling inside the current
@@ -1119,6 +1184,30 @@ function OfficeRedlineMapInner({ mode = "default" }: RedlineMapProps) {
     }
   }
 
+  async function handleEngineeringPlansUpload(files: FileList | null) {
+    if (!files || files.length === 0) return;
+    setEngPlansBusy(true);
+    setStatusText(`Uploading ${files.length} engineering plan file${files.length > 1 ? "s" : ""}...`);
+    setStatusTone("neutral");
+    try {
+      const form = new FormData();
+      appendSessionIdToForm(form);
+      Array.from(files).forEach((f) => form.append("files", f));
+      const response = await fetch(`${API_BASE}/api/upload-engineering-plans`, { method: "POST", body: form });
+      const data = await response.json();
+      rememberSessionFromResponse(data);
+      if (!response.ok || data.success === false) throw new Error(data.error || "Engineering plan upload failed.");
+      setState((prev) => prev ? { ...prev, engineering_plans: data.engineering_plans ?? prev.engineering_plans } : prev);
+      setStatusText(String(data.message || "Engineering plans uploaded successfully."));
+      setStatusTone("success");
+    } catch (error) {
+      setStatusText(error instanceof Error ? error.message : "Engineering plan upload failed.");
+      setStatusTone("error");
+    } finally {
+      setEngPlansBusy(false);
+    }
+  }
+
   async function submitBugNote() {
     if (!notes.trim()) return;
     setBusy(true);
@@ -1530,8 +1619,6 @@ function OfficeRedlineMapInner({ mode = "default" }: RedlineMapProps) {
     panStartRef.current = null;
   }
 
-  const redlineStroke = "rgba(255, 72, 72, 1)";
-  const redlineCasing = "rgba(18, 4, 6, 0.82)";
   const hasDesign = (kmzLineFeatures.length || kmzPolygonFeatures.length) > 0;
   const hasBoreFiles = (state?.loaded_field_data_files || 0) > 0;
   const hasGeneratedOutput = redlineSegments.length > 0 || stationPoints.length > 0;
@@ -1542,10 +1629,14 @@ function OfficeRedlineMapInner({ mode = "default" }: RedlineMapProps) {
         @media print {
           body {
             background: #ffffff !important;
+            margin: 0 !important;
+            padding: 0 !important;
           }
-          button, input[type="file"], textarea {
-            -webkit-print-color-adjust: exact;
-            print-color-adjust: exact;
+          .osp-workspace-main {
+            display: none !important;
+          }
+          #osp-print-report {
+            display: block !important;
           }
           .no-print {
             display: none !important;
@@ -1556,8 +1647,123 @@ function OfficeRedlineMapInner({ mode = "default" }: RedlineMapProps) {
             break-inside: avoid;
           }
         }
+        @media screen {
+          #osp-print-report {
+            display: none !important;
+          }
+        }
+        #osp-print-report {
+          font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+          color: #0f172a;
+          background: #ffffff;
+          padding: 32px 40px;
+          max-width: 960px;
+          margin: 0 auto;
+        }
+        #osp-print-report h1 {
+          font-size: 22px;
+          font-weight: 900;
+          margin: 0 0 4px 0;
+          letter-spacing: -0.4px;
+        }
+        #osp-print-report h2 {
+          font-size: 13px;
+          font-weight: 800;
+          text-transform: uppercase;
+          letter-spacing: 0.06em;
+          color: #475569;
+          margin: 20px 0 8px 0;
+          padding-bottom: 4px;
+          border-bottom: 1px solid #e2e8f0;
+        }
+        #osp-print-report .rpt-meta {
+          font-size: 12px;
+          color: #64748b;
+          margin-bottom: 16px;
+        }
+        #osp-print-report .rpt-kpi-row {
+          display: flex;
+          gap: 20px;
+          flex-wrap: wrap;
+          margin-bottom: 6px;
+        }
+        #osp-print-report .rpt-kpi {
+          background: #f8fafc;
+          border: 1px solid #e2e8f0;
+          border-radius: 8px;
+          padding: 10px 16px;
+          min-width: 140px;
+        }
+        #osp-print-report .rpt-kpi-label {
+          font-size: 10px;
+          font-weight: 700;
+          text-transform: uppercase;
+          letter-spacing: 0.08em;
+          color: #94a3b8;
+        }
+        #osp-print-report .rpt-kpi-value {
+          font-size: 18px;
+          font-weight: 800;
+          color: #0f172a;
+          margin-top: 2px;
+        }
+        #osp-print-report table {
+          width: 100%;
+          border-collapse: collapse;
+          font-size: 12px;
+          margin-bottom: 6px;
+        }
+        #osp-print-report th {
+          background: #f1f5f9;
+          text-align: left;
+          padding: 6px 10px;
+          font-weight: 700;
+          font-size: 11px;
+          text-transform: uppercase;
+          letter-spacing: 0.05em;
+          color: #475569;
+          border: 1px solid #e2e8f0;
+        }
+        #osp-print-report td {
+          padding: 6px 10px;
+          border: 1px solid #e2e8f0;
+          vertical-align: top;
+          line-height: 1.45;
+        }
+        #osp-print-report tr:nth-child(even) td {
+          background: #fafbfc;
+        }
+        #osp-print-report .rpt-total-row td {
+          font-weight: 800;
+          background: #f1f5f9 !important;
+          border-top: 2px solid #cbd5e1;
+        }
+        #osp-print-report .rpt-notes {
+          background: #fafbfc;
+          border: 1px solid #e2e8f0;
+          border-radius: 8px;
+          padding: 12px 16px;
+          font-size: 13px;
+          line-height: 1.6;
+          white-space: pre-wrap;
+          color: #334155;
+        }
+        #osp-print-report .rpt-footer {
+          margin-top: 28px;
+          padding-top: 12px;
+          border-top: 1px solid #e2e8f0;
+          font-size: 10px;
+          color: #94a3b8;
+          display: flex;
+          justify-content: space-between;
+        }
+        @media print {
+          #osp-print-report h2 { break-after: avoid; }
+          #osp-print-report table { break-inside: auto; }
+          #osp-print-report tr { break-inside: avoid; }
+        }
       `}</style>
-      <div style={{ maxWidth: 1520, margin: "0 auto", padding: 20 }}>
+      <div className="osp-workspace-main" style={{ maxWidth: 1520, margin: "0 auto", padding: 20 }}>
         <div style={{ display: "grid", gap: 18 }}>
           <div
             style={{
@@ -1663,6 +1869,89 @@ function OfficeRedlineMapInner({ mode = "default" }: RedlineMapProps) {
             </div>
           </Section>
 
+          {/* ─── Engineering Plans Evidence Upload ─────────────────────── */}
+          <Section
+            title="Job Evidence"
+            subtitle="Upload engineering plan PDFs or images for this session. Plans are scoped to your browser session and do not affect route matching or redline decisions."
+          >
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, alignItems: "start" }}>
+              {/* Upload card */}
+              <label style={{
+                display: "block",
+                border: "2px solid #000000",
+                borderRadius: 16,
+                padding: 16,
+                background: engPlansBusy ? "#f3f4f6" : "#ffffff",
+                cursor: engPlansBusy ? "not-allowed" : "pointer",
+                opacity: engPlansBusy ? 0.7 : 1,
+              }}>
+                <input
+                  type="file"
+                  accept=".pdf,.png,.jpg,.jpeg"
+                  multiple
+                  style={{ display: "none" }}
+                  disabled={engPlansBusy}
+                  onChange={(e) => {
+                    handleEngineeringPlansUpload(e.target.files);
+                    e.currentTarget.value = "";
+                  }}
+                />
+                <div style={{ fontWeight: 800, fontSize: 16 }}>Upload Engineering Plans</div>
+                <div style={{ marginTop: 6, fontSize: 13, color: "#64748b", lineHeight: 1.55 }}>
+                  PDF, PNG, JPG or JPEG. Multiple files allowed. Stored per session as job evidence only.
+                </div>
+                <div style={{ marginTop: 14, fontSize: 12, fontWeight: 700, color: (state?.engineering_plans?.length ?? 0) > 0 ? "#166534" : "#64748b" }}>
+                  {engPlansBusy
+                    ? "Uploading..."
+                    : (state?.engineering_plans?.length ?? 0) > 0
+                      ? `${state!.engineering_plans!.length} plan file${state!.engineering_plans!.length !== 1 ? "s" : ""} uploaded.`
+                      : "No engineering plans uploaded yet."}
+                </div>
+              </label>
+
+              {/* Plans list */}
+              <div style={{ border: "1px solid #dbe4ee", borderRadius: 16, background: "#fbfdff", padding: 16, minHeight: 120 }}>
+                <div style={{ fontWeight: 800, fontSize: 15, marginBottom: 10 }}>
+                  Engineering Plans
+                  {(state?.engineering_plans?.length ?? 0) > 0 && (
+                    <span style={{ marginLeft: 8, fontSize: 12, fontWeight: 600, color: "#64748b" }}>
+                      ({state!.engineering_plans!.length})
+                    </span>
+                  )}
+                </div>
+                {(state?.engineering_plans?.length ?? 0) === 0 ? (
+                  <div style={{ fontSize: 13, color: "#94a3b8" }}>No plans uploaded for this session.</div>
+                ) : (
+                  <div style={{ display: "grid", gap: 8 }}>
+                    {state!.engineering_plans!.map((plan: EngineeringPlan) => {
+                      const sizeKb = (plan.size_bytes / 1024).toFixed(1);
+                      const sizeMb = (plan.size_bytes / (1024 * 1024)).toFixed(2);
+                      const sizeLabel = plan.size_bytes >= 1024 * 1024 ? `${sizeMb} MB` : `${sizeKb} KB`;
+                      const uploadedDate = plan.uploaded_at
+                        ? new Date(plan.uploaded_at).toLocaleString(undefined, { dateStyle: "short", timeStyle: "short" })
+                        : "";
+                      const typeLabel = plan.file_type === "application/pdf"
+                        ? "PDF"
+                        : plan.file_type?.startsWith("image/")
+                          ? plan.file_type.split("/")[1]?.toUpperCase() ?? "Image"
+                          : plan.file_type ?? "";
+                      return (
+                        <div key={plan.plan_id} style={{ borderRadius: 10, border: "1px solid #e2e8f0", background: "#ffffff", padding: "10px 12px" }}>
+                          <div style={{ fontWeight: 700, fontSize: 13, color: "#0f172a", wordBreak: "break-all" }}>{plan.original_filename}</div>
+                          <div style={{ marginTop: 4, display: "flex", gap: 12, flexWrap: "wrap", fontSize: 12, color: "#64748b" }}>
+                            <span>{typeLabel}</span>
+                            <span>{sizeLabel}</span>
+                            {uploadedDate && <span>{uploadedDate}</span>}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </div>
+          </Section>
+
           <Section
             title="2. Actions"
             subtitle="Workspace controls and live backend facts. These controls use the existing execution flow exactly as-is."
@@ -1729,30 +2018,171 @@ function OfficeRedlineMapInner({ mode = "default" }: RedlineMapProps) {
             }
           >
             <div style={{ display: "grid", gap: 16 }}>
-              <div
-                ref={mapContainerRef}
-                style={{
-                  position: "relative",
-                  height: MAP_HEIGHT,
-                  borderRadius: 18,
-                  overflow: "hidden",
-                  background: "linear-gradient(180deg, #0b1a2a 0%, #060f1c 60%, #03080f 100%)",
-                  border: "1px solid #1f3a5e",
-                  cursor: boxZoom ? "crosshair" : isPanning ? "grabbing" : "grab",
-                  overscrollBehavior: "contain",
-                  touchAction: "none",
-                  userSelect: "none",
-                  boxShadow: "inset 0 1px 0 rgba(255,255,255,0.04)",
-                }}
-                onWheel={handleWheel}
-                onPointerDown={handlePointerDown}
-                onPointerMove={handlePointerMove}
-                onPointerUp={handlePointerUp}
-                onPointerCancel={handlePointerUp}
-                onPointerLeave={() => {
-                  if (!isPanning) setHoverStationIndex(null);
-                }}
-              >
+
+              {/* ─── Bore Log Layers panel ───────────────────────────── */}
+              {(state?.bore_log_summary?.length ?? 0) > 0 && (() => {
+                const layers = state!.bore_log_summary!;
+                const allVisible = layers.every((e) => !e.evidence_layer_id || !hiddenLayers.has(e.evidence_layer_id));
+                const allHidden  = layers.every((e) => e.evidence_layer_id && hiddenLayers.has(e.evidence_layer_id));
+                return (
+                  <div
+                    style={{
+                      border: "1px solid #dbe4ee",
+                      borderRadius: 14,
+                      background: "#ffffff",
+                      padding: "12px 16px",
+                    }}
+                  >
+                    {/* Header row */}
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 8, marginBottom: 10 }}>
+                      <div style={{ fontSize: 13, fontWeight: 800, color: "#0f172a" }}>
+                        Bore Log Layers
+                        <span style={{ marginLeft: 8, fontSize: 11, fontWeight: 600, color: "#64748b" }}>
+                          ({layers.filter((e) => !e.evidence_layer_id || !hiddenLayers.has(e.evidence_layer_id)).length} / {layers.length} visible)
+                        </span>
+                      </div>
+                      <div style={{ display: "flex", gap: 6 }}>
+                        <button
+                          type="button"
+                          disabled={allVisible}
+                          onClick={() => setHiddenLayers(new Set())}
+                          style={{
+                            padding: "4px 10px",
+                            fontSize: 12,
+                            fontWeight: 700,
+                            borderRadius: 8,
+                            border: "1px solid #dbe4ee",
+                            background: allVisible ? "#f8fafc" : "#ffffff",
+                            color: allVisible ? "#94a3b8" : "#0f172a",
+                            cursor: allVisible ? "default" : "pointer",
+                          }}
+                        >
+                          Show All
+                        </button>
+                        <button
+                          type="button"
+                          disabled={allHidden}
+                          onClick={() => {
+                            const ids = new Set(
+                              layers.map((e) => e.evidence_layer_id).filter(Boolean) as string[]
+                            );
+                            setHiddenLayers(ids);
+                            setSelectedStationIndex(null);
+                          }}
+                          style={{
+                            padding: "4px 10px",
+                            fontSize: 12,
+                            fontWeight: 700,
+                            borderRadius: 8,
+                            border: "1px solid #dbe4ee",
+                            background: allHidden ? "#f8fafc" : "#ffffff",
+                            color: allHidden ? "#94a3b8" : "#0f172a",
+                            cursor: allHidden ? "default" : "pointer",
+                          }}
+                        >
+                          Hide All
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Checkbox rows */}
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: "6px 20px" }}>
+                      {layers.map((entry) => {
+                        const lid = entry.evidence_layer_id ?? "";
+                        const isVisible = !lid || !hiddenLayers.has(lid);
+                        const shortName = entry.source_file.split(/[/\\]/).pop() ?? entry.source_file;
+                        const color = getColorForLayer(lid || null);
+                        return (
+                          <label
+                            key={lid || entry.source_file}
+                            style={{
+                              display: "flex",
+                              alignItems: "center",
+                              gap: 7,
+                              cursor: "pointer",
+                              userSelect: "none",
+                              opacity: isVisible ? 1 : 0.45,
+                            }}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={isVisible}
+                              onChange={() => {
+                                if (!lid) return;
+                                setHiddenLayers((prev) => {
+                                  const next = new Set(prev);
+                                  if (next.has(lid)) {
+                                    next.delete(lid);
+                                  } else {
+                                    next.add(lid);
+                                    // Close inspector if selected station belongs to this layer.
+                                    if (selectedStation) {
+                                      const selLid = sourceFileToLayerId.get(
+                                        String(selectedStation.source_file ?? "").trim()
+                                      );
+                                      if (selLid === lid) setSelectedStationIndex(null);
+                                    }
+                                  }
+                                  return next;
+                                });
+                              }}
+                              style={{ width: 14, height: 14, accentColor: color, cursor: "pointer", flexShrink: 0 }}
+                            />
+                            {/* Color swatch */}
+                            <span
+                              style={{
+                                display: "inline-block",
+                                width: 10,
+                                height: 10,
+                                borderRadius: "50%",
+                                background: color,
+                                flexShrink: 0,
+                              }}
+                            />
+                            <span style={{ fontSize: 12, fontWeight: 600, color: "#0f172a", maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                              {shortName}
+                            </span>
+                            {entry.dates?.[0] && (
+                              <span style={{ fontSize: 11, color: "#64748b" }}>
+                                {formatDisplayDate(entry.dates[0])}
+                              </span>
+                            )}
+                          </label>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* ─── Map + Inspector wrapper ─────────────────────────── */}
+              {/* Inspector is position:absolute so map container width    */}
+              {/* never changes — projection stays stable on station click. */}
+              <div style={{ position: "relative" }}>
+                <div
+                  ref={mapContainerRef}
+                  style={{
+                    position: "relative",
+                    height: MAP_HEIGHT,
+                    borderRadius: 18,
+                    overflow: "hidden",
+                    background: "linear-gradient(180deg, #0b1a2a 0%, #060f1c 60%, #03080f 100%)",
+                    border: "1px solid #1f3a5e",
+                    cursor: boxZoom ? "crosshair" : isPanning ? "grabbing" : "grab",
+                    overscrollBehavior: "contain",
+                    touchAction: "none",
+                    userSelect: "none",
+                    boxShadow: "inset 0 1px 0 rgba(255,255,255,0.04)",
+                  }}
+                  onWheel={handleWheel}
+                  onPointerDown={handlePointerDown}
+                  onPointerMove={handlePointerMove}
+                  onPointerUp={handlePointerUp}
+                  onPointerCancel={handlePointerUp}
+                  onPointerLeave={() => {
+                    if (!isPanning) setHoverStationIndex(null);
+                  }}
+                >
                 {renderBounds && projectionMetrics && allCoords.length > 0 ? (
                   <svg
                     viewBox={viewBoxToString(projectionMetrics, viewport)}
@@ -1896,13 +2326,18 @@ function OfficeRedlineMapInner({ mode = "default" }: RedlineMapProps) {
                     </g>
 
                     <g id="redline-layer">
-                      {redlinePaths.map((line) =>
-                        line.path ? (
+                      {redlinePaths.map((line) => {
+                        if (!line.path) return null;
+                        // Respect layer visibility toggle.
+                        if (line.evidenceLayerId && hiddenLayers.has(line.evidenceLayerId)) return null;
+                        const segStroke = getColorForLayer(line.evidenceLayerId);
+                        const segCasing = getCasingForLayer(line.evidenceLayerId);
+                        return (
                           <g key={line.id}>
                             <path
                               d={line.path}
                               fill="none"
-                              stroke={redlineCasing}
+                              stroke={segCasing}
                               strokeWidth={6.2}
                               strokeLinecap="round"
                               strokeLinejoin="round"
@@ -1911,7 +2346,7 @@ function OfficeRedlineMapInner({ mode = "default" }: RedlineMapProps) {
                             <path
                               d={line.path}
                               fill="none"
-                              stroke={redlineStroke}
+                              stroke={segStroke}
                               strokeWidth={4.35}
                               strokeLinecap="round"
                               strokeLinejoin="round"
@@ -1919,8 +2354,8 @@ function OfficeRedlineMapInner({ mode = "default" }: RedlineMapProps) {
                               filter="url(#redline-glow)"
                             />
                           </g>
-                        ) : null
-                      )}
+                        );
+                      })}
                     </g>
 
                     {showStations ? (
@@ -1928,9 +2363,12 @@ function OfficeRedlineMapInner({ mode = "default" }: RedlineMapProps) {
                         {projectedStations.map(({ idx, world, point }) => {
                           const isSelected = selectedStationIndex === idx;
                           const isHovered = hoverStationIndex === idx;
-                          const baseRadius = viewport.zoom < 4 ? 1.8 : viewport.zoom < 12 ? 1.5 : 1.25;
-                          const radius = isSelected ? baseRadius + 0.8 : isHovered ? baseRadius + 0.45 : baseRadius;
-                          const halo = isSelected ? radius + 3.2 : isHovered ? radius + 2.1 : radius + 0.7;
+                          // Smaller, less dominant markers so redline colors read first.
+                          // Base sizes tuned by zoom level; selected/hover add modest bump only.
+                          const baseRadius = viewport.zoom < 4 ? 1.1 : viewport.zoom < 12 ? 0.95 : 0.8;
+                          const radius = isSelected ? baseRadius + 0.55 : isHovered ? baseRadius + 0.3 : baseRadius;
+                          // Halo only on select/hover — no ambient white ring on idle markers.
+                          const halo = isSelected ? radius + 2.2 : radius + 1.4;
                           const showLabel = visibleLabelIndices.has(idx);
                           const stationLabel = cleanDisplayText(point.station);
 
@@ -1953,23 +2391,18 @@ function OfficeRedlineMapInner({ mode = "default" }: RedlineMapProps) {
                                   cx={world.x}
                                   cy={world.y}
                                   r={halo}
-                                  fill={isSelected ? "rgba(255, 214, 10, 0.24)" : "rgba(255,255,255,0.16)"}
+                                  fill={isSelected ? "rgba(250, 204, 21, 0.18)" : "rgba(255,255,255,0.10)"}
                                   pointerEvents="none"
                                 />
                               ) : null}
-                              <circle
-                                cx={world.x}
-                                cy={world.y}
-                                r={radius + 0.45}
-                                fill="rgba(255,255,255,0.82)"
-                              />
+                              {/* Single compact dot — no oversized white ring on idle state */}
                               <circle
                                 cx={world.x}
                                 cy={world.y}
                                 r={radius}
-                                fill={isSelected ? "#facc15" : isHovered ? "#dbeafe" : "#05070a"}
-                                stroke={isSelected ? "rgba(255,255,255,0.96)" : isHovered ? "rgba(255,255,255,0.92)" : "rgba(255,255,255,0.78)"}
-                                strokeWidth={isSelected ? 1.05 : isHovered ? 0.95 : 0.8}
+                                fill={isSelected ? "#facc15" : isHovered ? "#93c5fd" : "#1e293b"}
+                                stroke={isSelected ? "rgba(255,255,255,0.9)" : isHovered ? "rgba(255,255,255,0.75)" : "rgba(255,255,255,0.45)"}
+                                strokeWidth={0.6}
                                 vectorEffect="non-scaling-stroke"
                               />
                               {showLabel ? (
@@ -2086,94 +2519,131 @@ function OfficeRedlineMapInner({ mode = "default" }: RedlineMapProps) {
                       </g>
                     ) : null}
 
-                    {tooltipStation && tooltipWorldGeometry ? (
-                      <g id="station-tooltip-layer" pointerEvents="none">
-                        <path
-                          d={
-                            tooltipWorldGeometry.placeRight
-                              ? `M ${tooltipWorldGeometry.stationX + tooltipWorldGeometry.calloutInset} ${tooltipWorldGeometry.stationY} L ${tooltipWorldGeometry.cardX} ${tooltipWorldGeometry.calloutMidY}`
-                              : `M ${tooltipWorldGeometry.stationX - tooltipWorldGeometry.calloutInset} ${tooltipWorldGeometry.stationY} L ${tooltipWorldGeometry.cardX + tooltipWorldGeometry.cardWidth} ${tooltipWorldGeometry.calloutMidY}`
-                          }
-                          fill="none"
-                          stroke="rgba(255,255,255,0.28)"
-                          strokeWidth={tooltipWorldGeometry.calloutStroke}
-                          strokeLinecap="round"
-                        />
-                        <rect
-                          x={tooltipWorldGeometry.cardX}
-                          y={tooltipWorldGeometry.cardY}
-                          width={tooltipWorldGeometry.cardWidth}
-                          height={tooltipWorldGeometry.cardHeight}
-                          rx={tooltipWorldGeometry.cornerRadius}
-                          ry={tooltipWorldGeometry.cornerRadius}
-                          fill="rgba(255,255,255,0.985)"
-                          stroke="rgba(15, 23, 42, 0.16)"
-                          strokeWidth={Math.max(0.7, tooltipWorldGeometry.calloutStroke * 0.62)}
-                        />
-                        <text
-                          x={tooltipWorldGeometry.cardX + tooltipWorldGeometry.paddingX}
-                          y={tooltipWorldGeometry.cardY + tooltipWorldGeometry.headerY}
-                          fill="#64748b"
-                          fontSize={tooltipWorldGeometry.headerFontSize}
-                          fontWeight="800"
-                          style={{ letterSpacing: `${tooltipWorldGeometry.headerLetterSpacing}px`, textTransform: "uppercase" }}
-                        >
-                          {tooltipStationMode ? `Field inspection • ${tooltipStationMode}` : "Field inspection"}
-                        </text>
-                        <text
-                          x={tooltipWorldGeometry.cardX + tooltipWorldGeometry.paddingX}
-                          y={tooltipWorldGeometry.cardY + tooltipWorldGeometry.stationYText}
-                          fill="#0f172a"
-                          fontSize={tooltipWorldGeometry.stationFontSize}
-                          fontWeight="900"
-                        >
-                          {cleanDisplayText(tooltipStation.station)}
-                        </text>
-
-                        {[
-                          ["Station", cleanDisplayText(tooltipStation.station)],
-                          ["Mapped FT", formatNumber(tooltipStation.mapped_station_ft, 3)],
-                          ["Depth FT", formatNumber(tooltipStation.depth_ft)],
-                          ["BOC FT", formatNumber(tooltipStation.boc_ft)],
-                          ["Date", formatDisplayDate(tooltipStation.date)],
-                          ["Crew", cleanDisplayText(tooltipStation.crew)],
-                          ["Print", cleanDisplayText(tooltipStation.print)],
-                          ["Source", cleanDisplayText(tooltipStation.source_file)],
-                          ["Notes", cleanDisplayText(tooltipStation.notes)],
-                          ["Lat / Lon", `${formatNumber(tooltipStation.lat, 8)}, ${formatNumber(tooltipStation.lon, 8)}`],
-                        ].map(([label, value], rowIdx) => {
-                          const rowY = tooltipWorldGeometry.cardY + tooltipWorldGeometry.rowsStartY + rowIdx * tooltipWorldGeometry.rowGap;
-                          return (
-                            <g key={`${label}-${rowIdx}`}>
-                              <text
-                                x={tooltipWorldGeometry.cardX + tooltipWorldGeometry.paddingX}
-                                y={rowY}
-                                fill="#64748b"
-                                fontSize={tooltipWorldGeometry.rowLabelFontSize}
-                                fontWeight="800"
-                              >
-                                {label}
-                              </text>
-                              <text
-                                x={tooltipWorldGeometry.cardX + tooltipWorldGeometry.valueX}
-                                y={rowY}
-                                fill="#0f172a"
-                                fontSize={tooltipWorldGeometry.rowFontSize}
-                                fontWeight="600"
-                              >
-                                {String(value)}
-                              </text>
-                            </g>
-                          );
-                        })}
-                      </g>
-                    ) : null}
+                    {/* Station tooltip replaced by click-to-inspect side panel */}
                   </svg>
                 ) : (
                   <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", textAlign: "center", padding: 24, color: "#cbd5e1", fontWeight: 700 }}>
                     Upload a KMZ and structured bore logs to render real map output.
                   </div>
                 )}
+
+                {/* ─── Evidence-layer toggle legend ─────────────────────── */}
+                {/* Each row is a clickable button that hides/shows that layer. */}
+                {(() => {
+                  // Collect unique (evidenceLayerId, label) pairs from redlinePaths.
+                  const seen = new Map<string, string>();
+                  for (const line of redlinePaths) {
+                    const lid = line.evidenceLayerId ?? "";
+                    if (!seen.has(lid)) {
+                      const summaryEntry = (state?.bore_log_summary ?? []).find(
+                        (e) => e.evidence_layer_id === lid
+                      );
+                      const label = summaryEntry
+                        ? (summaryEntry.source_file.split(/[/\\]/).pop() ?? summaryEntry.source_file)
+                        : lid
+                        ? `layer ${lid.slice(0, 6)}`
+                        : "redline";
+                      seen.set(lid, label);
+                    }
+                  }
+                  if (seen.size === 0) return null;
+                  const entries = Array.from(seen.entries());
+                  return (
+                    <div
+                      style={{
+                        position: "absolute",
+                        bottom: 12,
+                        left: 12,
+                        display: "flex",
+                        flexDirection: "column",
+                        gap: 4,
+                        zIndex: 10,
+                      }}
+                    >
+                      {entries.map(([lid, label]) => {
+                        const isHidden = lid ? hiddenLayers.has(lid) : false;
+                        return (
+                          <button
+                            key={lid || "default"}
+                            type="button"
+                            title={isHidden ? `Show ${label}` : `Hide ${label}`}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              if (!lid) return;
+                              setHiddenLayers((prev) => {
+                                const next = new Set(prev);
+                                if (next.has(lid)) next.delete(lid);
+                                else next.add(lid);
+                                return next;
+                              });
+                              // Clear selected station if it belongs to the layer being hidden.
+                              if (!hiddenLayers.has(lid) && selectedStation) {
+                                const selLayerId = sourceFileToLayerId.get(
+                                  String(selectedStation.source_file ?? "").trim()
+                                );
+                                if (selLayerId === lid) setSelectedStationIndex(null);
+                              }
+                            }}
+                            style={{
+                              display: "flex",
+                              alignItems: "center",
+                              gap: 6,
+                              background: isHidden
+                                ? "rgba(4, 10, 18, 0.45)"
+                                : "rgba(4, 10, 18, 0.82)",
+                              borderRadius: 8,
+                              padding: "4px 9px 4px 6px",
+                              border: isHidden
+                                ? "1px solid rgba(255,255,255,0.04)"
+                                : "1px solid rgba(255,255,255,0.10)",
+                              cursor: "pointer",
+                              textAlign: "left",
+                            }}
+                          >
+                            {/* Color swatch — crossed out when hidden */}
+                            <div style={{ position: "relative", width: 14, height: 14, flexShrink: 0, display: "flex", alignItems: "center" }}>
+                              <div
+                                style={{
+                                  width: 14,
+                                  height: 4,
+                                  borderRadius: 2,
+                                  background: getColorForLayer(lid || null),
+                                  opacity: isHidden ? 0.3 : 1,
+                                }}
+                              />
+                              {isHidden && (
+                                <div style={{
+                                  position: "absolute",
+                                  left: 0, top: "50%",
+                                  width: "100%",
+                                  height: 1.5,
+                                  background: "rgba(255,255,255,0.55)",
+                                  transform: "translateY(-50%) rotate(-35deg)",
+                                  borderRadius: 1,
+                                }} />
+                              )}
+                            </div>
+                            <span
+                              style={{
+                                fontSize: 11,
+                                fontWeight: 700,
+                                color: isHidden ? "rgba(203,213,225,0.45)" : "#cbd5e1",
+                                letterSpacing: 0.2,
+                                maxWidth: 180,
+                                overflow: "hidden",
+                                textOverflow: "ellipsis",
+                                whiteSpace: "nowrap",
+                                textDecoration: isHidden ? "line-through" : "none",
+                              }}
+                            >
+                              {label}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  );
+                })()}
 
                 {boxZoom ? (
                   <div
@@ -2352,7 +2822,145 @@ function OfficeRedlineMapInner({ mode = "default" }: RedlineMapProps) {
                   );
                 })()}
 
+                </div>
+
+                {/* ─── Station Inspector Panel (absolute overlay) ────── */}
+                {/* Positioned absolute so the map container never resizes */}
+                {selectedStation ? (
+                  <div
+                    style={{
+                      position: "absolute",
+                      top: 0,
+                      right: 0,
+                      width: 276,
+                      height: MAP_HEIGHT,
+                      overflowY: "auto",
+                      borderRadius: "0 18px 18px 0",
+                      borderLeft: "1px solid #dbe4ee",
+                      background: "rgba(255, 255, 255, 0.97)",
+                      backdropFilter: "blur(8px)",
+                      display: "flex",
+                      flexDirection: "column",
+                      zIndex: 20,
+                      boxShadow: "-4px 0 16px rgba(15, 23, 42, 0.08)",
+                    }}
+                  >
+                    {/* Header */}
+                    <div
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "space-between",
+                        padding: "12px 14px 10px",
+                        borderBottom: "1px solid #e8eef5",
+                        flexShrink: 0,
+                      }}
+                    >
+                      <div>
+                        <div style={{ fontSize: 11, fontWeight: 800, color: "#64748b", textTransform: "uppercase", letterSpacing: 0.5 }}>
+                          Field Inspection
+                        </div>
+                        <div style={{ fontSize: 15, fontWeight: 900, color: "#0f172a", marginTop: 2, lineHeight: 1.2 }}>
+                          {cleanDisplayText(selectedStation.station)}
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setSelectedStationIndex(null)}
+                        aria-label="Close inspector"
+                        style={{
+                          border: "none",
+                          background: "#f1f5f9",
+                          cursor: "pointer",
+                          color: "#475569",
+                          fontSize: 16,
+                          lineHeight: 1,
+                          padding: "4px 8px",
+                          borderRadius: 8,
+                          flexShrink: 0,
+                        }}
+                      >
+                        ×
+                      </button>
+                    </div>
+
+                    {/* Detail rows */}
+                    <div style={{ padding: "12px 14px", display: "grid", gap: 7, flexShrink: 0 }}>
+                      {(
+                        [
+                          ["Station", cleanDisplayText(selectedStation.station)],
+                          ["Mapped FT", formatNumber(selectedStation.mapped_station_ft, 3)],
+                          ["Depth FT", formatNumber(selectedStation.depth_ft)],
+                          ["BOC FT", formatNumber(selectedStation.boc_ft)],
+                          ["Date", formatDisplayDate(selectedStation.date)],
+                          ["Crew", cleanDisplayText(selectedStation.crew)],
+                          ["Print", cleanDisplayText(selectedStation.print)],
+                          ["Source", cleanDisplayText(selectedStation.source_file)],
+                          ["Notes", cleanDisplayText(selectedStation.notes)],
+                          ["Lat", formatNumber(selectedStation.lat, 6)],
+                          ["Lon", formatNumber(selectedStation.lon, 6)],
+                        ] as [string, string][]
+                      ).map(([label, value]) => (
+                        <div key={label} style={{ display: "grid", gridTemplateColumns: "80px 1fr", gap: 6, alignItems: "baseline" }}>
+                          <span style={{ fontSize: 11, fontWeight: 800, color: "#64748b", textTransform: "uppercase", letterSpacing: 0.3 }}>
+                            {label}
+                          </span>
+                          <span
+                            style={{
+                              fontSize: 12,
+                              fontWeight: 600,
+                              color: value === "--" ? "#94a3b8" : "#0f172a",
+                              wordBreak: "break-all",
+                            }}
+                          >
+                            {value}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+
+                    {/* Photos */}
+                    {stationPhotos.length > 0 ? (
+                      <div style={{ padding: "0 14px 14px", flexShrink: 0 }}>
+                        <div style={{ fontSize: 11, fontWeight: 800, color: "#64748b", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 8 }}>
+                          Photos ({stationPhotos.length})
+                        </div>
+                        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                          {stationPhotos.map((photo) => (
+                            <a
+                              key={photo.photo_id}
+                              href={`${API_BASE}${photo.relative_url}`}
+                              target="_blank"
+                              rel="noreferrer"
+                              style={{ textDecoration: "none", color: "inherit", borderRadius: 10, overflow: "hidden", border: "1px solid #e2e8f0", display: "block" }}
+                            >
+                              <div
+                                style={{
+                                  height: 72,
+                                  backgroundImage: `url(${API_BASE}${photo.relative_url})`,
+                                  backgroundSize: "cover",
+                                  backgroundPosition: "center",
+                                  backgroundColor: "#e5e7eb",
+                                }}
+                              />
+                              <div style={{ padding: "5px 7px" }}>
+                                <div style={{ fontSize: 10, fontWeight: 700, color: "#0f172a", wordBreak: "break-all", lineHeight: 1.3 }}>
+                                  {photo.original_filename}
+                                </div>
                               </div>
+                            </a>
+                          ))}
+                        </div>
+                      </div>
+                    ) : stationPhotosLoading ? (
+                      <div style={{ padding: "0 14px 14px", fontSize: 12, color: "#64748b" }}>Loading photos…</div>
+                    ) : (
+                      <div style={{ padding: "0 14px 14px", fontSize: 12, color: "#94a3b8" }}>No photos attached.</div>
+                    )}
+                  </div>
+                ) : null}
+              </div>
+              {/* ─── End Map + Inspector wrapper ─────────────────────── */}
 
               <div
                 style={{
@@ -2696,6 +3304,56 @@ function OfficeRedlineMapInner({ mode = "default" }: RedlineMapProps) {
                     </div>
                   )}
                 </ShellCard>
+
+                <ShellCard
+                  title="Bore Log Summary"
+                  description="One row per uploaded bore log file. Shows raw file identity — no merging across construction events. All 9 bore logs remain visible even when they overlap the same route."
+                >
+                  {(state?.bore_log_summary?.length ?? 0) > 0 ? (
+                    <div style={{ overflowX: "auto" }}>
+                      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                        <thead>
+                          <tr>
+                            <th style={{ textAlign: "left", padding: "10px 8px", borderBottom: "1px solid #dbe4ee" }}>Source File</th>
+                            <th style={{ textAlign: "left", padding: "10px 8px", borderBottom: "1px solid #dbe4ee" }}>Rows</th>
+                            <th style={{ textAlign: "left", padding: "10px 8px", borderBottom: "1px solid #dbe4ee" }}>Span (FT)</th>
+                            <th style={{ textAlign: "left", padding: "10px 8px", borderBottom: "1px solid #dbe4ee" }}>Date(s)</th>
+                            <th style={{ textAlign: "left", padding: "10px 8px", borderBottom: "1px solid #dbe4ee" }}>Print(s)</th>
+                            <th style={{ textAlign: "left", padding: "10px 8px", borderBottom: "1px solid #dbe4ee" }}>Evidence ID</th>
+                            <th style={{ textAlign: "left", padding: "10px 8px", borderBottom: "1px solid #dbe4ee" }}>Eng Plan</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {state!.bore_log_summary!.map((entry: BoreLogSummaryEntry, idx: number) => {
+                            const shortFile = entry.source_file.split(/[/\\]/).pop() ?? entry.source_file;
+                            const spanLabel = entry.span_ft != null ? formatNumber(entry.span_ft) : "--";
+                            const datesLabel = (entry.dates ?? []).map(formatDisplayDate).join(", ") || "--";
+                            const printsLabel = (entry.print_tokens ?? []).join(", ") || "--";
+                            const evidenceShort = entry.evidence_layer_id ? entry.evidence_layer_id.slice(0, 8) : "--";
+                            const engPlan = entry.engineering_plan_ref
+                              ? (entry.engineering_plan_date ? `${entry.engineering_plan_ref} (${entry.engineering_plan_date})` : entry.engineering_plan_ref)
+                              : "--";
+                            return (
+                              <tr key={idx}>
+                                <td style={{ padding: "10px 8px", borderBottom: "1px solid #eef2f7", maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={entry.source_file}>{shortFile}</td>
+                                <td style={{ padding: "10px 8px", borderBottom: "1px solid #eef2f7" }}>{entry.row_count}</td>
+                                <td style={{ padding: "10px 8px", borderBottom: "1px solid #eef2f7" }}>{spanLabel}</td>
+                                <td style={{ padding: "10px 8px", borderBottom: "1px solid #eef2f7" }}>{datesLabel}</td>
+                                <td style={{ padding: "10px 8px", borderBottom: "1px solid #eef2f7" }}>{printsLabel}</td>
+                                <td style={{ padding: "10px 8px", borderBottom: "1px solid #eef2f7", fontFamily: "monospace", fontSize: 11, color: "#64748b" }} title={entry.evidence_layer_id ?? ""}>{evidenceShort}</td>
+                                <td style={{ padding: "10px 8px", borderBottom: "1px solid #eef2f7", color: entry.engineering_plan_ref ? "#166534" : "#94a3b8" }}>{engPlan}</td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : (
+                    <div style={{ fontSize: 13, color: "#64748b" }}>
+                      No bore log files loaded yet. Upload structured bore logs to see per-file identity records here.
+                    </div>
+                  )}
+                </ShellCard>
               </div>
             </Section>
 
@@ -2759,7 +3417,7 @@ function OfficeRedlineMapInner({ mode = "default" }: RedlineMapProps) {
                 </div>
               </Section>
 
-              <Section title="6. Export / Print" subtitle="Real print/export via browser print with a clean report layout.">
+              <Section title="6. Export / Print" subtitle="Opens a clean print-only report — use browser Save as PDF for a file.">
                 <div style={{ display: "grid", gap: 14 }}>
                   <ShellCard
                     title="Print / export report"
@@ -2791,6 +3449,149 @@ function OfficeRedlineMapInner({ mode = "default" }: RedlineMapProps) {
               </Section>
             </div>
           </div>
+        </div>
+      </div>
+
+      {/* ── Print-only report ── rendered in DOM always, visible only in @media print ── */}
+      <div id="osp-print-report">
+        {/* Header */}
+        <h1>OSP Redlining Field Report</h1>
+        <div className="rpt-meta">
+          {activeJob !== "--" ? <><strong>Job:</strong>{" "}{activeJob}{" "}</> : null}
+          {(state?.selected_route_name || state?.route_name) ? (
+            <><strong>Route:</strong>{" "}{state?.selected_route_name || state?.route_name}{" "}</>
+          ) : null}
+          <strong>Generated:</strong> {new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" })}
+        </div>
+
+        {/* KPI summary row */}
+        <div className="rpt-kpi-row">
+          <div className="rpt-kpi">
+            <div className="rpt-kpi-label">Total Footage</div>
+            <div className="rpt-kpi-value">{formatNumber(effectiveFootage)} ft</div>
+          </div>
+          <div className="rpt-kpi">
+            <div className="rpt-kpi-label">Completion</div>
+            <div className="rpt-kpi-value">
+              {typeof state?.completion_pct === "number" ? `${formatNumber(state.completion_pct, 1)}%` : "--"}
+            </div>
+          </div>
+          <div className="rpt-kpi">
+            <div className="rpt-kpi-label">Drill Paths</div>
+            <div className="rpt-kpi-value">{drillPathRows.length}</div>
+          </div>
+          <div className="rpt-kpi">
+            <div className="rpt-kpi-label">Final Billing</div>
+            <div className="rpt-kpi-value">{toMoney(finalBillingTotal)}</div>
+          </div>
+        </div>
+
+        {/* Drill path summary */}
+        {drillPathRows.length > 0 && (
+          <>
+            <h2>Drill Path Summary</h2>
+            <table>
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>Route</th>
+                  <th>Print</th>
+                  <th>Start Station</th>
+                  <th>End Station</th>
+                  <th>Length (ft)</th>
+                  <th>Cost</th>
+                  <th>Source File</th>
+                </tr>
+              </thead>
+              <tbody>
+                {drillPathRows.map((row, i) => (
+                  <tr key={row.id}>
+                    <td>{i + 1}</td>
+                    <td>{row.routeName}</td>
+                    <td>{row.print}</td>
+                    <td>{row.startStation}</td>
+                    <td>{row.endStation}</td>
+                    <td>{formatNumber(row.lengthFt)}</td>
+                    <td>{toMoney(row.cost)}</td>
+                    <td style={{ fontSize: 10, wordBreak: "break-all" }}>{row.sourceFile}</td>
+                  </tr>
+                ))}
+                <tr className="rpt-total-row">
+                  <td colSpan={5} style={{ textAlign: "right" }}>Total</td>
+                  <td>{formatNumber(drillPathRows.reduce((s, r) => s + r.lengthFt, 0))}</td>
+                  <td>{toMoney(drillPathRows.reduce((s, r) => s + r.cost, 0))}</td>
+                  <td></td>
+                </tr>
+              </tbody>
+            </table>
+          </>
+        )}
+
+        {/* Bore log reference line */}
+        {(state?.bore_log_summary?.length ?? 0) > 0 && (
+          <p style={{ margin: "0 0 12px 0", fontSize: 13, color: "#475569" }}>
+            Source bore logs reviewed: <strong>{state!.bore_log_summary!.length} {state!.bore_log_summary!.length === 1 ? "file" : "files"}</strong>
+          </p>
+        )}
+
+        {/* Billing summary */}
+        <h2>Billing Summary</h2>
+        <table>
+          <tbody>
+            <tr><td style={{ fontWeight: 600 }}>Footage used</td><td>{formatNumber(effectiveFootage)} ft</td></tr>
+            <tr><td style={{ fontWeight: 600 }}>Cost per foot</td><td>{toMoney(numericCostPerFoot)}</td></tr>
+            <tr><td style={{ fontWeight: 600 }}>Base total</td><td>{toMoney(baseBillingTotal)}</td></tr>
+          </tbody>
+        </table>
+
+        {/* Exceptions */}
+        {exceptions.filter(e => e.amount.trim() && Number.parseFloat(e.amount) !== 0).length > 0 && (
+          <>
+            <h2>Exceptions</h2>
+            <table>
+              <thead>
+                <tr><th>Label</th><th>Amount</th></tr>
+              </thead>
+              <tbody>
+                {exceptions
+                  .filter(e => e.amount.trim() && Number.isFinite(Number.parseFloat(e.amount)))
+                  .map(e => (
+                    <tr key={e.id}>
+                      <td>{e.label}</td>
+                      <td>{toMoney(Number.parseFloat(e.amount))}</td>
+                    </tr>
+                  ))}
+                <tr className="rpt-total-row">
+                  <td>Exception Total</td>
+                  <td>{toMoney(exceptionTotal)}</td>
+                </tr>
+              </tbody>
+            </table>
+          </>
+        )}
+
+        {/* Final billing */}
+        <table style={{ marginTop: 8 }}>
+          <tbody>
+            <tr className="rpt-total-row">
+              <td style={{ fontWeight: 800, fontSize: 14 }}>Final Billing Total</td>
+              <td style={{ fontWeight: 800, fontSize: 14 }}>{toMoney(finalBillingTotal)}</td>
+            </tr>
+          </tbody>
+        </table>
+
+        {/* Operator notes */}
+        {notes.trim() && (
+          <>
+            <h2>Operator Notes</h2>
+            <div className="rpt-notes">{notes.trim()}</div>
+          </>
+        )}
+
+        {/* Footer */}
+        <div className="rpt-footer">
+          <span>OSP Redlining Operator Workspace — Field Report</span>
+          <span>{new Date().toISOString().slice(0, 10)}</span>
         </div>
       </div>
     </div>

@@ -94,6 +94,35 @@ export type KmzPolygonFeature = {
   stroke_width?: number;
 };
 
+export type BoreLogSummaryEntry = {
+  source_file: string;
+  row_count: number;
+  min_station_ft?: number | null;
+  max_station_ft?: number | null;
+  span_ft?: number | null;
+  dates?: string[];
+  print_tokens?: string[];
+  crews?: string[];
+  evidence_layer_id?: string;
+  engineering_plan_ref?: string | null;
+  engineering_plan_date?: string | null;
+};
+
+export type EngineeringPlan = {
+  plan_id: string;
+  session_id: string;
+  original_filename: string;
+  stored_filename: string;
+  file_type: string;
+  size_bytes: number;
+  uploaded_at: string;
+  plan_date?: string | null;
+  print_numbers?: string | null;
+  sheet_numbers?: string | null;
+  street_hints?: string | null;
+  notes?: string | null;
+};
+
 export type BackendState = {
   success?: boolean;
   session_id?: string;
@@ -129,6 +158,8 @@ export type BackendState = {
     line_features?: KmzLineFeature[];
     polygon_features?: KmzPolygonFeature[];
   };
+  engineering_plans?: EngineeringPlan[];
+  bore_log_summary?: BoreLogSummaryEntry[];
 };
 
 export type StationPhoto = {

@@ -154,6 +154,7 @@ def _default_session_state() -> Dict[str, Any]:
         },
         "bug_reports": [],
         "matching_debug": [],
+        "engineering_plans": [],
     }
 
 
@@ -186,6 +187,7 @@ class _session_scope:
         session = _get_session(self.session_id)
         STATE.clear()
         STATE.update(session)
+        STATE["_session_id_hint"] = self.session_id
         return self.session_id
 
     def __exit__(self, exc_type, exc_value, traceback) -> None:
@@ -1891,6 +1893,14 @@ def _normalize_bore_group(group_rows: Sequence[Dict[str, Any]], group_idx: int) 
     max_station = max(station_values) if station_values else None
     span_ft = (max_station - min_station) if (min_station is not None and max_station is not None) else None
 
+    # Derive evidence_layer_id: stable hash of source_file + print_tokens + date.
+    # Groups sharing a layer can merge; groups with different layers must stay separate.
+    _el_source = str(rows[0].get("source_file") or "").strip().lower() if rows else ""
+    _el_print = "|".join(sorted(_collect_group_print_tokens(rows)))
+    _el_date = str(rows[0].get("date") or "").strip().lower() if rows else ""
+    _el_raw = f"{_el_source}|{_el_print}|{_el_date}"
+    evidence_layer_id = hashlib.sha256(_el_raw.encode()).hexdigest()[:16]
+
     return {
         "group_id": f"group_{group_idx + 1}",
         "group_index": group_idx,
@@ -1902,6 +1912,9 @@ def _normalize_bore_group(group_rows: Sequence[Dict[str, Any]], group_idx: int) 
         "span_ft": round(float(span_ft), 2) if span_ft is not None else None,
         "station_rows": [dict(row) for row in rows],
         "normalization_warnings": warnings,
+        "evidence_layer_id": evidence_layer_id,
+        "evidence_layer_source_file": str(rows[0].get("source_file") or "") if rows else "",
+        "evidence_layer_date": str(rows[0].get("date") or "") if rows else "",
     }
 
 
@@ -4026,6 +4039,14 @@ def _build_redline_segments_for_group(
     total = float(chainage[-1])
     confidence, reason = _confidence_from_rankings(str(mapping.get("mode") or "absolute"), rankings)
 
+    # Compute evidence_layer_id for this group from the first row.
+    _seg_first = rows[0] if rows else {}
+    _seg_src = str(_seg_first.get("source_file") or "").strip().lower()
+    _seg_print = "|".join(sorted(_parse_print_tokens(_seg_first.get("print"))))
+    _seg_date = str(_seg_first.get("date") or "").strip().lower()
+    _seg_layer_raw = f"{_seg_src}|{_seg_print}|{_seg_date}"
+    _group_evidence_layer_id = hashlib.sha256(_seg_layer_raw.encode()).hexdigest()[:16]
+
     segments: List[Dict[str, Any]] = []
     for idx in range(len(rows) - 1):
         start_row = rows[idx]
@@ -4057,7 +4078,9 @@ def _build_redline_segments_for_group(
                 "date": start_row.get("date", ""),
                 "crew": start_row.get("crew", ""),
                 "print": start_row.get("print", ""),
+                "print_numbers": start_row.get("print", ""),
                 "source_file": start_row.get("source_file", ""),
+                "evidence_layer_id": _group_evidence_layer_id,
                 "coords": coords,
                 "route_id": matched_route.get("route_id"),
                 "route_name": matched_route.get("route_name"),
@@ -4280,6 +4303,12 @@ def _apply_within_route_anchor_separation(
             if str(prior.get("route_id") or "") != route_id:
                 continue
             if current_group_id and str(prior.get("group_id") or "") == current_group_id:
+                continue
+            # Groups from different evidence layers are separate construction events —
+            # spatial overlap between them is intentional and not a conflict.
+            _wra_prior_layer = str((prior.get("_normalized_group") or {}).get("evidence_layer_id") or "").strip()
+            _wra_current_layer = str(normalized_group.get("evidence_layer_id") or "").strip()
+            if _wra_current_layer and _wra_prior_layer and _wra_current_layer != _wra_prior_layer:
                 continue
 
             prior_hypothesis = dict(prior.get("selected_hypothesis") or {})
@@ -4556,6 +4585,13 @@ def _batch_conflict_meta(current: Dict[str, Any], prior: Dict[str, Any]) -> Opti
     if str(current.get("route_id") or "") != str(prior.get("route_id") or ""):
         return None
     if str(current.get("group_id") or "") and str(current.get("group_id") or "") == str(prior.get("group_id") or ""):
+        return None
+
+    # Evidence layer check: groups from different evidence layers represent separate
+    # construction events and must never be treated as conflicting duplicates.
+    _bc_current_layer = str((current.get("_normalized_group") or {}).get("evidence_layer_id") or "").strip()
+    _bc_prior_layer = str((prior.get("_normalized_group") or {}).get("evidence_layer_id") or "").strip()
+    if _bc_current_layer and _bc_prior_layer and _bc_current_layer != _bc_prior_layer:
         return None
 
     current_hypothesis = dict(current.get("selected_hypothesis") or {})
@@ -5348,8 +5384,14 @@ def _classify_overlap(a: Dict[str, Any], b: Dict[str, Any]) -> Dict[str, Any]:
     b_length = _segment_length(b)
     denom = max(min(a_length, b_length), 1e-9)
     overlap_ratio = overlap_ft / denom if overlap_ft > 0.0 else 0.0
+    # evidence_layer_id takes priority: if both segments have a layer id and they differ,
+    # they are never the same provenance regardless of source_file/crew/date.
+    _a_layer = str(a.get("evidence_layer_id") or "").strip()
+    _b_layer = str(b.get("evidence_layer_id") or "").strip()
+    _layers_differ = bool(_a_layer and _b_layer and _a_layer != _b_layer)
     same_provenance = (
-        str(a.get("source_file") or "").strip() == str(b.get("source_file") or "").strip()
+        not _layers_differ
+        and str(a.get("source_file") or "").strip() == str(b.get("source_file") or "").strip()
         and str(a.get("crew") or "").strip() == str(b.get("crew") or "").strip()
         and str(a.get("date") or "").strip() == str(b.get("date") or "").strip()
     )
@@ -5576,6 +5618,73 @@ def _coverage_runtime_verification(redline_segments: Sequence[Dict[str, Any]], c
     }
 
 
+def _bore_log_summary_from_rows(rows: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """One record per uploaded bore log file — no merging across files.
+    Preserves all bore log identities for the UI's Bore Log Summary view."""
+    by_file: Dict[str, List[Dict[str, Any]]] = {}
+    for row in rows or []:
+        source_file = str(row.get("source_file") or "").strip()
+        if not source_file:
+            continue
+        by_file.setdefault(source_file, []).append(row)
+
+    session_id = str(STATE.get("_session_id_hint") or "").strip()
+    eng_plans: List[Dict[str, Any]] = []
+    try:
+        if session_id:
+            eng_plans = _load_engineering_plan_index_for_session(session_id)
+    except Exception:
+        eng_plans = []
+
+    summary: List[Dict[str, Any]] = []
+    for source_file in sorted(by_file.keys()):
+        file_rows = by_file[source_file]
+        station_values = [float(r["station_ft"]) for r in file_rows if r.get("station_ft") is not None]
+        dates = sorted({str(r.get("date") or "").strip() for r in file_rows if str(r.get("date") or "").strip()})
+        print_tokens = sorted({
+            token
+            for r in file_rows
+            for token in _parse_print_tokens(r.get("print"))
+        })
+        crews = sorted({str(r.get("crew") or "").strip() for r in file_rows if str(r.get("crew") or "").strip()})
+
+        _el_src = source_file.strip().lower()
+        _el_print = "|".join(print_tokens)
+        _el_date = dates[0].lower() if dates else ""
+        evidence_layer_id = hashlib.sha256(f"{_el_src}|{_el_print}|{_el_date}".encode()).hexdigest()[:16]
+
+        # Lightweight engineering plan association — match by plan_date proximity (same date prefix)
+        eng_plan_ref: Optional[str] = None
+        eng_plan_date: Optional[str] = None
+        if eng_plans and dates:
+            for plan in eng_plans:
+                plan_date = str(plan.get("plan_date") or "").strip()
+                if not plan_date:
+                    continue
+                for bore_date in dates:
+                    if plan_date[:10] == bore_date[:10]:
+                        eng_plan_ref = str(plan.get("original_filename") or "")
+                        eng_plan_date = plan_date
+                        break
+                if eng_plan_ref:
+                    break
+
+        summary.append({
+            "source_file": source_file,
+            "row_count": len(file_rows),
+            "min_station_ft": round(min(station_values), 2) if station_values else None,
+            "max_station_ft": round(max(station_values), 2) if station_values else None,
+            "span_ft": round(max(station_values) - min(station_values), 2) if len(station_values) >= 2 else None,
+            "dates": dates,
+            "print_tokens": print_tokens,
+            "crews": crews,
+            "evidence_layer_id": evidence_layer_id,
+            "engineering_plan_ref": eng_plan_ref,
+            "engineering_plan_date": eng_plan_date,
+        })
+    return summary
+
+
 def _total_design_length_ft(route_catalog: Sequence[Dict[str, Any]]) -> float:
     total_ft = 0.0
     seen_route_ids = set()
@@ -5708,6 +5817,8 @@ def _summary_payload(include_debug: bool = False) -> Dict[str, Any]:
             "group_outputs": route_match_candidates,
             "matching_debug": matching_debug,
             "kmz_reference_full": STATE.get("kmz_reference", {}) or {},
+            "engineering_plans": _load_engineering_plan_index_for_session(STATE.get("_session_id_hint", "")),
+            "bore_log_summary": _bore_log_summary_from_rows(committed_rows),
         }
         return payload
 
@@ -5777,6 +5888,8 @@ def _summary_payload(include_debug: bool = False) -> Dict[str, Any]:
         "route_match_candidate_count": len(route_match_candidates),
         "runtime_verification": runtime_verification,
         "active_route_runtime_verification": active_route_runtime_verification,
+        "engineering_plans": _load_engineering_plan_index_for_session(STATE.get("_session_id_hint", "")),
+        "bore_log_summary": _bore_log_summary_from_rows(committed_rows),
     }
 
 
@@ -6265,6 +6378,170 @@ async def get_station_photo_file(photo_id: str, session_id: Optional[str] = None
             filename=str(record.get("original_filename") or os.path.basename(stored_path)),
         )
     return _err("Photo file was not found.", status_code=404, session_id=resolved_session_id)
+
+
+# ---------------------------------------------------------------------------
+# Engineering Plan Evidence Upload
+# Scoped by session_id. Stores PDF/PNG/JPG/JPEG files as job evidence.
+# Does NOT affect route matching or redline decisions (V1 — evidence layer only).
+# ---------------------------------------------------------------------------
+
+ENGINEERING_PLAN_ROOT = UPLOADS_DIR / "engineering_plans"
+ENGINEERING_PLAN_INDEX_PATH = ENGINEERING_PLAN_ROOT / "index.json"
+ENGINEERING_PLAN_ALLOWED_EXTENSIONS = {".pdf", ".png", ".jpg", ".jpeg"}
+ENGINEERING_PLAN_MAX_FILES_PER_UPLOAD = 20
+
+
+def _ensure_engineering_plan_storage() -> None:
+    ENGINEERING_PLAN_ROOT.mkdir(parents=True, exist_ok=True)
+    if not ENGINEERING_PLAN_INDEX_PATH.exists():
+        ENGINEERING_PLAN_INDEX_PATH.write_text(json.dumps({"plans": []}, indent=2), encoding="utf-8")
+
+
+def _load_engineering_plan_index() -> Dict[str, Any]:
+    _ensure_engineering_plan_storage()
+    try:
+        data = json.loads(ENGINEERING_PLAN_INDEX_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        data = {"plans": []}
+    plans = data.get("plans")
+    if not isinstance(plans, list):
+        data["plans"] = []
+    return data
+
+
+def _save_engineering_plan_index(index_data: Dict[str, Any]) -> None:
+    _ensure_engineering_plan_storage()
+    temp_path = ENGINEERING_PLAN_INDEX_PATH.with_suffix(".tmp")
+    temp_path.write_text(json.dumps(index_data, indent=2), encoding="utf-8")
+    temp_path.replace(ENGINEERING_PLAN_INDEX_PATH)
+
+
+def _engineering_plan_record_matches_session(record: Dict[str, Any], session_id: str) -> bool:
+    return str(record.get("session_id") or "").strip() == str(session_id or "").strip()
+
+
+def _engineering_plan_public_record(record: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "plan_id": record.get("plan_id"),
+        "session_id": record.get("session_id"),
+        "original_filename": record.get("original_filename"),
+        "stored_filename": record.get("stored_filename"),
+        "file_type": record.get("file_type"),
+        "size_bytes": record.get("size_bytes"),
+        "uploaded_at": record.get("uploaded_at"),
+        "plan_date": record.get("plan_date"),
+        "print_numbers": record.get("print_numbers"),
+        "sheet_numbers": record.get("sheet_numbers"),
+        "street_hints": record.get("street_hints"),
+        "notes": record.get("notes"),
+    }
+
+
+def _load_engineering_plan_index_for_session(session_id: str) -> List[Dict[str, Any]]:
+    if not session_id:
+        return []
+    try:
+        index_data = _load_engineering_plan_index()
+        return [
+            _engineering_plan_public_record(r)
+            for r in index_data.get("plans", [])
+            if _engineering_plan_record_matches_session(r, session_id)
+        ]
+    except Exception:
+        return []
+
+
+@app.post("/api/upload-engineering-plans")
+async def upload_engineering_plans(
+    files: List[UploadFile] = File(...),
+    session_id: Optional[str] = Form(None),
+    plan_date: Optional[str] = Form(None),
+    print_numbers: Optional[str] = Form(None),
+    sheet_numbers: Optional[str] = Form(None),
+    street_hints: Optional[str] = Form(None),
+    notes: Optional[str] = Form(None),
+) -> JSONResponse:
+    resolved_session_id = _resolve_session_id(session_id)
+
+    if not files:
+        return _err("At least one file is required.", session_id=resolved_session_id)
+    if len(files) > ENGINEERING_PLAN_MAX_FILES_PER_UPLOAD:
+        return _err(
+            f"Upload up to {ENGINEERING_PLAN_MAX_FILES_PER_UPLOAD} files at a time.",
+            session_id=resolved_session_id,
+        )
+
+    _ensure_engineering_plan_storage()
+    session_folder = ENGINEERING_PLAN_ROOT / _safe_filename(resolved_session_id)
+    session_folder.mkdir(parents=True, exist_ok=True)
+
+    index_data = _load_engineering_plan_index()
+    plan_records: List[Dict[str, Any]] = index_data.setdefault("plans", [])
+
+    created: List[Dict[str, Any]] = []
+    timestamp = int(datetime.utcnow().timestamp() * 1000)
+
+    for upload in files:
+        original_filename = _safe_filename(upload.filename or "plan")
+        extension = Path(original_filename).suffix.lower()
+
+        if extension not in ENGINEERING_PLAN_ALLOWED_EXTENSIONS:
+            continue  # skip unsupported files silently
+
+        file_bytes = await upload.read()
+        size_bytes = len(file_bytes)
+
+        plan_id = hashlib.sha256(
+            f"{resolved_session_id}|{original_filename}|{timestamp}|{size_bytes}".encode()
+        ).hexdigest()[:24]
+
+        stored_filename = f"{timestamp}_{plan_id}{extension}"
+        stored_path = session_folder / stored_filename
+        stored_path.write_bytes(file_bytes)
+
+        mime_map = {
+            ".pdf": "application/pdf",
+            ".png": "image/png",
+            ".jpg": "image/jpeg",
+            ".jpeg": "image/jpeg",
+        }
+
+        record: Dict[str, Any] = {
+            "plan_id": plan_id,
+            "session_id": resolved_session_id,
+            "original_filename": original_filename,
+            "stored_filename": stored_filename,
+            "stored_path": str(stored_path),
+            "file_type": mime_map.get(extension, "application/octet-stream"),
+            "size_bytes": size_bytes,
+            "uploaded_at": datetime.utcnow().isoformat() + "Z",
+            "plan_date": (plan_date or "").strip() or None,
+            "print_numbers": (print_numbers or "").strip() or None,
+            "sheet_numbers": (sheet_numbers or "").strip() or None,
+            "street_hints": (street_hints or "").strip() or None,
+            "notes": (notes or "").strip() or None,
+        }
+        plan_records.append(record)
+        created.append(_engineering_plan_public_record(record))
+
+    _save_engineering_plan_index(index_data)
+
+    all_session_plans = _load_engineering_plan_index_for_session(resolved_session_id)
+
+    return _ok(
+        session_id=resolved_session_id,
+        message=f"Uploaded {len(created)} engineering plan file{'s' if len(created) != 1 else ''}.",
+        uploaded=created,
+        engineering_plans=all_session_plans,
+    )
+
+
+@app.get("/api/engineering-plans")
+async def get_engineering_plans(session_id: Optional[str] = None) -> JSONResponse:
+    resolved_session_id = _resolve_session_id(session_id)
+    plans = _load_engineering_plan_index_for_session(resolved_session_id)
+    return _ok(session_id=resolved_session_id, engineering_plans=plans)
 
 
 # ---------------------------------------------------------------------------
