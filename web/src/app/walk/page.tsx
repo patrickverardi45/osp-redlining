@@ -2008,15 +2008,15 @@ function StationKeypad({
         />
       ))}
       <KeypadKey
-        label="0"
-        onClick={() => onDigit("0")}
-        disabled={isFull}
-      />
-      <KeypadKey
         label="+"
         onClick={onPlus}
         disabled={plusDisabled}
         accent
+      />
+      <KeypadKey
+        label="0"
+        onClick={() => onDigit("0")}
+        disabled={isFull}
       />
       <KeypadKey
         // U+232B ERASE TO THE LEFT — universally readable as backspace.
