@@ -74,6 +74,26 @@ function formatTimestamp(ts: string | null): string {
   });
 }
 
+// Phase 4A: calendar-only date for the new "Date" column. Reads started_at
+// off the existing Session type — no new fetch.
+function formatDate(ts: string | null | undefined): string {
+  if (!ts) return "—";
+  const d = new Date(ts);
+  if (Number.isNaN(d.getTime())) return "—";
+  return d.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
+}
+
+// Phase 4A: shortened session id for the new "Session" column. Most ids are
+// UUID-ish; surface the leading 8 chars so the column stays narrow.
+function shortenSessionId(rawId: string): string {
+  if (!rawId) return "—";
+  return rawId.length <= 8 ? rawId : rawId.slice(0, 8);
+}
+
 function calcDuration(start: string, end: string | null): string {
   if (!end) return "In progress";
   const diffMs = new Date(end).getTime() - new Date(start).getTime();
@@ -99,18 +119,26 @@ export default function SessionListPanel({ sessions }: SessionListPanelProps) {
 
       {sessions.length === 0 ? (
         <div className="rounded-lg border border-dashed border-gray-200 bg-gray-50 py-10 text-center text-sm text-gray-400">
-          No walk sessions recorded for this job.
+          No walk sessions yet
         </div>
       ) : (
         <div className="overflow-x-auto rounded-lg border border-gray-200 shadow-sm">
           <table className="min-w-full divide-y divide-gray-200 text-sm">
             <thead className="bg-gray-50">
               <tr>
+                {/* Phase 4A: Session (shortened id) */}
+                <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                  Session
+                </th>
                 <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">
                   Crew
                 </th>
                 <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">
                   Status
+                </th>
+                {/* Phase 4A: Date column (started_at, date only) */}
+                <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                  Date
                 </th>
                 <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">
                   Started
@@ -121,6 +149,12 @@ export default function SessionListPanel({ sessions }: SessionListPanelProps) {
                 <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">
                   Duration
                 </th>
+                {/* Phase 4A: Breadcrumbs (track_point_count) — renamed from
+                    "Track Pts" so the field is named consistently with the
+                    mobile /walk UI. */}
+                <th className="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                  Breadcrumbs
+                </th>
                 <th className="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase tracking-wider">
                   Stations
                 </th>
@@ -130,19 +164,24 @@ export default function SessionListPanel({ sessions }: SessionListPanelProps) {
                 <th className="px-4 py-3 text-center text-xs font-semibold text-gray-500 uppercase tracking-wider">
                   View
                 </th>
-                <th className="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase tracking-wider">
-                  Track Pts
-                </th>
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-100">
               {sessions.map((session) => (
                 <tr key={session.id} className="hover:bg-gray-50 transition-colors">
+                  {/* Phase 4A: Session (shortened id) */}
+                  <td className="px-4 py-3 font-mono text-xs text-gray-700 whitespace-nowrap">
+                    {shortenSessionId(session.id)}
+                  </td>
                   <td className="px-4 py-3 font-medium text-gray-800">
                     {session.crew_name}
                   </td>
                   <td className="px-4 py-3">
                     <SessionStatusBadge status={session.status} />
+                  </td>
+                  {/* Phase 4A: Date column */}
+                  <td className="px-4 py-3 text-gray-700 whitespace-nowrap text-xs">
+                    {formatDate(session.started_at)}
                   </td>
                   <td className="px-4 py-3 text-gray-500 whitespace-nowrap text-xs">
                     {formatTimestamp(session.started_at)}
@@ -152,6 +191,10 @@ export default function SessionListPanel({ sessions }: SessionListPanelProps) {
                   </td>
                   <td className="px-4 py-3 text-gray-500 text-xs whitespace-nowrap">
                     {calcDuration(session.started_at, session.ended_at)}
+                  </td>
+                  {/* Phase 4A: Breadcrumbs (track_point_count) */}
+                  <td className="px-4 py-3 text-right text-gray-700 tabular-nums">
+                    {session.track_point_count?.toLocaleString?.() ?? 0}
                   </td>
                   <td className="px-4 py-3 text-right text-gray-700 tabular-nums">
                     {session.station_count}
@@ -174,10 +217,6 @@ export default function SessionListPanel({ sessions }: SessionListPanelProps) {
                     ) : (
                       <span className="text-gray-300 text-xs">—</span>
                     )}
-                  </td>
-
-                  <td className="px-4 py-3 text-right text-gray-700 tabular-nums">
-                    {session.track_point_count?.toLocaleString?.() ?? 0}
                   </td>
                 </tr>
               ))}
