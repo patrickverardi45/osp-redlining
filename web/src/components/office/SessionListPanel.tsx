@@ -1,4 +1,15 @@
+// web/src/components/office/SessionListPanel.tsx
+//
+// Phase 4A: Session/Date columns + "Breadcrumbs" rename.
+// Phase 4E: optional `highlightedSessionId` row highlight.
+// Phase 4F: secondary "Reviewed" badge sourced from client-side review state.
+
+"use client";
+
 import type { Session } from "@/lib/api";
+import {
+  useSessionReview,
+} from "@/lib/office/sessionReview";
 
 interface SessionListPanelProps {
   sessions: Session[];
@@ -66,6 +77,23 @@ function SessionStatusBadge({ status }: { status: string }) {
       "inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-500",
   };
   return <span className={config.className}>{config.label}</span>;
+}
+
+// Phase 4F: secondary review badge. Only renders when the session has been
+// marked "reviewed" client-side; default ("needs_review") is intentionally
+// silent here so the row doesn't gain visual noise for the common case.
+// The badge sits next to the existing status badge — it does not replace it.
+function ReviewedBadge({ sessionId }: { sessionId: string }) {
+  const { status } = useSessionReview(sessionId);
+  if (status !== "reviewed") return null;
+  return (
+    <span
+      className="ml-1.5 inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-green-50 text-green-700 border border-green-200"
+      aria-label="Reviewed"
+    >
+      Reviewed
+    </span>
+  );
 }
 
 function formatTimestamp(ts: string | null): string {
@@ -202,8 +230,11 @@ export default function SessionListPanel({
                   <td className="px-4 py-3 font-medium text-gray-800">
                     {session.crew_name}
                   </td>
-                  <td className="px-4 py-3">
+                  <td className="px-4 py-3 whitespace-nowrap">
                     <SessionStatusBadge status={session.status} />
+                    {/* Phase 4F: secondary review badge. Only appears for
+                        sessions that have been marked reviewed client-side. */}
+                    <ReviewedBadge sessionId={session.id} />
                   </td>
                   {/* Phase 4A: Date column */}
                   <td className="px-4 py-3 text-gray-700 whitespace-nowrap text-xs">

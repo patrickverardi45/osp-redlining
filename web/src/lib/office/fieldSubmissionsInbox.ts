@@ -1,6 +1,7 @@
 // web/src/lib/office/fieldSubmissionsInbox.ts
 //
 // Phase 4D — shared inbox data hook.
+// Phase 4F — review-aware filtering.
 //
 // Powers both:
 //   - /jobs/inbox (full page)
@@ -12,6 +13,12 @@
 // parallel. Per-job failures are tracked separately so a single broken job
 // does not blank the whole inbox.
 //
+// Phase 4F: the "Needs Review" filter now consults client-side review state
+// (localStorage, via @/lib/office/sessionReview) and excludes any session
+// that has been marked "reviewed". The "Today" and "This Week" filters are
+// time-based and unchanged — sessions that have been reviewed will still
+// show up there, just with no filtering effect from the review status.
+//
 // This module contains NO UI. All rendering happens in the consumers.
 
 "use client";
@@ -20,6 +27,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { getJobs, getJobById } from "@/lib/api";
 import type { Job, JobDetail, Session } from "@/lib/api";
+import { getSessionReviewStatus } from "@/lib/office/sessionReview";
 
 // ─── Public types ─────────────────────────────────────────────────────────────
 
@@ -115,6 +123,12 @@ export function isCompleted(session: Session): boolean {
 
 // ─── Hook ─────────────────────────────────────────────────────────────────────
 
+// Phase 4F: storage event prefix we care about. We listen for `storage` and
+// the same-tab custom event so the inbox re-filters when a session is
+// marked reviewed from elsewhere on the page.
+const REVIEW_STORAGE_PREFIX = "osp_session_review:";
+const REVIEW_SAME_TAB_EVENT = "osp:session-review-changed";
+
 export function useFieldSubmissions(
   initialFilter: InboxFilter = "needs_review",
 ): FieldSubmissionsState {
@@ -123,6 +137,13 @@ export function useFieldSubmissions(
   const [error, setError] = useState<string | null>(null);
   const [partialFailures, setPartialFailures] = useState<number>(0);
   const [filter, setFilter] = useState<InboxFilter>(initialFilter);
+
+  // Phase 4F: a tick counter that bumps whenever any session-review
+  // localStorage entry changes. We don't need to know which session changed
+  // — we just need the memos below to recompute their filter results.
+  // Storing the version in state (rather than a ref) is what triggers the
+  // re-render.
+  const [reviewVersion, setReviewVersion] = useState<number>(0);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -177,9 +198,50 @@ export function useFieldSubmissions(
     void refresh();
   }, [refresh]);
 
+  // Phase 4F: subscribe to review-status changes so the inbox re-filters
+  // when a session is marked reviewed (in this tab or another tab).
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const onStorage = (event: StorageEvent) => {
+      if (!event.key) return;
+      if (!event.key.startsWith(REVIEW_STORAGE_PREFIX)) return;
+      setReviewVersion((v) => v + 1);
+    };
+    const onSameTab = () => {
+      setReviewVersion((v) => v + 1);
+    };
+
+    window.addEventListener("storage", onStorage);
+    window.addEventListener(REVIEW_SAME_TAB_EVENT, onSameTab as EventListener);
+    return () => {
+      window.removeEventListener("storage", onStorage);
+      window.removeEventListener(
+        REVIEW_SAME_TAB_EVENT,
+        onSameTab as EventListener,
+      );
+    };
+  }, []);
+
+  // Phase 4F: a row is "ready for review" if the underlying walk has ended
+  // AND the reviewer has NOT yet marked it reviewed client-side. Time-based
+  // filters intentionally do not check review state — they answer "what
+  // walks happened today/this week", which is a different question.
+  //
+  // The reviewVersion dependency forces recomputation when a review status
+  // flips elsewhere on the page (or in another tab).
   const eligibleRows = useMemo(
     () => rows.filter((row) => isCompleted(row.session)),
     [rows],
+  );
+
+  const needsReviewRows = useMemo(
+    () =>
+      eligibleRows.filter(
+        (row) => getSessionReviewStatus(row.session.id) !== "reviewed",
+      ),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [eligibleRows, reviewVersion],
   );
 
   const filteredRows = useMemo(() => {
@@ -192,20 +254,23 @@ export function useFieldSubmissions(
         );
       case "needs_review":
       default:
-        return eligibleRows;
+        return needsReviewRows;
     }
-  }, [eligibleRows, filter]);
+  }, [eligibleRows, needsReviewRows, filter]);
 
   const counts = useMemo<Record<InboxFilter, number>>(() => {
     return {
-      needs_review: eligibleRows.length,
+      // Phase 4F: the "Needs Review" chip count reflects the same exclusion
+      // as the filter — once a reviewer marks a row reviewed it disappears
+      // from the count too, so reviewers see the queue actually drain.
+      needs_review: needsReviewRows.length,
       today: eligibleRows.filter((row) => isToday(row.session.started_at))
         .length,
       week: eligibleRows.filter((row) =>
         isWithinLastWeek(row.session.started_at),
       ).length,
     };
-  }, [eligibleRows]);
+  }, [eligibleRows, needsReviewRows]);
 
   return {
     rows,

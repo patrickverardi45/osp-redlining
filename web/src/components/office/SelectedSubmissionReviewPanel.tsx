@@ -1,11 +1,12 @@
 // web/src/components/office/SelectedSubmissionReviewPanel.tsx
 //
 // Phase 4E — compact "Selected Submission Review" card.
+// Phase 4F — live review badge + "Mark as Reviewed" toggle.
 //
 // Renders above the Map Review panel on /jobs/[jobId] when a `session`
-// query parameter resolves to one of the job's sessions. Read-only: shows
-// the headline facts about the chosen submission so reviewers know exactly
-// which walk they're looking at when they came in via the inbox.
+// query parameter resolves to one of the job's sessions. Read-only against
+// backend state — the only mutation is the client-side review status,
+// which lives in localStorage via `useSessionReview`.
 //
 // The session-not-found case is rendered as a yellow notice rather than a
 // hard error — the reviewer landed here on purpose, and a stale link
@@ -13,6 +14,10 @@
 "use client";
 
 import type { Session } from "@/lib/api";
+import {
+  SESSION_REVIEW_LABELS,
+  useSessionReview,
+} from "@/lib/office/sessionReview";
 
 type SelectedSubmissionReviewPanelProps = {
   selectedSessionId: string;
@@ -56,7 +61,17 @@ export default function SelectedSubmissionReviewPanel({
   selectedSessionId,
   session,
 }: SelectedSubmissionReviewPanelProps) {
+  // Phase 4F: subscribe to client-side review status. The hook handles
+  // localStorage, cross-tab sync, and same-tab propagation so the badge
+  // here stays in sync with the SessionListPanel rendered below.
+  const { status: reviewStatus, toggleReviewed } = useSessionReview(
+    selectedSessionId,
+  );
+  const isReviewed = reviewStatus === "reviewed";
+
   // Stale link / session not on this job. Show a soft notice and bail.
+  // We do NOT render review controls in this branch — there's no real
+  // session to mark.
   if (!session) {
     return (
       <section
@@ -84,6 +99,19 @@ export default function SelectedSubmissionReviewPanel({
   const breadcrumbs = safeCount(session.track_point_count);
   const crew = session.crew_name?.trim() || "—";
 
+  // Badge classes for the two states. Reviewed is green; needs review is
+  // amber so it visually matches the existing "Needs Review" badge style
+  // used by the Field Submissions Inbox.
+  const badgeClass = isReviewed
+    ? "inline-flex items-center rounded-full border border-green-200 bg-green-50 px-2 py-0.5 text-xs font-medium text-green-800 whitespace-nowrap"
+    : "inline-flex items-center rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-800 whitespace-nowrap";
+
+  // Action button styling — primary action when not yet reviewed, neutral
+  // "undo" affordance when already reviewed. Both are local-only writes.
+  const actionButtonClass = isReviewed
+    ? "inline-flex items-center rounded-md border border-gray-300 bg-white px-3 py-1.5 text-xs font-semibold text-gray-700 hover:bg-gray-50 transition-colors"
+    : "inline-flex items-center rounded-md border border-green-700 bg-green-700 px-3 py-1.5 text-xs font-semibold text-white hover:bg-green-800 transition-colors";
+
   return (
     <section
       aria-label="Selected submission review"
@@ -95,15 +123,26 @@ export default function SelectedSubmissionReviewPanel({
             Selected Submission Review
           </h2>
           <p className="text-xs text-gray-500 mt-0.5">
-            Came in from the Field Submissions Inbox. Read-only.
+            Came in from the Field Submissions Inbox. Review marks are saved
+            on this device only.
           </p>
         </div>
-        <span
-          className="inline-flex items-center rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-800 whitespace-nowrap"
-          aria-label="Status: Needs Review"
-        >
-          Needs Review
-        </span>
+        <div className="flex items-center gap-2">
+          <span
+            className={badgeClass}
+            aria-label={`Status: ${SESSION_REVIEW_LABELS[reviewStatus]}`}
+          >
+            {SESSION_REVIEW_LABELS[reviewStatus]}
+          </span>
+          <button
+            type="button"
+            onClick={toggleReviewed}
+            className={actionButtonClass}
+            aria-pressed={isReviewed}
+          >
+            {isReviewed ? "Undo Review" : "Mark as Reviewed"}
+          </button>
+        </div>
       </div>
 
       <dl className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 divide-x divide-y sm:divide-y-0 divide-gray-100">
