@@ -66,6 +66,11 @@ type EndSummary = {
   gps_status: GpsStatus;
 };
 
+// Phase 2D: route-context banner state. "unknown" covers both "no job
+// selected yet" and "selected option is the offline fallback that has no Job
+// payload behind it" — in both cases we render no banner.
+type RouteContextState = "unknown" | "available" | "missing";
+
 const STATUS_LABELS: Record<WalkStatus, string> = {
   not_started: "Not Started",
   walking: "Walking",
@@ -424,6 +429,23 @@ export default function WalkPage() {
     ? selectedJobOption.label
     : form.jobId || "—";
 
+  // Phase 2D: pull the actual Job payload (not the trimmed option) so we can
+  // read route_count. Falls back to null when:
+  //   - no job is selected
+  //   - the selected option is the synthetic "test-job" fallback used when
+  //     the jobs API failed/returned empty (no real Job record behind it)
+  const selectedJob = useMemo<Job | null>(
+    () => jobs.find((j) => j.id === form.jobId) ?? null,
+    [jobs, form.jobId],
+  );
+
+  const routeContext: RouteContextState = useMemo(() => {
+    if (!hydrated) return "unknown";
+    if (!form.jobId) return "unknown";
+    if (!selectedJob) return "unknown"; // fallback option, or job list still loading
+    return selectedJob.route_count > 0 ? "available" : "missing";
+  }, [hydrated, form.jobId, selectedJob]);
+
   // ── Handlers ───────────────────────────────────────────────────────────────
 
   const updateField = <K extends keyof WalkFormFields>(
@@ -764,6 +786,11 @@ export default function WalkPage() {
             </div>
           </dl>
         </section>
+
+        {/* Phase 2D: route context banner. Informational only — does not
+            block Start Walk. Hidden when no job is selected or when we
+            cannot read a Job payload (offline fallback option). */}
+        <RouteContextBanner state={routeContext} />
 
         {(status === "walking" || status === "ended") && (
           <section
@@ -1137,6 +1164,30 @@ function GpsBadge({ status }: { status: GpsStatus }) {
     >
       {GPS_STATUS_LABELS[status]}
     </span>
+  );
+}
+
+function RouteContextBanner({ state }: { state: RouteContextState }) {
+  if (state === "unknown") return null;
+  if (state === "available") {
+    return (
+      <div
+        role="status"
+        className="rounded-xl border border-emerald-800/60 bg-emerald-900/20 px-4 py-3 text-sm text-emerald-200"
+      >
+        Route context available for this job.
+      </div>
+    );
+  }
+  // missing
+  return (
+    <div
+      role="status"
+      className="rounded-xl border border-amber-700/60 bg-amber-900/20 px-4 py-3 text-sm text-amber-200"
+    >
+      No route/design loaded for this job yet. Office must upload the KMZ
+      before field walking.
+    </div>
   );
 }
 
