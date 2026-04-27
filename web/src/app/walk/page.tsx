@@ -71,6 +71,19 @@ type EndSummary = {
 // payload behind it" — in both cases we render no banner.
 type RouteContextState = "unknown" | "available" | "missing";
 
+// Phase 3A: a station entry captured during a walk. Stored locally only;
+// no backend wiring yet.
+type StationEntry = {
+  id: string;
+  station_number: string;
+  depth_ft: number;
+  boc_ft: number;
+  lat: number;
+  lon: number;
+  accuracy_m: number | null;
+  ts: string;
+};
+
 const STATUS_LABELS: Record<WalkStatus, string> = {
   not_started: "Not Started",
   walking: "Walking",
@@ -300,6 +313,16 @@ async function postJson(path: string, body: unknown): Promise<Response> {
   });
 }
 
+function newEntryId(): string {
+  if (
+    typeof window !== "undefined" &&
+    typeof window.crypto?.randomUUID === "function"
+  ) {
+    return window.crypto.randomUUID();
+  }
+  return `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`;
+}
+
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function WalkPage() {
@@ -328,12 +351,29 @@ export default function WalkPage() {
 
   const [mapAvailable, setMapAvailable] = useState<boolean>(true);
 
+  // Phase 3A: station entries captured during this walk. Stored as state
+  // (not just a ref) so the entry count rerenders when the user saves one.
+  // Local-only — no backend wiring in this phase.
+  const [stationEntries, setStationEntries] = useState<StationEntry[]>([]);
+  const [entryFormOpen, setEntryFormOpen] = useState<boolean>(false);
+  const [entryDraft, setEntryDraft] = useState<{
+    station_number: string;
+    depth_ft: string;
+    boc_ft: string;
+  }>({ station_number: "", depth_ft: "", boc_ft: "" });
+  const [entryError, setEntryError] = useState<string | null>(null);
+
   const watchIdRef = useRef<number | null>(null);
   const pendingPointsRef = useRef<Breadcrumb[]>([]);
   const lastAcceptedRef = useRef<Breadcrumb | null>(null);
   const flushTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const flushInFlightRef = useRef<boolean>(false);
   const sessionIdRef = useRef<string | null>(null);
+
+  // Mirror of latestPoint for the entry-save path. Save reads from the ref
+  // so we always pick up the most recent fix even if React hasn't flushed
+  // the corresponding render yet.
+  const latestPointRef = useRef<LatestPoint | null>(null);
 
   // Map controller is mounted/unmounted by the MapPanel child component, but
   // it lives in a parent ref so the GPS callback can drive it directly without
@@ -343,6 +383,10 @@ export default function WalkPage() {
   useEffect(() => {
     sessionIdRef.current = sessionId;
   }, [sessionId]);
+
+  useEffect(() => {
+    latestPointRef.current = latestPoint;
+  }, [latestPoint]);
 
   useEffect(() => {
     const persisted = readPersistedForm();
@@ -637,6 +681,13 @@ export default function WalkPage() {
       setServerPointCount(0);
       setSentHome(false);
 
+      // Phase 3A: a fresh walk starts with a fresh entry list and a clean
+      // entry-form state. Otherwise re-Start would carry stale entries.
+      setStationEntries([]);
+      setEntryFormOpen(false);
+      setEntryDraft({ station_number: "", depth_ft: "", boc_ft: "" });
+      setEntryError(null);
+
       // Wipe any previous trail so a re-Start doesn't visually merge walks.
       mapControllerRef.current?.resetTrail();
 
@@ -700,6 +751,9 @@ export default function WalkPage() {
         );
       } finally {
         setStatus("ended");
+        // Close any open entry form on End Walk so the user lands on a
+        // clean ended view.
+        setEntryFormOpen(false);
       }
     } catch (err) {
       setActionError(
@@ -728,6 +782,73 @@ export default function WalkPage() {
       setIsSending(false);
     }
   };
+
+  // Phase 3A: station entry form open/close + save.
+
+  const openEntryForm = useCallback(() => {
+    setEntryError(null);
+    setEntryDraft({ station_number: "", depth_ft: "", boc_ft: "" });
+    setEntryFormOpen(true);
+  }, []);
+
+  const closeEntryForm = useCallback(() => {
+    setEntryFormOpen(false);
+    setEntryError(null);
+  }, []);
+
+  const saveEntry = useCallback(() => {
+    const stationNumber = entryDraft.station_number.trim();
+    const depthRaw = entryDraft.depth_ft.trim();
+    const bocRaw = entryDraft.boc_ft.trim();
+
+    if (!stationNumber) {
+      setEntryError("Station # is required.");
+      return;
+    }
+    if (!depthRaw) {
+      setEntryError("Depth (ft) is required.");
+      return;
+    }
+    if (!bocRaw) {
+      setEntryError("BOC (ft) is required.");
+      return;
+    }
+
+    const depth = Number(depthRaw);
+    const boc = Number(bocRaw);
+    if (!Number.isFinite(depth)) {
+      setEntryError("Depth (ft) must be a number.");
+      return;
+    }
+    if (!Number.isFinite(boc)) {
+      setEntryError("BOC (ft) must be a number.");
+      return;
+    }
+
+    const point = latestPointRef.current;
+    if (!point) {
+      setEntryError(
+        "No GPS fix yet — wait for the GPS card to show coordinates.",
+      );
+      return;
+    }
+
+    const entry: StationEntry = {
+      id: newEntryId(),
+      station_number: stationNumber,
+      depth_ft: depth,
+      boc_ft: boc,
+      lat: point.lat,
+      lon: point.lon,
+      accuracy_m: point.accuracy_m,
+      ts: new Date().toISOString(),
+    };
+
+    setStationEntries((prev) => [...prev, entry]);
+    setEntryFormOpen(false);
+    setEntryError(null);
+    setEntryDraft({ station_number: "", depth_ft: "", boc_ft: "" });
+  }, [entryDraft]);
 
   // ── Render ─────────────────────────────────────────────────────────────────
 
@@ -854,6 +975,113 @@ export default function WalkPage() {
                 Map unavailable — GPS tracking and breadcrumb capture still
                 work.
               </p>
+            )}
+          </section>
+        )}
+
+        {/* Phase 3A: station entries panel. Visible during a walk and after
+            it ends so the user can see what they captured. Local-only —
+            entries are not yet sent to backend. */}
+        {(status === "walking" || status === "ended") && (
+          <section
+            aria-label="Station entries"
+            className="rounded-xl border border-slate-800 bg-slate-900/70 p-4"
+          >
+            <div className="flex items-center justify-between gap-3">
+              <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-400">
+                Station Entries
+              </h2>
+              <span className="inline-flex items-center rounded-md bg-slate-700/40 px-2 py-1 text-xs font-medium text-slate-200 ring-1 ring-inset ring-slate-600/40">
+                Entries: {stationEntries.length}
+              </span>
+            </div>
+
+            {status === "walking" && !entryFormOpen && (
+              <div className="mt-3">
+                <BigButton variant="muted" onClick={openEntryForm}>
+                  + Add Entry
+                </BigButton>
+              </div>
+            )}
+
+            {status === "walking" && entryFormOpen && (
+              <div className="mt-3 flex flex-col gap-3 rounded-lg border border-slate-700 bg-slate-950/60 p-3">
+                <Field label="Station #" htmlFor="entry-station">
+                  <input
+                    id="entry-station"
+                    type="text"
+                    inputMode="text"
+                    autoComplete="off"
+                    placeholder="e.g. 100+00"
+                    value={entryDraft.station_number}
+                    onChange={(e) =>
+                      setEntryDraft((d) => ({
+                        ...d,
+                        station_number: e.target.value,
+                      }))
+                    }
+                    className="h-12 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 text-base text-slate-100 placeholder:text-slate-500 focus:border-slate-500 focus:outline-none focus:ring-2 focus:ring-slate-500"
+                  />
+                </Field>
+                <Field label="Depth (ft)" htmlFor="entry-depth">
+                  <input
+                    id="entry-depth"
+                    type="number"
+                    inputMode="decimal"
+                    step="0.1"
+                    placeholder="e.g. 4.5"
+                    value={entryDraft.depth_ft}
+                    onChange={(e) =>
+                      setEntryDraft((d) => ({
+                        ...d,
+                        depth_ft: e.target.value,
+                      }))
+                    }
+                    className="h-12 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 text-base text-slate-100 placeholder:text-slate-500 focus:border-slate-500 focus:outline-none focus:ring-2 focus:ring-slate-500"
+                  />
+                </Field>
+                <Field label="BOC (ft)" htmlFor="entry-boc">
+                  <input
+                    id="entry-boc"
+                    type="number"
+                    inputMode="decimal"
+                    step="0.1"
+                    placeholder="e.g. 2.0"
+                    value={entryDraft.boc_ft}
+                    onChange={(e) =>
+                      setEntryDraft((d) => ({
+                        ...d,
+                        boc_ft: e.target.value,
+                      }))
+                    }
+                    className="h-12 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 text-base text-slate-100 placeholder:text-slate-500 focus:border-slate-500 focus:outline-none focus:ring-2 focus:ring-slate-500"
+                  />
+                </Field>
+
+                {entryError && (
+                  <div
+                    role="alert"
+                    className="rounded-lg border border-rose-800/60 bg-rose-900/30 p-2 text-xs text-rose-200"
+                  >
+                    {entryError}
+                  </div>
+                )}
+
+                {!latestPoint && !entryError && (
+                  <p className="text-xs text-amber-400">
+                    Waiting for first GPS fix before this entry can be saved.
+                  </p>
+                )}
+
+                <div className="flex gap-2">
+                  <BigButton variant="primary" onClick={saveEntry}>
+                    Save Entry
+                  </BigButton>
+                  <BigButton variant="muted" onClick={closeEntryForm}>
+                    Cancel
+                  </BigButton>
+                </div>
+              </div>
             )}
           </section>
         )}
