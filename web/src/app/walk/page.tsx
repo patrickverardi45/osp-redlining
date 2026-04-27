@@ -26,6 +26,13 @@ const FLUSH_INTERVAL_MS = 10000;
 // rezoom while the walk is active, per spec.
 const MAP_LOCKED_ZOOM = 18;
 
+// Phase 3B-A: cap on individual photo size (bytes) we are willing to keep
+// referenced in memory. We do not encode the file or hold its bytes in
+// React state — only the File handle plus a small metadata snapshot — but
+// browsers vary on object-URL memory pressure, so we still refuse absurd
+// inputs early.
+const PHOTO_MAX_BYTES = 25 * 1024 * 1024;
+
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 type WalkFormFields = {
@@ -71,8 +78,20 @@ type EndSummary = {
 // payload behind it" — in both cases we render no banner.
 type RouteContextState = "unknown" | "available" | "missing";
 
-// Phase 3A: a station entry captured during a walk. Stored locally only;
-// no backend wiring yet.
+// Phase 3B-A: per-entry photo metadata. We hold the original File handle
+// (cheap reference, no copy) for a future upload phase, plus a small
+// metadata snapshot for display. The object_url is created with
+// URL.createObjectURL and MUST be revoked when the entry is dropped.
+type EntryPhoto = {
+  file: File;
+  filename: string;
+  size_bytes: number;
+  mime_type: string;
+  object_url: string;
+};
+
+// Phase 3A + 3B-A: a station entry captured during a walk. Stored locally
+// only; no backend wiring yet. Photo is optional.
 type StationEntry = {
   id: string;
   station_number: string;
@@ -82,6 +101,7 @@ type StationEntry = {
   lon: number;
   accuracy_m: number | null;
   ts: string;
+  photo: EntryPhoto | null;
 };
 
 const STATUS_LABELS: Record<WalkStatus, string> = {
@@ -323,6 +343,22 @@ function newEntryId(): string {
   return `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`;
 }
 
+function safeRevokeObjectUrl(url: string | null | undefined): void {
+  if (!url) return;
+  try {
+    URL.revokeObjectURL(url);
+  } catch {
+    /* ignore */
+  }
+}
+
+function formatBytes(n: number): string {
+  if (!Number.isFinite(n) || n <= 0) return "0 B";
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+}
+
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function WalkPage() {
@@ -362,6 +398,12 @@ export default function WalkPage() {
     boc_ft: string;
   }>({ station_number: "", depth_ft: "", boc_ft: "" });
   const [entryError, setEntryError] = useState<string | null>(null);
+
+  // Phase 3B-A: pending photo for the current entry draft. Held outside the
+  // entry list so cancel/clear paths can revoke its object URL cleanly
+  // without scanning the saved entries.
+  const [photoDraft, setPhotoDraft] = useState<EntryPhoto | null>(null);
+  const photoInputRef = useRef<HTMLInputElement | null>(null);
 
   const watchIdRef = useRef<number | null>(null);
   const pendingPointsRef = useRef<Breadcrumb[]>([]);
@@ -641,6 +683,37 @@ export default function WalkPage() {
     }, FLUSH_INTERVAL_MS);
   }, [flushBreadcrumbs]);
 
+  // Phase 3B-A: revoke object URLs for every saved entry's photo and the
+  // current draft photo, then clear the lists. Used by Start New Walk and
+  // unmount cleanup so we never leak object URLs across walks.
+  const revokeAllPhotoUrls = useCallback(
+    (entries: StationEntry[], draft: EntryPhoto | null) => {
+      for (const entry of entries) {
+        safeRevokeObjectUrl(entry.photo?.object_url);
+      }
+      safeRevokeObjectUrl(draft?.object_url);
+    },
+    [],
+  );
+
+  // Use refs to give the unmount cleanup the latest entries+draft without
+  // adding them to a useEffect dep array (which would re-run cleanup on
+  // every save).
+  const stationEntriesRef = useRef<StationEntry[]>([]);
+  const photoDraftRef = useRef<EntryPhoto | null>(null);
+  useEffect(() => {
+    stationEntriesRef.current = stationEntries;
+  }, [stationEntries]);
+  useEffect(() => {
+    photoDraftRef.current = photoDraft;
+  }, [photoDraft]);
+
+  useEffect(() => {
+    return () => {
+      revokeAllPhotoUrls(stationEntriesRef.current, photoDraftRef.current);
+    };
+  }, [revokeAllPhotoUrls]);
+
   const handleStart = useCallback(async () => {
     if (isStarting) return;
     setIsStarting(true);
@@ -681,12 +754,18 @@ export default function WalkPage() {
       setServerPointCount(0);
       setSentHome(false);
 
-      // Phase 3A: a fresh walk starts with a fresh entry list and a clean
-      // entry-form state. Otherwise re-Start would carry stale entries.
+      // Phase 3A + 3B-A: a fresh walk starts with a fresh entry list and a
+      // clean entry-form state. Revoke any object URLs the previous walk
+      // left behind so we don't leak browser memory across walks.
+      revokeAllPhotoUrls(stationEntriesRef.current, photoDraftRef.current);
       setStationEntries([]);
       setEntryFormOpen(false);
       setEntryDraft({ station_number: "", depth_ft: "", boc_ft: "" });
       setEntryError(null);
+      setPhotoDraft(null);
+      if (photoInputRef.current) {
+        photoInputRef.current.value = "";
+      }
 
       // Wipe any previous trail so a re-Start doesn't visually merge walks.
       mapControllerRef.current?.resetTrail();
@@ -702,6 +781,7 @@ export default function WalkPage() {
     form.jobId,
     form.section,
     isStarting,
+    revokeAllPhotoUrls,
     selectedJobOption?.label,
     startGpsWatch,
   ]);
@@ -752,8 +832,15 @@ export default function WalkPage() {
       } finally {
         setStatus("ended");
         // Close any open entry form on End Walk so the user lands on a
-        // clean ended view.
+        // clean ended view. Drop any unsaved photo draft (revoke its URL).
         setEntryFormOpen(false);
+        if (photoDraftRef.current) {
+          safeRevokeObjectUrl(photoDraftRef.current.object_url);
+          setPhotoDraft(null);
+          if (photoInputRef.current) {
+            photoInputRef.current.value = "";
+          }
+        }
       }
     } catch (err) {
       setActionError(
@@ -783,17 +870,90 @@ export default function WalkPage() {
     }
   };
 
-  // Phase 3A: station entry form open/close + save.
+  // Phase 3A + 3B-A: station entry form open/close + save.
 
   const openEntryForm = useCallback(() => {
     setEntryError(null);
     setEntryDraft({ station_number: "", depth_ft: "", boc_ft: "" });
+    // Drop any prior photo draft on (re)open so opening a fresh form never
+    // inherits a stale selection.
+    if (photoDraftRef.current) {
+      safeRevokeObjectUrl(photoDraftRef.current.object_url);
+    }
+    setPhotoDraft(null);
+    if (photoInputRef.current) {
+      photoInputRef.current.value = "";
+    }
     setEntryFormOpen(true);
   }, []);
 
   const closeEntryForm = useCallback(() => {
+    if (photoDraftRef.current) {
+      safeRevokeObjectUrl(photoDraftRef.current.object_url);
+    }
+    setPhotoDraft(null);
+    if (photoInputRef.current) {
+      photoInputRef.current.value = "";
+    }
     setEntryFormOpen(false);
     setEntryError(null);
+  }, []);
+
+  const handlePhotoSelected = useCallback(
+    (event: React.ChangeEvent<HTMLInputElement>) => {
+      // User cancelled the file picker — files is empty and we should leave
+      // any existing draft as-is rather than wiping it.
+      const file = event.target.files?.[0];
+      if (!file) return;
+
+      // Defend against absurd inputs early (camera-default JPEGs are usually
+      // 2-6MB; we cap at 25MB so accidental video selection is rejected).
+      if (file.size > PHOTO_MAX_BYTES) {
+        setEntryError(
+          `Photo is too large (${formatBytes(file.size)}). Max ${formatBytes(
+            PHOTO_MAX_BYTES,
+          )}.`,
+        );
+        // Reset input so the same too-big file can be re-tried after the
+        // user picks something smaller.
+        event.target.value = "";
+        return;
+      }
+
+      // Replace any prior draft photo and revoke its URL.
+      if (photoDraftRef.current) {
+        safeRevokeObjectUrl(photoDraftRef.current.object_url);
+      }
+
+      let object_url = "";
+      try {
+        object_url = URL.createObjectURL(file);
+      } catch {
+        setEntryError("Could not create preview for that photo.");
+        event.target.value = "";
+        return;
+      }
+
+      setEntryError(null);
+      setPhotoDraft({
+        file,
+        filename: file.name || "photo",
+        size_bytes: file.size,
+        mime_type: file.type || "image/*",
+        object_url,
+      });
+    },
+    [],
+  );
+
+  const clearPhotoDraft = useCallback(() => {
+    if (photoDraftRef.current) {
+      safeRevokeObjectUrl(photoDraftRef.current.object_url);
+    }
+    setPhotoDraft(null);
+    if (photoInputRef.current) {
+      photoInputRef.current.value = "";
+    }
   }, []);
 
   const saveEntry = useCallback(() => {
@@ -842,13 +1002,22 @@ export default function WalkPage() {
       lon: point.lon,
       accuracy_m: point.accuracy_m,
       ts: new Date().toISOString(),
+      // Hand off the draft photo (its object URL belongs to the entry now;
+      // we do NOT revoke it here — it will be revoked on Start New Walk or
+      // unmount).
+      photo: photoDraft,
     };
 
     setStationEntries((prev) => [...prev, entry]);
     setEntryFormOpen(false);
     setEntryError(null);
     setEntryDraft({ station_number: "", depth_ft: "", boc_ft: "" });
-  }, [entryDraft]);
+    // Photo ownership transferred — clear the draft slot without revoking.
+    setPhotoDraft(null);
+    if (photoInputRef.current) {
+      photoInputRef.current.value = "";
+    }
+  }, [entryDraft, photoDraft]);
 
   // ── Render ─────────────────────────────────────────────────────────────────
 
@@ -979,9 +1148,9 @@ export default function WalkPage() {
           </section>
         )}
 
-        {/* Phase 3A: station entries panel. Visible during a walk and after
-            it ends so the user can see what they captured. Local-only —
-            entries are not yet sent to backend. */}
+        {/* Phase 3A + 3B-A: station entries panel. Visible during a walk
+            and after it ends so the user can see what they captured.
+            Local-only — entries are not yet sent to backend. */}
         {(status === "walking" || status === "ended") && (
           <section
             aria-label="Station entries"
@@ -1057,6 +1226,50 @@ export default function WalkPage() {
                     className="h-12 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 text-base text-slate-100 placeholder:text-slate-500 focus:border-slate-500 focus:outline-none focus:ring-2 focus:ring-slate-500"
                   />
                 </Field>
+
+                {/* Phase 3B-A: optional single-photo attachment. */}
+                <div className="flex flex-col gap-2">
+                  <label
+                    htmlFor="entry-photo"
+                    className="text-xs font-medium uppercase tracking-wide text-slate-400"
+                  >
+                    Photo (optional)
+                  </label>
+                  <input
+                    ref={photoInputRef}
+                    id="entry-photo"
+                    type="file"
+                    accept="image/*"
+                    capture="environment"
+                    onChange={handlePhotoSelected}
+                    className="block w-full text-sm text-slate-300 file:mr-3 file:rounded-md file:border-0 file:bg-slate-800 file:px-3 file:py-2 file:text-sm file:font-medium file:text-slate-100 hover:file:bg-slate-700"
+                  />
+                  {photoDraft && (
+                    <div className="flex items-center gap-3 rounded-lg border border-slate-700 bg-slate-900/60 p-2">
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={photoDraft.object_url}
+                        alt="Selected photo preview"
+                        className="h-16 w-16 flex-none rounded-md object-cover"
+                      />
+                      <div className="min-w-0 flex-1 text-xs">
+                        <div className="truncate text-slate-200">
+                          {photoDraft.filename}
+                        </div>
+                        <div className="text-slate-500">
+                          {formatBytes(photoDraft.size_bytes)}
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={clearPhotoDraft}
+                        className="rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-xs text-slate-300 hover:bg-slate-800"
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  )}
+                </div>
 
                 {entryError && (
                   <div
