@@ -104,6 +104,21 @@ type StationEntry = {
   photo: EntryPhoto | null;
 };
 
+// Phase 3B-B: standalone photo evidence not tied to a station. GPS is
+// auto-captured from latestPoint at the moment of selection.
+type PhotoEvidence = {
+  id: string;
+  file: File;
+  filename: string;
+  size_bytes: number;
+  mime_type: string;
+  object_url: string;
+  lat: number;
+  lon: number;
+  ts: string;
+  note?: string;
+};
+
 const STATUS_LABELS: Record<WalkStatus, string> = {
   not_started: "Not Started",
   walking: "Walking",
@@ -405,6 +420,16 @@ export default function WalkPage() {
   const [photoDraft, setPhotoDraft] = useState<EntryPhoto | null>(null);
   const photoInputRef = useRef<HTMLInputElement | null>(null);
 
+  // Phase 3B-B: standalone photo-evidence list, separate from station
+  // entries. Each item auto-stamps lat/lon from latestPoint at selection.
+  const [photoEvidenceList, setPhotoEvidenceList] = useState<PhotoEvidence[]>(
+    [],
+  );
+  const [photoEvidenceError, setPhotoEvidenceError] = useState<string | null>(
+    null,
+  );
+  const photoEvidenceInputRef = useRef<HTMLInputElement | null>(null);
+
   const watchIdRef = useRef<number | null>(null);
   const pendingPointsRef = useRef<Breadcrumb[]>([]);
   const lastAcceptedRef = useRef<Breadcrumb | null>(null);
@@ -683,34 +708,50 @@ export default function WalkPage() {
     }, FLUSH_INTERVAL_MS);
   }, [flushBreadcrumbs]);
 
-  // Phase 3B-A: revoke object URLs for every saved entry's photo and the
-  // current draft photo, then clear the lists. Used by Start New Walk and
-  // unmount cleanup so we never leak object URLs across walks.
+  // Phase 3B-A + 3B-B: revoke object URLs for every saved entry's photo,
+  // the current entry-form draft photo, AND the standalone photo evidence
+  // list. Used by Start New Walk and unmount cleanup so we never leak
+  // object URLs across walks.
   const revokeAllPhotoUrls = useCallback(
-    (entries: StationEntry[], draft: EntryPhoto | null) => {
+    (
+      entries: StationEntry[],
+      draft: EntryPhoto | null,
+      evidence: PhotoEvidence[],
+    ) => {
       for (const entry of entries) {
         safeRevokeObjectUrl(entry.photo?.object_url);
       }
       safeRevokeObjectUrl(draft?.object_url);
+      for (const ev of evidence) {
+        safeRevokeObjectUrl(ev.object_url);
+      }
     },
     [],
   );
 
-  // Use refs to give the unmount cleanup the latest entries+draft without
-  // adding them to a useEffect dep array (which would re-run cleanup on
-  // every save).
+  // Use refs to give the unmount cleanup the latest entries+draft+evidence
+  // without adding them to a useEffect dep array (which would re-run cleanup
+  // on every save).
   const stationEntriesRef = useRef<StationEntry[]>([]);
   const photoDraftRef = useRef<EntryPhoto | null>(null);
+  const photoEvidenceListRef = useRef<PhotoEvidence[]>([]);
   useEffect(() => {
     stationEntriesRef.current = stationEntries;
   }, [stationEntries]);
   useEffect(() => {
     photoDraftRef.current = photoDraft;
   }, [photoDraft]);
+  useEffect(() => {
+    photoEvidenceListRef.current = photoEvidenceList;
+  }, [photoEvidenceList]);
 
   useEffect(() => {
     return () => {
-      revokeAllPhotoUrls(stationEntriesRef.current, photoDraftRef.current);
+      revokeAllPhotoUrls(
+        stationEntriesRef.current,
+        photoDraftRef.current,
+        photoEvidenceListRef.current,
+      );
     };
   }, [revokeAllPhotoUrls]);
 
@@ -754,10 +795,15 @@ export default function WalkPage() {
       setServerPointCount(0);
       setSentHome(false);
 
-      // Phase 3A + 3B-A: a fresh walk starts with a fresh entry list and a
-      // clean entry-form state. Revoke any object URLs the previous walk
-      // left behind so we don't leak browser memory across walks.
-      revokeAllPhotoUrls(stationEntriesRef.current, photoDraftRef.current);
+      // Phase 3A + 3B-A + 3B-B: a fresh walk starts with fresh entry list,
+      // clean entry-form state, AND empty photo-evidence list. Revoke any
+      // object URLs the previous walk left behind so we don't leak browser
+      // memory across walks.
+      revokeAllPhotoUrls(
+        stationEntriesRef.current,
+        photoDraftRef.current,
+        photoEvidenceListRef.current,
+      );
       setStationEntries([]);
       setEntryFormOpen(false);
       setEntryDraft({ station_number: "", depth_ft: "", boc_ft: "" });
@@ -765,6 +811,11 @@ export default function WalkPage() {
       setPhotoDraft(null);
       if (photoInputRef.current) {
         photoInputRef.current.value = "";
+      }
+      setPhotoEvidenceList([]);
+      setPhotoEvidenceError(null);
+      if (photoEvidenceInputRef.current) {
+        photoEvidenceInputRef.current.value = "";
       }
 
       // Wipe any previous trail so a re-Start doesn't visually merge walks.
@@ -1018,6 +1069,77 @@ export default function WalkPage() {
       photoInputRef.current.value = "";
     }
   }, [entryDraft, photoDraft]);
+
+  // Phase 3B-B: standalone "Add Photo" path. Independent of station entry.
+  // Reuses the same size cap and object-URL convention but does not touch
+  // photoDraft (which belongs to the station-entry form).
+
+  const triggerAddPhotoEvidence = useCallback(() => {
+    setPhotoEvidenceError(null);
+    // Block early if there's no GPS fix — we promised auto lat/lon, so we
+    // shouldn't open the picker just to fail on selection.
+    if (!latestPointRef.current) {
+      setPhotoEvidenceError("Waiting for GPS fix");
+      return;
+    }
+    photoEvidenceInputRef.current?.click();
+  }, []);
+
+  const handlePhotoEvidenceSelected = useCallback(
+    (event: React.ChangeEvent<HTMLInputElement>) => {
+      // Cancelled picker — leave list untouched.
+      const file = event.target.files?.[0];
+      if (!file) return;
+
+      // Re-check GPS at selection time. The user may have opened the picker
+      // with a fix and then somehow lost it; we still want auto-attached
+      // coordinates and refuse the capture cleanly if there's nothing.
+      const point = latestPointRef.current;
+      if (!point) {
+        setPhotoEvidenceError("Waiting for GPS fix");
+        event.target.value = "";
+        return;
+      }
+
+      if (file.size > PHOTO_MAX_BYTES) {
+        setPhotoEvidenceError(
+          `Photo is too large (${formatBytes(file.size)}). Max ${formatBytes(
+            PHOTO_MAX_BYTES,
+          )}.`,
+        );
+        event.target.value = "";
+        return;
+      }
+
+      let object_url = "";
+      try {
+        object_url = URL.createObjectURL(file);
+      } catch {
+        setPhotoEvidenceError("Could not create preview for that photo.");
+        event.target.value = "";
+        return;
+      }
+
+      const evidence: PhotoEvidence = {
+        id: newEntryId(),
+        file,
+        filename: file.name || "photo",
+        size_bytes: file.size,
+        mime_type: file.type || "image/*",
+        object_url,
+        lat: point.lat,
+        lon: point.lon,
+        ts: new Date().toISOString(),
+      };
+
+      setPhotoEvidenceError(null);
+      setPhotoEvidenceList((prev) => [...prev, evidence]);
+      // Reset the input so picking the same filename again still fires
+      // onChange.
+      event.target.value = "";
+    },
+    [],
+  );
 
   // ── Render ─────────────────────────────────────────────────────────────────
 
@@ -1295,6 +1417,59 @@ export default function WalkPage() {
                   </BigButton>
                 </div>
               </div>
+            )}
+          </section>
+        )}
+
+        {/* Phase 3B-B: standalone photo evidence panel. Sits below station
+            entries. Auto-stamps lat/lon at selection from latestPoint. */}
+        {(status === "walking" || status === "ended") && (
+          <section
+            aria-label="Photo evidence"
+            className="rounded-xl border border-slate-800 bg-slate-900/70 p-4"
+          >
+            <div className="flex items-center justify-between gap-3">
+              <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-400">
+                Photos
+              </h2>
+              <span className="inline-flex items-center rounded-md bg-slate-700/40 px-2 py-1 text-xs font-medium text-slate-200 ring-1 ring-inset ring-slate-600/40">
+                Photos: {photoEvidenceList.length}
+              </span>
+            </div>
+
+            {/* Hidden input — driven by the Add Photo button so we can
+                pre-check GPS and surface the "Waiting for GPS fix" error
+                without opening the file picker. */}
+            <input
+              ref={photoEvidenceInputRef}
+              type="file"
+              accept="image/*"
+              capture="environment"
+              onChange={handlePhotoEvidenceSelected}
+              className="hidden"
+            />
+
+            {status === "walking" && (
+              <div className="mt-3">
+                <BigButton variant="muted" onClick={triggerAddPhotoEvidence}>
+                  + Add Photo
+                </BigButton>
+              </div>
+            )}
+
+            {photoEvidenceError && (
+              <div
+                role="alert"
+                className="mt-3 rounded-lg border border-amber-700/60 bg-amber-900/20 p-2 text-xs text-amber-200"
+              >
+                {photoEvidenceError}
+              </div>
+            )}
+
+            {status === "walking" && !latestPoint && !photoEvidenceError && (
+              <p className="mt-3 text-xs text-amber-400">
+                Waiting for first GPS fix before a photo can be attached.
+              </p>
             )}
           </section>
         )}
