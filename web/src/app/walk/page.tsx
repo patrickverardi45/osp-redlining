@@ -1,6 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 
 import { getJobs, type Job } from "@/lib/api";
 import { getOrCreateSessionId } from "@/lib/session";
@@ -9,24 +15,16 @@ import { getOrCreateSessionId } from "@/lib/session";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8000";
 
-// Versioned localStorage key for header form. Schema bump → new key, no
-// collision with old saved state.
 const FORM_STORAGE_KEY = "osp_walk_form_v1";
 
-// Drop GPS fixes worse than this. Spec: 75m.
 const ACCURACY_FILTER_M = 75;
-
-// Don't accept a new point if it's within this distance of the previous
-// accepted point. Cheap dedup so a phone sitting still doesn't fill the
-// breadcrumb list.
 const MIN_POINT_SPACING_M = 3;
-
-// Threshold above which we surface the "poor accuracy" state to the user
-// (still captured, but flagged in the UI).
 const POOR_ACCURACY_M = 30;
-
-// Periodic flush cadence while walking, plus on End Walk.
 const FLUSH_INTERVAL_MS = 10000;
+
+// Map: zoom locked at this value once we get our first fix. We pan but never
+// rezoom while the walk is active, per spec.
+const MAP_LOCKED_ZOOM = 18;
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -84,10 +82,155 @@ const GPS_STATUS_LABELS: Record<GpsStatus, string> = {
   unsupported: "Unsupported",
 };
 
+// ─── Map controller (vanilla Leaflet, no react-leaflet) ──────────────────────
+// Imperatively driven from outside React state so the GPS callback can push
+// updates without triggering re-renders. Lives behind a ref-held controller
+// object whose methods are no-ops until the map is initialized.
+
+type LeafletNS = typeof import("leaflet");
+
+type MapController = {
+  init(container: HTMLDivElement): Promise<boolean>;
+  destroy(): void;
+  setPosition(lat: number, lon: number): void;
+  appendBreadcrumb(lat: number, lon: number): void;
+  resetTrail(): void;
+};
+
+function createMapController(): MapController {
+  let L: LeafletNS | null = null;
+  let map: ReturnType<LeafletNS["map"]> | null = null;
+  let polyline: ReturnType<LeafletNS["polyline"]> | null = null;
+  let positionMarker: ReturnType<LeafletNS["circleMarker"]> | null = null;
+  let positionHalo: ReturnType<LeafletNS["circleMarker"]> | null = null;
+  let hasCentered = false;
+  const trail: Array<[number, number]> = [];
+
+  return {
+    async init(container: HTMLDivElement): Promise<boolean> {
+      try {
+        const mod = await import("leaflet");
+        // Some bundlers expose the namespace under .default, others as the
+        // module itself. Cover both.
+        L =
+          (mod as unknown as { default?: LeafletNS }).default ??
+          (mod as unknown as LeafletNS);
+        map = L.map(container, {
+          center: [0, 0],
+          zoom: 2,
+          zoomControl: false,
+          attributionControl: false,
+          // Lock zoom interactions so the map doesn't fight the user when
+          // we recenter on every fix.
+          scrollWheelZoom: false,
+          doubleClickZoom: false,
+          boxZoom: false,
+          touchZoom: false,
+          keyboard: false,
+        });
+        L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+          maxZoom: 19,
+        }).addTo(map);
+
+        polyline = L.polyline([], {
+          color: "#38bdf8", // sky-400
+          weight: 4,
+          opacity: 0.9,
+        }).addTo(map);
+
+        return true;
+      } catch {
+        // Caller will render the fallback panel.
+        return false;
+      }
+    },
+
+    destroy(): void {
+      try {
+        polyline?.remove();
+        positionMarker?.remove();
+        positionHalo?.remove();
+        map?.remove();
+      } catch {
+        /* ignore */
+      }
+      polyline = null;
+      positionMarker = null;
+      positionHalo = null;
+      map = null;
+      L = null;
+      hasCentered = false;
+      trail.length = 0;
+    },
+
+    setPosition(lat: number, lon: number): void {
+      if (!L || !map) return;
+      const latlng: [number, number] = [lat, lon];
+      try {
+        if (!positionHalo) {
+          positionHalo = L.circleMarker(latlng, {
+            radius: 14,
+            color: "#38bdf8",
+            weight: 0,
+            fillColor: "#38bdf8",
+            fillOpacity: 0.18,
+            interactive: false,
+          }).addTo(map);
+        } else {
+          positionHalo.setLatLng(latlng);
+        }
+        if (!positionMarker) {
+          positionMarker = L.circleMarker(latlng, {
+            radius: 7,
+            color: "#0c4a6e", // dark ring for contrast
+            weight: 2,
+            fillColor: "#38bdf8",
+            fillOpacity: 1,
+            interactive: false,
+          }).addTo(map);
+        } else {
+          positionMarker.setLatLng(latlng);
+        }
+        if (!hasCentered) {
+          map.setView(latlng, MAP_LOCKED_ZOOM, { animate: false });
+          hasCentered = true;
+        } else {
+          // Pan only — never re-zoom. panTo is gentle and cancels any
+          // ongoing animation, which keeps movement smooth.
+          map.panTo(latlng, { animate: true, duration: 0.35 });
+        }
+      } catch {
+        /* ignore — keep the page alive even if Leaflet errors mid-update */
+      }
+    },
+
+    appendBreadcrumb(lat: number, lon: number): void {
+      if (!polyline) return;
+      try {
+        trail.push([lat, lon]);
+        // addLatLng is the cheap append path — does not redraw the whole
+        // line, just extends it.
+        polyline.addLatLng([lat, lon]);
+      } catch {
+        /* ignore */
+      }
+    },
+
+    resetTrail(): void {
+      if (!polyline) return;
+      try {
+        trail.length = 0;
+        polyline.setLatLngs([]);
+      } catch {
+        /* ignore */
+      }
+    },
+  };
+}
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function todayIso(): string {
-  // YYYY-MM-DD in local time so the field matches the user's wall date.
   const d = new Date();
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, "0");
@@ -101,8 +244,7 @@ function metersBetween(
   lat2: number,
   lon2: number,
 ): number {
-  // Equirectangular approximation. Good enough at the breadcrumb scale.
-  const R = 6371000; // meters
+  const R = 6371000;
   const dLat = ((lat2 - lat1) * Math.PI) / 180;
   const dLon = ((lon2 - lon1) * Math.PI) / 180;
   const meanLat = ((lat1 + lat2) * Math.PI) / 360;
@@ -140,8 +282,7 @@ function writePersistedForm(fields: WalkFormFields): void {
   try {
     window.localStorage.setItem(FORM_STORAGE_KEY, JSON.stringify(fields));
   } catch {
-    // Storage unavailable (private mode, quota). Silent fail is OK — the
-    // user just loses persistence for the current session.
+    /* ignore */
   }
 }
 
@@ -169,7 +310,6 @@ export default function WalkPage() {
   const [status, setStatus] = useState<WalkStatus>("not_started");
   const [sentHome, setSentHome] = useState(false);
 
-  // GPS / breadcrumb state surfaced to the UI.
   const [gpsStatus, setGpsStatus] = useState<GpsStatus>("idle");
   const [latestPoint, setLatestPoint] = useState<LatestPoint | null>(null);
   const [pointCount, setPointCount] = useState<number>(0);
@@ -178,13 +318,8 @@ export default function WalkPage() {
   const [actionError, setActionError] = useState<string | null>(null);
   const [endSummary, setEndSummary] = useState<EndSummary | null>(null);
 
-  // Refs for things that change quickly and shouldn't trigger re-renders, or
-  // that need to survive across renders without state churn:
-  //  - the geolocation watch handle (so we can stop it cleanly)
-  //  - the unflushed breadcrumb buffer (mutated from inside the GPS callback)
-  //  - the last accepted point (for spacing dedup, also without re-rendering)
-  //  - the periodic flush timer
-  //  - the "are we currently flushing" guard (prevents overlapping POSTs)
+  const [mapAvailable, setMapAvailable] = useState<boolean>(true);
+
   const watchIdRef = useRef<number | null>(null);
   const pendingPointsRef = useRef<Breadcrumb[]>([]);
   const lastAcceptedRef = useRef<Breadcrumb | null>(null);
@@ -192,12 +327,14 @@ export default function WalkPage() {
   const flushInFlightRef = useRef<boolean>(false);
   const sessionIdRef = useRef<string | null>(null);
 
-  // Keep a ref mirror of sessionId so async callbacks always see the latest.
+  // Map controller is mounted/unmounted by the MapPanel child component, but
+  // it lives in a parent ref so the GPS callback can drive it directly without
+  // needing the child to expose anything via React state.
+  const mapControllerRef = useRef<MapController | null>(null);
+
   useEffect(() => {
     sessionIdRef.current = sessionId;
   }, [sessionId]);
-
-  // ── Lifecycle: hydrate form + session ──────────────────────────────────────
 
   useEffect(() => {
     const persisted = readPersistedForm();
@@ -239,7 +376,6 @@ export default function WalkPage() {
     fetchJobs();
   }, [fetchJobs]);
 
-  // Cleanup on unmount: stop watcher, clear timer.
   useEffect(() => {
     return () => {
       if (watchIdRef.current !== null && typeof navigator !== "undefined") {
@@ -268,7 +404,6 @@ export default function WalkPage() {
           : j.job_name || j.id,
       }));
     }
-    // Fallback so the page works with a flaky/offline backend.
     return [{ id: "test-job", label: "test-job" }];
   }, [jobs]);
 
@@ -295,8 +430,6 @@ export default function WalkPage() {
     setForm((prev) => ({ ...prev, [key]: value }));
   };
 
-  // Flush pending breadcrumbs to the backend. Safe to call from anywhere;
-  // returns the post-flush server count (or null on failure).
   const flushBreadcrumbs = useCallback(
     async (): Promise<number | null> => {
       if (flushInFlightRef.current) return null;
@@ -304,8 +437,6 @@ export default function WalkPage() {
       if (pending.length === 0) return serverPointCount;
       const sid = sessionIdRef.current;
       if (!sid) return null;
-      // Take ownership of the pending buffer atomically — anything that
-      // arrives during the POST goes into a fresh array.
       const batch = pending.splice(0, pending.length);
       flushInFlightRef.current = true;
       try {
@@ -314,7 +445,6 @@ export default function WalkPage() {
           points: batch,
         });
         if (!res.ok) {
-          // Restore the batch at the front so we retry next flush.
           pendingPointsRef.current = [...batch, ...pendingPointsRef.current];
           setActionError(
             `Breadcrumb upload failed (${res.status}). Will retry.`,
@@ -331,7 +461,6 @@ export default function WalkPage() {
         }
         return data.breadcrumb_count ?? null;
       } catch (err) {
-        // Network error — restore so we don't lose points.
         pendingPointsRef.current = [...batch, ...pendingPointsRef.current];
         setActionError(
           err instanceof Error
@@ -372,24 +501,23 @@ export default function WalkPage() {
       const { latitude, longitude, accuracy } = pos.coords;
       const accuracy_m = Number.isFinite(accuracy) ? accuracy : null;
 
-      // Filter on accuracy floor.
+      // Always tell the map where the user is, regardless of capture filters,
+      // so the blue dot follows even when accuracy is poor or the user is
+      // standing still.
+      mapControllerRef.current?.setPosition(latitude, longitude);
+
       if (accuracy_m !== null && accuracy_m > ACCURACY_FILTER_M) {
         setGpsStatus("poor");
-        // Still surface the latest reading so the user sees movement, but
-        // don't add it to the captured stream.
         setLatestPoint({ lat: latitude, lon: longitude, accuracy_m });
         return;
       }
 
-      // Spatial dedup against the previous accepted point.
       const last = lastAcceptedRef.current;
       if (
         last &&
         metersBetween(last.lat, last.lon, latitude, longitude) <
           MIN_POINT_SPACING_M
       ) {
-        // Treat as a still-active reading; refresh the surface state but
-        // don't capture.
         setGpsStatus(
           accuracy_m !== null && accuracy_m > POOR_ACCURACY_M
             ? "poor"
@@ -407,6 +535,10 @@ export default function WalkPage() {
       };
       lastAcceptedRef.current = point;
       pendingPointsRef.current.push(point);
+
+      // Append to the live polyline directly. No React state pathway — keeps
+      // map rendering off the per-tick render budget.
+      mapControllerRef.current?.appendBreadcrumb(latitude, longitude);
 
       setLatestPoint({ lat: latitude, lon: longitude, accuracy_m });
       setPointCount((c) => c + 1);
@@ -435,9 +567,6 @@ export default function WalkPage() {
       return;
     }
 
-    // Periodic flush while walking. Capture-by-closure of flushBreadcrumbs
-    // is fine here — the function body is stable across calls thanks to
-    // useCallback above.
     flushTimerRef.current = setInterval(() => {
       void flushBreadcrumbs();
     }, FLUSH_INTERVAL_MS);
@@ -473,13 +602,15 @@ export default function WalkPage() {
       return;
     }
 
-    // Reset capture state for a fresh walk.
     pendingPointsRef.current = [];
     lastAcceptedRef.current = null;
     setLatestPoint(null);
     setPointCount(0);
     setServerPointCount(0);
     setSentHome(false);
+
+    // Wipe any previous trail so a re-Start doesn't visually merge walks.
+    mapControllerRef.current?.resetTrail();
 
     setStatus("walking");
     startGpsWatch();
@@ -494,7 +625,6 @@ export default function WalkPage() {
 
   const handleEnd = useCallback(async () => {
     stopGpsWatch();
-    // Final flush of anything still in the buffer.
     await flushBreadcrumbs();
 
     const sid = sessionIdRef.current;
@@ -553,18 +683,30 @@ export default function WalkPage() {
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100">
-      <div className="mx-auto flex w-full max-w-md flex-col gap-5 px-4 pb-10 pt-6">
-        {/* Header */}
+      {/* Map sits at the top of the page as the dominant visual layer.
+          Stays mounted across the whole walk lifecycle so we never tear
+          down/rebuild Leaflet — that would cause flicker and lose the
+          breadcrumb trail.
+
+          height is a portion of the viewport so on a phone the map is
+          dominant but the controls are still reachable with one scroll. */}
+      <div className="h-[55vh] w-full bg-slate-900">
+        <MapPanel
+          controllerRef={mapControllerRef}
+          onAvailabilityChange={setMapAvailable}
+        />
+      </div>
+
+      <div className="mx-auto flex w-full max-w-md flex-col gap-5 px-4 pb-10 pt-4">
         <header className="flex flex-col gap-1">
           <h1 className="text-2xl font-semibold tracking-tight">
             Walk Verification
           </h1>
           <p className="text-sm text-slate-400">
-            Field entry shell — Phase 2A (GPS)
+            Field entry shell — Phase 2B (live map)
           </p>
         </header>
 
-        {/* Status strip */}
         <section
           aria-label="Walk status"
           className="rounded-xl border border-slate-800 bg-slate-900/70 p-4"
@@ -595,7 +737,6 @@ export default function WalkPage() {
           </dl>
         </section>
 
-        {/* GPS card — visible once a walk has started or ended */}
         {(status === "walking" || status === "ended") && (
           <section
             aria-label="GPS status"
@@ -653,10 +794,15 @@ export default function WalkPage() {
                 browser that supports it.
               </p>
             )}
+            {!mapAvailable && (
+              <p className="mt-3 text-xs text-amber-400">
+                Map unavailable — GPS tracking and breadcrumb capture still
+                work.
+              </p>
+            )}
           </section>
         )}
 
-        {/* End summary — visible once End Walk has completed */}
         {status === "ended" && endSummary && (
           <section
             aria-label="Walk summary"
@@ -696,7 +842,6 @@ export default function WalkPage() {
           </section>
         )}
 
-        {/* Error banner */}
         {actionError && (
           <div
             role="alert"
@@ -706,7 +851,6 @@ export default function WalkPage() {
           </div>
         )}
 
-        {/* Form (locked once walk has started) */}
         <section
           aria-label="Walk header fields"
           className="flex flex-col gap-4 rounded-xl border border-slate-800 bg-slate-900/40 p-4"
@@ -775,7 +919,6 @@ export default function WalkPage() {
           </Field>
         </section>
 
-        {/* Action buttons */}
         <section aria-label="Walk actions" className="flex flex-col gap-3">
           {status === "not_started" && (
             <BigButton variant="primary" onClick={() => void handleStart()}>
@@ -812,9 +955,76 @@ export default function WalkPage() {
         </section>
 
         <footer className="pt-2 text-center text-xs text-slate-500">
-          Phase 2A — GPS + breadcrumbs. No map, photos, or station entry yet.
+          Phase 2B — live map. No photos or station entry yet.
         </footer>
       </div>
+    </div>
+  );
+}
+
+// ─── Map panel ────────────────────────────────────────────────────────────────
+// Mounts a Leaflet map into a div and hands a controller back to the parent
+// via the supplied ref. Self-contained: if Leaflet fails to load or init,
+// renders a fallback message and tells the parent so the parent can surface
+// "Map unavailable" without breaking the rest of the page.
+
+function MapPanel({
+  controllerRef,
+  onAvailabilityChange,
+}: {
+  controllerRef: React.MutableRefObject<MapController | null>;
+  onAvailabilityChange: (available: boolean) => void;
+}) {
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const [failed, setFailed] = useState<boolean>(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    const controller = createMapController();
+    controllerRef.current = controller;
+
+    const node = containerRef.current;
+    if (!node) {
+      onAvailabilityChange(false);
+      setFailed(true);
+      return;
+    }
+
+    void controller.init(node).then((ok) => {
+      if (cancelled) return;
+      if (!ok) {
+        setFailed(true);
+        onAvailabilityChange(false);
+        controllerRef.current = null;
+      } else {
+        onAvailabilityChange(true);
+      }
+    });
+
+    return () => {
+      cancelled = true;
+      try {
+        controller.destroy();
+      } catch {
+        /* ignore */
+      }
+      if (controllerRef.current === controller) {
+        controllerRef.current = null;
+      }
+    };
+    // controllerRef and onAvailabilityChange are stable references from the
+    // parent; we intentionally run this effect once on mount.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  return (
+    <div className="relative h-full w-full">
+      <div ref={containerRef} className="h-full w-full" />
+      {failed && (
+        <div className="absolute inset-0 flex items-center justify-center bg-slate-900/80 px-6 text-center text-sm text-slate-300">
+          Map unavailable on this device. GPS tracking still works below.
+        </div>
+      )}
     </div>
   );
 }
