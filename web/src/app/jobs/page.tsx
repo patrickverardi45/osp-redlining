@@ -1,6 +1,7 @@
 // web/src/app/jobs/page.tsx
 "use client";
 
+import Link from "next/link";
 import { useState, useEffect, useCallback } from "react";
 import { getJobs } from "@/lib/api";
 import type { Job } from "@/lib/api";
@@ -87,7 +88,18 @@ export default function JobsPage() {
             </p>
           </div>
           {!loading && !error && (
-            <ViewToggle mode={viewMode} onChange={setViewMode} />
+            <div className="flex items-center gap-2">
+              {/* Phase 4D: discoverability for the Field Submissions Inbox.
+                  No global sidebar in this app, so we surface the link in
+                  the page header next to the view toggle. */}
+              <Link
+                href="/jobs/inbox"
+                className="px-3 py-1.5 text-xs font-semibold rounded border bg-white text-gray-700 border-gray-200 hover:border-gray-400 transition-colors"
+              >
+                Field Submissions Inbox
+              </Link>
+              <ViewToggle mode={viewMode} onChange={setViewMode} />
+            </div>
           )}
         </div>
 
