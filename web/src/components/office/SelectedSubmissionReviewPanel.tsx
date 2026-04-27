@@ -172,7 +172,7 @@ export default function SelectedSubmissionReviewPanel({
 
       <details
         className="border-t border-gray-100 bg-white"
-        defaultOpen={Boolean(savedNote)}
+        open={Boolean(savedNote)}
       >
         <summary className="cursor-pointer select-none px-4 py-3 text-sm font-semibold text-gray-800 hover:bg-gray-50">
           Reviewer Notes
