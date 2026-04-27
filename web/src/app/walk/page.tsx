@@ -69,7 +69,7 @@ type EndSummary = {
 const STATUS_LABELS: Record<WalkStatus, string> = {
   not_started: "Not Started",
   walking: "Walking",
-  ended: "Ended",
+  ended: "Walk Ended – Ready to Send",
 };
 
 const GPS_STATUS_LABELS: Record<GpsStatus, string> = {
@@ -309,6 +309,9 @@ export default function WalkPage() {
 
   const [status, setStatus] = useState<WalkStatus>("not_started");
   const [sentHome, setSentHome] = useState(false);
+  const [isStarting, setIsStarting] = useState(false);
+  const [isEnding, setIsEnding] = useState(false);
+  const [isSending, setIsSending] = useState(false);
 
   const [gpsStatus, setGpsStatus] = useState<GpsStatus>("idle");
   const [latestPoint, setLatestPoint] = useState<LatestPoint | null>(null);
@@ -573,90 +576,109 @@ export default function WalkPage() {
   }, [flushBreadcrumbs]);
 
   const handleStart = useCallback(async () => {
-    setActionError(null);
-    setEndSummary(null);
-    const sid = sessionIdRef.current;
-    if (!sid) {
-      setActionError("Session not ready. Please refresh.");
-      return;
-    }
+    if (isStarting) return;
+    setIsStarting(true);
     try {
-      const res = await postJson("/api/walk/start", {
-        session_id: sid,
-        job_id: form.jobId,
-        job_label: selectedJobOption?.label ?? form.jobId,
-        crew: form.crew,
-        date: form.date,
-        section: form.section,
-      });
-      if (!res.ok) {
-        setActionError(`Start Walk failed (${res.status}).`);
+      setActionError(null);
+      setEndSummary(null);
+      const sid = sessionIdRef.current;
+      if (!sid) {
+        setActionError("Session not ready. Please refresh.");
         return;
       }
-    } catch (err) {
-      setActionError(
-        err instanceof Error
-          ? `Could not start walk: ${err.message}`
-          : "Could not start walk.",
-      );
-      return;
+      try {
+        const res = await postJson("/api/walk/start", {
+          session_id: sid,
+          job_id: form.jobId,
+          job_label: selectedJobOption?.label ?? form.jobId,
+          crew: form.crew,
+          date: form.date,
+          section: form.section,
+        });
+        if (!res.ok) {
+          setActionError(`Start Walk failed (${res.status}).`);
+          return;
+        }
+      } catch (err) {
+        setActionError(
+          err instanceof Error
+            ? `Could not start walk: ${err.message}`
+            : "Could not start walk.",
+        );
+        return;
+      }
+
+      pendingPointsRef.current = [];
+      lastAcceptedRef.current = null;
+      setLatestPoint(null);
+      setPointCount(0);
+      setServerPointCount(0);
+      setSentHome(false);
+
+      // Wipe any previous trail so a re-Start doesn't visually merge walks.
+      mapControllerRef.current?.resetTrail();
+
+      setStatus("walking");
+      startGpsWatch();
+    } finally {
+      setIsStarting(false);
     }
-
-    pendingPointsRef.current = [];
-    lastAcceptedRef.current = null;
-    setLatestPoint(null);
-    setPointCount(0);
-    setServerPointCount(0);
-    setSentHome(false);
-
-    // Wipe any previous trail so a re-Start doesn't visually merge walks.
-    mapControllerRef.current?.resetTrail();
-
-    setStatus("walking");
-    startGpsWatch();
   }, [
     form.crew,
     form.date,
     form.jobId,
     form.section,
+    isStarting,
     selectedJobOption?.label,
     startGpsWatch,
   ]);
 
   const handleEnd = useCallback(async () => {
-    stopGpsWatch();
-    await flushBreadcrumbs();
-
-    const sid = sessionIdRef.current;
-    if (!sid) {
-      setActionError("Session not ready.");
-      setStatus("ended");
-      return;
-    }
+    if (isEnding) return;
+    setIsEnding(true);
     try {
-      const res = await postJson("/api/walk/end", { session_id: sid });
-      if (!res.ok) {
-        setActionError(`End Walk failed (${res.status}).`);
+      stopGpsWatch();
+      await flushBreadcrumbs();
+
+      const sid = sessionIdRef.current;
+      if (!sid) {
+        setActionError("Session not ready.");
         setStatus("ended");
         return;
       }
-      const data = (await res.json()) as {
-        success?: boolean;
-        breadcrumb_count?: number;
-        station_event_count?: number;
-      };
-      setEndSummary({
-        breadcrumb_count:
-          typeof data.breadcrumb_count === "number"
-            ? data.breadcrumb_count
-            : serverPointCount,
-        station_event_count:
-          typeof data.station_event_count === "number"
-            ? data.station_event_count
-            : 0,
-        last_accuracy_m: latestPoint?.accuracy_m ?? null,
-        gps_status: gpsStatus,
-      });
+      try {
+        const res = await postJson("/api/walk/end", { session_id: sid });
+        if (!res.ok) {
+          setActionError(`End Walk failed (${res.status}).`);
+          setStatus("ended");
+          return;
+        }
+        const data = (await res.json()) as {
+          success?: boolean;
+          breadcrumb_count?: number;
+          station_event_count?: number;
+        };
+        setEndSummary({
+          breadcrumb_count:
+            typeof data.breadcrumb_count === "number"
+              ? data.breadcrumb_count
+              : serverPointCount,
+          station_event_count:
+            typeof data.station_event_count === "number"
+              ? data.station_event_count
+              : 0,
+          last_accuracy_m: latestPoint?.accuracy_m ?? null,
+          gps_status: gpsStatus,
+        });
+      } catch (err) {
+        setActionError(
+          err instanceof Error
+            ? `End Walk error: ${err.message}`
+            : "End Walk error.",
+        );
+      } finally {
+        setStatus("ended");
+      }
     } catch (err) {
       setActionError(
         err instanceof Error
@@ -664,19 +686,25 @@ export default function WalkPage() {
           : "End Walk error.",
       );
     } finally {
-      setStatus("ended");
+      setIsEnding(false);
     }
   }, [
     flushBreadcrumbs,
     gpsStatus,
+    isEnding,
     latestPoint?.accuracy_m,
     serverPointCount,
     stopGpsWatch,
   ]);
 
   const handleSendHome = (): void => {
-    if (status !== "ended") return;
-    setSentHome(true);
+    if (status !== "ended" || isSending) return;
+    setIsSending(true);
+    try {
+      setSentHome(true);
+    } finally {
+      setIsSending(false);
+    }
   };
 
   // ── Render ─────────────────────────────────────────────────────────────────
@@ -921,28 +949,40 @@ export default function WalkPage() {
 
         <section aria-label="Walk actions" className="flex flex-col gap-3">
           {status === "not_started" && (
-            <BigButton variant="primary" onClick={() => void handleStart()}>
-              Start Walk
+            <BigButton
+              variant="primary"
+              onClick={() => void handleStart()}
+              disabled={isStarting}
+            >
+              {isStarting ? "Starting Walk…" : "Start Walk"}
             </BigButton>
           )}
 
           {status === "walking" && (
-            <BigButton variant="danger" onClick={() => void handleEnd()}>
-              End Walk
+            <BigButton
+              variant="danger"
+              onClick={() => void handleEnd()}
+              disabled={isEnding}
+            >
+              {isEnding ? "Ending Walk…" : "End Walk"}
             </BigButton>
           )}
 
           {status === "ended" && (
             <>
-              <BigButton variant="muted" onClick={() => void handleStart()}>
-                Start New Walk
+              <BigButton
+                variant="muted"
+                onClick={() => void handleStart()}
+                disabled={isStarting}
+              >
+                {isStarting ? "Starting Walk…" : "Start New Walk"}
               </BigButton>
               <BigButton
                 variant="primary"
                 onClick={handleSendHome}
-                disabled={sentHome}
+                disabled={status !== "ended" || sentHome || isSending}
               >
-                {sentHome ? "Sent Home ✓" : "Send Home"}
+                {isSending ? "Sending Home…" : sentHome ? "Sent Home ✓" : "Send Home"}
               </BigButton>
             </>
           )}
