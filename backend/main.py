@@ -138,6 +138,10 @@ def _reset_workspace_state() -> None:
             "matching_debug": [],
             "engineering_plans": [],
             "engineering_plan_signals": [],
+            "walk_active": False,
+            "walk_meta": {},
+            "walk_breadcrumbs": [],
+            "walk_station_events": [],
         }
     )
 
@@ -177,6 +181,10 @@ def _default_session_state() -> Dict[str, Any]:
         "matching_debug": [],
         "engineering_plans": [],
         "engineering_plan_signals": [],
+        "walk_active": False,
+        "walk_meta": {},
+        "walk_breadcrumbs": [],
+        "walk_station_events": [],
     }
 
 
@@ -8569,6 +8577,152 @@ def walk_test_event(payload: _WalkTestDict[str, _WalkTestAny] = Body(default={})
     except Exception:
         _walk_test_logger.info("walk test event received (unserializable payload)")
     return _ok(received=payload)
+
+
+# ---------------------------------------------------------------------------
+# Phase 2A walk endpoints: start / breadcrumbs / end.
+# Session-scoped. Append-only writes into walk_breadcrumbs and walk_meta.
+# Station events and Send Home are intentionally not implemented here yet.
+# ---------------------------------------------------------------------------
+
+WALK_BREADCRUMB_CAP = 50000
+WALK_ACCURACY_HARD_LIMIT_M = 1000.0
+
+
+def _walk_iso_now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _walk_clean_breadcrumb(point: Any) -> Optional[Dict[str, Any]]:
+    """Validate and normalize a single breadcrumb point. Returns None if the
+    point is unusable. Used by /api/walk/breadcrumbs to defend the stored
+    list against malformed client payloads."""
+    if not isinstance(point, dict):
+        return None
+    try:
+        lat = float(point.get("lat"))
+        lon = float(point.get("lon"))
+    except (TypeError, ValueError):
+        return None
+    if not (-90.0 <= lat <= 90.0) or not (-180.0 <= lon <= 180.0):
+        return None
+    accuracy_raw = point.get("accuracy_m")
+    accuracy_m: Optional[float]
+    try:
+        accuracy_m = float(accuracy_raw) if accuracy_raw is not None else None
+    except (TypeError, ValueError):
+        accuracy_m = None
+    if accuracy_m is not None and accuracy_m > WALK_ACCURACY_HARD_LIMIT_M:
+        # Anything worse than 1km is almost certainly garbage from a desktop
+        # geo-IP lookup; the client should be filtering tighter than this
+        # already, but defend in depth.
+        return None
+    ts_raw = point.get("ts")
+    ts = str(ts_raw).strip() if ts_raw is not None else ""
+    cleaned: Dict[str, Any] = {
+        "lat": lat,
+        "lon": lon,
+        "ts": ts or _walk_iso_now(),
+    }
+    if accuracy_m is not None:
+        cleaned["accuracy_m"] = accuracy_m
+    return cleaned
+
+
+@app.post("/api/walk/start")
+def walk_start(payload: Dict[str, Any] = Body(default={})) -> JSONResponse:
+    body_session_id = payload.get("session_id") if isinstance(payload, dict) else None
+    resolved_session_id = _resolve_session_id(body_session_id)
+    try:
+        with _session_scope(resolved_session_id):
+            meta = {
+                "job_id": str(payload.get("job_id") or "").strip(),
+                "job_label": str(payload.get("job_label") or "").strip(),
+                "crew": str(payload.get("crew") or "").strip(),
+                "date": str(payload.get("date") or "").strip(),
+                "section": str(payload.get("section") or "").strip(),
+                "started_at": _walk_iso_now(),
+            }
+            STATE["walk_active"] = True
+            STATE["walk_meta"] = meta
+            # Per spec: clear/start the breadcrumb list at the beginning of a
+            # walk. Station events are NOT cleared here — they are managed by
+            # a separate Phase 2B endpoint.
+            STATE["walk_breadcrumbs"] = []
+            return _ok(
+                session_id=resolved_session_id,
+                walk_active=True,
+                walk_meta=meta,
+            )
+    except Exception as exc:
+        return _err(str(exc), session_id=resolved_session_id)
+
+
+@app.post("/api/walk/breadcrumbs")
+def walk_breadcrumbs(payload: Dict[str, Any] = Body(default={})) -> JSONResponse:
+    body_session_id = payload.get("session_id") if isinstance(payload, dict) else None
+    resolved_session_id = _resolve_session_id(body_session_id)
+    try:
+        raw_points = payload.get("points") if isinstance(payload, dict) else None
+        incoming = list(raw_points) if isinstance(raw_points, list) else []
+        with _session_scope(resolved_session_id):
+            if not bool(STATE.get("walk_active")):
+                # Walk not active — accept but discard. Returning an error
+                # would force the client into an awkward retry loop on race
+                # conditions around End Walk; silent drop is friendlier.
+                return _ok(
+                    session_id=resolved_session_id,
+                    walk_active=False,
+                    accepted=0,
+                    breadcrumb_count=len(STATE.get("walk_breadcrumbs") or []),
+                    truncated=False,
+                )
+            existing = list(STATE.get("walk_breadcrumbs") or [])
+            accepted = 0
+            for raw_point in incoming:
+                cleaned = _walk_clean_breadcrumb(raw_point)
+                if cleaned is None:
+                    continue
+                existing.append(cleaned)
+                accepted += 1
+            truncated = False
+            if len(existing) > WALK_BREADCRUMB_CAP:
+                # Drop oldest first so the most recent walk activity survives.
+                existing = existing[-WALK_BREADCRUMB_CAP:]
+                truncated = True
+            STATE["walk_breadcrumbs"] = existing
+            return _ok(
+                session_id=resolved_session_id,
+                walk_active=True,
+                accepted=accepted,
+                breadcrumb_count=len(existing),
+                truncated=truncated,
+            )
+    except Exception as exc:
+        return _err(str(exc), session_id=resolved_session_id)
+
+
+@app.post("/api/walk/end")
+def walk_end(payload: Dict[str, Any] = Body(default={})) -> JSONResponse:
+    body_session_id = payload.get("session_id") if isinstance(payload, dict) else None
+    resolved_session_id = _resolve_session_id(body_session_id)
+    try:
+        with _session_scope(resolved_session_id):
+            STATE["walk_active"] = False
+            meta = dict(STATE.get("walk_meta") or {})
+            meta["ended_at"] = _walk_iso_now()
+            STATE["walk_meta"] = meta
+            breadcrumb_count = len(STATE.get("walk_breadcrumbs") or [])
+            station_event_count = len(STATE.get("walk_station_events") or [])
+            return _ok(
+                session_id=resolved_session_id,
+                walk_active=False,
+                breadcrumb_count=breadcrumb_count,
+                station_event_count=station_event_count,
+                walk_meta=meta,
+            )
+    except Exception as exc:
+        return _err(str(exc), session_id=resolved_session_id)
 
 
 # ---------------------------------------------------------------------------
