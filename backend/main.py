@@ -8916,6 +8916,79 @@ def _office_photos_payload(job_id: str, stations: Sequence[Dict[str, Any]]) -> L
     ]
 
 
+REVIEWER_EXCEPTION_ROOT = UPLOADS_DIR / "reviewer_exceptions"
+REVIEWER_EXCEPTION_INDEX_PATH = REVIEWER_EXCEPTION_ROOT / "index.json"
+REVIEWER_EXCEPTION_SEVERITIES = {"low", "medium", "high", "critical"}
+
+
+def _ensure_reviewer_exception_storage() -> None:
+    REVIEWER_EXCEPTION_ROOT.mkdir(parents=True, exist_ok=True)
+    if not REVIEWER_EXCEPTION_INDEX_PATH.exists():
+        REVIEWER_EXCEPTION_INDEX_PATH.write_text(
+            json.dumps({"exceptions": []}, indent=2),
+            encoding="utf-8",
+        )
+
+
+def _load_reviewer_exception_index() -> Dict[str, Any]:
+    _ensure_reviewer_exception_storage()
+    try:
+        data = json.loads(REVIEWER_EXCEPTION_INDEX_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        data = {"exceptions": []}
+    if not isinstance(data, dict):
+        data = {"exceptions": []}
+    if not isinstance(data.get("exceptions"), list):
+        data["exceptions"] = []
+    return data
+
+
+def _save_reviewer_exception_index(data: Dict[str, Any]) -> None:
+    _ensure_reviewer_exception_storage()
+    temp_path = REVIEWER_EXCEPTION_INDEX_PATH.with_suffix(".tmp")
+    temp_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    temp_path.replace(REVIEWER_EXCEPTION_INDEX_PATH)
+
+
+def _office_float_or_none(value: Any) -> Optional[float]:
+    if value in (None, ""):
+        return None
+    try:
+        return float(value)
+    except Exception:
+        return None
+
+
+def _office_public_exception_record(record: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "id": str(record.get("id") or ""),
+        "exception_type": str(record.get("exception_type") or "reviewer_qa_issue"),
+        "severity": str(record.get("severity") or "medium"),
+        "status": str(record.get("status") or "open"),
+        "description": str(record.get("description") or ""),
+        "latitude": record.get("latitude"),
+        "longitude": record.get("longitude"),
+        "job_id": str(record.get("job_id") or ""),
+        "session_id": str(record.get("session_id") or ""),
+        "source": str(record.get("source") or "office_review"),
+        "created_at": str(record.get("created_at") or ""),
+    }
+
+
+def _office_reviewer_exceptions_payload(job_id: str) -> List[Dict[str, Any]]:
+    safe_job_id = str(job_id or "").strip()
+    if not safe_job_id:
+        return []
+    data = _load_reviewer_exception_index()
+    matches = [
+        _office_public_exception_record(record)
+        for record in data.get("exceptions", [])
+        if str(record.get("job_id") or "").strip() == safe_job_id
+    ]
+    matches.sort(key=lambda item: str(item.get("created_at") or ""))
+    return matches
+
+
 def _office_exceptions_payload(job_id: str, stations: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
     for station in stations:
         if str(station.get("review_status") or "") == "needs_review":
@@ -8961,6 +9034,7 @@ def get_jobs(session_id: Optional[str] = None) -> List[Dict[str, Any]]:
         routes = _office_routes_payload()
         stations = _office_stations_payload("test-job", routes)
         exceptions = _office_exceptions_payload("test-job", stations)
+        exceptions.extend(_office_reviewer_exceptions_payload("test-job"))
         sessions = _office_sessions_payload("test-job", resolved_session_id)
         return [
             {
@@ -8976,6 +9050,48 @@ def get_jobs(session_id: Optional[str] = None) -> List[Dict[str, Any]]:
         ]
 
 
+@app.post("/jobs/{job_id}/exceptions")
+def create_job_exception(job_id: str, payload: Dict[str, Any] = Body(...)) -> JSONResponse:
+    safe_job_id = str(job_id or "").strip()
+    if not safe_job_id:
+        return _err("job_id is required.", status_code=400)
+    if not isinstance(payload, dict):
+        return _err("JSON body is required.", status_code=400)
+
+    session_id = str(payload.get("session_id") or "").strip()
+    description = str(payload.get("description") or "").strip()
+    severity = str(payload.get("severity") or "medium").strip().lower()
+    if not session_id:
+        return _err("session_id is required.", status_code=400)
+    if not description:
+        return _err("description is required.", status_code=400)
+    if severity not in REVIEWER_EXCEPTION_SEVERITIES:
+        return _err("severity must be low, medium, high, or critical.", status_code=400)
+
+    record = {
+        "id": f"{safe_job_id}-reviewer-exception-{uuid.uuid4().hex[:12]}",
+        "exception_type": "reviewer_qa_issue",
+        "severity": severity,
+        "status": "open",
+        "description": description[:1000],
+        "latitude": _office_float_or_none(payload.get("latitude")),
+        "longitude": _office_float_or_none(payload.get("longitude")),
+        "job_id": safe_job_id,
+        "session_id": session_id,
+        "source": "office_review",
+        "created_at": _office_iso_now(),
+    }
+
+    try:
+        data = _load_reviewer_exception_index()
+        data["exceptions"].append(record)
+        _save_reviewer_exception_index(data)
+    except Exception as exc:
+        return _err(f"Failed to persist reviewer exception: {exc}", status_code=500)
+
+    return JSONResponse(content=_office_public_exception_record(record), status_code=201)
+
+
 @app.get("/jobs/{job_id}")
 def get_job_by_id(job_id: str, session_id: Optional[str] = None) -> Dict[str, Any]:
     resolved_session_id = _resolve_session_id(session_id)
@@ -8986,6 +9102,7 @@ def get_job_by_id(job_id: str, session_id: Optional[str] = None) -> Dict[str, An
         stations = _office_stations_payload(safe_job_id, routes)
         photos = _office_photos_payload(safe_job_id, stations)
         exceptions = _office_exceptions_payload(safe_job_id, stations)
+        exceptions.extend(_office_reviewer_exceptions_payload(safe_job_id))
         artifacts = _office_artifacts_payload(safe_job_id)
 
         return {
