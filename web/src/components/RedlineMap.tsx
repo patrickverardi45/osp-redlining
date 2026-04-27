@@ -33,6 +33,7 @@ import {
   MID_ZOOM_LABEL_THRESHOLD,
 } from "@/lib/map/constants";
 import MobileWalkContainer from "@/components/MobileWalkContainer";
+import FieldSubmissionsInboxPanel from "@/components/office/FieldSubmissionsInboxPanel";
 import { clamp, formatNumber, cleanDisplayText, formatDisplayDate } from "@/lib/format/text";
 import { toMoney } from "@/lib/format/money";
 import { extractGps } from "@/lib/photos/exif";
@@ -2047,6 +2048,13 @@ function OfficeRedlineMapInner({ mode = "default" }: RedlineMapProps) {
             <SummaryCard title="QA Status" value={String(verification?.status || "waiting")} subtitle="Real backend verification summary" />
             <SummaryCard title="Output Counts" value={`${stationPoints.length} pts / ${redlineSegments.length} segs`} subtitle="Station points and generated redline segments" />
           </div>
+
+          {/* ─── Phase 4D: Field Submissions Inbox ───────────────────── */}
+          {/* Compact panel sits between the top status cards and the     */}
+          {/* Upload section. Read-only — uses existing /jobs and         */}
+          {/* /jobs/{id} endpoints via the shared inbox hook. Does not    */}
+          {/* mutate any backend state. "View all" links to /jobs/inbox.  */}
+          <FieldSubmissionsInboxPanel />
 
           <Section
             title="1. Upload"
