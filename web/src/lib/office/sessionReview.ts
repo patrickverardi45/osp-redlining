@@ -1,49 +1,57 @@
 // web/src/lib/office/sessionReview.ts
 //
-// Phase 4F — frontend-only session review status.
+// Phase 4F - frontend-only session review status.
+// Phase 4G - frontend-only reviewer notes.
 //
 // State lives entirely in the browser via localStorage. There is NO backend
 // call, NO API contract change, and NO mutation of the Session interface
-// in @/lib/api. When the eventual backend gains a real review-status field,
-// the same hook can be swapped to read/write through the API while every
-// consumer keeps the same call shape.
+// in @/lib/api. When the eventual backend gains real review fields, these
+// hooks can be swapped to read/write through the API while consumers keep
+// the same call shape.
 //
 // Storage layout:
 //   key:   osp_session_review:{sessionId}
 //   value: "needs_review" | "reviewed"
 //
-// "needs_review" is the implicit default when no key is present, so we
-// never write that value — we just delete the key on reset. This keeps
-// localStorage tidy and avoids re-emitting writes for the default state.
+//   key:   osp_session_review_note:{sessionId}
+//   value: reviewer note text, capped at NOTE_MAX_LENGTH
 //
-// The hook also subscribes to the `storage` event so two open tabs stay
-// in sync within the same browser. SSR safety: every localStorage access
-// is guarded behind a typeof window check, and the hook returns the
-// default until the first mount-effect runs.
+// "needs_review" is the implicit default when no status key is present, so
+// we never write that value - we just delete the key on reset. Empty notes
+// also delete their key. This keeps localStorage tidy and avoids re-emitting
+// writes for default/empty state.
+//
+// Hooks subscribe to the `storage` event so two open tabs stay in sync within
+// the same browser. SSR safety: every localStorage access is guarded behind a
+// typeof window check, and hooks return defaults until the first mount-effect
+// runs.
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
 
-// ─── Public types ─────────────────────────────────────────────────────────────
-
 export type SessionReviewStatus = "needs_review" | "reviewed";
 
 const STORAGE_PREFIX = "osp_session_review:";
+const NOTE_STORAGE_PREFIX = "osp_session_review_note:";
+const NOTE_MAX_LENGTH = 1000;
 
-// Custom event name for same-tab updates. The native `storage` event only
-// fires across tabs; same-tab subscribers need a separate signal so a
-// "Mark Reviewed" click in the SelectedSubmissionReviewPanel propagates to
-// the SessionListPanel and inbox panels rendered alongside it.
 const SAME_TAB_EVENT = "osp:session-review-changed";
-
-// ─── Pure read/write functions ────────────────────────────────────────────────
+const SAME_TAB_NOTE_EVENT = "osp:session-review-note-changed";
 
 function storageKey(sessionId: string): string {
   return `${STORAGE_PREFIX}${sessionId}`;
 }
 
+function noteStorageKey(sessionId: string): string {
+  return `${NOTE_STORAGE_PREFIX}${sessionId}`;
+}
+
 function isValidStatus(value: unknown): value is SessionReviewStatus {
   return value === "needs_review" || value === "reviewed";
+}
+
+function normalizeReviewNote(text: string): string {
+  return text.slice(0, NOTE_MAX_LENGTH);
 }
 
 export function getSessionReviewStatus(
@@ -56,9 +64,6 @@ export function getSessionReviewStatus(
     if (!raw) return "needs_review";
     return isValidStatus(raw) ? raw : "needs_review";
   } catch {
-    // localStorage can throw in private browsing or when quota exceeded.
-    // Failing closed to "needs_review" is safe — the worst case is the
-    // reviewer marks something twice.
     return "needs_review";
   }
 }
@@ -71,19 +76,13 @@ export function setSessionReviewStatus(
   if (typeof window === "undefined") return;
   try {
     if (status === "needs_review") {
-      // Default state — delete the key rather than write the default.
       window.localStorage.removeItem(storageKey(sessionId));
     } else {
       window.localStorage.setItem(storageKey(sessionId), status);
     }
   } catch {
-    // Same rationale as the read path — silently no-op if storage is
-    // unavailable. Visible side effect for the user: their click appears
-    // to do nothing, which is acceptable in private browsing.
     return;
   }
-  // Notify same-tab subscribers. Cross-tab subscribers receive the native
-  // `storage` event automatically and don't need this dispatch.
   try {
     window.dispatchEvent(
       new CustomEvent<SessionReviewChangePayload>(SAME_TAB_EVENT, {
@@ -95,31 +94,56 @@ export function setSessionReviewStatus(
   }
 }
 
-// ─── Hook ─────────────────────────────────────────────────────────────────────
+export function getSessionReviewNote(sessionId: string): string {
+  if (!sessionId) return "";
+  if (typeof window === "undefined") return "";
+  try {
+    const raw = window.localStorage.getItem(noteStorageKey(sessionId));
+    return raw ? normalizeReviewNote(raw) : "";
+  } catch {
+    return "";
+  }
+}
+
+export function setSessionReviewNote(sessionId: string, text: string): void {
+  if (!sessionId) return;
+  if (typeof window === "undefined") return;
+  const note = normalizeReviewNote(text);
+  try {
+    if (note.trim().length === 0) {
+      window.localStorage.removeItem(noteStorageKey(sessionId));
+    } else {
+      window.localStorage.setItem(noteStorageKey(sessionId), note);
+    }
+  } catch {
+    return;
+  }
+  try {
+    window.dispatchEvent(
+      new CustomEvent<SessionReviewNoteChangePayload>(SAME_TAB_NOTE_EVENT, {
+        detail: { sessionId, note: note.trim().length === 0 ? "" : note },
+      }),
+    );
+  } catch {
+    /* ignore */
+  }
+}
 
 type SessionReviewChangePayload = {
   sessionId: string;
   status: SessionReviewStatus;
 };
 
-/**
- * useSessionReview
- *
- * Returns the current review status for a session id, plus a setter that
- * persists to localStorage and notifies other subscribers in the same tab
- * (and other tabs via the native `storage` event).
- *
- * `sessionId` may be null/empty during initial render — the hook returns
- * "needs_review" in that case and the setter is a no-op.
- */
+type SessionReviewNoteChangePayload = {
+  sessionId: string;
+  note: string;
+};
+
 export function useSessionReview(sessionId: string | null | undefined): {
   status: SessionReviewStatus;
   setStatus: (next: SessionReviewStatus) => void;
   toggleReviewed: () => void;
 } {
-  // Server / first-render: always start at the default. We hydrate to the
-  // real localStorage value inside useEffect so we never produce a server
-  // vs. client mismatch.
   const [status, setStatusState] = useState<SessionReviewStatus>("needs_review");
 
   useEffect(() => {
@@ -129,19 +153,15 @@ export function useSessionReview(sessionId: string | null | undefined): {
     }
     setStatusState(getSessionReviewStatus(sessionId));
 
-    // Cross-tab listener.
     const onStorage = (event: StorageEvent) => {
       if (!event.key) return;
       if (event.key !== storageKey(sessionId)) return;
-      // event.newValue is null when the key was removed (i.e. status reset).
       const next = isValidStatus(event.newValue)
         ? event.newValue
         : "needs_review";
       setStatusState(next);
     };
 
-    // Same-tab listener. Custom event so multiple components in the same
-    // page see updates without forcing a page-level state lift.
     const onSameTab = (event: Event) => {
       const detail = (event as CustomEvent<SessionReviewChangePayload>).detail;
       if (!detail || detail.sessionId !== sessionId) return;
@@ -161,9 +181,6 @@ export function useSessionReview(sessionId: string | null | undefined): {
     (next: SessionReviewStatus) => {
       if (!sessionId) return;
       setSessionReviewStatus(sessionId, next);
-      // Update local state immediately so the calling component sees the
-      // change on the same render cycle. The same-tab event will arrive
-      // next tick and be a no-op (state already matches).
       setStatusState(next);
     },
     [sessionId],
@@ -181,7 +198,56 @@ export function useSessionReview(sessionId: string | null | undefined): {
   return { status, setStatus, toggleReviewed };
 }
 
-// ─── Display helpers ──────────────────────────────────────────────────────────
+export function useSessionReviewNote(sessionId: string | null | undefined): {
+  note: string;
+  setNote: (next: string) => void;
+} {
+  const [note, setNoteState] = useState<string>("");
+
+  useEffect(() => {
+    if (!sessionId) {
+      setNoteState("");
+      return;
+    }
+    setNoteState(getSessionReviewNote(sessionId));
+
+    const onStorage = (event: StorageEvent) => {
+      if (!event.key) return;
+      if (event.key !== noteStorageKey(sessionId)) return;
+      setNoteState(event.newValue ? normalizeReviewNote(event.newValue) : "");
+    };
+
+    const onSameTab = (event: Event) => {
+      const detail = (event as CustomEvent<SessionReviewNoteChangePayload>)
+        .detail;
+      if (!detail || detail.sessionId !== sessionId) return;
+      setNoteState(normalizeReviewNote(detail.note));
+    };
+
+    window.addEventListener("storage", onStorage);
+    window.addEventListener(SAME_TAB_NOTE_EVENT, onSameTab as EventListener);
+
+    return () => {
+      window.removeEventListener("storage", onStorage);
+      window.removeEventListener(
+        SAME_TAB_NOTE_EVENT,
+        onSameTab as EventListener,
+      );
+    };
+  }, [sessionId]);
+
+  const setNote = useCallback(
+    (next: string) => {
+      if (!sessionId) return;
+      const normalized = normalizeReviewNote(next);
+      setSessionReviewNote(sessionId, normalized);
+      setNoteState(normalized.trim().length === 0 ? "" : normalized);
+    },
+    [sessionId],
+  );
+
+  return { note, setNote };
+}
 
 export const SESSION_REVIEW_LABELS: Record<SessionReviewStatus, string> = {
   needs_review: "Needs Review",

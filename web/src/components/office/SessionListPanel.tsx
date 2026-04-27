@@ -3,20 +3,18 @@
 // Phase 4A: Session/Date columns + "Breadcrumbs" rename.
 // Phase 4E: optional `highlightedSessionId` row highlight.
 // Phase 4F: secondary "Reviewed" badge sourced from client-side review state.
+// Phase 4G: local reviewer-note indicator.
 
 "use client";
 
 import type { Session } from "@/lib/api";
 import {
   useSessionReview,
+  useSessionReviewNote,
 } from "@/lib/office/sessionReview";
 
 interface SessionListPanelProps {
   sessions: Session[];
-  // Phase 4E: when set, the matching row is highlighted so reviewers who
-  // arrive via the Field Submissions Inbox can see at a glance which
-  // session their `?session=` query param refers to. Optional — the panel
-  // works exactly as before when not supplied.
   highlightedSessionId?: string | null;
 }
 
@@ -79,10 +77,6 @@ function SessionStatusBadge({ status }: { status: string }) {
   return <span className={config.className}>{config.label}</span>;
 }
 
-// Phase 4F: secondary review badge. Only renders when the session has been
-// marked "reviewed" client-side; default ("needs_review") is intentionally
-// silent here so the row doesn't gain visual noise for the common case.
-// The badge sits next to the existing status badge — it does not replace it.
 function ReviewedBadge({ sessionId }: { sessionId: string }) {
   const { status } = useSessionReview(sessionId);
   if (status !== "reviewed") return null;
@@ -96,8 +90,22 @@ function ReviewedBadge({ sessionId }: { sessionId: string }) {
   );
 }
 
+function NoteIndicator({ sessionId }: { sessionId: string }) {
+  const { note } = useSessionReviewNote(sessionId);
+  const trimmed = note.trim();
+  if (!trimmed) return null;
+  const preview = trimmed.length > 120 ? `${trimmed.slice(0, 117)}...` : trimmed;
+  return (
+    <span
+      className="ml-1 inline-flex h-2 w-2 rounded-full bg-blue-500 align-middle"
+      title={preview}
+      aria-label={`Reviewer note: ${preview}`}
+    />
+  );
+}
+
 function formatTimestamp(ts: string | null): string {
-  if (!ts) return "—";
+  if (!ts) return "-";
   return new Date(ts).toLocaleString("en-US", {
     month: "short",
     day: "numeric",
@@ -107,12 +115,10 @@ function formatTimestamp(ts: string | null): string {
   });
 }
 
-// Phase 4A: calendar-only date for the new "Date" column. Reads started_at
-// off the existing Session type — no new fetch.
 function formatDate(ts: string | null | undefined): string {
-  if (!ts) return "—";
+  if (!ts) return "-";
   const d = new Date(ts);
-  if (Number.isNaN(d.getTime())) return "—";
+  if (Number.isNaN(d.getTime())) return "-";
   return d.toLocaleDateString("en-US", {
     month: "short",
     day: "numeric",
@@ -120,17 +126,15 @@ function formatDate(ts: string | null | undefined): string {
   });
 }
 
-// Phase 4A: shortened session id for the new "Session" column. Most ids are
-// UUID-ish; surface the leading 8 chars so the column stays narrow.
 function shortenSessionId(rawId: string): string {
-  if (!rawId) return "—";
+  if (!rawId) return "-";
   return rawId.length <= 8 ? rawId : rawId.slice(0, 8);
 }
 
 function calcDuration(start: string, end: string | null): string {
   if (!end) return "In progress";
   const diffMs = new Date(end).getTime() - new Date(start).getTime();
-  if (diffMs < 0) return "—";
+  if (diffMs < 0) return "-";
   const totalMin = Math.floor(diffMs / 60000);
   const hours = Math.floor(totalMin / 60);
   const mins = totalMin % 60;
@@ -162,7 +166,6 @@ export default function SessionListPanel({
           <table className="min-w-full divide-y divide-gray-200 text-sm">
             <thead className="bg-gray-50">
               <tr>
-                {/* Phase 4A: Session (shortened id) */}
                 <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">
                   Session
                 </th>
@@ -172,7 +175,6 @@ export default function SessionListPanel({
                 <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">
                   Status
                 </th>
-                {/* Phase 4A: Date column (started_at, date only) */}
                 <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">
                   Date
                 </th>
@@ -185,9 +187,6 @@ export default function SessionListPanel({
                 <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">
                   Duration
                 </th>
-                {/* Phase 4A: Breadcrumbs (track_point_count) — renamed from
-                    "Track Pts" so the field is named consistently with the
-                    mobile /walk UI. */}
                 <th className="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase tracking-wider">
                   Breadcrumbs
                 </th>
@@ -208,74 +207,68 @@ export default function SessionListPanel({
                   Boolean(highlightedSessionId) &&
                   session.id === highlightedSessionId;
                 return (
-                <tr
-                  key={session.id}
-                  className={`transition-colors ${
-                    isHighlighted
-                      ? "bg-amber-50 hover:bg-amber-100 ring-1 ring-inset ring-amber-200"
-                      : "hover:bg-gray-50"
-                  }`}
-                  aria-current={isHighlighted ? "true" : undefined}
-                >
-                  {/* Phase 4A: Session (shortened id) */}
-                  <td className="px-4 py-3 font-mono text-xs text-gray-700 whitespace-nowrap">
-                    {isHighlighted && (
-                      <span
-                        aria-hidden="true"
-                        className="mr-1 inline-block h-1.5 w-1.5 rounded-full bg-amber-500 align-middle"
-                      />
-                    )}
-                    {shortenSessionId(session.id)}
-                  </td>
-                  <td className="px-4 py-3 font-medium text-gray-800">
-                    {session.crew_name}
-                  </td>
-                  <td className="px-4 py-3 whitespace-nowrap">
-                    <SessionStatusBadge status={session.status} />
-                    {/* Phase 4F: secondary review badge. Only appears for
-                        sessions that have been marked reviewed client-side. */}
-                    <ReviewedBadge sessionId={session.id} />
-                  </td>
-                  {/* Phase 4A: Date column */}
-                  <td className="px-4 py-3 text-gray-700 whitespace-nowrap text-xs">
-                    {formatDate(session.started_at)}
-                  </td>
-                  <td className="px-4 py-3 text-gray-500 whitespace-nowrap text-xs">
-                    {formatTimestamp(session.started_at)}
-                  </td>
-                  <td className="px-4 py-3 text-gray-500 whitespace-nowrap text-xs">
-                    {formatTimestamp(session.ended_at)}
-                  </td>
-                  <td className="px-4 py-3 text-gray-500 text-xs whitespace-nowrap">
-                    {calcDuration(session.started_at, session.ended_at)}
-                  </td>
-                  {/* Phase 4A: Breadcrumbs (track_point_count) */}
-                  <td className="px-4 py-3 text-right text-gray-700 tabular-nums">
-                    {session.track_point_count?.toLocaleString?.() ?? 0}
-                  </td>
-                  <td className="px-4 py-3 text-right text-gray-700 tabular-nums">
-                    {session.station_count}
-                  </td>
-                  <td className="px-4 py-3 text-right text-gray-700 tabular-nums">
-                    {session.photo_count}
-                  </td>
-
-                  {/* 🔥 NEW: VIEW PHOTO */}
-                  <td className="px-4 py-3 text-center">
-                    {session.latest_photo_url ? (
-                      <a
-                        href={resolvePhotoUrl(session.latest_photo_url)}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-blue-600 hover:underline text-xs font-medium"
-                      >
-                        View Photo
-                      </a>
-                    ) : (
-                      <span className="text-gray-300 text-xs">—</span>
-                    )}
-                  </td>
-                </tr>
+                  <tr
+                    key={session.id}
+                    className={`transition-colors ${
+                      isHighlighted
+                        ? "bg-amber-50 hover:bg-amber-100 ring-1 ring-inset ring-amber-200"
+                        : "hover:bg-gray-50"
+                    }`}
+                    aria-current={isHighlighted ? "true" : undefined}
+                  >
+                    <td className="px-4 py-3 font-mono text-xs text-gray-700 whitespace-nowrap">
+                      {isHighlighted && (
+                        <span
+                          aria-hidden="true"
+                          className="mr-1 inline-block h-1.5 w-1.5 rounded-full bg-amber-500 align-middle"
+                        />
+                      )}
+                      {shortenSessionId(session.id)}
+                      <NoteIndicator sessionId={session.id} />
+                    </td>
+                    <td className="px-4 py-3 font-medium text-gray-800">
+                      {session.crew_name}
+                    </td>
+                    <td className="px-4 py-3 whitespace-nowrap">
+                      <SessionStatusBadge status={session.status} />
+                      <ReviewedBadge sessionId={session.id} />
+                    </td>
+                    <td className="px-4 py-3 text-gray-700 whitespace-nowrap text-xs">
+                      {formatDate(session.started_at)}
+                    </td>
+                    <td className="px-4 py-3 text-gray-500 whitespace-nowrap text-xs">
+                      {formatTimestamp(session.started_at)}
+                    </td>
+                    <td className="px-4 py-3 text-gray-500 whitespace-nowrap text-xs">
+                      {formatTimestamp(session.ended_at)}
+                    </td>
+                    <td className="px-4 py-3 text-gray-500 text-xs whitespace-nowrap">
+                      {calcDuration(session.started_at, session.ended_at)}
+                    </td>
+                    <td className="px-4 py-3 text-right text-gray-700 tabular-nums">
+                      {session.track_point_count?.toLocaleString?.() ?? 0}
+                    </td>
+                    <td className="px-4 py-3 text-right text-gray-700 tabular-nums">
+                      {session.station_count}
+                    </td>
+                    <td className="px-4 py-3 text-right text-gray-700 tabular-nums">
+                      {session.photo_count}
+                    </td>
+                    <td className="px-4 py-3 text-center">
+                      {session.latest_photo_url ? (
+                        <a
+                          href={resolvePhotoUrl(session.latest_photo_url)}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-blue-600 hover:underline text-xs font-medium"
+                        >
+                          View Photo
+                        </a>
+                      ) : (
+                        <span className="text-gray-300 text-xs">-</span>
+                      )}
+                    </td>
+                  </tr>
                 );
               })}
             </tbody>

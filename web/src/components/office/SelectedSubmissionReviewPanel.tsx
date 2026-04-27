@@ -1,22 +1,17 @@
 // web/src/components/office/SelectedSubmissionReviewPanel.tsx
 //
-// Phase 4E — compact "Selected Submission Review" card.
-// Phase 4F — live review badge + "Mark as Reviewed" toggle.
-//
-// Renders above the Map Review panel on /jobs/[jobId] when a `session`
-// query parameter resolves to one of the job's sessions. Read-only against
-// backend state — the only mutation is the client-side review status,
-// which lives in localStorage via `useSessionReview`.
-//
-// The session-not-found case is rendered as a yellow notice rather than a
-// hard error — the reviewer landed here on purpose, and a stale link
-// (session deleted, wrong id, etc.) shouldn't break the rest of the page.
+// Phase 4E - compact "Selected Submission Review" card.
+// Phase 4F - live review badge + "Mark as Reviewed" toggle.
+// Phase 4G - frontend-only reviewer notes.
 "use client";
+
+import { useEffect, useState } from "react";
 
 import type { Session } from "@/lib/api";
 import {
   SESSION_REVIEW_LABELS,
   useSessionReview,
+  useSessionReviewNote,
 } from "@/lib/office/sessionReview";
 
 type SelectedSubmissionReviewPanelProps = {
@@ -25,14 +20,14 @@ type SelectedSubmissionReviewPanelProps = {
 };
 
 function shortenId(rawId: string): string {
-  if (!rawId) return "—";
+  if (!rawId) return "-";
   return rawId.length <= 8 ? rawId : rawId.slice(0, 8);
 }
 
 function formatDate(ts: string | null | undefined): string {
-  if (!ts) return "—";
+  if (!ts) return "-";
   const d = new Date(ts);
-  if (Number.isNaN(d.getTime())) return "—";
+  if (Number.isNaN(d.getTime())) return "-";
   return d.toLocaleDateString("en-US", {
     month: "short",
     day: "numeric",
@@ -41,9 +36,9 @@ function formatDate(ts: string | null | undefined): string {
 }
 
 function formatDateTime(ts: string | null | undefined): string {
-  if (!ts) return "—";
+  if (!ts) return "-";
   const d = new Date(ts);
-  if (Number.isNaN(d.getTime())) return "—";
+  if (Number.isNaN(d.getTime())) return "-";
   return d.toLocaleString("en-US", {
     month: "short",
     day: "numeric",
@@ -61,17 +56,30 @@ export default function SelectedSubmissionReviewPanel({
   selectedSessionId,
   session,
 }: SelectedSubmissionReviewPanelProps) {
-  // Phase 4F: subscribe to client-side review status. The hook handles
-  // localStorage, cross-tab sync, and same-tab propagation so the badge
-  // here stays in sync with the SessionListPanel rendered below.
   const { status: reviewStatus, toggleReviewed } = useSessionReview(
     selectedSessionId,
   );
+  const { note: savedNote, setNote } = useSessionReviewNote(selectedSessionId);
+  const [noteDraft, setNoteDraft] = useState("");
+  const [noteJustSaved, setNoteJustSaved] = useState(false);
   const isReviewed = reviewStatus === "reviewed";
 
-  // Stale link / session not on this job. Show a soft notice and bail.
-  // We do NOT render review controls in this branch — there's no real
-  // session to mark.
+  useEffect(() => {
+    setNoteDraft(savedNote);
+    setNoteJustSaved(false);
+  }, [savedNote, selectedSessionId]);
+
+  const saveReviewerNote = () => {
+    setNote(noteDraft);
+    setNoteJustSaved(true);
+  };
+
+  const clearReviewerNote = () => {
+    setNoteDraft("");
+    setNote("");
+    setNoteJustSaved(true);
+  };
+
   if (!session) {
     return (
       <section
@@ -97,17 +105,12 @@ export default function SelectedSubmissionReviewPanel({
   const stations = safeCount(session.station_count);
   const photos = safeCount(session.photo_count);
   const breadcrumbs = safeCount(session.track_point_count);
-  const crew = session.crew_name?.trim() || "—";
+  const crew = session.crew_name?.trim() || "-";
 
-  // Badge classes for the two states. Reviewed is green; needs review is
-  // amber so it visually matches the existing "Needs Review" badge style
-  // used by the Field Submissions Inbox.
   const badgeClass = isReviewed
     ? "inline-flex items-center rounded-full border border-green-200 bg-green-50 px-2 py-0.5 text-xs font-medium text-green-800 whitespace-nowrap"
     : "inline-flex items-center rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-800 whitespace-nowrap";
 
-  // Action button styling — primary action when not yet reviewed, neutral
-  // "undo" affordance when already reviewed. Both are local-only writes.
   const actionButtonClass = isReviewed
     ? "inline-flex items-center rounded-md border border-gray-300 bg-white px-3 py-1.5 text-xs font-semibold text-gray-700 hover:bg-gray-50 transition-colors"
     : "inline-flex items-center rounded-md border border-green-700 bg-green-700 px-3 py-1.5 text-xs font-semibold text-white hover:bg-green-800 transition-colors";
@@ -166,6 +169,63 @@ export default function SelectedSubmissionReviewPanel({
           {breadcrumbs.toLocaleString()}
         </Cell>
       </dl>
+
+      <details
+        className="border-t border-gray-100 bg-white"
+        defaultOpen={Boolean(savedNote)}
+      >
+        <summary className="cursor-pointer select-none px-4 py-3 text-sm font-semibold text-gray-800 hover:bg-gray-50">
+          Reviewer Notes
+          {savedNote ? (
+            <span className="ml-2 rounded-full bg-blue-50 px-2 py-0.5 text-[11px] font-medium text-blue-700 border border-blue-100">
+              Saved on this device
+            </span>
+          ) : null}
+        </summary>
+        <div className="px-4 pb-4">
+          <label htmlFor="session-review-note" className="sr-only">
+            Reviewer Notes
+          </label>
+          <textarea
+            id="session-review-note"
+            value={noteDraft}
+            onChange={(event) => {
+              setNoteDraft(event.target.value.slice(0, 1000));
+              setNoteJustSaved(false);
+            }}
+            maxLength={1000}
+            rows={4}
+            placeholder="Add reviewer notes for this session..."
+            className="block w-full rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-800 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100"
+          />
+          <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+            <div className="text-xs text-gray-500">
+              {noteDraft.length.toLocaleString()} / 1,000 characters
+              {noteJustSaved ? (
+                <span className="ml-2 font-medium text-green-700">
+                  Saved on this device
+                </span>
+              ) : null}
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={clearReviewerNote}
+                className="inline-flex items-center rounded-md border border-gray-300 bg-white px-3 py-1.5 text-xs font-semibold text-gray-700 hover:bg-gray-50 transition-colors"
+              >
+                Clear
+              </button>
+              <button
+                type="button"
+                onClick={saveReviewerNote}
+                className="inline-flex items-center rounded-md border border-blue-700 bg-blue-700 px-3 py-1.5 text-xs font-semibold text-white hover:bg-blue-800 transition-colors"
+              >
+                Save
+              </button>
+            </div>
+          </div>
+        </div>
+      </details>
     </section>
   );
 }
