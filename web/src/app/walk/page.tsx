@@ -33,6 +33,22 @@ const MAP_LOCKED_ZOOM = 18;
 // inputs early.
 const PHOTO_MAX_BYTES = 25 * 1024 * 1024;
 
+// Phase 3C-4: quick-tap suggestions for the freeform photo description.
+// Field workers tap one of these; the underlying note remains free-form.
+// Order matters — these render left-to-right and wrap; common items first.
+const PHOTO_NOTE_SUGGESTIONS: ReadonlyArray<string> = [
+  "Tree",
+  "Hydrant",
+  "Pole",
+  "Issue",
+  "Driveway",
+];
+
+// Phase 3C-4: hard cap on station-input length. The custom keypad below
+// enforces this directly; the constant is here so save-time validation
+// agrees with the entry-time UI.
+const STATION_MAX_LENGTH = 7;
+
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 type WalkFormFields = {
@@ -104,8 +120,9 @@ type StationEntry = {
   photo: EntryPhoto | null;
 };
 
-// Phase 3B-B: standalone photo evidence not tied to a station. GPS is
-// auto-captured from latestPoint at the moment of selection.
+// Phase 3B-B + 3C: standalone photo evidence not tied to a station. GPS is
+// auto-captured from latestPoint at the moment of selection. Optional note
+// (phase 3C) lets the user tag it as "Tree", "Pole", etc.
 type PhotoEvidence = {
   id: string;
   file: File;
@@ -374,6 +391,33 @@ function formatBytes(n: number): string {
   return `${(n / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+// ─── Phase 3C-4: station-keypad reducers ─────────────────────────────────────
+// The keypad is the only thing that mutates the station value. These
+// reducers run on each tap and enforce the spec rules:
+//   - cannot start with "+"
+//   - only one "+"
+//   - max length STATION_MAX_LENGTH (7)
+// They take the current value and return the next value. Anything that would
+// violate a rule is rejected silently (the keypad button is also visually
+// disabled, so this is belt-and-suspenders).
+
+function stationAppendDigit(current: string, digit: string): string {
+  if (current.length >= STATION_MAX_LENGTH) return current;
+  return current + digit;
+}
+
+function stationAppendPlus(current: string): string {
+  if (current.length === 0) return current; // can't start with "+"
+  if (current.includes("+")) return current; // only one "+"
+  if (current.length >= STATION_MAX_LENGTH) return current;
+  return current + "+";
+}
+
+function stationBackspace(current: string): string {
+  if (current.length === 0) return current;
+  return current.slice(0, -1);
+}
+
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function WalkPage() {
@@ -420,7 +464,7 @@ export default function WalkPage() {
   const [photoDraft, setPhotoDraft] = useState<EntryPhoto | null>(null);
   const photoInputRef = useRef<HTMLInputElement | null>(null);
 
-  // Phase 3B-B: standalone photo-evidence list, separate from station
+  // Phase 3B-B + 3C: standalone photo-evidence list, separate from station
   // entries. Each item auto-stamps lat/lon from latestPoint at selection.
   const [photoEvidenceList, setPhotoEvidenceList] = useState<PhotoEvidence[]>(
     [],
@@ -428,6 +472,12 @@ export default function WalkPage() {
   const [photoEvidenceError, setPhotoEvidenceError] = useState<string | null>(
     null,
   );
+  // Phase 3C: id of the photo currently having its note edited. null means
+  // the note panel is closed.
+  const [noteEditingPhotoId, setNoteEditingPhotoId] = useState<string | null>(
+    null,
+  );
+  const [noteDraft, setNoteDraft] = useState<string>("");
   const photoEvidenceInputRef = useRef<HTMLInputElement | null>(null);
 
   const watchIdRef = useRef<number | null>(null);
@@ -755,6 +805,11 @@ export default function WalkPage() {
     };
   }, [revokeAllPhotoUrls]);
 
+  const resetNoteEditor = useCallback(() => {
+    setNoteEditingPhotoId(null);
+    setNoteDraft("");
+  }, []);
+
   const handleStart = useCallback(async () => {
     if (isStarting) return;
     setIsStarting(true);
@@ -795,10 +850,10 @@ export default function WalkPage() {
       setServerPointCount(0);
       setSentHome(false);
 
-      // Phase 3A + 3B-A + 3B-B: a fresh walk starts with fresh entry list,
-      // clean entry-form state, AND empty photo-evidence list. Revoke any
-      // object URLs the previous walk left behind so we don't leak browser
-      // memory across walks.
+      // Phase 3A + 3B-A + 3B-B + 3C: a fresh walk starts with fresh entry
+      // list, clean entry-form state, AND empty photo-evidence list +
+      // closed note editor. Revoke any object URLs the previous walk left
+      // behind so we don't leak browser memory across walks.
       revokeAllPhotoUrls(
         stationEntriesRef.current,
         photoDraftRef.current,
@@ -814,6 +869,7 @@ export default function WalkPage() {
       }
       setPhotoEvidenceList([]);
       setPhotoEvidenceError(null);
+      resetNoteEditor();
       if (photoEvidenceInputRef.current) {
         photoEvidenceInputRef.current.value = "";
       }
@@ -833,6 +889,7 @@ export default function WalkPage() {
     form.section,
     isStarting,
     revokeAllPhotoUrls,
+    resetNoteEditor,
     selectedJobOption?.label,
     startGpsWatch,
   ]);
@@ -892,6 +949,8 @@ export default function WalkPage() {
             photoInputRef.current.value = "";
           }
         }
+        // Phase 3C: also close any open freeform note editor.
+        resetNoteEditor();
       }
     } catch (err) {
       setActionError(
@@ -907,6 +966,7 @@ export default function WalkPage() {
     gpsStatus,
     isEnding,
     latestPoint?.accuracy_m,
+    resetNoteEditor,
     serverPointCount,
     stopGpsWatch,
   ]);
@@ -921,7 +981,7 @@ export default function WalkPage() {
     }
   };
 
-  // Phase 3A + 3B-A: station entry form open/close + save.
+  // Phase 3A + 3B-A + 3C-4: station entry form open/close + save.
 
   const openEntryForm = useCallback(() => {
     setEntryError(null);
@@ -948,6 +1008,30 @@ export default function WalkPage() {
     }
     setEntryFormOpen(false);
     setEntryError(null);
+  }, []);
+
+  // Phase 3C-4: keypad-driven station mutators. Replaces the prior
+  // formatStationInput + onChange path. The reducers above enforce the
+  // length/plus/leading-plus rules.
+  const handleStationDigit = useCallback((digit: string) => {
+    setEntryDraft((d) => ({
+      ...d,
+      station_number: stationAppendDigit(d.station_number, digit),
+    }));
+  }, []);
+
+  const handleStationPlus = useCallback(() => {
+    setEntryDraft((d) => ({
+      ...d,
+      station_number: stationAppendPlus(d.station_number),
+    }));
+  }, []);
+
+  const handleStationBackspace = useCallback(() => {
+    setEntryDraft((d) => ({
+      ...d,
+      station_number: stationBackspace(d.station_number),
+    }));
   }, []);
 
   const handlePhotoSelected = useCallback(
@@ -1070,9 +1154,11 @@ export default function WalkPage() {
     }
   }, [entryDraft, photoDraft]);
 
-  // Phase 3B-B: standalone "Add Photo" path. Independent of station entry.
-  // Reuses the same size cap and object-URL convention but does not touch
-  // photoDraft (which belongs to the station-entry form).
+  // Phase 3B-B + 3C: standalone "Add Photo" path. Independent of station
+  // entry. Reuses the same size cap and object-URL convention but does not
+  // touch photoDraft (which belongs to the station-entry form). After a
+  // successful capture we open the note editor so the user can tag what
+  // the photo shows.
 
   const triggerAddPhotoEvidence = useCallback(() => {
     setPhotoEvidenceError(null);
@@ -1134,12 +1220,40 @@ export default function WalkPage() {
 
       setPhotoEvidenceError(null);
       setPhotoEvidenceList((prev) => [...prev, evidence]);
+      // Phase 3C: open the note editor for this fresh photo so the user
+      // can tag it without an extra tap. Note remains optional — they can
+      // skip without typing.
+      setNoteEditingPhotoId(evidence.id);
+      setNoteDraft("");
       // Reset the input so picking the same filename again still fires
       // onChange.
       event.target.value = "";
     },
     [],
   );
+
+  // Phase 3C + 3C-4: note editor handlers for freeform photo evidence.
+
+  const openNoteEditor = useCallback((photo: PhotoEvidence) => {
+    setNoteEditingPhotoId(photo.id);
+    setNoteDraft(photo.note ?? "");
+  }, []);
+
+  const cancelNoteEditor = useCallback(() => {
+    resetNoteEditor();
+  }, [resetNoteEditor]);
+
+  const saveNote = useCallback(() => {
+    const id = noteEditingPhotoId;
+    if (!id) return;
+    const trimmed = noteDraft.trim();
+    setPhotoEvidenceList((prev) =>
+      prev.map((p) =>
+        p.id === id ? { ...p, note: trimmed || undefined } : p,
+      ),
+    );
+    resetNoteEditor();
+  }, [noteDraft, noteEditingPhotoId, resetNoteEditor]);
 
   // ── Render ─────────────────────────────────────────────────────────────────
 
@@ -1294,135 +1408,14 @@ export default function WalkPage() {
                 </BigButton>
               </div>
             )}
-
-            {status === "walking" && entryFormOpen && (
-              <div className="mt-3 flex flex-col gap-3 rounded-lg border border-slate-700 bg-slate-950/60 p-3">
-                <Field label="Station #" htmlFor="entry-station">
-                  <input
-                    id="entry-station"
-                    type="text"
-                    inputMode="text"
-                    autoComplete="off"
-                    placeholder="e.g. 100+00"
-                    value={entryDraft.station_number}
-                    onChange={(e) =>
-                      setEntryDraft((d) => ({
-                        ...d,
-                        station_number: e.target.value,
-                      }))
-                    }
-                    className="h-12 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 text-base text-slate-100 placeholder:text-slate-500 focus:border-slate-500 focus:outline-none focus:ring-2 focus:ring-slate-500"
-                  />
-                </Field>
-                <Field label="Depth (ft)" htmlFor="entry-depth">
-                  <input
-                    id="entry-depth"
-                    type="number"
-                    inputMode="decimal"
-                    step="0.1"
-                    placeholder="e.g. 4.5"
-                    value={entryDraft.depth_ft}
-                    onChange={(e) =>
-                      setEntryDraft((d) => ({
-                        ...d,
-                        depth_ft: e.target.value,
-                      }))
-                    }
-                    className="h-12 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 text-base text-slate-100 placeholder:text-slate-500 focus:border-slate-500 focus:outline-none focus:ring-2 focus:ring-slate-500"
-                  />
-                </Field>
-                <Field label="BOC (ft)" htmlFor="entry-boc">
-                  <input
-                    id="entry-boc"
-                    type="number"
-                    inputMode="decimal"
-                    step="0.1"
-                    placeholder="e.g. 2.0"
-                    value={entryDraft.boc_ft}
-                    onChange={(e) =>
-                      setEntryDraft((d) => ({
-                        ...d,
-                        boc_ft: e.target.value,
-                      }))
-                    }
-                    className="h-12 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 text-base text-slate-100 placeholder:text-slate-500 focus:border-slate-500 focus:outline-none focus:ring-2 focus:ring-slate-500"
-                  />
-                </Field>
-
-                {/* Phase 3B-A: optional single-photo attachment. */}
-                <div className="flex flex-col gap-2">
-                  <label
-                    htmlFor="entry-photo"
-                    className="text-xs font-medium uppercase tracking-wide text-slate-400"
-                  >
-                    Photo (optional)
-                  </label>
-                  <input
-                    ref={photoInputRef}
-                    id="entry-photo"
-                    type="file"
-                    accept="image/*"
-                    capture="environment"
-                    onChange={handlePhotoSelected}
-                    className="block w-full text-sm text-slate-300 file:mr-3 file:rounded-md file:border-0 file:bg-slate-800 file:px-3 file:py-2 file:text-sm file:font-medium file:text-slate-100 hover:file:bg-slate-700"
-                  />
-                  {photoDraft && (
-                    <div className="flex items-center gap-3 rounded-lg border border-slate-700 bg-slate-900/60 p-2">
-                      {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img
-                        src={photoDraft.object_url}
-                        alt="Selected photo preview"
-                        className="h-16 w-16 flex-none rounded-md object-cover"
-                      />
-                      <div className="min-w-0 flex-1 text-xs">
-                        <div className="truncate text-slate-200">
-                          {photoDraft.filename}
-                        </div>
-                        <div className="text-slate-500">
-                          {formatBytes(photoDraft.size_bytes)}
-                        </div>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={clearPhotoDraft}
-                        className="rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-xs text-slate-300 hover:bg-slate-800"
-                      >
-                        Remove
-                      </button>
-                    </div>
-                  )}
-                </div>
-
-                {entryError && (
-                  <div
-                    role="alert"
-                    className="rounded-lg border border-rose-800/60 bg-rose-900/30 p-2 text-xs text-rose-200"
-                  >
-                    {entryError}
-                  </div>
-                )}
-
-                {!latestPoint && !entryError && (
-                  <p className="text-xs text-amber-400">
-                    Waiting for first GPS fix before this entry can be saved.
-                  </p>
-                )}
-
-                <div className="flex gap-2">
-                  <BigButton variant="primary" onClick={saveEntry}>
-                    Save Entry
-                  </BigButton>
-                  <BigButton variant="muted" onClick={closeEntryForm}>
-                    Cancel
-                  </BigButton>
-                </div>
-              </div>
-            )}
           </section>
         )}
 
-        {/* Phase 3B-B: standalone photo evidence panel. Sits below station
-            entries. Auto-stamps lat/lon at selection from latestPoint. */}
+        {/* Phase 3B-B + 3C + 3C-4: standalone photo evidence panel. Sits
+            below station entries. Auto-stamps lat/lon at selection from
+            latestPoint. The note editor lives inline here so the user
+            sees a visible description field directly under the captured
+            photo. */}
         {(status === "walking" || status === "ended") && (
           <section
             aria-label="Photo evidence"
@@ -1470,6 +1463,127 @@ export default function WalkPage() {
               <p className="mt-3 text-xs text-amber-400">
                 Waiting for first GPS fix before a photo can be attached.
               </p>
+            )}
+
+            {/* Per-photo list. After capture, the matching list item opens
+                directly into the note editor (handled by handlePhotoEvidenceSelected
+                setting noteEditingPhotoId). Saved notes are visible in the list
+                without tapping "Edit". */}
+            {photoEvidenceList.length > 0 && (
+              <ul className="mt-3 flex flex-col gap-2">
+                {photoEvidenceList.map((photo) => {
+                  const isEditing = noteEditingPhotoId === photo.id;
+                  return (
+                    <li
+                      key={photo.id}
+                      className="rounded-lg border border-slate-700 bg-slate-900/60 p-2"
+                    >
+                      <div className="flex items-center gap-2">
+                        {/* Phase 3C-4: small thumbnail so the list item is
+                            visually anchored to the photo it describes. */}
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
+                          src={photo.object_url}
+                          alt=""
+                          className="h-12 w-12 flex-none rounded-md object-cover"
+                        />
+                        <div className="min-w-0 flex-1 text-xs">
+                          <div className="truncate text-slate-200">
+                            {photo.filename}
+                          </div>
+                          <div
+                            className={`truncate ${photo.note ? "text-emerald-300" : "text-slate-500"}`}
+                          >
+                            {photo.note ? photo.note : "No description"}
+                          </div>
+                        </div>
+                        {status === "walking" && !isEditing && (
+                          <button
+                            type="button"
+                            onClick={() => openNoteEditor(photo)}
+                            className="rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-xs font-medium text-slate-200 hover:bg-slate-800"
+                          >
+                            {photo.note ? "Edit" : "Describe"}
+                          </button>
+                        )}
+                      </div>
+
+                      {isEditing && (
+                        <div className="mt-3 flex flex-col gap-3 rounded-md border border-slate-700 bg-slate-950/60 p-3">
+                          <label
+                            htmlFor={`note-${photo.id}`}
+                            className="text-xs font-medium uppercase tracking-wide text-slate-400"
+                          >
+                            Description (optional)
+                          </label>
+                          <input
+                            id={`note-${photo.id}`}
+                            type="text"
+                            inputMode="text"
+                            autoComplete="off"
+                            placeholder="Tree, Hydrant, Pole, Issue..."
+                            value={noteDraft}
+                            onChange={(e) => setNoteDraft(e.target.value)}
+                            className="h-12 w-full rounded-md border border-slate-700 bg-slate-950 px-3 text-base text-slate-100 placeholder:text-slate-500 focus:border-slate-500 focus:outline-none focus:ring-2 focus:ring-slate-500"
+                            autoFocus
+                          />
+                          {/* Quick-tap suggestions. Tapping fills the field;
+                              user can still edit afterward. */}
+                          <div className="flex flex-wrap gap-2">
+                            {PHOTO_NOTE_SUGGESTIONS.map((suggestion) => {
+                              const active =
+                                noteDraft.trim().toLowerCase() ===
+                                suggestion.toLowerCase();
+                              return (
+                                <button
+                                  key={suggestion}
+                                  type="button"
+                                  onClick={() => setNoteDraft(suggestion)}
+                                  className={`min-h-[40px] rounded-full border px-4 py-1.5 text-sm font-medium transition-colors ${
+                                    active
+                                      ? "border-sky-500 bg-sky-500/20 text-sky-200"
+                                      : "border-slate-700 bg-slate-900 text-slate-200 hover:bg-slate-800"
+                                  }`}
+                                >
+                                  {suggestion}
+                                </button>
+                              );
+                            })}
+                          </div>
+                          <div className="flex gap-2">
+                            <button
+                              type="button"
+                              onClick={saveNote}
+                              className="flex min-h-[48px] flex-1 items-center justify-center rounded-md bg-sky-500 px-3 py-2 text-base font-semibold text-white hover:bg-sky-400"
+                            >
+                              Save Note
+                            </button>
+                            <button
+                              type="button"
+                              onClick={cancelNoteEditor}
+                              className="flex min-h-[48px] items-center justify-center rounded-md border border-slate-700 bg-slate-900 px-4 py-2 text-base font-semibold text-slate-200 hover:bg-slate-800"
+                            >
+                              Skip
+                            </button>
+                            {/* Cancel only shown when editing an existing
+                                note — for fresh captures, "Skip" is the
+                                right framing. */}
+                            {photo.note ? (
+                              <button
+                                type="button"
+                                onClick={cancelNoteEditor}
+                                className="flex min-h-[48px] items-center justify-center rounded-md border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-300 hover:bg-slate-800"
+                              >
+                                Cancel
+                              </button>
+                            ) : null}
+                          </div>
+                        </div>
+                      )}
+                    </li>
+                  );
+                })}
+              </ul>
             )}
           </section>
         )}
@@ -1641,6 +1755,25 @@ export default function WalkPage() {
           Phase 2B — live map. No photos or station entry yet.
         </footer>
       </div>
+
+      {/* Phase 3C + 3C-4: Add Entry as a bottom sheet with a custom keypad. */}
+      {entryFormOpen && status === "walking" && (
+        <EntrySheet
+          entryDraft={entryDraft}
+          setEntryDraft={setEntryDraft}
+          entryError={entryError}
+          latestPoint={latestPoint}
+          photoDraft={photoDraft}
+          photoInputRef={photoInputRef}
+          onPhotoSelected={handlePhotoSelected}
+          onClearPhoto={clearPhotoDraft}
+          onCancel={closeEntryForm}
+          onSave={saveEntry}
+          onStationDigit={handleStationDigit}
+          onStationPlus={handleStationPlus}
+          onStationBackspace={handleStationBackspace}
+        />
+      )}
     </div>
   );
 }
@@ -1837,5 +1970,319 @@ function BigButton({
     >
       {children}
     </button>
+  );
+}
+
+// ─── Phase 3C-4: Station keypad ───────────────────────────────────────────────
+// Custom on-screen keypad. Rules enforced here AND in the reducer functions
+// at module scope:
+//   - cannot start with "+"
+//   - only one "+"
+//   - max length STATION_MAX_LENGTH
+
+function StationKeypad({
+  value,
+  onDigit,
+  onPlus,
+  onBackspace,
+}: {
+  value: string;
+  onDigit: (digit: string) => void;
+  onPlus: () => void;
+  onBackspace: () => void;
+}) {
+  const isFull = value.length >= STATION_MAX_LENGTH;
+  const plusDisabled =
+    isFull || value.length === 0 || value.includes("+");
+  const backspaceDisabled = value.length === 0;
+
+  // 4 rows of 3 buttons. Mirrors the spec layout.
+  return (
+    <div className="grid grid-cols-3 gap-2">
+      {["1", "2", "3", "4", "5", "6", "7", "8", "9"].map((digit) => (
+        <KeypadKey
+          key={digit}
+          label={digit}
+          onClick={() => onDigit(digit)}
+          disabled={isFull}
+        />
+      ))}
+      <KeypadKey
+        label="0"
+        onClick={() => onDigit("0")}
+        disabled={isFull}
+      />
+      <KeypadKey
+        label="+"
+        onClick={onPlus}
+        disabled={plusDisabled}
+        accent
+      />
+      <KeypadKey
+        // U+232B ERASE TO THE LEFT — universally readable as backspace.
+        label="⌫"
+        onClick={onBackspace}
+        disabled={backspaceDisabled}
+        accent
+        ariaLabel="Backspace"
+      />
+    </div>
+  );
+}
+
+function KeypadKey({
+  label,
+  onClick,
+  disabled,
+  accent,
+  ariaLabel,
+}: {
+  label: string;
+  onClick: () => void;
+  disabled?: boolean;
+  accent?: boolean;
+  ariaLabel?: string;
+}) {
+  // Min height generous enough for thumb taps with gloves on. type="button"
+  // is critical so the keypad never submits an enclosing form.
+  const base =
+    "flex min-h-[56px] items-center justify-center rounded-lg text-2xl font-semibold transition-colors active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-40 select-none";
+  const palette = accent
+    ? "bg-slate-800 text-sky-300 border border-slate-700 hover:bg-slate-700"
+    : "bg-slate-800 text-slate-100 border border-slate-700 hover:bg-slate-700";
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      aria-label={ariaLabel ?? label}
+      className={`${base} ${palette}`}
+    >
+      {label}
+    </button>
+  );
+}
+
+// ─── Phase 3C + 3C-4: Add Entry bottom sheet ─────────────────────────────────
+// Mobile-friendly modal that slides up from the bottom and pins itself above
+// the on-screen keyboard. Renders the same fields as the previous inline
+// form (station #, depth, BOC, optional photo) — but station now uses a
+// custom on-screen keypad instead of a phone keyboard.
+
+function EntrySheet({
+  entryDraft,
+  setEntryDraft,
+  entryError,
+  latestPoint,
+  photoDraft,
+  photoInputRef,
+  onPhotoSelected,
+  onClearPhoto,
+  onCancel,
+  onSave,
+  onStationDigit,
+  onStationPlus,
+  onStationBackspace,
+}: {
+  entryDraft: { station_number: string; depth_ft: string; boc_ft: string };
+  setEntryDraft: React.Dispatch<
+    React.SetStateAction<{
+      station_number: string;
+      depth_ft: string;
+      boc_ft: string;
+    }>
+  >;
+  entryError: string | null;
+  latestPoint: LatestPoint | null;
+  photoDraft: EntryPhoto | null;
+  photoInputRef: React.MutableRefObject<HTMLInputElement | null>;
+  onPhotoSelected: (event: React.ChangeEvent<HTMLInputElement>) => void;
+  onClearPhoto: () => void;
+  onCancel: () => void;
+  onSave: () => void;
+  onStationDigit: (digit: string) => void;
+  onStationPlus: () => void;
+  onStationBackspace: () => void;
+}) {
+  // Lock body scroll while the sheet is open so the underlying page doesn't
+  // shift when the on-screen keyboard appears.
+  useEffect(() => {
+    const previous = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = previous;
+    };
+  }, []);
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label="Add station entry"
+      className="fixed inset-0 z-50 flex flex-col"
+    >
+      {/* Backdrop — tap to dismiss. */}
+      <button
+        type="button"
+        onClick={onCancel}
+        aria-label="Close entry form"
+        className="flex-1 bg-slate-950/70 backdrop-blur-sm"
+      />
+
+      {/* Sheet body. max-h pinned so it never grows past the viewport,
+          overflow-y-auto so long content (with keyboard up) is scrollable. */}
+      <div className="max-h-[85vh] overflow-y-auto rounded-t-2xl border-t border-slate-800 bg-slate-900 px-4 pb-[max(1rem,env(safe-area-inset-bottom))] pt-3 shadow-2xl">
+        {/* Drag handle. Decorative — sheet does not implement swipe-to-dismiss
+            in this phase, but the affordance signals "dismissable sheet". */}
+        <div className="mx-auto mb-3 h-1 w-10 rounded-full bg-slate-700" />
+
+        <div className="mb-3 flex items-center justify-between">
+          <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-300">
+            Add Entry
+          </h2>
+          <button
+            type="button"
+            onClick={onCancel}
+            className="rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-xs text-slate-300 hover:bg-slate-800"
+          >
+            Close
+          </button>
+        </div>
+
+        <div className="flex flex-col gap-3">
+          {/* Phase 3C-4: Station # is a read-only display with a custom
+              keypad below. NO native input — the phone keyboard never
+              opens. Tapping the display does nothing. */}
+          <Field label="Station #" htmlFor="entry-station-display">
+            <div
+              id="entry-station-display"
+              role="textbox"
+              aria-readonly="true"
+              aria-label="Station number"
+              className="flex h-14 w-full items-center rounded-lg border border-slate-700 bg-slate-950 px-3 text-2xl font-mono tracking-wider text-slate-100"
+            >
+              {entryDraft.station_number || (
+                <span className="text-slate-600">—</span>
+              )}
+            </div>
+            <p className="mt-1 text-[11px] text-slate-500">
+              Use the keypad below. Examples: 1+00, 12+50, 100+00.
+            </p>
+            <div className="mt-2">
+              <StationKeypad
+                value={entryDraft.station_number}
+                onDigit={onStationDigit}
+                onPlus={onStationPlus}
+                onBackspace={onStationBackspace}
+              />
+            </div>
+          </Field>
+
+          <Field label="Depth (ft)" htmlFor="entry-depth">
+            <input
+              id="entry-depth"
+              type="number"
+              inputMode="decimal"
+              step="0.1"
+              placeholder="e.g. 4.5"
+              value={entryDraft.depth_ft}
+              onChange={(e) =>
+                setEntryDraft((d) => ({
+                  ...d,
+                  depth_ft: e.target.value,
+                }))
+              }
+              className="h-12 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 text-base text-slate-100 placeholder:text-slate-500 focus:border-slate-500 focus:outline-none focus:ring-2 focus:ring-slate-500"
+            />
+          </Field>
+
+          <Field label="BOC (ft)" htmlFor="entry-boc">
+            <input
+              id="entry-boc"
+              type="number"
+              inputMode="decimal"
+              step="0.1"
+              placeholder="e.g. 2.0"
+              value={entryDraft.boc_ft}
+              onChange={(e) =>
+                setEntryDraft((d) => ({
+                  ...d,
+                  boc_ft: e.target.value,
+                }))
+              }
+              className="h-12 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 text-base text-slate-100 placeholder:text-slate-500 focus:border-slate-500 focus:outline-none focus:ring-2 focus:ring-slate-500"
+            />
+          </Field>
+
+          {/* Optional single-photo attachment. */}
+          <div className="flex flex-col gap-2">
+            <label
+              htmlFor="entry-photo"
+              className="text-xs font-medium uppercase tracking-wide text-slate-400"
+            >
+              Photo (optional)
+            </label>
+            <input
+              ref={photoInputRef}
+              id="entry-photo"
+              type="file"
+              accept="image/*"
+              capture="environment"
+              onChange={onPhotoSelected}
+              className="block w-full text-sm text-slate-300 file:mr-3 file:rounded-md file:border-0 file:bg-slate-800 file:px-3 file:py-2 file:text-sm file:font-medium file:text-slate-100 hover:file:bg-slate-700"
+            />
+            {photoDraft && (
+              <div className="flex items-center gap-3 rounded-lg border border-slate-700 bg-slate-900/60 p-2">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={photoDraft.object_url}
+                  alt="Selected photo preview"
+                  className="h-16 w-16 flex-none rounded-md object-cover"
+                />
+                <div className="min-w-0 flex-1 text-xs">
+                  <div className="truncate text-slate-200">
+                    {photoDraft.filename}
+                  </div>
+                  <div className="text-slate-500">
+                    {formatBytes(photoDraft.size_bytes)}
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={onClearPhoto}
+                  className="rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-xs text-slate-300 hover:bg-slate-800"
+                >
+                  Remove
+                </button>
+              </div>
+            )}
+          </div>
+
+          {entryError && (
+            <div
+              role="alert"
+              className="rounded-lg border border-rose-800/60 bg-rose-900/30 p-2 text-xs text-rose-200"
+            >
+              {entryError}
+            </div>
+          )}
+
+          {!latestPoint && !entryError && (
+            <p className="text-xs text-amber-400">
+              Waiting for first GPS fix before this entry can be saved.
+            </p>
+          )}
+
+          <div className="flex gap-2 pt-1">
+            <BigButton variant="primary" onClick={onSave}>
+              Save Entry
+            </BigButton>
+            <BigButton variant="muted" onClick={onCancel}>
+              Cancel
+            </BigButton>
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }
