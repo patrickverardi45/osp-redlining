@@ -1,22 +1,16 @@
 // web/src/app/jobs/inbox/page.tsx
 //
-// Phase 4D: Field Submissions Inbox.
+// Phase 4D: Field Submissions Inbox — full-page view.
 //
-// Office-only view that aggregates walk sessions across every job in the
-// shop into a single "inbox" of field submissions waiting to be reviewed.
+// The actual inbox-data plumbing lives in the shared hook
+// `useFieldSubmissions` (web/src/lib/office/fieldSubmissionsInbox.ts) so this
+// page and the compact panel on the main Operator Workspace stay in sync
+// without duplicating the getJobs / getJobById fan-out.
 //
-// Data plumbing notes (read this before changing anything):
-//   - There is no global /sessions endpoint. We build the inbox by calling
-//     getJobs() once and then getJobById() per job in parallel. This is a
-//     fan-out, not a fake — every row corresponds to a real session
-//     returned by the backend.
-//   - This page does NOT mutate session state. It does not approve, reject,
-//     or otherwise change anything. It is a visibility-only view.
-//   - Phase 4D is intentionally read-only: the only action is an optional
-//     "View Session" link that scrolls the existing job detail page to the
-//     SessionListPanel. No new buttons, no approval workflow.
+// This page does NOT mutate session state. It does not approve, reject, or
+// otherwise change anything. It is a visibility-only view.
 //
-// Status mapping for this phase:
+// Status mapping (Phase 4D):
 //   - Any session whose `status` is "ended" is treated as "Needs Review".
 //   - All other statuses (active, paused, syncing, anything else) are
 //     considered in-progress and excluded from the inbox.
@@ -28,203 +22,31 @@
 //                      (rolling, inclusive of today)
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 
-import { getJobs, getJobById } from "@/lib/api";
-import type { Job, JobDetail, Session } from "@/lib/api";
+import {
+  FIELD_SUBMISSIONS_FILTER_LABELS,
+  formatSessionDate,
+  formatSessionDateTime,
+  safeCount,
+  shortenSessionId,
+  useFieldSubmissions,
+  type InboxFilter,
+} from "@/lib/office/fieldSubmissionsInbox";
 
-// ─── Inbox row shape ──────────────────────────────────────────────────────────
-// We flatten (job, session) pairs into one row per session so the table can
-// render without nested loops. Only the fields the inbox actually shows are
-// kept here; everything else stays on the underlying Session.
-
-type InboxRow = {
-  jobId: string;
-  jobLabel: string;
-  jobCode: string;
-  session: Session;
-};
-
-type InboxFilter = "needs_review" | "today" | "week";
-
-const FILTER_LABELS: Record<InboxFilter, string> = {
-  needs_review: "Needs Review",
-  today: "Today",
-  week: "This Week",
-};
-
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-
-function shortenSessionId(rawId: string): string {
-  if (!rawId) return "—";
-  return rawId.length <= 8 ? rawId : rawId.slice(0, 8);
-}
-
-function formatSessionDate(ts: string | null | undefined): string {
-  if (!ts) return "—";
-  const d = new Date(ts);
-  if (Number.isNaN(d.getTime())) return "—";
-  return d.toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  });
-}
-
-function formatSessionDateTime(ts: string | null | undefined): string {
-  if (!ts) return "—";
-  const d = new Date(ts);
-  if (Number.isNaN(d.getTime())) return "—";
-  return d.toLocaleString("en-US", {
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: true,
-  });
-}
-
-function safeCount(n: unknown): number {
-  return typeof n === "number" && Number.isFinite(n) ? n : 0;
-}
-
-function jobLabelFor(job: Job): string {
-  if (job.job_code && job.job_name) return `${job.job_code} — ${job.job_name}`;
-  return job.job_name || job.job_code || job.id;
-}
-
-// "Today" = session started_at falls on today's local calendar date.
-function isToday(ts: string): boolean {
-  const d = new Date(ts);
-  if (Number.isNaN(d.getTime())) return false;
-  const now = new Date();
-  return (
-    d.getFullYear() === now.getFullYear() &&
-    d.getMonth() === now.getMonth() &&
-    d.getDate() === now.getDate()
-  );
-}
-
-// "This Week" = session started_at within the last 7 days (rolling,
-// inclusive of today). We use a ms threshold rather than ISO weeks so the
-// behavior is unambiguous and locale-independent.
-const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
-
-function isWithinLastWeek(ts: string): boolean {
-  const d = new Date(ts);
-  if (Number.isNaN(d.getTime())) return false;
-  const now = Date.now();
-  const t = d.getTime();
-  return t >= now - WEEK_MS && t <= now;
-}
-
-// Phase 4D status rule. Only "ended" sessions are in the inbox.
-function isCompleted(session: Session): boolean {
-  return String(session.status || "").toLowerCase() === "ended";
-}
-
-// ─── Page ─────────────────────────────────────────────────────────────────────
+const FILTER_KEYS: InboxFilter[] = ["needs_review", "today", "week"];
 
 export default function FieldSubmissionsInboxPage() {
-  const [rows, setRows] = useState<InboxRow[]>([]);
-  const [loading, setLoading] = useState<boolean>(true);
-  const [error, setError] = useState<string | null>(null);
-  // Track per-job fetch failures separately so a single broken job detail
-  // does not blank the whole inbox. We surface the count in a small notice.
-  const [partialFailures, setPartialFailures] = useState<number>(0);
-  const [filter, setFilter] = useState<InboxFilter>("needs_review");
-
-  const fetchInbox = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    setPartialFailures(0);
-    try {
-      const jobs = await getJobs();
-      // Fan out: one getJobById call per job. Settled (not all-or-nothing)
-      // so a single broken job doesn't kill the inbox.
-      const results = await Promise.allSettled(
-        jobs.map((job) => getJobById(job.id)),
-      );
-
-      let failures = 0;
-      const flattened: InboxRow[] = [];
-      results.forEach((result, idx) => {
-        const job = jobs[idx];
-        if (result.status !== "fulfilled") {
-          failures += 1;
-          return;
-        }
-        const detail: JobDetail = result.value;
-        const sessions = Array.isArray(detail.sessions) ? detail.sessions : [];
-        for (const session of sessions) {
-          flattened.push({
-            jobId: job.id,
-            jobLabel: jobLabelFor(job),
-            jobCode: job.job_code || job.id,
-            session,
-          });
-        }
-      });
-
-      // Sort newest-first so the most recently submitted walk surfaces at
-      // the top of the inbox.
-      flattened.sort((a, b) => {
-        const ta = new Date(a.session.started_at).getTime() || 0;
-        const tb = new Date(b.session.started_at).getTime() || 0;
-        return tb - ta;
-      });
-
-      setRows(flattened);
-      setPartialFailures(failures);
-    } catch (err: unknown) {
-      setError(
-        err instanceof Error
-          ? err.message
-          : "An unexpected error occurred while loading field submissions.",
-      );
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    fetchInbox();
-  }, [fetchInbox]);
-
-  // Only ended sessions are eligible for the inbox at all. Date filters
-  // narrow further but never include in-progress sessions.
-  const eligibleRows = useMemo(
-    () => rows.filter((row) => isCompleted(row.session)),
-    [rows],
-  );
-
-  const filteredRows = useMemo(() => {
-    switch (filter) {
-      case "today":
-        return eligibleRows.filter((row) => isToday(row.session.started_at));
-      case "week":
-        return eligibleRows.filter((row) =>
-          isWithinLastWeek(row.session.started_at),
-        );
-      case "needs_review":
-      default:
-        return eligibleRows;
-    }
-  }, [eligibleRows, filter]);
-
-  // Filter chip counts so the user can see at a glance how much is in each
-  // bucket without flipping through them.
-  const counts = useMemo(() => {
-    return {
-      needs_review: eligibleRows.length,
-      today: eligibleRows.filter((row) => isToday(row.session.started_at))
-        .length,
-      week: eligibleRows.filter((row) =>
-        isWithinLastWeek(row.session.started_at),
-      ).length,
-    } as Record<InboxFilter, number>;
-  }, [eligibleRows]);
+  const {
+    filteredRows,
+    counts,
+    loading,
+    error,
+    partialFailures,
+    filter,
+    setFilter,
+    refresh,
+  } = useFieldSubmissions("needs_review");
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -251,7 +73,7 @@ export default function FieldSubmissionsInboxPage() {
 
         {/* Filter chips */}
         <div className="flex flex-wrap items-center gap-2">
-          {(Object.keys(FILTER_LABELS) as InboxFilter[]).map((key) => {
+          {FILTER_KEYS.map((key) => {
             const active = filter === key;
             return (
               <button
@@ -264,7 +86,7 @@ export default function FieldSubmissionsInboxPage() {
                     : "bg-white text-gray-700 border-gray-200 hover:border-gray-400"
                 }`}
               >
-                {FILTER_LABELS[key]}
+                {FIELD_SUBMISSIONS_FILTER_LABELS[key]}
                 <span
                   className={`ml-2 inline-flex items-center justify-center rounded-full px-1.5 text-[10px] font-semibold ${
                     active
@@ -280,7 +102,7 @@ export default function FieldSubmissionsInboxPage() {
           <div className="ml-auto">
             <button
               type="button"
-              onClick={fetchInbox}
+              onClick={refresh}
               disabled={loading}
               className="px-3 py-1.5 rounded text-xs font-medium bg-white border border-gray-200 text-gray-700 hover:border-gray-400 disabled:opacity-50 disabled:cursor-not-allowed"
             >
@@ -306,7 +128,7 @@ export default function FieldSubmissionsInboxPage() {
               {error}
             </div>
             <button
-              onClick={fetchInbox}
+              onClick={refresh}
               className="mt-3 px-3 py-1.5 rounded text-sm font-medium bg-gray-800 text-white hover:bg-gray-700 transition-colors"
             >
               Retry
@@ -362,8 +184,6 @@ export default function FieldSubmissionsInboxPage() {
                     Breadcrumbs
                   </th>
                   <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-gray-500">
-                    {/* Optional "View Session" column. Reuses the existing
-                        job detail route — no new action endpoint. */}
                     {""}
                   </th>
                 </tr>
@@ -383,7 +203,7 @@ export default function FieldSubmissionsInboxPage() {
                       </td>
                       <td className="px-4 py-3">
                         <Link
-                          href={`/jobs/${row.jobId}`}
+                          href={`/jobs/${row.jobId}?session=${encodeURIComponent(session.id)}`}
                           className="font-medium text-gray-900 hover:text-blue-600 hover:underline"
                         >
                           {row.jobLabel}
@@ -418,7 +238,7 @@ export default function FieldSubmissionsInboxPage() {
                       </td>
                       <td className="px-4 py-3 text-right whitespace-nowrap">
                         <Link
-                          href={`/jobs/${row.jobId}`}
+                          href={`/jobs/${row.jobId}?session=${encodeURIComponent(session.id)}`}
                           className="text-xs font-medium text-blue-600 hover:underline"
                         >
                           View Session →

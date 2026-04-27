@@ -2,6 +2,11 @@ import type { Session } from "@/lib/api";
 
 interface SessionListPanelProps {
   sessions: Session[];
+  // Phase 4E: when set, the matching row is highlighted so reviewers who
+  // arrive via the Field Submissions Inbox can see at a glance which
+  // session their `?session=` query param refers to. Optional — the panel
+  // works exactly as before when not supplied.
+  highlightedSessionId?: string | null;
 }
 
 const API_BASE_URL = (
@@ -105,7 +110,10 @@ function calcDuration(start: string, end: string | null): string {
   return `${hours}h ${mins}m`;
 }
 
-export default function SessionListPanel({ sessions }: SessionListPanelProps) {
+export default function SessionListPanel({
+  sessions,
+  highlightedSessionId,
+}: SessionListPanelProps) {
   return (
     <section>
       <div className="flex items-center justify-between mb-3">
@@ -167,10 +175,28 @@ export default function SessionListPanel({ sessions }: SessionListPanelProps) {
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-100">
-              {sessions.map((session) => (
-                <tr key={session.id} className="hover:bg-gray-50 transition-colors">
+              {sessions.map((session) => {
+                const isHighlighted =
+                  Boolean(highlightedSessionId) &&
+                  session.id === highlightedSessionId;
+                return (
+                <tr
+                  key={session.id}
+                  className={`transition-colors ${
+                    isHighlighted
+                      ? "bg-amber-50 hover:bg-amber-100 ring-1 ring-inset ring-amber-200"
+                      : "hover:bg-gray-50"
+                  }`}
+                  aria-current={isHighlighted ? "true" : undefined}
+                >
                   {/* Phase 4A: Session (shortened id) */}
                   <td className="px-4 py-3 font-mono text-xs text-gray-700 whitespace-nowrap">
+                    {isHighlighted && (
+                      <span
+                        aria-hidden="true"
+                        className="mr-1 inline-block h-1.5 w-1.5 rounded-full bg-amber-500 align-middle"
+                      />
+                    )}
                     {shortenSessionId(session.id)}
                   </td>
                   <td className="px-4 py-3 font-medium text-gray-800">
@@ -219,7 +245,8 @@ export default function SessionListPanel({ sessions }: SessionListPanelProps) {
                     )}
                   </td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         </div>

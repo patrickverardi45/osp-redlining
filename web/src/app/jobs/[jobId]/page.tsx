@@ -1,20 +1,35 @@
 // web/src/app/jobs/[jobId]/page.tsx
 // Client component — re-fetches after mutations (status change, exception resolve, report generation).
+//
+// Phase 4E additions:
+//   - Reads optional `?session=<id>` query parameter so the Field
+//     Submissions Inbox can hand off a specific submission for review.
+//   - Renders a Selected Submission Review panel above Map Review when
+//     a session is selected.
+//   - Highlights the selected row in the Walk Sessions table.
+//   - Passes the selected id through to the Map Review panel so the
+//     matching walk track can be emphasized.
+//
+// Hard rules respected:
+//   - read-only, no redlines generated, no approve / reject actions
+//   - no backend changes
+//   - no fake data — the selected session must come from job.sessions[]
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
-import { useParams } from "next/navigation";
+import { useState, useEffect, useCallback, useMemo } from "react";
+import { useParams, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import dynamic from "next/dynamic";
 
 import { getJobById } from "@/lib/api";
-import type { JobDetail } from "@/lib/api";
+import type { JobDetail, Session } from "@/lib/api";
 
 // ─── Existing panels ──────────────────────────────────────────────────────────
 import JobHeader from "@/components/office/JobHeader";
 import DesignSetupPanel from "@/components/office/DesignSetupPanel";
 import RouteListPanel from "@/components/office/RouteListPanel";
 import SessionListPanel from "@/components/office/SessionListPanel";
+import SelectedSubmissionReviewPanel from "@/components/office/SelectedSubmissionReviewPanel";
 import ExceptionSummaryPanel from "@/components/office/ExceptionSummaryPanel";
 import ReportActionsPanel from "@/components/office/ReportActionsPanel";
 import ArtifactsPanel from "@/components/office/ArtifactsPanel";
@@ -55,6 +70,14 @@ export default function JobDetailPage() {
   const params = useParams();
   const jobId = params.jobId as string;
 
+  // Phase 4E: pick up the optional `session` query parameter. Empty / missing
+  // means "no specific session selected" — the page renders exactly as it
+  // did before. We trim and coalesce to null so downstream components have a
+  // single clean shape to work with.
+  const searchParams = useSearchParams();
+  const rawSelectedSessionId = searchParams?.get("session") ?? "";
+  const selectedSessionId = rawSelectedSessionId.trim() || null;
+
   const [job, setJob] = useState<JobDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -79,6 +102,17 @@ export default function JobDetailPage() {
   useEffect(() => {
     fetchJob();
   }, [fetchJob]);
+
+  // Phase 4E: resolve the selected id against the loaded sessions. Done here
+  // (rather than inside the review panel) so we can pass either the real
+  // Session record or `null` (meaning "selected, but not on this job — stale
+  // link") to the panel without re-walking the array there.
+  const selectedSession = useMemo<Session | null>(() => {
+    if (!selectedSessionId || !job) return null;
+    return (
+      (job.sessions ?? []).find((s) => s.id === selectedSessionId) ?? null
+    );
+  }, [selectedSessionId, job]);
 
   // ── Loading ────────────────────────────────────────────────────────────────
   if (loading) {
@@ -151,8 +185,11 @@ export default function JobDetailPage() {
         {/* Routes */}
         <RouteListPanel routes={job.routes ?? []} />
 
-        {/* Walk Sessions */}
-        <SessionListPanel sessions={job.sessions ?? []} />
+        {/* Walk Sessions — Phase 4E: highlight the inbox-selected session */}
+        <SessionListPanel
+          sessions={job.sessions ?? []}
+          highlightedSessionId={selectedSessionId}
+        />
 
         {/* Exceptions — interactive, refreshes job on mutation */}
         <ExceptionSummaryPanel
@@ -162,8 +199,23 @@ export default function JobDetailPage() {
 
         <hr className="border-gray-200" />
 
-        {/* Map — Leaflet, client-only */}
-        <OfficeMapReviewPanel job={job} />
+        {/* Phase 4E: Selected Submission Review — only when a `session`
+            query param is present. Sits directly above the map so the
+            reviewer's eye flows from "what was submitted" to "what does
+            it look like on the map". */}
+        {selectedSessionId && (
+          <SelectedSubmissionReviewPanel
+            selectedSessionId={selectedSessionId}
+            session={selectedSession}
+          />
+        )}
+
+        {/* Map — Leaflet, client-only. Phase 4E: passes the selected
+            session id so the matching walk track is emphasized. */}
+        <OfficeMapReviewPanel
+          job={job}
+          selectedSessionId={selectedSessionId}
+        />
 
         <hr className="border-gray-200" />
 

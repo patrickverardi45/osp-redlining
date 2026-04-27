@@ -284,7 +284,7 @@ export default function FieldSubmissionsInboxPanel() {
                       </Td>
                       <Td>
                         <Link
-                          href={`/jobs/${row.jobId}`}
+                          href={`/jobs/${row.jobId}?session=${encodeURIComponent(session.id)}`}
                           style={{
                             color: "#0f172a",
                             fontWeight: 700,
@@ -336,7 +336,7 @@ export default function FieldSubmissionsInboxPanel() {
                       </Td>
                       <Td align="right">
                         <Link
-                          href={`/jobs/${row.jobId}`}
+                          href={`/jobs/${row.jobId}?session=${encodeURIComponent(session.id)}`}
                           style={{
                             fontSize: 12,
                             fontWeight: 700,
