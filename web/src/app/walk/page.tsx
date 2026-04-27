@@ -8,7 +8,7 @@ import {
   useState,
 } from "react";
 
-import { getJobs, type Job } from "@/lib/api";
+import { getJobs, getJobById, type Job, type Route } from "@/lib/api";
 import { getOrCreateSessionId } from "@/lib/session";
 
 // ─── Configuration ────────────────────────────────────────────────────────────
@@ -48,6 +48,16 @@ const PHOTO_NOTE_SUGGESTIONS: ReadonlyArray<string> = [
 // enforces this directly; the constant is here so save-time validation
 // agrees with the entry-time UI.
 const STATION_MAX_LENGTH = 7;
+
+// Phase 4C: visual style for the design (KMZ) route overlay on the mobile
+// map. Distinct from the breadcrumb polyline so the field worker can tell
+// the planned route from their actual walked path at a glance.
+const DESIGN_ROUTE_STYLE = {
+  color: "#94a3b8", // slate-400 — neutral, recedes against the breadcrumb's sky-400
+  weight: 4,
+  dashArray: "6, 6",
+  opacity: 0.8,
+} as const;
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -165,6 +175,11 @@ type MapController = {
   setPosition(lat: number, lon: number): void;
   appendBreadcrumb(lat: number, lon: number): void;
   resetTrail(): void;
+  // Phase 4C: design-route overlay. setDesignRoutes replaces any previously
+  // drawn design polylines with a fresh set; clearDesignRoutes wipes them.
+  // These are no-ops until the map has been initialized.
+  setDesignRoutes(routes: ReadonlyArray<Route>): void;
+  clearDesignRoutes(): void;
 };
 
 function createMapController(): MapController {
@@ -175,6 +190,20 @@ function createMapController(): MapController {
   let positionHalo: ReturnType<LeafletNS["circleMarker"]> | null = null;
   let hasCentered = false;
   const trail: Array<[number, number]> = [];
+  // Phase 4C: design-route layers. We hold references so we can remove just
+  // the design polylines (and not the breadcrumb polyline) on each update.
+  const designLayers: Array<ReturnType<LeafletNS["polyline"]>> = [];
+
+  function clearDesignLayersInternal(): void {
+    while (designLayers.length > 0) {
+      const layer = designLayers.pop();
+      try {
+        layer?.remove();
+      } catch {
+        /* ignore */
+      }
+    }
+  }
 
   return {
     async init(container: HTMLDivElement): Promise<boolean> {
@@ -217,6 +246,7 @@ function createMapController(): MapController {
 
     destroy(): void {
       try {
+        clearDesignLayersInternal();
         polyline?.remove();
         positionMarker?.remove();
         positionHalo?.remove();
@@ -291,6 +321,70 @@ function createMapController(): MapController {
       try {
         trail.length = 0;
         polyline.setLatLngs([]);
+      } catch {
+        /* ignore */
+      }
+    },
+
+    // Phase 4C: redraw the design overlay from the supplied routes. We
+    // wipe-and-redraw rather than diff because route lists are tiny and
+    // change at most once per job switch — the simplest correct path.
+    setDesignRoutes(routes: ReadonlyArray<Route>): void {
+      if (!L || !map) return;
+      try {
+        clearDesignLayersInternal();
+        // Collect every drawn coordinate so we can fit the view to the
+        // design overlay before GPS takes over. Without this the map sits
+        // at its default world zoom and the polyline is drawn but is far
+        // off-screen — the route is invisible until the first GPS fix.
+        const allLatLngs: Array<[number, number]> = [];
+        for (const route of routes) {
+          const coords = route.geometry?.coordinates;
+          if (!Array.isArray(coords) || coords.length < 2) continue;
+          // GeoJSON delivers [lon, lat]; Leaflet wants [lat, lng]. Swap on
+          // read and skip any malformed pair defensively.
+          const latlngs: Array<[number, number]> = [];
+          for (const pair of coords) {
+            if (!Array.isArray(pair) || pair.length < 2) continue;
+            const lon = Number(pair[0]);
+            const lat = Number(pair[1]);
+            if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
+            latlngs.push([lat, lon]);
+          }
+          if (latlngs.length < 2) continue;
+          const layer = L.polyline(latlngs, {
+            color: DESIGN_ROUTE_STYLE.color,
+            weight: DESIGN_ROUTE_STYLE.weight,
+            opacity: DESIGN_ROUTE_STYLE.opacity,
+            dashArray: DESIGN_ROUTE_STYLE.dashArray,
+            interactive: false,
+          });
+          layer.addTo(map);
+          designLayers.push(layer);
+          allLatLngs.push(...latlngs);
+        }
+        // Fit map to the design route ONLY if GPS has not taken over
+        // centering yet. Once the user gets a GPS fix, hasCentered is true
+        // and we must NOT yank the view back to the route — the GPS path
+        // owns centering from that point on (panTo only, never re-zoom).
+        if (!hasCentered && allLatLngs.length >= 2) {
+          const bounds = L.latLngBounds(allLatLngs);
+          if (bounds.isValid()) {
+            map.fitBounds(bounds, {
+              padding: [20, 20],
+              maxZoom: MAP_LOCKED_ZOOM,
+              animate: false,
+            });
+          }
+        }
+      } catch {
+        /* ignore — never let an overlay error break the page */
+      }
+    },
+
+    clearDesignRoutes(): void {
+      try {
+        clearDesignLayersInternal();
       } catch {
         /* ignore */
       }
@@ -445,6 +539,9 @@ export default function WalkPage() {
   const [endSummary, setEndSummary] = useState<EndSummary | null>(null);
 
   const [mapAvailable, setMapAvailable] = useState<boolean>(true);
+  // Phase 4C: signal from MapPanel that Leaflet has finished initializing.
+  // Used to know when it's safe to push design routes into the controller.
+  const [mapReady, setMapReady] = useState<boolean>(false);
 
   // Phase 3A: station entries captured during this walk. Stored as state
   // (not just a ref) so the entry count rerenders when the user saves one.
@@ -479,6 +576,13 @@ export default function WalkPage() {
   );
   const [noteDraft, setNoteDraft] = useState<string>("");
   const photoEvidenceInputRef = useRef<HTMLInputElement | null>(null);
+
+  // Phase 4C: routes for the currently selected job. Fetched lazily via
+  // getJobById when the user picks a job from the list. Empty array means
+  // either nothing fetched yet OR the job has no routes — the routeContext
+  // value (derived from selectedJob.route_count, NOT from this state)
+  // distinguishes the two for UI purposes.
+  const [designRoutes, setDesignRoutes] = useState<Route[]>([]);
 
   const watchIdRef = useRef<number | null>(null);
   const pendingPointsRef = useRef<Breadcrumb[]>([]);
@@ -606,6 +710,52 @@ export default function WalkPage() {
     if (!selectedJob) return "unknown"; // fallback option, or job list still loading
     return selectedJob.route_count > 0 ? "available" : "missing";
   }, [hydrated, form.jobId, selectedJob]);
+
+  // Phase 4C: fetch the selected job's detail (routes with geometry) when
+  // the user picks a real job. We deliberately gate on `selectedJob` so the
+  // offline "test-job" fallback (which has no backing Job record) doesn't
+  // trigger a 404. We also skip the fetch when route_count is 0 — there
+  // would be nothing to draw and we'd just waste a request.
+  useEffect(() => {
+    if (!hydrated) return;
+    if (!form.jobId || !selectedJob || selectedJob.route_count === 0) {
+      setDesignRoutes([]);
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const detail = await getJobById(form.jobId);
+        if (cancelled) return;
+        setDesignRoutes(Array.isArray(detail.routes) ? detail.routes : []);
+      } catch {
+        if (cancelled) return;
+        // Fail quietly. No banner — the route overlay is a nice-to-have and
+        // any actual job-fetch problem would already be visible elsewhere.
+        setDesignRoutes([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [form.jobId, hydrated, selectedJob]);
+
+  // Phase 4C: push design routes into the map controller. Deterministic
+  // gating only — no debouncing, no rAF, no delay. Runs whenever any of
+  // the three preconditions changes; when all are satisfied, force-applies
+  // the routes. The controller's setDesignRoutes is idempotent (wipes its
+  // previous overlay before drawing) so repeated calls are safe.
+  useEffect(() => {
+    if (!mapReady) return;
+    if (!mapAvailable) return;
+    if (!designRoutes || designRoutes.length === 0) return;
+
+    const controller = mapControllerRef.current;
+    if (!controller) return;
+
+    // FORCE apply routes
+    controller.setDesignRoutes(designRoutes);
+  }, [mapReady, mapAvailable, designRoutes]);
 
   // ── Handlers ───────────────────────────────────────────────────────────────
 
@@ -875,6 +1025,8 @@ export default function WalkPage() {
       }
 
       // Wipe any previous trail so a re-Start doesn't visually merge walks.
+      // Phase 4C: design-route overlay is intentionally NOT cleared here —
+      // it belongs to the selected job, not to a single walk session.
       mapControllerRef.current?.resetTrail();
 
       setStatus("walking");
@@ -1270,6 +1422,7 @@ export default function WalkPage() {
         <MapPanel
           controllerRef={mapControllerRef}
           onAvailabilityChange={setMapAvailable}
+          onReady={setMapReady}
         />
       </div>
 
@@ -1787,9 +1940,14 @@ export default function WalkPage() {
 function MapPanel({
   controllerRef,
   onAvailabilityChange,
+  onReady,
 }: {
   controllerRef: React.MutableRefObject<MapController | null>;
   onAvailabilityChange: (available: boolean) => void;
+  // Phase 4C: fired after init() succeeds so the parent knows it's safe to
+  // push design routes into the controller. Fired with `false` on unmount
+  // / failure so any pending overlay updates can short-circuit.
+  onReady: (ready: boolean) => void;
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [failed, setFailed] = useState<boolean>(false);
@@ -1802,6 +1960,7 @@ function MapPanel({
     const node = containerRef.current;
     if (!node) {
       onAvailabilityChange(false);
+      onReady(false);
       setFailed(true);
       return;
     }
@@ -1811,9 +1970,11 @@ function MapPanel({
       if (!ok) {
         setFailed(true);
         onAvailabilityChange(false);
+        onReady(false);
         controllerRef.current = null;
       } else {
         onAvailabilityChange(true);
+        onReady(true);
       }
     });
 
@@ -1827,9 +1988,10 @@ function MapPanel({
       if (controllerRef.current === controller) {
         controllerRef.current = null;
       }
+      onReady(false);
     };
-    // controllerRef and onAvailabilityChange are stable references from the
-    // parent; we intentionally run this effect once on mount.
+    // controllerRef, onAvailabilityChange, and onReady are stable references
+    // from the parent; we intentionally run this effect once on mount.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -1928,13 +2090,14 @@ function RouteContextBanner({ state }: { state: RouteContextState }) {
       </div>
     );
   }
-  // missing
+  // missing — Phase 4C: this is the empty-state copy required by the spec
+  // when the selected job has no design route to overlay.
   return (
     <div
       role="status"
       className="rounded-xl border border-amber-700/60 bg-amber-900/20 px-4 py-3 text-sm text-amber-200"
     >
-      No route/design loaded for this job yet. Office must upload the KMZ
+      No design route loaded for this job yet. Office must upload the KMZ
       before field walking.
     </div>
   );
