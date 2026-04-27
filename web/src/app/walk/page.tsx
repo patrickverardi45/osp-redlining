@@ -2229,8 +2229,14 @@ function EntrySheet({
               accept="image/*"
               capture="environment"
               onChange={onPhotoSelected}
-              className="block w-full text-sm text-slate-300 file:mr-3 file:rounded-md file:border-0 file:bg-slate-800 file:px-3 file:py-2 file:text-sm file:font-medium file:text-slate-100 hover:file:bg-slate-700"
+              className="sr-only"
             />
+            <label
+              htmlFor="entry-photo"
+              className="flex min-h-[52px] w-full cursor-pointer items-center justify-center rounded-lg bg-sky-500 px-4 py-3 text-base font-semibold text-white transition-colors hover:bg-sky-400"
+            >
+              📸 Add Photo
+            </label>
             {photoDraft && (
               <div className="flex items-center gap-3 rounded-lg border border-slate-700 bg-slate-900/60 p-2">
                 {/* eslint-disable-next-line @next/next/no-img-element */}
