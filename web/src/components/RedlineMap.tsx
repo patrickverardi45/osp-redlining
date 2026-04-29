@@ -192,6 +192,22 @@ function buildWorldPath(
     .join(" ");
 }
 
+function escapeXml(value: unknown): string {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&apos;");
+}
+
+function kmlCoordinateFromLatLon(lat: unknown, lon: unknown): string | null {
+  if (typeof lat !== "number" || typeof lon !== "number") return null;
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+  if (Math.abs(lat) > 90 || Math.abs(lon) > 180) return null;
+  return `${lon.toFixed(8)},${lat.toFixed(8)},0`;
+}
+
 function viewBoxToString(metrics: ProjectionMetrics | null, viewport: Viewport): string {
   const worldWidth = (metrics?.worldWidth || PROJECTION_BASE_WIDTH) / viewport.zoom;
   const worldHeight = (metrics?.worldHeight || PROJECTION_BASE_WIDTH) / viewport.zoom;
@@ -1185,6 +1201,185 @@ function OfficeRedlineMapInner({ mode = "default" }: RedlineMapProps) {
       window.print();
     }
   }, []);
+
+  const handleExportKml = useCallback(() => {
+    const designCoveragePlacemarks: string[] = [];
+    const designRoutePlacemarks: string[] = [];
+    const redlinePlacemarks: string[] = [];
+    const photoPlacemarks: string[] = [];
+    const stationPlacemarks: string[] = [];
+
+    const buildFolder = (name: string, folderPlacemarks: string[]) => `    <Folder>
+      <name>${escapeXml(name)}</name>
+${folderPlacemarks.join("\n")}
+    </Folder>`;
+
+    kmzPolygonFeatures.forEach((feature, idx) => {
+      const ringCoords = cleanCoords(feature.coords);
+      if (ringCoords.length < 3) return;
+
+      const first = ringCoords[0];
+      const last = ringCoords[ringCoords.length - 1];
+      const closedRing =
+        first[0] === last[0] && first[1] === last[1]
+          ? ringCoords
+          : [...ringCoords, first];
+      const coordinates = closedRing
+        .map((pt) => kmlCoordinateFromLatLon(pt[0], pt[1]))
+        .filter((coord): coord is string => Boolean(coord));
+      if (coordinates.length < 4) return;
+
+      const name = cleanDisplayText(feature.name || feature.feature_id || `Coverage ${idx + 1}`);
+      designCoveragePlacemarks.push(`      <Placemark>
+        <name>${escapeXml(name)}</name>
+        <styleUrl>#coveragePolyStyle</styleUrl>
+        <Polygon>
+          <tessellate>1</tessellate>
+          <outerBoundaryIs>
+            <LinearRing>
+              <coordinates>
+                ${coordinates.join("\n                ")}
+              </coordinates>
+            </LinearRing>
+          </outerBoundaryIs>
+        </Polygon>
+      </Placemark>`);
+    });
+
+    kmzLineFeatures.forEach((feature, idx) => {
+      const coordinates = cleanCoords(feature.coords)
+        .map((pt) => kmlCoordinateFromLatLon(pt[0], pt[1]))
+        .filter((coord): coord is string => Boolean(coord));
+      if (coordinates.length < 2) return;
+
+      const name = cleanDisplayText(
+        feature.route_name ||
+          feature.route_id ||
+          feature.feature_id ||
+          feature.role ||
+          `Design Route ${idx + 1}`
+      );
+      designRoutePlacemarks.push(`      <Placemark>
+        <name>${escapeXml(name)}</name>
+        <styleUrl>#designLineStyle</styleUrl>
+        <LineString>
+          <tessellate>1</tessellate>
+          <coordinates>
+            ${coordinates.join("\n            ")}
+          </coordinates>
+        </LineString>
+      </Placemark>`);
+    });
+
+    redlineSegments.forEach((segment, idx) => {
+      const coordinates = cleanCoords(segment.coords)
+        .map((pt) => kmlCoordinateFromLatLon(pt[0], pt[1]))
+        .filter((coord): coord is string => Boolean(coord));
+      if (coordinates.length < 2) return;
+      const name = cleanDisplayText(segment.source_file || segment.segment_id || `Redline ${idx + 1}`);
+      redlinePlacemarks.push(`      <Placemark>
+        <name>${escapeXml(`Redline - ${name}`)}</name>
+        <styleUrl>#redlineStyle</styleUrl>
+        <LineString>
+          <tessellate>1</tessellate>
+          <coordinates>
+            ${coordinates.join("\n            ")}
+          </coordinates>
+        </LineString>
+      </Placemark>`);
+    });
+
+    gpsPhotos.forEach((photo) => {
+      if (photo.reason !== "mapped") return;
+      const markerLat = typeof photo.displayLat === "number" ? photo.displayLat : photo.lat;
+      const markerLon = typeof photo.displayLon === "number" ? photo.displayLon : photo.lon;
+      const coordinate = kmlCoordinateFromLatLon(markerLat, markerLon);
+      if (!coordinate) return;
+      const hasAdjusted = typeof photo.displayLat === "number" && typeof photo.displayLon === "number";
+      const description = [
+        `Original GPS: ${typeof photo.lat === "number" ? photo.lat.toFixed(6) : "--"}, ${typeof photo.lon === "number" ? photo.lon.toFixed(6) : "--"}`,
+        hasAdjusted ? `Adjusted: ${photo.displayLat!.toFixed(6)}, ${photo.displayLon!.toFixed(6)}` : "Adjusted: none",
+      ].join("\n");
+      photoPlacemarks.push(`      <Placemark>
+        <name>${escapeXml(photo.filename)}</name>
+        <description>${escapeXml(description)}</description>
+        <styleUrl>#photoStyle</styleUrl>
+        <Point>
+          <coordinates>${coordinate}</coordinates>
+        </Point>
+      </Placemark>`);
+    });
+
+    stationPoints.forEach((point, idx) => {
+      const coordinate = kmlCoordinateFromLatLon(point.lat, point.lon);
+      if (!coordinate) return;
+      const stationLabel = cleanDisplayText(point.station);
+      stationPlacemarks.push(`      <Placemark>
+        <name>${escapeXml(`Station ${stationLabel !== "--" ? stationLabel : idx + 1}`)}</name>
+        <description>${escapeXml(`Source: ${cleanDisplayText(point.source_file)}\nMapped FT: ${formatNumber(point.mapped_station_ft, 3)}`)}</description>
+        <styleUrl>#stationStyle</styleUrl>
+        <Point>
+          <coordinates>${coordinate}</coordinates>
+        </Point>
+      </Placemark>`);
+    });
+
+    const kml = `<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2">
+  <Document>
+    <name>${escapeXml(activeJob !== "--" ? activeJob : "OSP Redlining Export")}</name>
+    <Style id="redlineStyle">
+      <LineStyle>
+        <color>ff0000ff</color>
+        <width>6</width>
+      </LineStyle>
+    </Style>
+    <Style id="designLineStyle">
+      <LineStyle>
+        <color>9900ffff</color>
+        <width>1</width>
+      </LineStyle>
+    </Style>
+    <Style id="coveragePolyStyle">
+      <LineStyle>
+        <color>ff22c55e</color>
+        <width>2</width>
+      </LineStyle>
+      <PolyStyle>
+        <color>7f22c55e</color>
+        <fill>1</fill>
+        <outline>1</outline>
+      </PolyStyle>
+    </Style>
+    <Style id="photoStyle">
+      <IconStyle>
+        <scale>0.9</scale>
+      </IconStyle>
+    </Style>
+    <Style id="stationStyle">
+      <IconStyle>
+        <scale>0.7</scale>
+      </IconStyle>
+    </Style>
+${buildFolder("Design / Coverage", designCoveragePlacemarks)}
+${buildFolder("Design Routes", designRoutePlacemarks)}
+${buildFolder("As-Built Redlines", redlinePlacemarks)}
+${buildFolder("Photos", photoPlacemarks)}
+${buildFolder("Stations", stationPlacemarks)}
+  </Document>
+</kml>
+`;
+
+    const blob = new Blob([kml], { type: "application/vnd.google-earth.kml+xml" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "osp_redlining_export.kml";
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  }, [activeJob, gpsPhotos, kmzLineFeatures, kmzPolygonFeatures, redlineSegments, stationPoints]);
 
   const fitToBounds = useCallback((targetBounds: Bounds | null) => {
     const container = mapContainerRef.current;
@@ -4119,9 +4314,14 @@ function OfficeRedlineMapInner({ mode = "default" }: RedlineMapProps) {
                     title="Print / export report"
                     description="Use browser print to create a clean printed report or Save as PDF from the browser print dialog."
                   >
-                    <button onClick={handlePrintReport} className="no-print" style={{ ...buttonStyle("#0f172a", "#ffffff", "#000000", false), width: "100%" }}>
-                      Print / Export Report
-                    </button>
+                    <div className="no-print" style={{ display: "grid", gap: 10 }}>
+                      <button onClick={handleExportKml} style={{ ...buttonStyle("#ffffff", "#0f172a", "#cfd8e3", false), width: "100%" }}>
+                        Export to Google Earth (KML)
+                      </button>
+                      <button onClick={handlePrintReport} style={{ ...buttonStyle("#0f172a", "#ffffff", "#000000", false), width: "100%" }}>
+                        Print / Export Report
+                      </button>
+                    </div>
                   </ShellCard>
                   <ShellCard
                     title="Operator notes"
