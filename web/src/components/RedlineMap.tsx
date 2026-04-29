@@ -40,7 +40,6 @@ import { extractGps } from "@/lib/photos/exif";
 import { appendSessionId, appendSessionIdToForm, rememberSessionFromResponse } from "@/lib/session";
 import type { PipelineDiagEntry, EngineeringPlanSignal, QaFlagItem } from "@/lib/types/nova";
 import { buildNovaSummary } from "@/lib/nova/buildNovaSummary";
-import NovaDrawer from "@/components/NovaDrawer";
 import CloseoutPacket from "@/components/CloseoutPacket";
 
 const API_BASE =
@@ -212,6 +211,19 @@ function screenToWorld(
   };
 }
 
+function worldPointToLatLon(
+  world: ScreenPoint,
+  bounds: Bounds,
+  metrics: ProjectionMetrics
+): { lat: number; lon: number } {
+  const xRatio = clamp((world.x - metrics.offsetX) / Math.max(metrics.contentWidth, 0.000001), 0, 1);
+  const yRatio = clamp((world.y - metrics.offsetY) / Math.max(metrics.contentHeight, 0.000001), 0, 1);
+  return {
+    lat: bounds.maxLat - yRatio * (bounds.maxLat - bounds.minLat),
+    lon: bounds.minLon + xRatio * (bounds.maxLon - bounds.minLon),
+  };
+}
+
 
 function kmzLineStroke(feature: KmzLineFeature): string {
   return (
@@ -253,25 +265,25 @@ function kmzPolygonOpacity(feature: KmzPolygonFeature): number {
 // Deterministic: same evidence_layer_id always maps to the same color.
 // Colors are chosen for high contrast on the dark map background.
 const EVIDENCE_LAYER_PALETTE = [
-  "rgba(255, 72,  72,  1)",   // 0 red
-  "rgba( 56, 189, 248, 1)",   // 1 sky-blue
-  "rgba(251, 146,  60, 1)",   // 2 orange
-  "rgba( 52, 211, 153, 1)",   // 3 emerald
-  "rgba(232,  70, 230, 1)",   // 4 magenta
-  "rgba(250, 204,  21, 1)",   // 5 yellow
-  "rgba(129, 140, 248, 1)",   // 6 indigo
-  "rgba( 34, 211, 238, 1)",   // 7 cyan
+  "rgba(220, 38, 38, 1)",   // red
+  "rgba(220, 38, 38, 1)",   // red
+  "rgba(220, 38, 38, 1)",   // red
+  "rgba(220, 38, 38, 1)",   // red
+  "rgba(220, 38, 38, 1)",   // red
+  "rgba(220, 38, 38, 1)",   // red
+  "rgba(220, 38, 38, 1)",   // red
+  "rgba(220, 38, 38, 1)",   // red
 ];
 
 const EVIDENCE_LAYER_CASING_PALETTE = [
-  "rgba(18,  4,   6,  0.82)", // 0 red casing
-  "rgba( 4,  20,  32, 0.82)", // 1 sky-blue casing
-  "rgba(20,  10,  2,  0.82)", // 2 orange casing
-  "rgba( 2,  18,  12, 0.82)", // 3 emerald casing
-  "rgba(18,   2,  18, 0.82)", // 4 magenta casing
-  "rgba(18,  14,  2,  0.82)", // 5 yellow casing
-  "rgba( 6,   6,  22, 0.82)", // 6 indigo casing
-  "rgba( 2,  18,  20, 0.82)", // 7 cyan casing
+  "rgba(69, 10, 10, 0.84)", // red casing
+  "rgba(69, 10, 10, 0.84)", // red casing
+  "rgba(69, 10, 10, 0.84)", // red casing
+  "rgba(69, 10, 10, 0.84)", // red casing
+  "rgba(69, 10, 10, 0.84)", // red casing
+  "rgba(69, 10, 10, 0.84)", // red casing
+  "rgba(69, 10, 10, 0.84)", // red casing
+  "rgba(69, 10, 10, 0.84)", // red casing
 ];
 
 function layerPaletteIndex(layerId: string | undefined | null): number {
@@ -313,7 +325,23 @@ function SummaryCard({ title, value, subtitle }: { title: string; value: string;
   );
 }
 
-function Section({ title, subtitle, children, actions }: { title: string; subtitle?: string; children: React.ReactNode; actions?: React.ReactNode }) {
+function Section({
+  title,
+  subtitle,
+  children,
+  actions,
+  style,
+  headerStyle,
+  contentStyle,
+}: {
+  title: string;
+  subtitle?: string;
+  children: React.ReactNode;
+  actions?: React.ReactNode;
+  style?: React.CSSProperties;
+  headerStyle?: React.CSSProperties;
+  contentStyle?: React.CSSProperties;
+}) {
   return (
     <div
       style={{
@@ -322,16 +350,17 @@ function Section({ title, subtitle, children, actions }: { title: string; subtit
         borderRadius: 20,
         overflow: "hidden",
         boxShadow: "0 10px 24px rgba(15, 23, 42, 0.04)",
+        ...style,
       }}
     >
-      <div style={{ padding: 18, borderBottom: "1px solid #e8eef5", display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+      <div style={{ padding: 18, borderBottom: "1px solid #e8eef5", display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, flexWrap: "wrap", ...headerStyle }}>
         <div>
           <div style={{ fontSize: 18, fontWeight: 800, color: "#0f172a" }}>{title}</div>
           {subtitle ? <div style={{ marginTop: 6, fontSize: 13, color: "#64748b", maxWidth: 900 }}>{subtitle}</div> : null}
         </div>
         {actions ? <div>{actions}</div> : null}
       </div>
-      <div style={{ padding: 18 }}>{children}</div>
+      <div style={{ padding: 18, ...contentStyle }}>{children}</div>
     </div>
   );
 }
@@ -396,12 +425,13 @@ const miniMapButton: React.CSSProperties = {
   height: 36,
   borderRadius: 10,
   padding: "0 12px",
-  border: "2px solid #000000",
-  background: "rgba(15, 23, 42, 0.92)",
+  border: "1px solid rgba(255, 255, 255, 0.18)",
+  background: "rgba(15, 23, 42, 0.82)",
   color: "#f8fafc",
   fontWeight: 800,
   cursor: "pointer",
-  boxShadow: "0 6px 16px rgba(0,0,0,0.28)",
+  boxShadow: "0 8px 22px rgba(0,0,0,0.30)",
+  backdropFilter: "blur(8px)",
 };
 
 function uploadCardStyle(disabled: boolean): React.CSSProperties {
@@ -459,6 +489,16 @@ type RedlineMapProps = {
   mode?: "mobileWalk" | "default";
 };
 
+type WorkspaceTab = "map" | "setup" | "evidence" | "reports" | "billing";
+
+const WORKSPACE_TABS: Array<{ id: WorkspaceTab; label: string }> = [
+  { id: "map", label: "Map" },
+  { id: "setup", label: "Setup" },
+  { id: "evidence", label: "Evidence" },
+  { id: "reports", label: "Reports" },
+  { id: "billing", label: "Billing / Export" },
+];
+
 type NovaIssueFocusPayload = {
   issueId: string;
   source_file: string;
@@ -489,11 +529,15 @@ type GpsPhoto = {
   contentType: string;
   lat: number | null;
   lon: number | null;
+  displayLat?: number;
+  displayLon?: number;
+  displayAdjustedAt?: number;
   reason: "mapped" | "no_gps" | "unreadable";
   addedAt: number; // Date.now()
 };
 
 function OfficeRedlineMapInner({ mode = "default" }: RedlineMapProps) {
+  const [activeWorkspaceTab, setActiveWorkspaceTab] = useState<WorkspaceTab>("map");
   const [state, setState] = useState<BackendState | null>(null);
   const [busy, setBusy] = useState(false);
   const [statusTone, setStatusTone] = useState<NoteTone>("neutral");
@@ -522,6 +566,11 @@ function OfficeRedlineMapInner({ mode = "default" }: RedlineMapProps) {
   const [gpsPhotoBusy, setGpsPhotoBusy] = useState(false);
   const [selectedGpsPhotoId, setSelectedGpsPhotoId] = useState<string | null>(null);
   const [hoverGpsPhotoId, setHoverGpsPhotoId] = useState<string | null>(null);
+  const [gpsPhotoDrag, setGpsPhotoDrag] = useState<{
+    id: string;
+    offsetWorldX: number;
+    offsetWorldY: number;
+  } | null>(null);
   const [viewport, setViewport] = useState<Viewport>({ zoom: 1, panX: 0, panY: 0 });
   const [didInitialFit, setDidInitialFit] = useState(false);
   const [isPanning, setIsPanning] = useState(false);
@@ -657,7 +706,7 @@ function OfficeRedlineMapInner({ mode = "default" }: RedlineMapProps) {
         id: feature.feature_id || feature.route_id || `${feature.route_name || "kmz"}-${Math.random()}`,
         path: buildWorldPath(feature.coords || [], renderBounds, projectionMetrics),
       })),
-    [kmzLineFeatures, renderBounds]
+    [kmzLineFeatures, renderBounds, projectionMetrics]
   );
 
   const kmzPolygonPaths = useMemo(
@@ -666,7 +715,7 @@ function OfficeRedlineMapInner({ mode = "default" }: RedlineMapProps) {
         id: feature.feature_id || `${feature.name || "polygon"}-${Math.random()}`,
         path: buildWorldPath([...(feature.coords || []), (feature.coords || [])[0]], renderBounds, projectionMetrics),
       })),
-    [kmzPolygonFeatures, renderBounds]
+    [kmzPolygonFeatures, renderBounds, projectionMetrics]
   );
 
   const redlinePaths = useMemo(
@@ -737,17 +786,19 @@ function OfficeRedlineMapInner({ mode = "default" }: RedlineMapProps) {
       .map((photo) => {
         if (photo.reason !== "mapped") return null;
         if (typeof photo.lat !== "number" || typeof photo.lon !== "number") return null;
+        const markerLat = typeof photo.displayLat === "number" ? photo.displayLat : photo.lat;
+        const markerLon = typeof photo.displayLon === "number" ? photo.displayLon : photo.lon;
         if (
-          photo.lat < renderBounds.minLat ||
-          photo.lat > renderBounds.maxLat ||
-          photo.lon < renderBounds.minLon ||
-          photo.lon > renderBounds.maxLon
+          markerLat < renderBounds.minLat ||
+          markerLat > renderBounds.maxLat ||
+          markerLon < renderBounds.minLon ||
+          markerLon > renderBounds.maxLon
         ) {
           return null;
         }
         return {
           photo,
-          world: projectWorldPoint(photo.lat, photo.lon, renderBounds, projectionMetrics),
+          world: projectWorldPoint(markerLat, markerLon, renderBounds, projectionMetrics),
         };
       })
       .filter((item): item is { photo: GpsPhoto; world: ScreenPoint } => Boolean(item));
@@ -1613,6 +1664,7 @@ function OfficeRedlineMapInner({ mode = "default" }: RedlineMapProps) {
     });
     setSelectedGpsPhotoId(null);
     setHoverGpsPhotoId(null);
+    setGpsPhotoDrag(null);
   }
 
   // Revoke object URLs on unmount. We use a ref so the cleanup sees the
@@ -1857,6 +1909,8 @@ function OfficeRedlineMapInner({ mode = "default" }: RedlineMapProps) {
   const hasDesign = (kmzLineFeatures.length || kmzPolygonFeatures.length) > 0;
   const hasBoreFiles = (state?.loaded_field_data_files || 0) > 0;
   const hasGeneratedOutput = redlineSegments.length > 0 || stationPoints.length > 0;
+  const desktopMapHeight = Math.max(MAP_HEIGHT, 900);
+  const mapScrollGutterWidth = 34;
 
   return (
     <div style={{ minHeight: "100vh", background: "linear-gradient(180deg, #eef3f8 0%, #f6f9fc 100%)", fontFamily: "Inter, ui-sans-serif, system-ui, sans-serif", color: "#0f172a" }}>
@@ -1999,7 +2053,7 @@ function OfficeRedlineMapInner({ mode = "default" }: RedlineMapProps) {
         }
       `}</style>
       <div className="osp-workspace-main" style={{ maxWidth: 1520, margin: "0 auto", padding: 20 }}>
-        <div style={{ display: "grid", gap: 18 }}>
+        <div style={{ display: "grid", gap: 8 }}>
           <div
             style={{
               background: "linear-gradient(135deg, #ffffff 0%, #f7fbff 52%, #eef6ff 100%)",
@@ -2049,16 +2103,51 @@ function OfficeRedlineMapInner({ mode = "default" }: RedlineMapProps) {
             <SummaryCard title="Output Counts" value={`${stationPoints.length} pts / ${redlineSegments.length} segs`} subtitle="Station points and generated redline segments" />
           </div>
 
-          {/* ─── Phase 4D: Field Submissions Inbox ───────────────────── */}
-          {/* Compact panel sits between the top status cards and the     */}
-          {/* Upload section. Read-only — uses existing /jobs and         */}
-          {/* /jobs/{id} endpoints via the shared inbox hook. Does not    */}
-          {/* mutate any backend state. "View all" links to /jobs/inbox.  */}
-          <FieldSubmissionsInboxPanel />
+          <div
+            role="tablist"
+            aria-label="Operator workspace sections"
+            style={{
+              display: "flex",
+              flexWrap: "wrap",
+              gap: 8,
+              padding: 8,
+              border: "1px solid #dbe4ee",
+              borderRadius: 18,
+              background: "#ffffff",
+              boxShadow: "0 10px 24px rgba(15, 23, 42, 0.04)",
+              marginBottom: -8,
+            }}
+          >
+            {WORKSPACE_TABS.map((tab) => {
+              const active = activeWorkspaceTab === tab.id;
+              return (
+                <button
+                  key={tab.id}
+                  type="button"
+                  role="tab"
+                  aria-selected={active}
+                  onClick={() => setActiveWorkspaceTab(tab.id)}
+                  style={{
+                    border: active ? "1px solid #0f172a" : "1px solid #dbe4ee",
+                    borderRadius: 12,
+                    background: active ? "#0f172a" : "#f8fafc",
+                    color: active ? "#ffffff" : "#334155",
+                    padding: "10px 14px",
+                    fontSize: 13,
+                    fontWeight: 800,
+                    cursor: "pointer",
+                  }}
+                >
+                  {tab.label}
+                </button>
+              );
+            })}
+          </div>
 
           <Section
             title="1. Upload"
             subtitle="Load the design first, then add one or more structured bore log files. This section stays tied to the current backend workflow."
+            style={{ display: activeWorkspaceTab === "setup" ? "block" : "none" }}
           >
             <div style={{ display: "grid", gridTemplateColumns: "1.1fr 1.1fr 0.8fr", gap: 16, alignItems: "start" }}>
               <label style={uploadCardStyle(busy)}>
@@ -2115,6 +2204,7 @@ function OfficeRedlineMapInner({ mode = "default" }: RedlineMapProps) {
           <Section
             title="Job Evidence"
             subtitle="Upload engineering plan PDFs or images for this session. Plans are scoped to your browser session and do not affect route matching or redline decisions."
+            style={{ display: activeWorkspaceTab === "evidence" ? "block" : "none" }}
           >
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, alignItems: "start" }}>
               {/* Upload card */}
@@ -2197,6 +2287,7 @@ function OfficeRedlineMapInner({ mode = "default" }: RedlineMapProps) {
           <Section
             title="2. Actions"
             subtitle="Workspace controls and live backend facts. These controls use the existing execution flow exactly as-is."
+            style={{ display: activeWorkspaceTab === "setup" ? "block" : "none" }}
           >
             <div style={{ display: "grid", gridTemplateColumns: "0.95fr 1.05fr", gap: 16, alignItems: "start" }}>
               <div style={{ display: "grid", gap: 12 }}>
@@ -2235,62 +2326,58 @@ function OfficeRedlineMapInner({ mode = "default" }: RedlineMapProps) {
           </Section>
 
           <Section
-            title="3. Map Review"
-            subtitle="Safe map polish only: smaller black stations, stronger redline readability, cleaner field-review callouts, and initial fit prioritized to the full KMZ design footprint."
-            actions={
-              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                <button onClick={() => {
-                  userHasAdjustedViewportRef.current = true;
-                  zoomAt(viewport.zoom * BUTTON_IN, containerSize.width / 2, containerSize.height / 2);
-                }} style={miniMapButton}>+</button>
-                <button onClick={() => {
-                  userHasAdjustedViewportRef.current = true;
-                  zoomAt(viewport.zoom * BUTTON_OUT, containerSize.width / 2, containerSize.height / 2);
-                }} style={miniMapButton}>-</button>
-                <button onClick={() => {
-                  userHasAdjustedViewportRef.current = true;
-                  fitToBounds(designBounds || bounds);
-                }} style={miniMapButton}>Fit All</button>
-                <button onClick={() => {
-                  userHasAdjustedViewportRef.current = true;
-                  fitToBounds(stationOnlyBounds || bounds);
-                }} style={miniMapButton}>Fit Stations</button>
-                <button onClick={() => setShowStations((current) => !current)} style={miniMapButton}>{showStations ? "Hide Stations" : "Show Stations"}</button>
-              </div>
+            title={activeWorkspaceTab === "evidence" ? "Field Photo Evidence" : "Map Review"}
+            subtitle={
+              activeWorkspaceTab === "evidence"
+                ? "Station-attached photos and geotagged photo review, using the existing photo state and upload behavior."
+                : undefined
             }
+            style={{
+              display: activeWorkspaceTab === "map" || activeWorkspaceTab === "evidence" ? "block" : "none",
+              border: activeWorkspaceTab === "map" ? "none" : "1px solid #cbd5e1",
+              background: activeWorkspaceTab === "map" ? "transparent" : "#ffffff",
+              boxShadow: activeWorkspaceTab === "map" ? "none" : "0 18px 42px rgba(15, 23, 42, 0.10)",
+            }}
+            headerStyle={{
+              display: activeWorkspaceTab === "map" ? "none" : "flex",
+            }}
+            contentStyle={{
+              padding: activeWorkspaceTab === "map" ? 0 : 18,
+            }}
           >
-            <div style={{ display: "grid", gap: 16 }}>
+            <div style={{ display: "grid", gap: activeWorkspaceTab === "map" ? 6 : 18 }}>
 
               {/* ─── Bore Log Layers panel ───────────────────────────── */}
-              {(state?.bore_log_summary?.length ?? 0) > 0 && (() => {
+              {activeWorkspaceTab === "map" && (state?.bore_log_summary?.length ?? 0) > 0 && (() => {
                 const layers = state!.bore_log_summary!;
                 const allVisible = layers.every((e) => !e.evidence_layer_id || !hiddenLayers.has(e.evidence_layer_id));
                 const allHidden  = layers.every((e) => e.evidence_layer_id && hiddenLayers.has(e.evidence_layer_id));
                 return (
                   <div
                     style={{
-                      border: "1px solid #dbe4ee",
-                      borderRadius: 14,
-                      background: "#ffffff",
-                      padding: "12px 16px",
+                      border: "1px solid #e2e8f0",
+                      borderRadius: 10,
+                      background: "rgba(255, 255, 255, 0.7)",
+                      padding: "3px 7px",
+                      order: -1,
                     }}
                   >
                     {/* Header row */}
-                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 8, marginBottom: 10 }}>
-                      <div style={{ fontSize: 13, fontWeight: 800, color: "#0f172a" }}>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 4, marginBottom: 2 }}>
+                      <div style={{ fontSize: 10, fontWeight: 800, color: "#334155" }}>
                         Bore Log Layers
-                        <span style={{ marginLeft: 8, fontSize: 11, fontWeight: 600, color: "#64748b" }}>
+                        <span style={{ marginLeft: 5, fontSize: 9, fontWeight: 600, color: "#64748b" }}>
                           ({layers.filter((e) => !e.evidence_layer_id || !hiddenLayers.has(e.evidence_layer_id)).length} / {layers.length} visible)
                         </span>
                       </div>
-                      <div style={{ display: "flex", gap: 6 }}>
+                      <div style={{ display: "flex", gap: 4 }}>
                         <button
                           type="button"
                           disabled={allVisible}
                           onClick={() => setHiddenLayers(new Set())}
                           style={{
-                            padding: "4px 10px",
-                            fontSize: 12,
+                            padding: "3px 7px",
+                            fontSize: 10,
                             fontWeight: 700,
                             borderRadius: 8,
                             border: "1px solid #dbe4ee",
@@ -2312,8 +2399,8 @@ function OfficeRedlineMapInner({ mode = "default" }: RedlineMapProps) {
                             setSelectedStationIndex(null);
                           }}
                           style={{
-                            padding: "4px 10px",
-                            fontSize: 12,
+                            padding: "3px 7px",
+                            fontSize: 10,
                             fontWeight: 700,
                             borderRadius: 8,
                             border: "1px solid #dbe4ee",
@@ -2328,7 +2415,7 @@ function OfficeRedlineMapInner({ mode = "default" }: RedlineMapProps) {
                     </div>
 
                     {/* Checkbox rows */}
-                    <div style={{ display: "flex", flexWrap: "wrap", gap: "6px 20px" }}>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: "3px 12px" }}>
                       {layers.map((entry) => {
                         const lid = entry.evidence_layer_id ?? "";
                         const isVisible = !lid || !hiddenLayers.has(lid);
@@ -2340,7 +2427,7 @@ function OfficeRedlineMapInner({ mode = "default" }: RedlineMapProps) {
                             style={{
                               display: "flex",
                               alignItems: "center",
-                              gap: 7,
+                              gap: 5,
                               cursor: "pointer",
                               userSelect: "none",
                               opacity: isVisible ? 1 : 0.45,
@@ -2368,24 +2455,24 @@ function OfficeRedlineMapInner({ mode = "default" }: RedlineMapProps) {
                                   return next;
                                 });
                               }}
-                              style={{ width: 14, height: 14, accentColor: color, cursor: "pointer", flexShrink: 0 }}
+                              style={{ width: 11, height: 11, accentColor: color, cursor: "pointer", flexShrink: 0 }}
                             />
                             {/* Color swatch */}
                             <span
                               style={{
                                 display: "inline-block",
-                                width: 10,
-                                height: 10,
+                                width: 8,
+                                height: 8,
                                 borderRadius: "50%",
                                 background: color,
                                 flexShrink: 0,
                               }}
                             />
-                            <span style={{ fontSize: 12, fontWeight: 600, color: "#0f172a", maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                            <span style={{ fontSize: 11, fontWeight: 600, color: "#334155", maxWidth: 180, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                               {shortName}
                             </span>
                             {entry.dates?.[0] && (
-                              <span style={{ fontSize: 11, color: "#64748b" }}>
+                              <span style={{ fontSize: 10, color: "#64748b" }}>
                                 {formatDisplayDate(entry.dates[0])}
                               </span>
                             )}
@@ -2400,12 +2487,13 @@ function OfficeRedlineMapInner({ mode = "default" }: RedlineMapProps) {
               {/* ─── Map + Inspector wrapper ─────────────────────────── */}
               {/* Inspector is position:absolute so map container width    */}
               {/* never changes — projection stays stable on station click. */}
-              <div style={{ position: "relative" }}>
+              <div style={{ position: "relative", display: activeWorkspaceTab === "map" ? "block" : "none", order: -2 }}>
                 <div
                   ref={mapContainerRef}
                   style={{
                     position: "relative",
-                    height: MAP_HEIGHT,
+                    width: `calc(100% - ${mapScrollGutterWidth}px)`,
+                    height: desktopMapHeight,
                     borderRadius: 18,
                     overflow: "hidden",
                     background: "linear-gradient(180deg, #0b1a2a 0%, #060f1c 60%, #03080f 100%)",
@@ -2425,6 +2513,42 @@ function OfficeRedlineMapInner({ mode = "default" }: RedlineMapProps) {
                     if (!isPanning) setHoverStationIndex(null);
                   }}
                 >
+                <div
+                  style={{
+                    position: "absolute",
+                    top: 12,
+                    left: selectedStation ? 12 : undefined,
+                    right: selectedStation ? undefined : 12,
+                    zIndex: 25,
+                    display: "flex",
+                    gap: 8,
+                    flexWrap: "wrap",
+                    justifyContent: selectedStation ? "flex-start" : "flex-end",
+                    maxWidth: selectedStation
+                      ? `calc(100% - ${276 + mapScrollGutterWidth + 24}px)`
+                      : "calc(100% - 24px)",
+                  }}
+                  onPointerDown={(e) => e.stopPropagation()}
+                  onWheel={(e) => e.stopPropagation()}
+                >
+                  <button onClick={() => {
+                    userHasAdjustedViewportRef.current = true;
+                    zoomAt(viewport.zoom * BUTTON_IN, containerSize.width / 2, containerSize.height / 2);
+                  }} style={miniMapButton}>+</button>
+                  <button onClick={() => {
+                    userHasAdjustedViewportRef.current = true;
+                    zoomAt(viewport.zoom * BUTTON_OUT, containerSize.width / 2, containerSize.height / 2);
+                  }} style={miniMapButton}>-</button>
+                  <button onClick={() => {
+                    userHasAdjustedViewportRef.current = true;
+                    fitToBounds(designBounds || bounds);
+                  }} style={miniMapButton}>Fit All</button>
+                  <button onClick={() => {
+                    userHasAdjustedViewportRef.current = true;
+                    fitToBounds(stationOnlyBounds || bounds);
+                  }} style={miniMapButton}>Fit Stations</button>
+                  <button onClick={() => setShowStations((current) => !current)} style={miniMapButton}>{showStations ? "Hide Stations" : "Show Stations"}</button>
+                </div>
                 {renderBounds && projectionMetrics && allCoords.length > 0 ? (
                   <svg
                     viewBox={viewBoxToString(projectionMetrics, viewport)}
@@ -2736,12 +2860,13 @@ function OfficeRedlineMapInner({ mode = "default" }: RedlineMapProps) {
                         {projectedPhotos.map(({ photo, world }) => {
                           const isSelected = selectedGpsPhotoId === photo.id;
                           const isHovered = hoverGpsPhotoId === photo.id;
+                          const isDragging = gpsPhotoDrag?.id === photo.id;
                           // Mirror the zoom-aware sizing used by stations so
                           // photo pins don't get huge at low zoom or tiny at
                           // high zoom. Photo pins are slightly larger than
                           // station dots so they read as "pins" not "dots".
                           const baseRadius = viewport.zoom < 4 ? 2.6 : viewport.zoom < 12 ? 2.1 : 1.7;
-                          const radius = isSelected ? baseRadius + 1.0 : isHovered ? baseRadius + 0.5 : baseRadius;
+                          const radius = isSelected || isDragging ? baseRadius + 1.0 : isHovered ? baseRadius + 0.5 : baseRadius;
                           const tailHeight = radius * 1.4;
                           // Pin body is centered above the actual coordinate;
                           // the tail points down to (world.x, world.y).
@@ -2750,9 +2875,90 @@ function OfficeRedlineMapInner({ mode = "default" }: RedlineMapProps) {
                           return (
                             <g
                               key={`gpsphoto-${photo.id}`}
-                              style={{ cursor: "pointer" }}
+                              style={{ cursor: isDragging ? "grabbing" : "grab", touchAction: "none" }}
                               onPointerDown={(e) => {
+                                if (e.button !== 0) return;
+                                if (!mapContainerRef.current) return;
+                                e.preventDefault();
                                 e.stopPropagation();
+                                const rect = mapContainerRef.current.getBoundingClientRect();
+                                const pointerWorld = screenToWorld(
+                                  e.clientX - rect.left,
+                                  e.clientY - rect.top,
+                                  viewport
+                                );
+                                (e.currentTarget as SVGGElement).setPointerCapture(e.pointerId);
+                                setGpsPhotoDrag({
+                                  id: photo.id,
+                                  offsetWorldX: pointerWorld.x - world.x,
+                                  offsetWorldY: pointerWorld.y - world.y,
+                                });
+                                setSelectedGpsPhotoId(photo.id);
+                              }}
+                              onPointerMove={(e) => {
+                                if (gpsPhotoDrag?.id !== photo.id || !renderBounds || !projectionMetrics || !mapContainerRef.current) return;
+                                e.preventDefault();
+                                e.stopPropagation();
+                                const rect = mapContainerRef.current.getBoundingClientRect();
+                                const pointerWorld = screenToWorld(
+                                  e.clientX - rect.left,
+                                  e.clientY - rect.top,
+                                  viewport
+                                );
+                                const nextAnchor = {
+                                  x: pointerWorld.x - gpsPhotoDrag.offsetWorldX,
+                                  y: pointerWorld.y - gpsPhotoDrag.offsetWorldY,
+                                };
+                                const nextDisplay = worldPointToLatLon(nextAnchor, renderBounds, projectionMetrics);
+                                setGpsPhotos((prev) =>
+                                  prev.map((item) =>
+                                    item.id === photo.id
+                                      ? {
+                                          ...item,
+                                          displayLat: nextDisplay.lat,
+                                          displayLon: nextDisplay.lon,
+                                          displayAdjustedAt: Date.now(),
+                                        }
+                                      : item
+                                  )
+                                );
+                              }}
+                              onPointerUp={(e) => {
+                                if (gpsPhotoDrag?.id !== photo.id) return;
+                                e.preventDefault();
+                                e.stopPropagation();
+                                if (renderBounds && projectionMetrics && mapContainerRef.current) {
+                                  const rect = mapContainerRef.current.getBoundingClientRect();
+                                  const pointerWorld = screenToWorld(
+                                    e.clientX - rect.left,
+                                    e.clientY - rect.top,
+                                    viewport
+                                  );
+                                  const nextAnchor = {
+                                    x: pointerWorld.x - gpsPhotoDrag.offsetWorldX,
+                                    y: pointerWorld.y - gpsPhotoDrag.offsetWorldY,
+                                  };
+                                  const nextDisplay = worldPointToLatLon(nextAnchor, renderBounds, projectionMetrics);
+                                  setGpsPhotos((prev) =>
+                                    prev.map((item) =>
+                                      item.id === photo.id
+                                        ? {
+                                            ...item,
+                                            displayLat: nextDisplay.lat,
+                                            displayLon: nextDisplay.lon,
+                                            displayAdjustedAt: Date.now(),
+                                          }
+                                        : item
+                                    )
+                                  );
+                                }
+                                (e.currentTarget as SVGGElement).releasePointerCapture(e.pointerId);
+                                setGpsPhotoDrag(null);
+                              }}
+                              onPointerCancel={(e) => {
+                                if (gpsPhotoDrag?.id !== photo.id) return;
+                                e.stopPropagation();
+                                setGpsPhotoDrag(null);
                               }}
                               onPointerEnter={() => setHoverGpsPhotoId(photo.id)}
                               onPointerLeave={() =>
@@ -2776,8 +2982,8 @@ function OfficeRedlineMapInner({ mode = "default" }: RedlineMapProps) {
                                 <circle
                                   cx={bodyCx}
                                   cy={bodyCy}
-                                  r={radius + (isSelected ? 2.4 : 1.6)}
-                                  fill={isSelected ? "rgba(245, 158, 11, 0.28)" : "rgba(245, 158, 11, 0.18)"}
+                                  r={radius + (isSelected || isDragging ? 2.4 : 1.6)}
+                                  fill={isSelected || isDragging ? "rgba(245, 158, 11, 0.28)" : "rgba(245, 158, 11, 0.18)"}
                                   pointerEvents="none"
                                 />
                               ) : null}
@@ -2994,6 +3200,11 @@ function OfficeRedlineMapInner({ mode = "default" }: RedlineMapProps) {
                   const isHeic = /heic|heif/i.test(photo.contentType) || /\.heic$|\.heif$/i.test(photo.filename);
                   const latText = typeof photo.lat === "number" ? photo.lat.toFixed(6) : "--";
                   const lonText = typeof photo.lon === "number" ? photo.lon.toFixed(6) : "--";
+                  const isAdjusted =
+                    typeof photo.displayLat === "number" &&
+                    typeof photo.displayLon === "number";
+                  const displayLatText = isAdjusted ? photo.displayLat!.toFixed(6) : "--";
+                  const displayLonText = isAdjusted ? photo.displayLon!.toFixed(6) : "--";
 
                   return (
                     <div
@@ -3031,6 +3242,7 @@ function OfficeRedlineMapInner({ mode = "default" }: RedlineMapProps) {
                           type="button"
                           onClick={(e) => {
                             e.stopPropagation();
+                            if (gpsPhotoDrag?.id === photo.id) setGpsPhotoDrag(null);
                             setSelectedGpsPhotoId(null);
                           }}
                           aria-label="Close photo preview"
@@ -3087,7 +3299,63 @@ function OfficeRedlineMapInner({ mode = "default" }: RedlineMapProps) {
                             fontFamily: "ui-monospace, SFMono-Regular, monospace",
                           }}
                         >
-                          {latText}, {lonText}
+                          Original GPS: {latText}, {lonText}
+                        </div>
+                        <div
+                          style={{
+                            marginTop: 4,
+                            fontSize: 11,
+                            color: "#cbd5e1",
+                          }}
+                        >
+                          Drag this marker to adjust display position. Original GPS is preserved.
+                        </div>
+                        {isAdjusted ? (
+                          <div
+                            style={{
+                              marginTop: 4,
+                              fontSize: 11,
+                              color: "#fbbf24",
+                              fontFamily: "ui-monospace, SFMono-Regular, monospace",
+                            }}
+                          >
+                            Display: {displayLatText}, {displayLonText}
+                          </div>
+                        ) : null}
+                        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 10 }}>
+                          {isAdjusted ? (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setGpsPhotoDrag((current) => (current?.id === photo.id ? null : current));
+                                setGpsPhotos((prev) =>
+                                  prev.map((item) =>
+                                    item.id === photo.id
+                                      ? {
+                                          ...item,
+                                          displayLat: undefined,
+                                          displayLon: undefined,
+                                          displayAdjustedAt: undefined,
+                                        }
+                                      : item
+                                  )
+                                );
+                              }}
+                              style={{
+                                fontSize: 12,
+                                fontWeight: 800,
+                                color: "#f1f5f9",
+                                background: "rgba(15, 23, 42, 0.66)",
+                                border: "1px solid rgba(255, 255, 255, 0.18)",
+                                borderRadius: 8,
+                                padding: "6px 10px",
+                                cursor: "pointer",
+                              }}
+                            >
+                              Reset to GPS
+                            </button>
+                          ) : null}
                         </div>
                         <a
                           href={photo.previewUrl}
@@ -3115,6 +3383,35 @@ function OfficeRedlineMapInner({ mode = "default" }: RedlineMapProps) {
 
                 </div>
 
+                <div
+                  aria-hidden="true"
+                  title="Scroll page"
+                  style={{
+                    position: "absolute",
+                    top: 0,
+                    right: 0,
+                    width: mapScrollGutterWidth,
+                    height: desktopMapHeight,
+                    borderRadius: "0 18px 18px 0",
+                    background: "linear-gradient(180deg, rgba(248, 250, 252, 0.82), rgba(226, 232, 240, 0.70))",
+                    border: "1px solid rgba(203, 213, 225, 0.85)",
+                    borderLeft: "none",
+                    color: "#64748b",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    fontSize: 10,
+                    fontWeight: 800,
+                    letterSpacing: "0.08em",
+                    textTransform: "uppercase",
+                    writingMode: "vertical-rl",
+                    userSelect: "none",
+                    pointerEvents: "auto",
+                  }}
+                >
+                  Scroll
+                </div>
+
                 {/* ─── Station Inspector Panel (absolute overlay) ────── */}
                 {/* Positioned absolute so the map container never resizes */}
                 {selectedStation ? (
@@ -3122,9 +3419,9 @@ function OfficeRedlineMapInner({ mode = "default" }: RedlineMapProps) {
                     style={{
                       position: "absolute",
                       top: 0,
-                      right: 0,
+                      right: mapScrollGutterWidth,
                       width: 276,
-                      height: MAP_HEIGHT,
+                      height: desktopMapHeight,
                       overflowY: "auto",
                       borderRadius: "0 18px 18px 0",
                       borderLeft: "1px solid #dbe4ee",
@@ -3252,6 +3549,12 @@ function OfficeRedlineMapInner({ mode = "default" }: RedlineMapProps) {
                 ) : null}
               </div>
               {/* ─── End Map + Inspector wrapper ─────────────────────── */}
+
+              {/* ─── Phase 4D: Field Submissions Inbox ───────────────────── */}
+              {/* Secondary in Map tab: keep the map as the first workspace surface. */}
+              <div style={{ display: activeWorkspaceTab === "map" ? "block" : "none" }}>
+                <FieldSubmissionsInboxPanel />
+              </div>
 
               <div
                 style={{
@@ -3538,9 +3841,9 @@ function OfficeRedlineMapInner({ mode = "default" }: RedlineMapProps) {
             </div>
           </Section>
 
-          <div style={{ display: "grid", gridTemplateColumns: "1.1fr 0.9fr", gap: 18, alignItems: "start" }}>
+          <div style={{ display: activeWorkspaceTab === "reports" || activeWorkspaceTab === "billing" ? "grid" : "none", gridTemplateColumns: "1fr", gap: 18, alignItems: "start" }}>
             
-<Section title="4. Reports" subtitle="Real report output built from current job data, redline sections, pricing inputs, and exception totals.">
+<Section title="4. Reports" subtitle="Real report output built from current job data, redline sections, pricing inputs, and exception totals." style={{ display: activeWorkspaceTab === "reports" ? "block" : "none" }}>
               <div className="print-report" style={{ display: "grid", gap: 14 }}>
                 <ShellCard
                   title="Field-to-billing report"
@@ -3596,59 +3899,10 @@ function OfficeRedlineMapInner({ mode = "default" }: RedlineMapProps) {
                   )}
                 </ShellCard>
 
-                <ShellCard
-                  title="Bore Log Summary"
-                  description="One row per uploaded bore log file. Shows raw file identity — no merging across construction events. All 9 bore logs remain visible even when they overlap the same route."
-                >
-                  {(state?.bore_log_summary?.length ?? 0) > 0 ? (
-                    <div style={{ overflowX: "auto" }}>
-                      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
-                        <thead>
-                          <tr>
-                            <th style={{ textAlign: "left", padding: "10px 8px", borderBottom: "1px solid #dbe4ee" }}>Source File</th>
-                            <th style={{ textAlign: "left", padding: "10px 8px", borderBottom: "1px solid #dbe4ee" }}>Rows</th>
-                            <th style={{ textAlign: "left", padding: "10px 8px", borderBottom: "1px solid #dbe4ee" }}>Span (FT)</th>
-                            <th style={{ textAlign: "left", padding: "10px 8px", borderBottom: "1px solid #dbe4ee" }}>Date(s)</th>
-                            <th style={{ textAlign: "left", padding: "10px 8px", borderBottom: "1px solid #dbe4ee" }}>Print(s)</th>
-                            <th style={{ textAlign: "left", padding: "10px 8px", borderBottom: "1px solid #dbe4ee" }}>Evidence ID</th>
-                            <th style={{ textAlign: "left", padding: "10px 8px", borderBottom: "1px solid #dbe4ee" }}>Eng Plan</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {state!.bore_log_summary!.map((entry: BoreLogSummaryEntry, idx: number) => {
-                            const shortFile = entry.source_file.split(/[/\\]/).pop() ?? entry.source_file;
-                            const spanLabel = entry.span_ft != null ? formatNumber(entry.span_ft) : "--";
-                            const datesLabel = (entry.dates ?? []).map(formatDisplayDate).join(", ") || "--";
-                            const printsLabel = (entry.print_tokens ?? []).join(", ") || "--";
-                            const evidenceShort = entry.evidence_layer_id ? entry.evidence_layer_id.slice(0, 8) : "--";
-                            const engPlan = entry.engineering_plan_ref
-                              ? (entry.engineering_plan_date ? `${entry.engineering_plan_ref} (${entry.engineering_plan_date})` : entry.engineering_plan_ref)
-                              : "--";
-                            return (
-                              <tr key={idx}>
-                                <td style={{ padding: "10px 8px", borderBottom: "1px solid #eef2f7", maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={entry.source_file}>{shortFile}</td>
-                                <td style={{ padding: "10px 8px", borderBottom: "1px solid #eef2f7" }}>{entry.row_count}</td>
-                                <td style={{ padding: "10px 8px", borderBottom: "1px solid #eef2f7" }}>{spanLabel}</td>
-                                <td style={{ padding: "10px 8px", borderBottom: "1px solid #eef2f7" }}>{datesLabel}</td>
-                                <td style={{ padding: "10px 8px", borderBottom: "1px solid #eef2f7" }}>{printsLabel}</td>
-                                <td style={{ padding: "10px 8px", borderBottom: "1px solid #eef2f7", fontFamily: "monospace", fontSize: 11, color: "#64748b" }} title={entry.evidence_layer_id ?? ""}>{evidenceShort}</td>
-                                <td style={{ padding: "10px 8px", borderBottom: "1px solid #eef2f7", color: entry.engineering_plan_ref ? "#166534" : "#94a3b8" }}>{engPlan}</td>
-                              </tr>
-                            );
-                          })}
-                        </tbody>
-                      </table>
-                    </div>
-                  ) : (
-                    <div style={{ fontSize: 13, color: "#64748b" }}>
-                      No bore log files loaded yet. Upload structured bore logs to see per-file identity records here.
-                    </div>
-                  )}
-                </ShellCard>
               </div>
             </Section>
 
-            <div style={{ display: "grid", gap: 18 }}>
+            <div style={{ display: activeWorkspaceTab === "billing" ? "grid" : "none", gap: 18 }}>
               <Section title="5. Pricing / Crews / Exceptions" subtitle="Real billing controls using actual footage plus editable exception costs.">
                 <div style={{ display: "grid", gap: 14 }}>
                   <ShellCard
@@ -3721,13 +3975,6 @@ function OfficeRedlineMapInner({ mode = "default" }: RedlineMapProps) {
                     <SmallRow label="Exception total" value={toMoney(exceptionTotal)} />
                     <SmallRow label="Final total" value={toMoney(finalBillingTotal)} />
                   </ShellCard>
-
-                  {/* Nova — compact launcher + slide-out panel */}
-                  <NovaDrawer
-                    summary={novaSummary}
-                    onFocusIssue={handleFocusNovaIssue}
-                    onOverrideSourcesChange={handleNovaOverrideSourcesChange}
-                  />
                 </div>
               </Section>
 
