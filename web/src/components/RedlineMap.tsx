@@ -230,10 +230,10 @@ function kmzLineStroke(feature: KmzLineFeature): string {
     feature.stroke ||
     feature.color ||
     (feature.role === "backbone"
-      ? "rgba(140, 195, 230, 0.22)"
+      ? "rgba(168, 213, 245, 0.34)"
       : feature.role === "terminal_tail"
-      ? "rgba(160, 190, 215, 0.18)"
-      : "rgba(150, 180, 205, 0.16)")
+      ? "rgba(250, 204, 21, 0.28)"
+      : "rgba(183, 211, 231, 0.26)")
   );
 }
 
@@ -423,15 +423,16 @@ function buttonStyle(background: string, color: string, borderColor: string, dis
 
 const miniMapButton: React.CSSProperties = {
   height: 36,
-  borderRadius: 10,
+  borderRadius: 999,
   padding: "0 12px",
-  border: "1px solid rgba(255, 255, 255, 0.18)",
-  background: "rgba(15, 23, 42, 0.82)",
-  color: "#f8fafc",
+  border: "1px solid rgba(148, 163, 184, 0.28)",
+  background: "rgba(2, 6, 23, 0.72)",
+  color: "#e2e8f0",
   fontWeight: 800,
   cursor: "pointer",
-  boxShadow: "0 8px 22px rgba(0,0,0,0.30)",
-  backdropFilter: "blur(8px)",
+  boxShadow: "0 10px 28px rgba(0,0,0,0.38), inset 0 1px 0 rgba(255,255,255,0.08)",
+  backdropFilter: "blur(14px) saturate(135%)",
+  WebkitBackdropFilter: "blur(14px) saturate(135%)",
 };
 
 function uploadCardStyle(disabled: boolean): React.CSSProperties {
@@ -587,6 +588,7 @@ function OfficeRedlineMapInner({ mode = "default" }: RedlineMapProps) {
   const [focusedNovaIssue, setFocusedNovaIssue] = useState<FocusedNovaIssue | null>(null);
   const [novaOverrideSourceKeys, setNovaOverrideSourceKeys] = useState<Set<string>>(new Set());
   const userHasAdjustedViewportRef = useRef(false);
+  const plannedFootageRestoringRef = useRef(false);
   const lastAutoFitSignatureRef = useRef<string>("");
   const initialFitRafRef = useRef<number | null>(null);
   const initialFitTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -611,6 +613,42 @@ function OfficeRedlineMapInner({ mode = "default" }: RedlineMapProps) {
     state?.route_name ||
     state?.selected_route_name ||
     "--";
+
+  const projectPlannedFootageStorageKey = useMemo(() => {
+    const rawKey = activeJob && activeJob !== "--" ? activeJob : "default";
+    const safeKey = rawKey
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9._-]+/g, "-")
+      .replace(/^-+|-+$/g, "") || "default";
+    return `osp_project_planned_footage:${safeKey}`;
+  }, [activeJob]);
+
+  useEffect(() => {
+    try {
+      plannedFootageRestoringRef.current = true;
+      setManualProjectPlannedFootage(window.localStorage.getItem(projectPlannedFootageStorageKey) ?? "");
+    } catch {
+      plannedFootageRestoringRef.current = false;
+    }
+  }, [projectPlannedFootageStorageKey]);
+
+  useEffect(() => {
+    if (plannedFootageRestoringRef.current) {
+      plannedFootageRestoringRef.current = false;
+      return;
+    }
+    try {
+      const value = manualProjectPlannedFootage.trim();
+      if (value) {
+        window.localStorage.setItem(projectPlannedFootageStorageKey, value);
+      } else {
+        window.localStorage.removeItem(projectPlannedFootageStorageKey);
+      }
+    } catch {
+      // localStorage can be unavailable in restricted browser contexts.
+    }
+  }, [manualProjectPlannedFootage, projectPlannedFootageStorageKey]);
 
   const kmzLineFeatures = useMemo(
     () =>
@@ -1012,32 +1050,26 @@ function OfficeRedlineMapInner({ mode = "default" }: RedlineMapProps) {
   const projectCompletionSummary = useMemo(() => {
     const manualPlanned = Number.parseFloat(manualProjectPlannedFootage);
     const manualPlannedFootage = Number.isFinite(manualPlanned) && manualPlanned > 0 ? manualPlanned : null;
-    const backendPlanned =
+    const touchedDesignRouteScope =
       typeof state?.total_length_ft === "number" && Number.isFinite(state.total_length_ft) && state.total_length_ft > 0
         ? state.total_length_ft
         : null;
-    const matchedPlanned =
-      typeof selectedMatch?.expected_span_ft === "number" &&
-      Number.isFinite(selectedMatch.expected_span_ft) &&
-      selectedMatch.expected_span_ft > 0
-        ? selectedMatch.expected_span_ft
-        : null;
-    const plannedFootage = manualPlannedFootage ?? backendPlanned ?? matchedPlanned;
     const drilledFootage = calculatedCoveredFootage;
-    const remainingFootage = plannedFootage !== null ? Math.max(plannedFootage - drilledFootage, 0) : null;
+    const remainingFootage = manualPlannedFootage !== null ? Math.max(manualPlannedFootage - drilledFootage, 0) : null;
     const calculatedPct =
-      plannedFootage !== null && plannedFootage > 0
-        ? clamp((drilledFootage / plannedFootage) * 100, 0, 100)
+      manualPlannedFootage !== null && manualPlannedFootage > 0
+        ? clamp((drilledFootage / manualPlannedFootage) * 100, 0, 100)
         : null;
 
     return {
-      plannedFootage,
+      plannedFootage: manualPlannedFootage,
       drilledFootage,
       remainingFootage,
       percentComplete: calculatedPct,
-      plannedSource: manualPlannedFootage !== null ? "manual" : plannedFootage !== null ? "fallback" : null,
+      touchedDesignRouteScope,
+      plannedSource: manualPlannedFootage !== null ? "manual" : null,
     };
-  }, [calculatedCoveredFootage, manualProjectPlannedFootage, selectedMatch?.expected_span_ft, state?.total_length_ft]);
+  }, [calculatedCoveredFootage, manualProjectPlannedFootage, state?.total_length_ft]);
 
   const numericCostPerFoot = useMemo(() => {
     const parsed = Number.parseFloat(costPerFoot);
@@ -2541,13 +2573,13 @@ function OfficeRedlineMapInner({ mode = "default" }: RedlineMapProps) {
                     height: desktopMapHeight,
                     borderRadius: 18,
                     overflow: "hidden",
-                    background: "linear-gradient(180deg, #0b1a2a 0%, #060f1c 60%, #03080f 100%)",
-                    border: "1px solid #1f3a5e",
+                    background: "radial-gradient(circle at 28% 18%, rgba(30, 64, 82, 0.42), transparent 34%), radial-gradient(circle at 76% 72%, rgba(44, 73, 48, 0.30), transparent 32%), linear-gradient(180deg, #020617 0%, #030712 58%, #010409 100%)",
+                    border: "1px solid rgba(96, 165, 250, 0.26)",
                     cursor: boxZoom ? "crosshair" : isPanning ? "grabbing" : "grab",
                     overscrollBehavior: "contain",
                     touchAction: "none",
                     userSelect: "none",
-                    boxShadow: "inset 0 1px 0 rgba(255,255,255,0.04)",
+                    boxShadow: "inset 0 1px 0 rgba(255,255,255,0.06), inset 0 0 80px rgba(0,0,0,0.42)",
                   }}
                   onWheel={handleWheel}
                   onPointerDown={handlePointerDown}
@@ -2598,9 +2630,9 @@ function OfficeRedlineMapInner({ mode = "default" }: RedlineMapProps) {
                     title="Highlights loaded design/KMZ route context. This is not exact remaining-work detection."
                     style={{
                       ...miniMapButton,
-                      background: showPlannedRouteHighlight ? "#e0f2fe" : miniMapButton.background,
-                      borderColor: showPlannedRouteHighlight ? "#38bdf8" : miniMapButton.borderColor,
-                      color: showPlannedRouteHighlight ? "#075985" : miniMapButton.color,
+                      background: showPlannedRouteHighlight ? "rgba(120, 53, 15, 0.82)" : miniMapButton.background,
+                      borderColor: showPlannedRouteHighlight ? "rgba(250, 204, 21, 0.54)" : miniMapButton.borderColor,
+                      color: showPlannedRouteHighlight ? "#fef3c7" : miniMapButton.color,
                     }}
                   >
                     Planned Route Highlight
@@ -2644,6 +2676,23 @@ function OfficeRedlineMapInner({ mode = "default" }: RedlineMapProps) {
                           vectorEffect="non-scaling-stroke"
                         />
                       </pattern>
+                      <radialGradient id="satellite-map-wash" cx="34%" cy="18%" r="82%">
+                        <stop offset="0%" stopColor="#183244" />
+                        <stop offset="48%" stopColor="#07111d" />
+                        <stop offset="100%" stopColor="#010409" />
+                      </radialGradient>
+                      <pattern
+                        id="terrain-speckle-pattern"
+                        x="0"
+                        y="0"
+                        width="96"
+                        height="96"
+                        patternUnits="userSpaceOnUse"
+                      >
+                        <circle cx="18" cy="22" r="1.1" fill="rgba(148, 163, 184, 0.055)" />
+                        <circle cx="68" cy="34" r="1.4" fill="rgba(132, 204, 22, 0.045)" />
+                        <circle cx="42" cy="76" r="1.2" fill="rgba(56, 189, 248, 0.035)" />
+                      </pattern>
                       <pattern
                         id="map-grid-pattern-coarse"
                         x="0"
@@ -2682,7 +2731,15 @@ function OfficeRedlineMapInner({ mode = "default" }: RedlineMapProps) {
                         y={0}
                         width={projectionMetrics?.worldWidth || PROJECTION_BASE_WIDTH}
                         height={projectionMetrics?.worldHeight || PROJECTION_BASE_WIDTH}
-                        fill="rgba(4,10,18,0.97)"
+                        fill="url(#satellite-map-wash)"
+                      />
+                      <rect
+                        x={0}
+                        y={0}
+                        width={projectionMetrics?.worldWidth || PROJECTION_BASE_WIDTH}
+                        height={projectionMetrics?.worldHeight || PROJECTION_BASE_WIDTH}
+                        fill="url(#terrain-speckle-pattern)"
+                        pointerEvents="none"
                       />
                       {/* Fine grid */}
                       <rect
@@ -2722,7 +2779,7 @@ function OfficeRedlineMapInner({ mode = "default" }: RedlineMapProps) {
                               d={line.path}
                               fill="none"
                               stroke={stroke}
-                              strokeOpacity={0.78}
+                              strokeOpacity={0.9}
                               strokeWidth={width}
                               strokeLinecap="round"
                               strokeLinejoin="round"
@@ -2741,12 +2798,12 @@ function OfficeRedlineMapInner({ mode = "default" }: RedlineMapProps) {
                                 key={`planned-highlight-${line.id}`}
                                 d={line.path}
                                 fill="none"
-                                stroke="rgba(56, 189, 248, 0.9)"
-                                strokeWidth={Math.max(width + 2.4, 3.4)}
+                                stroke="rgba(250, 204, 21, 0.88)"
+                                strokeWidth={Math.max(width + 3.2, 4.2)}
                                 strokeLinecap="round"
                                 strokeLinejoin="round"
-                                strokeDasharray="8 7"
-                                strokeOpacity={0.78}
+                                strokeDasharray="10 7"
+                                strokeOpacity={0.82}
                                 vectorEffect="non-scaling-stroke"
                                 filter="url(#redline-glow)"
                               />
@@ -3160,12 +3217,12 @@ function OfficeRedlineMapInner({ mode = "default" }: RedlineMapProps) {
                         left: cardLeft,
                         top: cardTop,
                         width: cardWidth,
-                        background: "rgba(10, 18, 30, 0.78)",
-                        backdropFilter: "blur(14px) saturate(140%)",
-                        WebkitBackdropFilter: "blur(14px) saturate(140%)",
-                        border: "1px solid rgba(255, 255, 255, 0.16)",
-                        borderRadius: 14,
-                        boxShadow: "0 20px 45px rgba(0,0,0,0.55), 0 0 0 1px rgba(56, 189, 248, 0.08) inset",
+                        background: "rgba(2, 6, 23, 0.76)",
+                        backdropFilter: "blur(18px) saturate(150%)",
+                        WebkitBackdropFilter: "blur(18px) saturate(150%)",
+                        border: "1px solid rgba(148, 163, 184, 0.22)",
+                        borderRadius: 12,
+                        boxShadow: "0 20px 45px rgba(0,0,0,0.58), 0 0 0 1px rgba(250, 204, 21, 0.08) inset",
                         overflow: "hidden",
                         zIndex: 900,
                       }}
@@ -3177,9 +3234,9 @@ function OfficeRedlineMapInner({ mode = "default" }: RedlineMapProps) {
                           display: "flex",
                           alignItems: "center",
                           justifyContent: "space-between",
-                          padding: "8px 10px 6px 12px",
-                          borderBottom: "1px solid rgba(255,255,255,0.08)",
-                          background: "rgba(255,255,255,0.03)",
+                          padding: "7px 10px 6px 12px",
+                          borderBottom: "1px solid rgba(148,163,184,0.16)",
+                          background: "rgba(15, 23, 42, 0.46)",
                         }}
                       >
                         <div style={{ fontSize: 11, fontWeight: 800, color: "#fbbf24", letterSpacing: 0.4 }}>
@@ -3371,13 +3428,14 @@ function OfficeRedlineMapInner({ mode = "default" }: RedlineMapProps) {
                       height: desktopMapHeight,
                       overflowY: "auto",
                       borderRadius: "0 18px 18px 0",
-                      borderLeft: "1px solid #dbe4ee",
-                      background: "rgba(255, 255, 255, 0.97)",
-                      backdropFilter: "blur(8px)",
+                      borderLeft: "1px solid rgba(148, 163, 184, 0.20)",
+                      background: "rgba(2, 6, 23, 0.78)",
+                      backdropFilter: "blur(18px) saturate(145%)",
+                      WebkitBackdropFilter: "blur(18px) saturate(145%)",
                       display: "flex",
                       flexDirection: "column",
                       zIndex: 20,
-                      boxShadow: "-4px 0 16px rgba(15, 23, 42, 0.08)",
+                      boxShadow: "-8px 0 30px rgba(0, 0, 0, 0.34)",
                     }}
                   >
                     {/* Header */}
@@ -3386,16 +3444,16 @@ function OfficeRedlineMapInner({ mode = "default" }: RedlineMapProps) {
                         display: "flex",
                         alignItems: "center",
                         justifyContent: "space-between",
-                        padding: "12px 14px 10px",
-                        borderBottom: "1px solid #e8eef5",
+                        padding: "10px 14px 9px",
+                        borderBottom: "1px solid rgba(148, 163, 184, 0.16)",
                         flexShrink: 0,
                       }}
                     >
                       <div>
-                        <div style={{ fontSize: 11, fontWeight: 800, color: "#64748b", textTransform: "uppercase", letterSpacing: 0.5 }}>
+                        <div style={{ fontSize: 11, fontWeight: 800, color: "#93c5fd", textTransform: "uppercase", letterSpacing: 0.5 }}>
                           Field Inspection
                         </div>
-                        <div style={{ fontSize: 15, fontWeight: 900, color: "#0f172a", marginTop: 2, lineHeight: 1.2 }}>
+                        <div style={{ fontSize: 15, fontWeight: 900, color: "#f8fafc", marginTop: 2, lineHeight: 1.2 }}>
                           {cleanDisplayText(selectedStation.station)}
                         </div>
                       </div>
@@ -3405,13 +3463,14 @@ function OfficeRedlineMapInner({ mode = "default" }: RedlineMapProps) {
                         aria-label="Close inspector"
                         style={{
                           border: "none",
-                          background: "#f1f5f9",
+                          background: "rgba(15, 23, 42, 0.72)",
                           cursor: "pointer",
-                          color: "#475569",
+                          color: "#cbd5e1",
                           fontSize: 16,
                           lineHeight: 1,
                           padding: "4px 8px",
                           borderRadius: 8,
+                          border: "1px solid rgba(148, 163, 184, 0.18)",
                           flexShrink: 0,
                         }}
                       >
@@ -3437,14 +3496,14 @@ function OfficeRedlineMapInner({ mode = "default" }: RedlineMapProps) {
                         ] as [string, string][]
                       ).map(([label, value]) => (
                         <div key={label} style={{ display: "grid", gridTemplateColumns: "80px 1fr", gap: 6, alignItems: "baseline" }}>
-                          <span style={{ fontSize: 11, fontWeight: 800, color: "#64748b", textTransform: "uppercase", letterSpacing: 0.3 }}>
+                          <span style={{ fontSize: 11, fontWeight: 800, color: "#94a3b8", textTransform: "uppercase", letterSpacing: 0.3 }}>
                             {label}
                           </span>
                           <span
                             style={{
                               fontSize: 12,
                               fontWeight: 600,
-                              color: value === "--" ? "#94a3b8" : "#0f172a",
+                              color: value === "--" ? "#64748b" : "#e2e8f0",
                               wordBreak: "break-all",
                             }}
                           >
@@ -3809,78 +3868,94 @@ function OfficeRedlineMapInner({ mode = "default" }: RedlineMapProps) {
                 </ShellCard>
 
                 <ShellCard
-                  title="Project Completion Summary"
-                  description="Overall drilled progress using existing planned route footage and generated redline footage only."
+                  title={projectCompletionSummary.plannedSource === "manual" ? "Project Completion Summary" : "As-Built Upload Summary"}
+                  description={
+                    projectCompletionSummary.plannedSource === "manual"
+                      ? "Overall drilled progress using the engineering/material takeoff total."
+                      : "Uploaded as-built footage and touched backend route scope only. This is not full project completion."
+                  }
                 >
-                  <div style={{ display: "grid", gridTemplateColumns: "160px minmax(0, 1fr)", gap: 18, alignItems: "center" }}>
-                    <div
-                      aria-label="Project completion"
-                      style={{
-                        width: 138,
-                        height: 138,
-                        borderRadius: "50%",
-                        background:
-                          projectCompletionSummary.percentComplete !== null
-                            ? `conic-gradient(#16a34a 0 ${projectCompletionSummary.percentComplete}%, #e5e7eb ${projectCompletionSummary.percentComplete}% 100%)`
-                            : "conic-gradient(#e5e7eb 0 100%)",
-                        display: "grid",
-                        placeItems: "center",
-                        boxShadow: "inset 0 0 0 1px rgba(15, 23, 42, 0.08)",
-                      }}
-                    >
+                  <div style={{ display: "grid", gridTemplateColumns: projectCompletionSummary.plannedSource === "manual" ? "160px minmax(0, 1fr)" : "1fr", gap: 18, alignItems: "center" }}>
+                    {projectCompletionSummary.plannedSource === "manual" ? (
                       <div
+                        aria-label="Project completion"
                         style={{
-                          width: 92,
-                          height: 92,
+                          width: 138,
+                          height: 138,
                           borderRadius: "50%",
-                          background: "#ffffff",
+                          background:
+                            projectCompletionSummary.percentComplete !== null
+                              ? `conic-gradient(#16a34a 0 ${projectCompletionSummary.percentComplete}%, #e5e7eb ${projectCompletionSummary.percentComplete}% 100%)`
+                              : "conic-gradient(#e5e7eb 0 100%)",
                           display: "grid",
                           placeItems: "center",
-                          textAlign: "center",
-                          boxShadow: "0 0 0 1px #e2e8f0",
+                          boxShadow: "inset 0 0 0 1px rgba(15, 23, 42, 0.08)",
                         }}
                       >
-                        <div>
-                          <div style={{ fontSize: 24, fontWeight: 900, color: "#0f172a", lineHeight: 1 }}>
-                            {projectCompletionSummary.percentComplete !== null
-                              ? `${formatNumber(projectCompletionSummary.percentComplete, 1)}%`
-                              : "--"}
-                          </div>
-                          <div style={{ marginTop: 4, fontSize: 10, fontWeight: 800, color: "#64748b", textTransform: "uppercase", letterSpacing: 0.5 }}>
-                            Complete
+                        <div
+                          style={{
+                            width: 92,
+                            height: 92,
+                            borderRadius: "50%",
+                            background: "#ffffff",
+                            display: "grid",
+                            placeItems: "center",
+                            textAlign: "center",
+                            boxShadow: "0 0 0 1px #e2e8f0",
+                          }}
+                        >
+                          <div>
+                            <div style={{ fontSize: 24, fontWeight: 900, color: "#0f172a", lineHeight: 1 }}>
+                              {projectCompletionSummary.percentComplete !== null
+                                ? `${formatNumber(projectCompletionSummary.percentComplete, 1)}%`
+                                : "--"}
+                            </div>
+                            <div style={{ marginTop: 4, fontSize: 10, fontWeight: 800, color: "#64748b", textTransform: "uppercase", letterSpacing: 0.5 }}>
+                              Complete
+                            </div>
                           </div>
                         </div>
                       </div>
-                    </div>
+                    ) : null}
                     <div style={{ display: "grid", gap: 8 }}>
-                      <SmallRow
-                        label="Planned footage"
-                        value={
-                          projectCompletionSummary.plannedFootage !== null
-                            ? `${formatNumber(projectCompletionSummary.plannedFootage)} ft`
-                            : "Planned footage unavailable"
-                        }
-                      />
-                      <SmallRow label="Drilled footage" value={`${formatNumber(projectCompletionSummary.drilledFootage)} ft`} />
-                      <SmallRow
-                        label="Remaining footage"
-                        value={
-                          projectCompletionSummary.remainingFootage !== null
-                            ? `${formatNumber(projectCompletionSummary.remainingFootage)} ft`
-                            : "--"
-                        }
-                      />
-                      <SmallRow
-                        label="Percent complete"
-                        value={
-                          projectCompletionSummary.percentComplete !== null
-                            ? `${formatNumber(projectCompletionSummary.percentComplete, 1)}%`
-                            : "--"
-                        }
-                      />
-                      {projectCompletionSummary.plannedSource ? (
+                      {projectCompletionSummary.plannedSource !== "manual" ? (
+                        <div style={{ justifySelf: "start", borderRadius: 999, background: "#fef3c7", color: "#92400e", border: "1px solid #fbbf24", padding: "4px 9px", fontSize: 11, fontWeight: 900, textTransform: "uppercase", letterSpacing: 0.3 }}>
+                          Enter engineering/material takeoff total to calculate full project completion.
+                        </div>
+                      ) : null}
+                      {projectCompletionSummary.plannedSource === "manual" ? (
+                        <>
+                          <SmallRow label="Planned footage" value={`${formatNumber(projectCompletionSummary.plannedFootage)} ft`} />
+                          <SmallRow label="Drilled/as-built footage" value={`${formatNumber(projectCompletionSummary.drilledFootage)} ft`} />
+                          <SmallRow label="Remaining footage" value={`${formatNumber(projectCompletionSummary.remainingFootage)} ft`} />
+                          <SmallRow
+                            label="Percent complete"
+                            value={
+                              projectCompletionSummary.percentComplete !== null
+                                ? `${formatNumber(projectCompletionSummary.percentComplete, 1)}%`
+                                : "--"
+                            }
+                          />
+                        </>
+                      ) : (
+                        <>
+                          <SmallRow label="Uploaded as-built footage" value={`${formatNumber(projectCompletionSummary.drilledFootage)} ft`} />
+                          <SmallRow
+                            label="Touched design route scope"
+                            value={
+                              projectCompletionSummary.touchedDesignRouteScope !== null
+                                ? `${formatNumber(projectCompletionSummary.touchedDesignRouteScope)} ft`
+                                : "--"
+                            }
+                          />
+                          <div style={{ fontSize: 12, color: "#64748b", fontWeight: 700 }}>
+                            Touched route scope is not full project completion.
+                          </div>
+                        </>
+                      )}
+                      {projectCompletionSummary.plannedSource === "manual" ? (
                         <div style={{ marginTop: 2, fontSize: 12, color: "#64748b", fontWeight: 700 }}>
-                          Planned source: {projectCompletionSummary.plannedSource === "manual" ? "Manual engineering total" : "KMZ/backend estimate"}
+                          Source: Manual engineering total
                         </div>
                       ) : null}
                     </div>
