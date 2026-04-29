@@ -489,12 +489,11 @@ type RedlineMapProps = {
   mode?: "mobileWalk" | "default";
 };
 
-type WorkspaceTab = "map" | "setup" | "evidence" | "reports" | "billing";
+type WorkspaceTab = "setup" | "map" | "reports" | "billing";
 
 const WORKSPACE_TABS: Array<{ id: WorkspaceTab; label: string }> = [
-  { id: "map", label: "Map" },
   { id: "setup", label: "Setup" },
-  { id: "evidence", label: "Evidence" },
+  { id: "map", label: "Map" },
   { id: "reports", label: "Reports" },
   { id: "billing", label: "Billing / Export" },
 ];
@@ -537,13 +536,14 @@ type GpsPhoto = {
 };
 
 function OfficeRedlineMapInner({ mode = "default" }: RedlineMapProps) {
-  const [activeWorkspaceTab, setActiveWorkspaceTab] = useState<WorkspaceTab>("map");
+  const [activeWorkspaceTab, setActiveWorkspaceTab] = useState<WorkspaceTab>("setup");
   const [state, setState] = useState<BackendState | null>(null);
   const [busy, setBusy] = useState(false);
   const [statusTone, setStatusTone] = useState<NoteTone>("neutral");
   const [statusText, setStatusText] = useState("Connecting to local beta backend...");
   const [jobLabel, setJobLabel] = useState("");
   const [notes, setNotes] = useState("");
+  const [manualProjectPlannedFootage, setManualProjectPlannedFootage] = useState("");
   const [costPerFoot, setCostPerFoot] = useState("5.00");
   const [manualFootage, setManualFootage] = useState("");
   const [exceptions, setExceptions] = useState<ExceptionCost[]>([
@@ -581,6 +581,7 @@ function OfficeRedlineMapInner({ mode = "default" }: RedlineMapProps) {
   const [selectedStationIndex, setSelectedStationIndex] = useState<number | null>(null);
   const [hoverStationIndex, setHoverStationIndex] = useState<number | null>(null);
   const [showStations, setShowStations] = useState(false);
+  const [showPlannedRouteHighlight, setShowPlannedRouteHighlight] = useState(false);
   // Evidence-layer visibility: Set of hidden layer ids. Empty = all visible.
   const [hiddenLayers, setHiddenLayers] = useState<Set<string>>(new Set());
   const [focusedNovaIssue, setFocusedNovaIssue] = useState<FocusedNovaIssue | null>(null);
@@ -1007,6 +1008,36 @@ function OfficeRedlineMapInner({ mode = "default" }: RedlineMapProps) {
     if (Number.isFinite(manual) && manual > 0) return manual;
     return calculatedCoveredFootage;
   }, [manualFootage, calculatedCoveredFootage]);
+
+  const projectCompletionSummary = useMemo(() => {
+    const manualPlanned = Number.parseFloat(manualProjectPlannedFootage);
+    const manualPlannedFootage = Number.isFinite(manualPlanned) && manualPlanned > 0 ? manualPlanned : null;
+    const backendPlanned =
+      typeof state?.total_length_ft === "number" && Number.isFinite(state.total_length_ft) && state.total_length_ft > 0
+        ? state.total_length_ft
+        : null;
+    const matchedPlanned =
+      typeof selectedMatch?.expected_span_ft === "number" &&
+      Number.isFinite(selectedMatch.expected_span_ft) &&
+      selectedMatch.expected_span_ft > 0
+        ? selectedMatch.expected_span_ft
+        : null;
+    const plannedFootage = manualPlannedFootage ?? backendPlanned ?? matchedPlanned;
+    const drilledFootage = calculatedCoveredFootage;
+    const remainingFootage = plannedFootage !== null ? Math.max(plannedFootage - drilledFootage, 0) : null;
+    const calculatedPct =
+      plannedFootage !== null && plannedFootage > 0
+        ? clamp((drilledFootage / plannedFootage) * 100, 0, 100)
+        : null;
+
+    return {
+      plannedFootage,
+      drilledFootage,
+      remainingFootage,
+      percentComplete: calculatedPct,
+      plannedSource: manualPlannedFootage !== null ? "manual" : plannedFootage !== null ? "fallback" : null,
+    };
+  }, [calculatedCoveredFootage, manualProjectPlannedFootage, selectedMatch?.expected_span_ft, state?.total_length_ft]);
 
   const numericCostPerFoot = useMemo(() => {
     const parsed = Number.parseFloat(costPerFoot);
@@ -2198,13 +2229,26 @@ function OfficeRedlineMapInner({ mode = "default" }: RedlineMapProps) {
                 </div>
               </div>
             </div>
+            <label style={{ display: "grid", gap: 6, marginTop: 16, maxWidth: 420, fontSize: 13, color: "#475569" }}>
+              <span style={{ fontWeight: 800, color: "#0f172a" }}>Project Planned Footage (authoritative)</span>
+              <input
+                value={manualProjectPlannedFootage}
+                onChange={(e) => setManualProjectPlannedFootage(e.target.value)}
+                inputMode="decimal"
+                placeholder="34354"
+                style={{ borderRadius: 12, border: "1px solid #cfd8e3", padding: "10px 12px", background: "#ffffff", fontSize: 14 }}
+              />
+              <span style={{ color: "#64748b", lineHeight: 1.45 }}>
+                Use engineering/material takeoff total when available. KMZ may only represent a route slice.
+              </span>
+            </label>
           </Section>
 
           {/* ─── Engineering Plans Evidence Upload ─────────────────────── */}
           <Section
             title="Job Evidence"
             subtitle="Upload engineering plan PDFs or images for this session. Plans are scoped to your browser session and do not affect route matching or redline decisions."
-            style={{ display: activeWorkspaceTab === "evidence" ? "block" : "none" }}
+            style={{ display: activeWorkspaceTab === "setup" ? "block" : "none" }}
           >
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, alignItems: "start" }}>
               {/* Upload card */}
@@ -2287,7 +2331,7 @@ function OfficeRedlineMapInner({ mode = "default" }: RedlineMapProps) {
           <Section
             title="2. Actions"
             subtitle="Workspace controls and live backend facts. These controls use the existing execution flow exactly as-is."
-            style={{ display: activeWorkspaceTab === "setup" ? "block" : "none" }}
+            style={{ display: activeWorkspaceTab === "setup" ? "block" : "none", order: 4 }}
           >
             <div style={{ display: "grid", gridTemplateColumns: "0.95fr 1.05fr", gap: 16, alignItems: "start" }}>
               <div style={{ display: "grid", gap: 12 }}>
@@ -2326,17 +2370,18 @@ function OfficeRedlineMapInner({ mode = "default" }: RedlineMapProps) {
           </Section>
 
           <Section
-            title={activeWorkspaceTab === "evidence" ? "Field Photo Evidence" : "Map Review"}
+            title={activeWorkspaceTab === "setup" ? "Field Photo Evidence" : "Map Review"}
             subtitle={
-              activeWorkspaceTab === "evidence"
+              activeWorkspaceTab === "setup"
                 ? "Station-attached photos and geotagged photo review, using the existing photo state and upload behavior."
                 : undefined
             }
             style={{
-              display: activeWorkspaceTab === "map" || activeWorkspaceTab === "evidence" ? "block" : "none",
+              display: activeWorkspaceTab === "map" || activeWorkspaceTab === "setup" ? "block" : "none",
               border: activeWorkspaceTab === "map" ? "none" : "1px solid #cbd5e1",
               background: activeWorkspaceTab === "map" ? "transparent" : "#ffffff",
               boxShadow: activeWorkspaceTab === "map" ? "none" : "0 18px 42px rgba(15, 23, 42, 0.10)",
+              order: activeWorkspaceTab === "setup" ? 3 : undefined,
             }}
             headerStyle={{
               display: activeWorkspaceTab === "map" ? "none" : "flex",
@@ -2548,6 +2593,18 @@ function OfficeRedlineMapInner({ mode = "default" }: RedlineMapProps) {
                     fitToBounds(stationOnlyBounds || bounds);
                   }} style={miniMapButton}>Fit Stations</button>
                   <button onClick={() => setShowStations((current) => !current)} style={miniMapButton}>{showStations ? "Hide Stations" : "Show Stations"}</button>
+                  <button
+                    onClick={() => setShowPlannedRouteHighlight((current) => !current)}
+                    title="Highlights loaded design/KMZ route context. This is not exact remaining-work detection."
+                    style={{
+                      ...miniMapButton,
+                      background: showPlannedRouteHighlight ? "#e0f2fe" : miniMapButton.background,
+                      borderColor: showPlannedRouteHighlight ? "#38bdf8" : miniMapButton.borderColor,
+                      color: showPlannedRouteHighlight ? "#075985" : miniMapButton.color,
+                    }}
+                  >
+                    Planned Route Highlight
+                  </button>
                 </div>
                 {renderBounds && projectionMetrics && allCoords.length > 0 ? (
                   <svg
@@ -2646,21 +2703,6 @@ function OfficeRedlineMapInner({ mode = "default" }: RedlineMapProps) {
                         pointerEvents="none"
                       />
 
-                      {kmzPolygonPaths.map((poly, idx) => {
-                        const feature = kmzPolygonFeatures[idx];
-                        return poly.path ? (
-                          <path
-                            key={poly.id}
-                            d={poly.path}
-                            fill={kmzPolygonFill(feature)}
-                            fillOpacity={kmzPolygonOpacity(feature)}
-                            stroke={kmzPolygonStroke(feature)}
-                            strokeWidth={feature?.stroke_width ?? 1.2}
-                            vectorEffect="non-scaling-stroke"
-                          />
-                        ) : null;
-                      })}
-
                       {kmzLinePaths.map((line, idx) => {
                         const feature = kmzLineFeatures[idx];
                         const stroke = kmzLineStroke(feature);
@@ -2689,6 +2731,29 @@ function OfficeRedlineMapInner({ mode = "default" }: RedlineMapProps) {
                           </g>
                         ) : null;
                       })}
+                      {showPlannedRouteHighlight ? (
+                        <g id="planned-route-highlight-layer" pointerEvents="none">
+                          {kmzLinePaths.map((line, idx) => {
+                            const feature = kmzLineFeatures[idx];
+                            const width = kmzLineWidth(feature);
+                            return line.path ? (
+                              <path
+                                key={`planned-highlight-${line.id}`}
+                                d={line.path}
+                                fill="none"
+                                stroke="rgba(56, 189, 248, 0.9)"
+                                strokeWidth={Math.max(width + 2.4, 3.4)}
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                                strokeDasharray="8 7"
+                                strokeOpacity={0.78}
+                                vectorEffect="non-scaling-stroke"
+                                filter="url(#redline-glow)"
+                              />
+                            ) : null;
+                          })}
+                        </g>
+                      ) : null}
                     </g>
 
                     <g id="redline-layer">
@@ -3023,124 +3088,6 @@ function OfficeRedlineMapInner({ mode = "default" }: RedlineMapProps) {
                     Upload a KMZ and structured bore logs to render real map output.
                   </div>
                 )}
-
-                {/* ─── Evidence-layer toggle legend ─────────────────────── */}
-                {/* Each row is a clickable button that hides/shows that layer. */}
-                {(() => {
-                  // Collect unique (evidenceLayerId, label) pairs from redlinePaths.
-                  const seen = new Map<string, string>();
-                  for (const line of redlinePaths) {
-                    const lid = line.evidenceLayerId ?? "";
-                    if (!seen.has(lid)) {
-                      const summaryEntry = (state?.bore_log_summary ?? []).find(
-                        (e) => e.evidence_layer_id === lid
-                      );
-                      const label = summaryEntry
-                        ? (summaryEntry.source_file.split(/[/\\]/).pop() ?? summaryEntry.source_file)
-                        : lid
-                        ? `layer ${lid.slice(0, 6)}`
-                        : "redline";
-                      seen.set(lid, label);
-                    }
-                  }
-                  if (seen.size === 0) return null;
-                  const entries = Array.from(seen.entries());
-                  return (
-                    <div
-                      style={{
-                        position: "absolute",
-                        bottom: 12,
-                        left: 12,
-                        display: "flex",
-                        flexDirection: "column",
-                        gap: 4,
-                        zIndex: 10,
-                      }}
-                    >
-                      {entries.map(([lid, label]) => {
-                        const isHidden = lid ? hiddenLayers.has(lid) : false;
-                        return (
-                          <button
-                            key={lid || "default"}
-                            type="button"
-                            title={isHidden ? `Show ${label}` : `Hide ${label}`}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              if (!lid) return;
-                              setHiddenLayers((prev) => {
-                                const next = new Set(prev);
-                                if (next.has(lid)) next.delete(lid);
-                                else next.add(lid);
-                                return next;
-                              });
-                              // Clear selected station if it belongs to the layer being hidden.
-                              if (!hiddenLayers.has(lid) && selectedStation) {
-                                const selLayerId = sourceFileToLayerId.get(
-                                  String(selectedStation.source_file ?? "").trim()
-                                );
-                                if (selLayerId === lid) setSelectedStationIndex(null);
-                              }
-                            }}
-                            style={{
-                              display: "flex",
-                              alignItems: "center",
-                              gap: 6,
-                              background: isHidden
-                                ? "rgba(4, 10, 18, 0.45)"
-                                : "rgba(4, 10, 18, 0.82)",
-                              borderRadius: 8,
-                              padding: "4px 9px 4px 6px",
-                              border: isHidden
-                                ? "1px solid rgba(255,255,255,0.04)"
-                                : "1px solid rgba(255,255,255,0.10)",
-                              cursor: "pointer",
-                              textAlign: "left",
-                            }}
-                          >
-                            {/* Color swatch — crossed out when hidden */}
-                            <div style={{ position: "relative", width: 14, height: 14, flexShrink: 0, display: "flex", alignItems: "center" }}>
-                              <div
-                                style={{
-                                  width: 14,
-                                  height: 4,
-                                  borderRadius: 2,
-                                  background: getColorForLayer(lid || null),
-                                  opacity: isHidden ? 0.3 : 1,
-                                }}
-                              />
-                              {isHidden && (
-                                <div style={{
-                                  position: "absolute",
-                                  left: 0, top: "50%",
-                                  width: "100%",
-                                  height: 1.5,
-                                  background: "rgba(255,255,255,0.55)",
-                                  transform: "translateY(-50%) rotate(-35deg)",
-                                  borderRadius: 1,
-                                }} />
-                              )}
-                            </div>
-                            <span
-                              style={{
-                                fontSize: 11,
-                                fontWeight: 700,
-                                color: isHidden ? "rgba(203,213,225,0.45)" : "#cbd5e1",
-                                letterSpacing: 0.2,
-                                maxWidth: 180,
-                                overflow: "hidden",
-                                textOverflow: "ellipsis",
-                                whiteSpace: "nowrap",
-                                textDecoration: isHidden ? "line-through" : "none",
-                              }}
-                            >
-                              {label}
-                            </span>
-                          </button>
-                        );
-                      })}
-                    </div>
-                  );
-                })()}
 
                 {boxZoom ? (
                   <div
@@ -3562,7 +3509,7 @@ function OfficeRedlineMapInner({ mode = "default" }: RedlineMapProps) {
                   borderRadius: 16,
                   background: "#ffffff",
                   padding: 16,
-                  display: "grid",
+                  display: activeWorkspaceTab === "setup" ? "grid" : "none",
                   gap: 14,
                 }}
               >
@@ -3677,7 +3624,7 @@ function OfficeRedlineMapInner({ mode = "default" }: RedlineMapProps) {
                   borderRadius: 16,
                   background: "#ffffff",
                   padding: 16,
-                  display: "grid",
+                  display: activeWorkspaceTab === "setup" ? "grid" : "none",
                   gap: 14,
                 }}
               >
@@ -3858,6 +3805,85 @@ function OfficeRedlineMapInner({ mode = "default" }: RedlineMapProps) {
                     <SmallRow label="Base cost / ft" value={toMoney(numericCostPerFoot)} />
                     <SmallRow label="Exception total" value={toMoney(exceptionTotal)} />
                     <SmallRow label="Final total" value={toMoney(finalBillingTotal)} />
+                  </div>
+                </ShellCard>
+
+                <ShellCard
+                  title="Project Completion Summary"
+                  description="Overall drilled progress using existing planned route footage and generated redline footage only."
+                >
+                  <div style={{ display: "grid", gridTemplateColumns: "160px minmax(0, 1fr)", gap: 18, alignItems: "center" }}>
+                    <div
+                      aria-label="Project completion"
+                      style={{
+                        width: 138,
+                        height: 138,
+                        borderRadius: "50%",
+                        background:
+                          projectCompletionSummary.percentComplete !== null
+                            ? `conic-gradient(#16a34a 0 ${projectCompletionSummary.percentComplete}%, #e5e7eb ${projectCompletionSummary.percentComplete}% 100%)`
+                            : "conic-gradient(#e5e7eb 0 100%)",
+                        display: "grid",
+                        placeItems: "center",
+                        boxShadow: "inset 0 0 0 1px rgba(15, 23, 42, 0.08)",
+                      }}
+                    >
+                      <div
+                        style={{
+                          width: 92,
+                          height: 92,
+                          borderRadius: "50%",
+                          background: "#ffffff",
+                          display: "grid",
+                          placeItems: "center",
+                          textAlign: "center",
+                          boxShadow: "0 0 0 1px #e2e8f0",
+                        }}
+                      >
+                        <div>
+                          <div style={{ fontSize: 24, fontWeight: 900, color: "#0f172a", lineHeight: 1 }}>
+                            {projectCompletionSummary.percentComplete !== null
+                              ? `${formatNumber(projectCompletionSummary.percentComplete, 1)}%`
+                              : "--"}
+                          </div>
+                          <div style={{ marginTop: 4, fontSize: 10, fontWeight: 800, color: "#64748b", textTransform: "uppercase", letterSpacing: 0.5 }}>
+                            Complete
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                    <div style={{ display: "grid", gap: 8 }}>
+                      <SmallRow
+                        label="Planned footage"
+                        value={
+                          projectCompletionSummary.plannedFootage !== null
+                            ? `${formatNumber(projectCompletionSummary.plannedFootage)} ft`
+                            : "Planned footage unavailable"
+                        }
+                      />
+                      <SmallRow label="Drilled footage" value={`${formatNumber(projectCompletionSummary.drilledFootage)} ft`} />
+                      <SmallRow
+                        label="Remaining footage"
+                        value={
+                          projectCompletionSummary.remainingFootage !== null
+                            ? `${formatNumber(projectCompletionSummary.remainingFootage)} ft`
+                            : "--"
+                        }
+                      />
+                      <SmallRow
+                        label="Percent complete"
+                        value={
+                          projectCompletionSummary.percentComplete !== null
+                            ? `${formatNumber(projectCompletionSummary.percentComplete, 1)}%`
+                            : "--"
+                        }
+                      />
+                      {projectCompletionSummary.plannedSource ? (
+                        <div style={{ marginTop: 2, fontSize: 12, color: "#64748b", fontWeight: 700 }}>
+                          Planned source: {projectCompletionSummary.plannedSource === "manual" ? "Manual engineering total" : "KMZ/backend estimate"}
+                        </div>
+                      ) : null}
+                    </div>
                   </div>
                 </ShellCard>
 
