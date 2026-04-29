@@ -3657,7 +3657,6 @@ ${buildFolder("Stations", stationPlacemarks)}
                         onClick={() => setSelectedStationIndex(null)}
                         aria-label="Close inspector"
                         style={{
-                          border: "none",
                           background: "rgba(15, 23, 42, 0.72)",
                           cursor: "pointer",
                           color: "#cbd5e1",
