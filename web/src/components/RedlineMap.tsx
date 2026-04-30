@@ -37,7 +37,7 @@ import FieldSubmissionsInboxPanel from "@/components/office/FieldSubmissionsInbo
 import { clamp, formatNumber, cleanDisplayText, formatDisplayDate } from "@/lib/format/text";
 import { toMoney } from "@/lib/format/money";
 import { extractGps } from "@/lib/photos/exif";
-import { appendSessionId, appendSessionIdToForm, rememberSessionFromResponse } from "@/lib/session";
+import { appendSessionId, appendSessionIdToForm, getStoredSessionId, rememberSessionFromResponse } from "@/lib/session";
 import type { PipelineDiagEntry, EngineeringPlanSignal, QaFlagItem } from "@/lib/types/nova";
 import { buildNovaSummary } from "@/lib/nova/buildNovaSummary";
 import CloseoutPacket from "@/components/CloseoutPacket";
@@ -46,6 +46,53 @@ const API_BASE =
   process.env.NEXT_PUBLIC_API_BASE?.replace(/\/+$/, "") ||
   process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/+$/, "") ||
   "http://127.0.0.1:8000";
+
+const CLEARED_ENGINEERING_PLANS_PREFIX = "osp_cleared_engineering_plans:";
+
+function clearedEngineeringPlansStorageKey(sessionId: string | null): string | null {
+  return sessionId ? `${CLEARED_ENGINEERING_PLANS_PREFIX}${sessionId}` : null;
+}
+
+function readClearedEngineeringPlanIds(sessionId = getStoredSessionId()): Set<string> {
+  const key = clearedEngineeringPlansStorageKey(sessionId);
+  if (!key || typeof window === "undefined") return new Set();
+  try {
+    const raw = window.localStorage.getItem(key);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return new Set(Array.isArray(parsed) ? parsed.filter((value): value is string => typeof value === "string") : []);
+  } catch {
+    return new Set();
+  }
+}
+
+function rememberClearedEngineeringPlans(plans: EngineeringPlan[], sessionId = getStoredSessionId()): void {
+  const key = clearedEngineeringPlansStorageKey(sessionId);
+  if (!key || typeof window === "undefined") return;
+  const planIds = plans.map((plan) => plan.plan_id).filter((planId): planId is string => Boolean(planId));
+  try {
+    if (planIds.length > 0) {
+      window.localStorage.setItem(key, JSON.stringify(planIds));
+    } else {
+      window.localStorage.removeItem(key);
+    }
+  } catch {
+    // localStorage can be unavailable in restricted browser contexts.
+  }
+}
+
+function withoutClearedEngineeringPlans(data: BackendState, sessionId = getStoredSessionId()): BackendState {
+  const clearedPlanIds = readClearedEngineeringPlanIds(sessionId);
+  if (clearedPlanIds.size === 0 || !Array.isArray(data.engineering_plans)) return data;
+
+  const engineeringPlans = data.engineering_plans.filter((plan) => !clearedPlanIds.has(plan.plan_id));
+  return engineeringPlans.length === data.engineering_plans.length ? data : { ...data, engineering_plans: engineeringPlans };
+}
+
+function withoutClearedEngineeringPlanSignals(signals: EngineeringPlanSignal[], sessionId = getStoredSessionId()): EngineeringPlanSignal[] {
+  const clearedPlanIds = readClearedEngineeringPlanIds(sessionId);
+  if (clearedPlanIds.size === 0) return signals;
+  return signals.filter((signal) => !signal.plan_id || !clearedPlanIds.has(signal.plan_id));
+}
 
 function stationIdentityPart(value: unknown, digits?: number): string {
   if (value === null || value === undefined) return "";
@@ -1561,9 +1608,9 @@ ${buildFolder("Stations", stationPlacemarks)}
     try {
       const response = await fetch(appendSessionId(`${API_BASE}/api/current-state`));
       const data: BackendState = await response.json();
-      rememberSessionFromResponse(data);
+      const sessionId = rememberSessionFromResponse(data);
       if (!response.ok || data.success === false) throw new Error(data.error || "Unable to load current state.");
-      setState(data);
+      setState(withoutClearedEngineeringPlans(data, sessionId));
       fetchPipelineDiag(); // Nova Phase 1 — non-blocking refresh
       if (data.warning) {
         setStatusText(String(data.warning));
@@ -1594,7 +1641,9 @@ ${buildFolder("Stations", stationPlacemarks)}
       if (!res.ok) return;
       const data = await res.json();
       if (Array.isArray(data.pipeline_diag)) setPipelineDiag(data.pipeline_diag);
-      if (Array.isArray(data.engineering_plan_signals)) setEngineeringPlanSignals(data.engineering_plan_signals);
+      if (Array.isArray(data.engineering_plan_signals)) {
+        setEngineeringPlanSignals(withoutClearedEngineeringPlanSignals(data.engineering_plan_signals));
+      }
     } catch {
       // non-fatal — Nova works with whatever data it already has
     }
@@ -1605,9 +1654,10 @@ ${buildFolder("Stations", stationPlacemarks)}
     try {
       const response = await fetch(appendSessionId(`${API_BASE}/api/reset-state`), { method: "POST" });
       const data: BackendState = await response.json();
-      rememberSessionFromResponse(data);
+      const sessionId = rememberSessionFromResponse(data);
       if (!response.ok || data.success === false) throw new Error(data.error || "Reset failed.");
-      setState(data);
+      rememberClearedEngineeringPlans([...(state?.engineering_plans ?? []), ...(data.engineering_plans ?? [])], sessionId);
+      setState({ ...data, engineering_plans: [] });
       // Nova Phase 1 — clear diagnostics on workspace reset
       setPipelineDiag([]);
       setEngineeringPlanSignals([]);
@@ -1727,7 +1777,11 @@ ${buildFolder("Stations", stationPlacemarks)}
       const data = await response.json();
       rememberSessionFromResponse(data);
       if (!response.ok || data.success === false) throw new Error(data.error || "Engineering plan upload failed.");
-      setState((prev) => prev ? { ...prev, engineering_plans: data.engineering_plans ?? prev.engineering_plans } : prev);
+      setState((prev) => {
+        if (!prev) return prev;
+        const nextState = { ...prev, engineering_plans: data.engineering_plans ?? prev.engineering_plans };
+        return withoutClearedEngineeringPlans(nextState);
+      });
       fetchPipelineDiag(); // Nova Phase 1 — refresh plan signals after engineering plan upload
       setStatusText(String(data.message || "Engineering plans uploaded successfully."));
       setStatusTone("success");
