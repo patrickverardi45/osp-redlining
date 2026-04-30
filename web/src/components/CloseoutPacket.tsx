@@ -72,6 +72,8 @@ export type CloseoutPacketProps = {
   stationPhotos: StationPhoto[];
   /** Client-session geotagged photos. previewUrl is a blob URL — modal only. */
   geoTaggedPhotos: GeoTaggedPhoto[];
+  /** Drilled ÷ planned footage from engineering takeoff (Reports). Null if no planned footage — not backend route completion_pct. */
+  projectCompletionPercent: number | null;
 };
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -169,6 +171,7 @@ function buildPrintHtml(
     notes,
     stationPhotos,
     geoTaggedPhotos,
+    projectCompletionPercent,
   } = props;
 
   const routeName = state?.selected_route_name || state?.route_name || "—";
@@ -355,7 +358,7 @@ ${novaSummary.billingReadiness.reasons.length > 0
 ${h2("Route / Production Summary", "2")}
 <table><tbody>
   ${row("Total Route Footage", state?.total_length_ft ? `${formatNumber(state.total_length_ft)} ft` : "—")}
-  ${row("Completion %", typeof state?.completion_pct === "number" ? `${formatNumber(state.completion_pct, 1)}%` : "—")}
+  ${row("Project completion %", projectCompletionPercent !== null ? `${formatNumber(projectCompletionPercent, 1)}%` : "—")}
   ${row("Covered Footage", state?.covered_length_ft ? `${formatNumber(state.covered_length_ft)} ft` : "—")}
   ${row("Drill Paths", String(drillPathRows.length))}
   ${row("Processed Groups", String(novaSummary.jobOverview.renderedGroups))}
@@ -494,6 +497,7 @@ export default function CloseoutPacket(props: CloseoutPacketProps) {
     notes,
     stationPhotos,
     geoTaggedPhotos,
+    projectCompletionPercent,
   } = props;
 
   const [open, setOpen] = useState(false);
@@ -684,7 +688,7 @@ export default function CloseoutPacket(props: CloseoutPacketProps) {
               <PS num="2" title="Route / Production Summary">
                 <KVTable rows={[
                   ["Total Route Footage", state?.total_length_ft ? `${formatNumber(state.total_length_ft)} ft` : "—"],
-                  ["Completion %", typeof state?.completion_pct === "number" ? `${formatNumber(state.completion_pct, 1)}%` : "—"],
+                  ["Project completion %", projectCompletionPercent !== null ? `${formatNumber(projectCompletionPercent, 1)}%` : "—"],
                   ["Covered Footage", state?.covered_length_ft ? `${formatNumber(state.covered_length_ft)} ft` : "—"],
                   ["Drill Paths", String(drillPathRows.length)],
                   ["Processed Groups", String(novaSummary.jobOverview.renderedGroups)],

@@ -1112,8 +1112,10 @@ function OfficeRedlineMapInner({ mode = "default", projectId }: RedlineMapProps)
   }, [redlineSegments, state?.covered_length_ft]);
 
   const effectiveFootage = useMemo(() => {
-    const manual = Number.parseFloat(manualFootage);
-    if (Number.isFinite(manual) && manual > 0) return manual;
+    const raw = manualFootage.trim().replace(/,/g, "");
+    if (raw === "") return calculatedCoveredFootage;
+    const manual = Number.parseFloat(raw);
+    if (Number.isFinite(manual) && manual >= 0) return manual;
     return calculatedCoveredFootage;
   }, [manualFootage, calculatedCoveredFootage]);
 
@@ -1697,6 +1699,7 @@ ${buildFolder("Stations", stationPlacemarks)}
       // geotagged photos are cleared alongside KMZ/redline/station state,
       // regardless of whether the backend reset succeeded.
       clearGpsPhotos();
+      setManualFootage("");
       setBusy(false);
     }
   }
@@ -1709,7 +1712,7 @@ ${buildFolder("Stations", stationPlacemarks)}
       const form = new FormData();
       form.append("file", file);
       appendSessionIdToForm(form, projectId);
-      const response = await fetch(`${API_BASE}/api/upload-design`, { method: "POST", body: form });
+      const response = await fetch(appendSessionId(`${API_BASE}/api/upload-design`, projectId), { method: "POST", body: form });
       const data: BackendState = await response.json();
       rememberSessionFromResponse(data, projectId);
       if (!response.ok || data.success === false) throw new Error(data.error || "Design upload failed.");
@@ -2377,24 +2380,16 @@ ${buildFolder("Stations", stationPlacemarks)}
             style={{
               background: "linear-gradient(135deg, #ffffff 0%, #f7fbff 52%, #eef6ff 100%)",
               border: "1px solid #dbe4ee",
-              borderRadius: 24,
-              padding: 24,
-              boxShadow: "0 12px 28px rgba(15, 23, 42, 0.05)",
+              borderRadius: 18,
+              padding: "14px 18px",
+              boxShadow: "0 8px 20px rgba(15, 23, 42, 0.04)",
             }}
           >
             <div style={{ display: "flex", justifyContent: "space-between", gap: 16, alignItems: "flex-start", flexWrap: "wrap" }}>
-              <div style={{ maxWidth: 860 }}>
-                <div style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "6px 10px", borderRadius: 999, background: "#eff6ff", border: "1px solid #cfe0f5", fontSize: 12, fontWeight: 800, color: "#1d4ed8", marginBottom: 12 }}>
-                  Phase 1 Safe UI Polish
-                </div>
-                <div style={{ fontSize: 34, fontWeight: 900, letterSpacing: -0.7 }}>OSP Redlining Operator Workspace</div>
-                <div style={{ marginTop: 8, fontSize: 15, color: "#526173", lineHeight: 1.6 }}>
-                  Upload design files, load bore logs, generate redlines, review the map, and stage reporting outputs in one cleaner top-to-bottom workflow.
-                </div>
-                <div style={{ marginTop: 14, display: "flex", gap: 10, flexWrap: "wrap" }}>
-                  <Pill label="API" value={API_BASE} />
-                  <Pill label="Active job" value={String(activeJob)} />
-                  <Pill label="Status" value={String(verification?.status || "waiting")} />
+              <div style={{ maxWidth: 720 }}>
+                <div style={{ fontSize: 22, fontWeight: 900, letterSpacing: -0.5, color: "#0f172a" }}>OSP Redlining Operator Workspace</div>
+                <div style={{ marginTop: 6, fontSize: 14, color: "#526173", lineHeight: 1.5 }}>
+                  Upload design and bore logs, review the map, then use Reports and Billing for outputs.
                 </div>
               </div>
 
@@ -2445,6 +2440,7 @@ ${buildFolder("Stations", stationPlacemarks)}
                   type="button"
                   role="tab"
                   aria-selected={active}
+                  onPointerDown={() => setActiveWorkspaceTab(tab.id)}
                   onClick={() => setActiveWorkspaceTab(tab.id)}
                   style={{
                     border: active ? "1px solid #0f172a" : "1px solid #dbe4ee",
@@ -2465,10 +2461,10 @@ ${buildFolder("Stations", stationPlacemarks)}
 
           <Section
             title="1. Upload"
-            subtitle="Load the design first, then add one or more structured bore log files. This section stays tied to the current backend workflow."
+            subtitle="KMZ design, structured bore logs, and optional engineering plan PDFs/images. Same upload behavior as before."
             style={{ display: activeWorkspaceTab === "setup" ? "block" : "none" }}
           >
-            <div style={{ display: "grid", gridTemplateColumns: "1.1fr 1.1fr 0.8fr", gap: 16, alignItems: "start" }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 16, alignItems: "start" }}>
               <label style={uploadCardStyle(busy)}>
                 <input
                   type="file"
@@ -2507,39 +2503,6 @@ ${buildFolder("Stations", stationPlacemarks)}
                 </div>
               </label>
 
-              <div style={{ border: "1px solid #dbe4ee", borderRadius: 16, background: "#fbfdff", padding: 16 }}>
-                <div style={{ fontWeight: 800, fontSize: 15 }}>File status</div>
-                <div style={{ marginTop: 12, display: "grid", gap: 10 }}>
-                  <Pill label="Design" value={hasDesign ? "Loaded" : "Waiting"} />
-                  <Pill label="Bore files" value={String(state?.loaded_field_data_files || 0)} />
-                  <Pill label="Latest file" value={state?.latest_structured_file || "--"} />
-                  <Pill label="Output ready" value={hasGeneratedOutput ? "Yes" : "No"} />
-                </div>
-              </div>
-            </div>
-            <label style={{ display: "grid", gap: 6, marginTop: 16, maxWidth: 420, fontSize: 13, color: "#475569" }}>
-              <span style={{ fontWeight: 800, color: "#0f172a" }}>Project Planned Footage (authoritative)</span>
-              <input
-                value={manualProjectPlannedFootage}
-                onChange={(e) => setManualProjectPlannedFootage(e.target.value)}
-                inputMode="decimal"
-                placeholder="34354"
-                style={{ borderRadius: 12, border: "1px solid #cfd8e3", padding: "10px 12px", background: "#ffffff", fontSize: 14 }}
-              />
-              <span style={{ color: "#64748b", lineHeight: 1.45 }}>
-                Use engineering/material takeoff total when available. KMZ may only represent a route slice.
-              </span>
-            </label>
-          </Section>
-
-          {/* ─── Engineering Plans Evidence Upload ─────────────────────── */}
-          <Section
-            title="Job Evidence"
-            subtitle="Upload engineering plan PDFs or images for this session. Plans are scoped to your browser session and do not affect route matching or redline decisions."
-            style={{ display: activeWorkspaceTab === "setup" ? "block" : "none" }}
-          >
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, alignItems: "start" }}>
-              {/* Upload card */}
               <label style={{
                 display: "block",
                 border: "2px solid #000000",
@@ -2562,7 +2525,7 @@ ${buildFolder("Stations", stationPlacemarks)}
                 />
                 <div style={{ fontWeight: 800, fontSize: 16 }}>Upload Engineering Plans</div>
                 <div style={{ marginTop: 6, fontSize: 13, color: "#64748b", lineHeight: 1.55 }}>
-                  PDF, PNG, JPG or JPEG. Multiple files allowed. Stored per session as job evidence only.
+                  PDF, PNG, JPG or JPEG. Multiple files allowed. Session-scoped job evidence only.
                 </div>
                 <div style={{ marginTop: 14, fontSize: 12, fontWeight: 700, color: (state?.engineering_plans?.length ?? 0) > 0 ? "#166534" : "#64748b" }}>
                   {engPlansBusy
@@ -2573,86 +2536,76 @@ ${buildFolder("Stations", stationPlacemarks)}
                 </div>
               </label>
 
-              {/* Plans list */}
-              <div style={{ border: "1px solid #dbe4ee", borderRadius: 16, background: "#fbfdff", padding: 16, minHeight: 120 }}>
-                <div style={{ fontWeight: 800, fontSize: 15, marginBottom: 10 }}>
-                  Engineering Plans
-                  {(state?.engineering_plans?.length ?? 0) > 0 && (
-                    <span style={{ marginLeft: 8, fontSize: 12, fontWeight: 600, color: "#64748b" }}>
-                      ({state!.engineering_plans!.length})
-                    </span>
-                  )}
+              <div style={{ border: "1px solid #dbe4ee", borderRadius: 16, background: "#fbfdff", padding: 16 }}>
+                <div style={{ fontWeight: 800, fontSize: 15 }}>File status</div>
+                <div style={{ marginTop: 12, display: "grid", gap: 10 }}>
+                  <Pill label="Design" value={hasDesign ? "Loaded" : "Waiting"} />
+                  <Pill label="Bore files" value={String(state?.loaded_field_data_files || 0)} />
+                  <Pill label="Latest file" value={state?.latest_structured_file || "--"} />
+                  <Pill label="Output ready" value={hasGeneratedOutput ? "Yes" : "No"} />
                 </div>
-                {(state?.engineering_plans?.length ?? 0) === 0 ? (
-                  <div style={{ fontSize: 13, color: "#94a3b8" }}>No plans uploaded for this session.</div>
-                ) : (
-                  <div style={{ display: "grid", gap: 8 }}>
-                    {state!.engineering_plans!.map((plan: EngineeringPlan) => {
-                      const sizeKb = (plan.size_bytes / 1024).toFixed(1);
-                      const sizeMb = (plan.size_bytes / (1024 * 1024)).toFixed(2);
-                      const sizeLabel = plan.size_bytes >= 1024 * 1024 ? `${sizeMb} MB` : `${sizeKb} KB`;
-                      const uploadedDate = plan.uploaded_at
-                        ? new Date(plan.uploaded_at).toLocaleString(undefined, { dateStyle: "short", timeStyle: "short" })
-                        : "";
-                      const typeLabel = plan.file_type === "application/pdf"
-                        ? "PDF"
-                        : plan.file_type?.startsWith("image/")
-                          ? plan.file_type.split("/")[1]?.toUpperCase() ?? "Image"
-                          : plan.file_type ?? "";
-                      return (
-                        <div key={plan.plan_id} style={{ borderRadius: 10, border: "1px solid #e2e8f0", background: "#ffffff", padding: "10px 12px" }}>
-                          <div style={{ fontWeight: 700, fontSize: 13, color: "#0f172a", wordBreak: "break-all" }}>{plan.original_filename}</div>
-                          <div style={{ marginTop: 4, display: "flex", gap: 12, flexWrap: "wrap", fontSize: 12, color: "#64748b" }}>
-                            <span>{typeLabel}</span>
-                            <span>{sizeLabel}</span>
-                            {uploadedDate && <span>{uploadedDate}</span>}
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
+              </div>
+            </div>
+
+            <div style={{ border: "1px solid #dbe4ee", borderRadius: 16, background: "#fbfdff", padding: 16, minHeight: 100, marginTop: 16 }}>
+              <div style={{ fontWeight: 800, fontSize: 15, marginBottom: 10 }}>
+                Engineering Plans
+                {(state?.engineering_plans?.length ?? 0) > 0 && (
+                  <span style={{ marginLeft: 8, fontSize: 12, fontWeight: 600, color: "#64748b" }}>
+                    ({state!.engineering_plans!.length})
+                  </span>
                 )}
               </div>
+              {(state?.engineering_plans?.length ?? 0) === 0 ? (
+                <div style={{ fontSize: 13, color: "#94a3b8" }}>No plans uploaded for this session.</div>
+              ) : (
+                <div style={{ display: "grid", gap: 8 }}>
+                  {state!.engineering_plans!.map((plan: EngineeringPlan) => {
+                    const sizeKb = (plan.size_bytes / 1024).toFixed(1);
+                    const sizeMb = (plan.size_bytes / (1024 * 1024)).toFixed(2);
+                    const sizeLabel = plan.size_bytes >= 1024 * 1024 ? `${sizeMb} MB` : `${sizeKb} KB`;
+                    const uploadedDate = plan.uploaded_at
+                      ? new Date(plan.uploaded_at).toLocaleString(undefined, { dateStyle: "short", timeStyle: "short" })
+                      : "";
+                    const typeLabel = plan.file_type === "application/pdf"
+                      ? "PDF"
+                      : plan.file_type?.startsWith("image/")
+                        ? plan.file_type.split("/")[1]?.toUpperCase() ?? "Image"
+                        : plan.file_type ?? "";
+                    return (
+                      <div key={plan.plan_id} style={{ borderRadius: 10, border: "1px solid #e2e8f0", background: "#ffffff", padding: "10px 12px" }}>
+                        <div style={{ fontWeight: 700, fontSize: 13, color: "#0f172a", wordBreak: "break-all" }}>{plan.original_filename}</div>
+                        <div style={{ marginTop: 4, display: "flex", gap: 12, flexWrap: "wrap", fontSize: 12, color: "#64748b" }}>
+                          <span>{typeLabel}</span>
+                          <span>{sizeLabel}</span>
+                          {uploadedDate && <span>{uploadedDate}</span>}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           </Section>
 
           <Section
             title="2. Actions"
-            subtitle="Workspace controls and live backend facts. These controls use the existing execution flow exactly as-is."
+            subtitle="Refresh or clear the workspace."
             style={{ display: activeWorkspaceTab === "setup" ? "block" : "none", order: 4 }}
           >
-            <div style={{ display: "grid", gridTemplateColumns: "0.95fr 1.05fr", gap: 16, alignItems: "start" }}>
-              <div style={{ display: "grid", gap: 12 }}>
-                <div style={{ border: "1px solid #dbe4ee", borderRadius: 16, padding: 16, background: "#fbfdff" }}>
-                  <div style={{ fontSize: 15, fontWeight: 800 }}>Workflow guidance</div>
-                  <div style={{ marginTop: 8, fontSize: 13, color: "#64748b", lineHeight: 1.65 }}>
-                    1. Upload a KMZ design.<br />
-                    2. Upload structured bore logs.<br />
-                    3. Review generated output on the map.<br />
-                    4. Use the reporting shells below for staging pricing, crew, exceptions, and export workflow.
-                  </div>
-                </div>
-
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 12 }}>
-                  <button onClick={() => fetchState("Refreshing backend state...")} disabled={busy} style={buttonStyle("#ffffff", "#0f172a", "#cfd8e3", busy)}>Refresh Backend State</button>
-                  <button onClick={handleReset} disabled={busy} style={buttonStyle("#0f172a", "#ffffff", "#0f172a", busy)}>Clear Workspace</button>
+            <div style={{ display: "grid", gap: 12, maxWidth: 560 }}>
+              <div style={{ border: "1px solid #dbe4ee", borderRadius: 16, padding: 14, background: "#fbfdff" }}>
+                <div style={{ fontSize: 14, fontWeight: 800 }}>Workflow</div>
+                <div style={{ marginTop: 6, fontSize: 13, color: "#64748b", lineHeight: 1.6 }}>
+                  1. Upload KMZ and bore logs (optional engineering plans).<br />
+                  2. Review output on the map.<br />
+                  3. Open Reports / Billing for summaries and export.
                 </div>
               </div>
 
-              <div style={{ border: "1px solid #dbe4ee", borderRadius: 16, padding: 16, background: "#ffffff" }}>
-                <div style={{ fontSize: 15, fontWeight: 800, marginBottom: 6 }}>Current backend state</div>
-                <SmallRow label="Selected route" value={state?.selected_route_name || state?.route_name || "--"} />
-                <SmallRow label="Suggested route id" value={state?.suggested_route_id || "--"} />
-                <SmallRow label="Latest bore file" value={state?.latest_structured_file || "--"} />
-                <SmallRow label="Field data files" value={String(state?.loaded_field_data_files || 0)} />
-                <SmallRow label="Route length" value={`${formatNumber(state?.total_length_ft)} ft`} />
-                <SmallRow label="Covered length" value={`${formatNumber(state?.covered_length_ft)} ft`} />
-                <SmallRow label="Completion %" value={`${formatNumber(state?.completion_pct)}%`} />
-                <SmallRow label="Active-route covered" value={`${formatNumber(state?.active_route_covered_length_ft)} ft`} />
-                <SmallRow label="Active-route completion" value={`${formatNumber(state?.active_route_completion_pct)}%`} />
-                <SmallRow label="Mapping mode" value={state?.station_mapping_mode || "--"} />
-                <SmallRow label="Committed rows" value={String((state?.committed_rows || []).length)} />
-                <SmallRow label="Bug report count" value={String(state?.bug_report_count || 0)} />
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 12 }}>
+                <button onClick={() => fetchState("Refreshing backend state...")} disabled={busy} style={buttonStyle("#ffffff", "#0f172a", "#cfd8e3", busy)}>Refresh Backend State</button>
+                <button onClick={handleReset} disabled={busy} style={buttonStyle("#0f172a", "#ffffff", "#0f172a", busy)}>Clear Workspace</button>
               </div>
             </div>
           </Section>
@@ -4108,13 +4061,12 @@ ${buildFolder("Stations", stationPlacemarks)}
               <div className="print-report" style={{ display: "grid", gap: 14 }}>
                 <ShellCard
                   title="Field-to-billing report"
-                  description="This report uses current route, redline, completion, pricing, and exception values only. Browser print is enabled for clean export."
+                  description="This report uses current route, redline, pricing, and exception values only. Browser print is enabled for clean export."
                 >
                   <div style={{ display: "grid", gap: 8 }}>
                     <SmallRow label="Job / Route" value={activeJob} />
                     <SmallRow label="Matched route" value={selectedMatch?.route_name || state?.selected_route_name || state?.route_name || "--"} />
                     <SmallRow label="Total footage" value={`${formatNumber(effectiveFootage)} ft`} />
-                    <SmallRow label="Completion %" value={`${formatNumber(state?.completion_pct)}%`} />
                     <SmallRow label="Drill paths" value={String(drillPathRows.length)} />
                     <SmallRow label="Base cost / ft" value={toMoney(numericCostPerFoot)} />
                     <SmallRow label="Exception total" value={toMoney(exceptionTotal)} />
@@ -4263,22 +4215,29 @@ ${buildFolder("Stations", stationPlacemarks)}
                 <div style={{ display: "grid", gap: 14 }}>
                   <ShellCard
                     title="Footage calculator"
-                    description="Uses summed redline segment lengths first, then covered_length_ft from the backend. Manual footage is optional when no backend value is available."
+                    description="Footage pre-fills from summed redline segments, then covered_length_ft from the backend. Leave the field blank to track detected footage live, or type your own amount for billing."
                   >
                     <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 12 }}>
                       <label style={{ display: "grid", gap: 6, fontSize: 13, color: "#475569" }}>
-                        <span>Detected footage (FT)</span>
-                        <input value={formatNumber(calculatedCoveredFootage)} readOnly style={{ borderRadius: 12, border: "1px solid #cfd8e3", padding: "10px 12px", background: "#f8fafc", fontSize: 14 }} />
-                      </label>
-                      <label style={{ display: "grid", gap: 6, fontSize: 13, color: "#475569" }}>
-                        <span>Manual footage override (FT)</span>
-                        <input value={manualFootage} onChange={(e) => setManualFootage(e.target.value)} placeholder="Optional" style={{ borderRadius: 12, border: "1px solid #cfd8e3", padding: "10px 12px", background: "#ffffff", fontSize: 14 }} />
+                        <span>Footage (FT)</span>
+                        <input
+                          value={
+                            manualFootage !== ""
+                              ? manualFootage
+                              : calculatedCoveredFootage > 0
+                                ? formatNumber(calculatedCoveredFootage)
+                                : ""
+                          }
+                          onChange={(e) => setManualFootage(e.target.value)}
+                          placeholder={calculatedCoveredFootage > 0 ? undefined : "Enter footage (ft)"}
+                          style={{ borderRadius: 12, border: "1px solid #cfd8e3", padding: "10px 12px", background: "#ffffff", fontSize: 14 }}
+                        />
                       </label>
                       <label style={{ display: "grid", gap: 6, fontSize: 13, color: "#475569" }}>
                         <span>Cost per foot ($)</span>
                         <input value={costPerFoot} onChange={(e) => setCostPerFoot(e.target.value)} style={{ borderRadius: 12, border: "1px solid #cfd8e3", padding: "10px 12px", background: "#ffffff", fontSize: 14 }} />
                       </label>
-                      <div style={{ display: "grid", gap: 6, fontSize: 13, color: "#475569" }}>
+                      <div style={{ display: "grid", gap: 6, fontSize: 13, color: "#475569", gridColumn: "1 / -1" }}>
                         <span>Base total</span>
                         <div style={{ borderRadius: 12, border: "1px solid #cfd8e3", padding: "10px 12px", background: "#f8fafc", fontSize: 14, fontWeight: 800 }}>{toMoney(baseBillingTotal)}</div>
                       </div>
@@ -4344,6 +4303,7 @@ ${buildFolder("Stations", stationPlacemarks)}
                       activeJob={activeJob}
                       state={state}
                       selectedMatch={selectedMatch}
+                      projectCompletionPercent={projectCompletionSummary.percentComplete}
                       effectiveFootage={effectiveFootage}
                       numericCostPerFoot={numericCostPerFoot}
                       baseBillingTotal={baseBillingTotal}
@@ -4427,9 +4387,11 @@ ${buildFolder("Stations", stationPlacemarks)}
             <div className="rpt-kpi-value">{formatNumber(effectiveFootage)} ft</div>
           </div>
           <div className="rpt-kpi">
-            <div className="rpt-kpi-label">Completion</div>
+            <div className="rpt-kpi-label">Project completion</div>
             <div className="rpt-kpi-value">
-              {typeof state?.completion_pct === "number" ? `${formatNumber(state.completion_pct, 1)}%` : "--"}
+              {projectCompletionSummary.percentComplete !== null
+                ? `${formatNumber(projectCompletionSummary.percentComplete, 1)}%`
+                : "--"}
             </div>
           </div>
           <div className="rpt-kpi">

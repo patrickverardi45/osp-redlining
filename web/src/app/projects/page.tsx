@@ -21,8 +21,11 @@ type ProjectState = {
     line_features?: unknown[];
     polygon_features?: unknown[];
   } | null;
-  redline_segments?: unknown[];
+  redline_segments?: Array<{
+    length_ft?: number | null;
+  }>;
   bore_log_summary?: unknown[];
+  loaded_field_data_files?: number;
   coverage_summary?: {
     bore_logs?: unknown[];
     bore_log_count?: number;
@@ -32,8 +35,7 @@ type ProjectState = {
   gpsPhotos?: unknown[];
   total_length_ft?: number | null;
   covered_length_ft?: number | null;
-  completion_pct?: number | null;
-  active_route_completion_pct?: number | null;
+  active_route_covered_length_ft?: number | null;
   updated_at?: string;
   last_updated?: string;
   timestamp?: string;
@@ -42,7 +44,10 @@ type ProjectState = {
 type ProjectSummary = {
   status: "No data yet" | "No uploads yet" | "Design loaded";
   hasSession: boolean;
+  hasLiveState: boolean;
   kmzLoaded: boolean;
+  plannedFootage: number | null;
+  drilledFootage: number | null;
   boreLogs: number | null;
   photos: number | null;
   completion: string | null;
@@ -89,16 +94,20 @@ function getManualPlannedFootage(projectId: string): number | null {
   if (typeof window === "undefined") return null;
   const keyPrefix = `osp_project_planned_footage:${projectId}:`;
   try {
+    let best: number | null = null;
     for (let index = 0; index < window.localStorage.length; index += 1) {
       const key = window.localStorage.key(index);
       if (!key?.startsWith(keyPrefix)) continue;
-      const value = Number(window.localStorage.getItem(key));
-      if (Number.isFinite(value) && value > 0) return value;
+      const raw = window.localStorage.getItem(key);
+      const value = raw === null ? NaN : parseFloat(raw.trim());
+      if (Number.isFinite(value) && value > 0) {
+        best = best === null ? value : Math.max(best, value);
+      }
     }
+    return best;
   } catch {
     return null;
   }
-  return null;
 }
 
 function hasKmz(state: ProjectState): boolean {
@@ -108,10 +117,15 @@ function hasKmz(state: ProjectState): boolean {
 }
 
 function getBoreLogCount(state: ProjectState): number {
-  if (Array.isArray(state.bore_log_summary)) return state.bore_log_summary.length;
+  if (Array.isArray(state.bore_log_summary) && state.bore_log_summary.length > 0) {
+    return state.bore_log_summary.length;
+  }
+  if (typeof state.loaded_field_data_files === "number" && state.loaded_field_data_files > 0) {
+    return state.loaded_field_data_files;
+  }
   if (typeof state.coverage_summary?.bore_log_count === "number") return state.coverage_summary.bore_log_count;
   if (Array.isArray(state.coverage_summary?.bore_logs)) return state.coverage_summary.bore_logs.length;
-  return state.redline_segments?.length ?? 0;
+  return 0;
 }
 
 function getPhotoCount(state: ProjectState): number {
@@ -121,17 +135,35 @@ function getPhotoCount(state: ProjectState): number {
   return 0;
 }
 
-function formatCompletion(state: ProjectState, projectId: string): string | null {
-  const plannedFootage = state.total_length_ft || getManualPlannedFootage(projectId);
-  if (!plannedFootage) return null;
-  const completionPct = typeof state.completion_pct === "number" ? state.completion_pct : state.active_route_completion_pct;
-  if (typeof completionPct === "number" && Number.isFinite(completionPct)) {
-    return `${Math.round(completionPct)}%`;
-  }
-  if (typeof state.covered_length_ft === "number" && Number.isFinite(state.covered_length_ft)) {
-    return `${Math.round((state.covered_length_ft / plannedFootage) * 100)}%`;
-  }
-  return null;
+/** Drilled / as-built footage for dashboard: sum of redline segment lengths only (matches workspace drilled total). */
+function getDrilledFootageFromRedlines(state: ProjectState): number | null {
+  const segments = state.redline_segments;
+  if (!Array.isArray(segments) || segments.length === 0) return null;
+  const sum = segments.reduce((total, segment) => {
+    const length = segment.length_ft;
+    return typeof length === "number" && Number.isFinite(length) ? total + length : total;
+  }, 0);
+  return sum;
+}
+
+function formatCompletion(plannedFootage: number | null, drilledFootage: number | null): string | null {
+  if (plannedFootage === null || !Number.isFinite(plannedFootage) || plannedFootage <= 0 || drilledFootage === null) return null;
+  const completion = (drilledFootage / plannedFootage) * 100;
+  return `${completion.toFixed(1)}%`;
+}
+
+function formatFeet(value: number | null, decimals = 2): string {
+  if (value === null || !Number.isFinite(value)) return "—";
+  const fixed = decimals === 0 ? Math.round(value).toString() : value.toFixed(decimals);
+  const [whole, frac] = fixed.split(".");
+  const withCommas = whole.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+  return frac !== undefined ? `${withCommas}.${frac}` : withCommas;
+}
+
+function formatFeetSmart(value: number | null): string {
+  if (value === null || !Number.isFinite(value)) return "—";
+  const decimals = Math.abs(value - Math.round(value)) < 1e-6 ? 0 : 2;
+  return formatFeet(value, decimals);
 }
 
 function formatLastUpdated(state: ProjectState): string | null {
@@ -144,17 +176,29 @@ function formatLastUpdated(state: ProjectState): string | null {
 
 function summarizeState(state: ProjectState, projectId: string): ProjectSummary {
   const kmzLoaded = hasKmz(state);
+  const plannedFootage = getManualPlannedFootage(projectId);
+  const drilledFootage = getDrilledFootageFromRedlines(state);
   const boreLogs = getBoreLogCount(state);
   const photos = getPhotoCount(state);
-  const hasUploads = kmzLoaded || boreLogs > 0 || photos > 0;
+  const filesLoaded = (state.loaded_field_data_files ?? 0) > 0;
+  const hasRedlines = (state.redline_segments?.length ?? 0) > 0;
+  const hasUploads = kmzLoaded || filesLoaded || hasRedlines || boreLogs > 0 || photos > 0;
+  const status: ProjectSummary["status"] = kmzLoaded
+    ? "Design loaded"
+    : hasUploads
+      ? "No uploads yet"
+      : "No uploads yet";
 
   return {
-    status: kmzLoaded ? "Design loaded" : hasUploads ? "No uploads yet" : "No uploads yet",
+    status,
     hasSession: true,
+    hasLiveState: true,
     kmzLoaded,
+    plannedFootage,
+    drilledFootage,
     boreLogs,
     photos,
-    completion: formatCompletion(state, projectId),
+    completion: formatCompletion(plannedFootage, drilledFootage),
     lastUpdated: formatLastUpdated(state),
   };
 }
@@ -194,7 +238,10 @@ function ProjectCard({ project }: { project: Project }) {
   const [summary, setSummary] = useState<ProjectSummary>({
     status: "No data yet",
     hasSession: false,
+    hasLiveState: false,
     kmzLoaded: false,
+    plannedFootage: null,
+    drilledFootage: null,
     boreLogs: null,
     photos: null,
     completion: null,
@@ -211,7 +258,10 @@ function ProjectCard({ project }: { project: Project }) {
           setSummary({
             status: "No data yet",
             hasSession: false,
+            hasLiveState: false,
             kmzLoaded: false,
+            plannedFootage: null,
+            drilledFootage: null,
             boreLogs: null,
             photos: null,
             completion: null,
@@ -233,10 +283,20 @@ function ProjectCard({ project }: { project: Project }) {
     }
 
     loadProjectStatus();
+    const onStorage = (event: StorageEvent) => {
+      if (event.key?.startsWith(`osp_project_planned_footage:${project.projectId}:`)) {
+        loadProjectStatus();
+      }
+      if (event.key === `osp_session_id:${project.projectId}`) {
+        loadProjectStatus();
+      }
+    };
     window.addEventListener("focus", loadProjectStatus);
+    window.addEventListener("storage", onStorage);
     return () => {
       cancelled = true;
       window.removeEventListener("focus", loadProjectStatus);
+      window.removeEventListener("storage", onStorage);
     };
   }, [project.projectId]);
 
@@ -287,9 +347,24 @@ function ProjectCard({ project }: { project: Project }) {
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
         <Metric label="Design" value={summary.kmzLoaded ? "Design loaded" : summary.hasSession ? "Not loaded" : "No data yet"} />
-        <Metric label="Bore logs" value={summary.boreLogs === null ? "--" : String(summary.boreLogs)} />
-        <Metric label="Photos" value={summary.photos === null ? "--" : String(summary.photos)} />
-        {summary.completion ? <Metric label="Completion" value={summary.completion} /> : null}
+        <Metric
+          label="Planned footage"
+          value={!summary.hasLiveState ? "—" : summary.plannedFootage === null ? "—" : `${formatFeetSmart(summary.plannedFootage)} ft`}
+        />
+        <Metric
+          label="Drilled footage"
+          value={!summary.hasLiveState ? "—" : summary.drilledFootage === null ? "—" : `${formatFeet(summary.drilledFootage, 2)} ft`}
+        />
+        <Metric
+          label="Completion"
+          value={
+            !summary.hasLiveState
+              ? "—"
+              : summary.completion ?? "—"
+          }
+        />
+        <Metric label="Bore logs" value={!summary.hasLiveState ? "—" : String(summary.boreLogs ?? 0)} />
+        <Metric label="Photos" value={!summary.hasLiveState ? "—" : String(summary.photos ?? 0)} />
         {summary.lastUpdated ? <Metric label="Last updated" value={summary.lastUpdated} /> : null}
       </div>
 
