@@ -540,6 +540,97 @@ function formatBytes(n: number): string {
   return `${(n / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+/** Loose JSON object read (walk route-context payload). */
+function asRecord(v: unknown): Record<string, unknown> | null {
+  return v !== null && typeof v === "object" && !Array.isArray(v)
+    ? (v as Record<string, unknown>)
+    : null;
+}
+
+/**
+ * Ensure each position is GeoJSON [longitude, latitude] for MapController.setDesignRoutes
+ * (it reads pair[0] as lon, pair[1] as lat).
+ * Catalog/native pairs are often [lat, lon] with lat ∈ (15, 55) and lon ∈ (-130, -25) (CONUS).
+ */
+function normalizePositionToLonLat(x: number, y: number): [number, number] {
+  if (
+    x > 15 &&
+    x < 55 &&
+    y < -25 &&
+    y > -130 &&
+    Number.isFinite(x) &&
+    Number.isFinite(y)
+  ) {
+    return [y, x];
+  }
+  return [x, y];
+}
+
+function normalizeLineStringCoordinates(coordsRaw: unknown): [number, number][] {
+  if (!Array.isArray(coordsRaw) || coordsRaw.length < 2) return [];
+
+  const pairs: [number, number][] = [];
+  for (const item of coordsRaw) {
+    if (!Array.isArray(item) || item.length < 2) continue;
+    const x = Number(item[0]);
+    const y = Number(item[1]);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+    const [lon, lat] = normalizePositionToLonLat(x, y);
+    if (!Number.isFinite(lon) || !Number.isFinite(lat)) continue;
+    if (lat < -90 || lat > 90 || lon < -180 || lon > 180) continue;
+    pairs.push([lon, lat]);
+  }
+
+  return pairs.length >= 2 ? pairs : [];
+}
+
+/** Map /api/walk/route-context JSON into Route[] with geometry Leaflet can draw. */
+function normalizeWalkRouteContextPayload(data: unknown): Route[] {
+  const root = asRecord(data);
+  const rawRoutes = root?.routes;
+  if (!Array.isArray(rawRoutes)) return [];
+
+  const out: Route[] = [];
+  for (const entry of rawRoutes) {
+    const r = asRecord(entry);
+    if (!r) continue;
+
+    const id =
+      typeof r.id === "string"
+        ? r.id
+        : typeof r.route_id === "string"
+          ? r.route_id
+          : "";
+    const route_name =
+      typeof r.route_name === "string"
+        ? r.route_name
+        : typeof r.name === "string"
+          ? r.name
+          : "";
+
+    const length_ft =
+      typeof r.length_ft === "number" ? r.length_ft : Number(r.length_ft) || 0;
+    const segment_count =
+      typeof r.segment_count === "number"
+        ? r.segment_count
+        : Number(r.segment_count) || 0;
+
+    const geom = asRecord(r.geometry);
+    const coordinates = normalizeLineStringCoordinates(geom?.coordinates);
+    if (coordinates.length < 2) continue;
+
+    out.push({
+      id,
+      route_name,
+      length_ft,
+      segment_count,
+      geometry: { type: "LineString", coordinates },
+    });
+  }
+
+  return out;
+}
+
 // ─── Phase 3C-4: station-keypad reducers ─────────────────────────────────────
 // The keypad is the only thing that mutates the station value. These
 // reducers run on each tap and enforce the spec rules:
@@ -739,7 +830,7 @@ function WalkPageInner() {
       try {
         const data = await getWalkRouteContext(walkProjectScope);
         if (cancelled) return;
-        setProjectWalkRoutes(Array.isArray(data.routes) ? data.routes : []);
+        setProjectWalkRoutes(normalizeWalkRouteContextPayload(data));
       } catch {
         if (cancelled) return;
         setProjectWalkRoutes([]);
