@@ -10,7 +10,7 @@ import {
 } from "react";
 import { useSearchParams } from "next/navigation";
 
-import { getJobs, getJobById, getWalkRouteContext, type Job, type Route } from "@/lib/api";
+import { getJobs, getJobById, type Job, type Route } from "@/lib/api";
 import { getOrCreateSessionId } from "@/lib/session";
 
 // ─── Configuration ────────────────────────────────────────────────────────────
@@ -192,6 +192,8 @@ function createMapController(): MapController {
   let positionMarker: ReturnType<LeafletNS["circleMarker"]> | null = null;
   let positionHalo: ReturnType<LeafletNS["circleMarker"]> | null = null;
   let hasCentered = false;
+  /** Ensures we fit the camera to the design route once even if GPS already ran (mobile). */
+  let designRouteBoundsApplied = false;
   const trail: Array<[number, number]> = [];
   // Phase 4C: design-route layers. We hold references so we can remove just
   // the design polylines (and not the breadcrumb polyline) on each update.
@@ -273,6 +275,7 @@ function createMapController(): MapController {
       map = null;
       L = null;
       hasCentered = false;
+      designRouteBoundsApplied = false;
       trail.length = 0;
     },
 
@@ -346,6 +349,10 @@ function createMapController(): MapController {
       if (!L || !map) return;
       try {
         clearDesignLayersInternal();
+        if (routes.length === 0) {
+          designRouteBoundsApplied = false;
+          return;
+        }
         // Collect every drawn coordinate so we can fit the view to the
         // design overlay before GPS takes over. Without this the map sits
         // at its default world zoom and the polyline is drawn but is far
@@ -376,18 +383,28 @@ function createMapController(): MapController {
           designLayers.push(layer);
           allLatLngs.push(...latlngs);
         }
-        // Fit map to the design route ONLY if GPS has not taken over
-        // centering yet. Once the user gets a GPS fix, hasCentered is true
-        // and we must NOT yank the view back to the route — the GPS path
-        // owns centering from that point on (panTo only, never re-zoom).
-        if (!hasCentered && allLatLngs.length >= 2) {
+        // Fit so the design polyline is on-screen. If GPS already centered the
+        // map (hasCentered), we still fit once when project/job routes arrive —
+        // otherwise the line is drawn at ~33°N but the view stays on the user's
+        // previous fix or world view.
+        if (allLatLngs.length >= 2) {
           const bounds = L.latLngBounds(allLatLngs);
           if (bounds.isValid()) {
-            map.fitBounds(bounds, {
-              padding: [20, 20],
-              maxZoom: MAP_LOCKED_ZOOM,
-              animate: false,
-            });
+            const shouldFit =
+              !hasCentered || !designRouteBoundsApplied;
+            if (shouldFit) {
+              try {
+                map.invalidateSize({ animate: false });
+              } catch {
+                /* ignore */
+              }
+              map.fitBounds(bounds, {
+                padding: [20, 20],
+                maxZoom: MAP_LOCKED_ZOOM,
+                animate: false,
+              });
+              designRouteBoundsApplied = true;
+            }
           }
         }
       } catch {
@@ -398,6 +415,7 @@ function createMapController(): MapController {
     clearDesignRoutes(): void {
       try {
         clearDesignLayersInternal();
+        designRouteBoundsApplied = false;
       } catch {
         /* ignore */
       }
@@ -828,7 +846,13 @@ function WalkPageInner() {
     let cancelled = false;
     void (async () => {
       try {
-        const data = await getWalkRouteContext(walkProjectScope);
+        const res = await fetch(
+          `${API_BASE}/api/walk/route-context?projectId=${encodeURIComponent(walkProjectScope.trim())}`,
+          { cache: "no-store" },
+        );
+        if (cancelled) return;
+        if (!res.ok) throw new Error(String(res.status));
+        const data: unknown = await res.json();
         if (cancelled) return;
         setProjectWalkRoutes(normalizeWalkRouteContextPayload(data));
       } catch {
