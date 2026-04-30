@@ -1,5 +1,5 @@
-import RedlineMap from "../components/RedlineMap";
+import ProjectsPage from "./projects/page";
 
 export default function Page() {
-  return <RedlineMap />;
+  return <ProjectsPage />;
 }
