@@ -20,7 +20,7 @@ export default async function ProjectPage({ params }: ProjectPageProps) {
           Project Workspace: {projectId}
         </h1>
       </header>
-      <RedlineMap />
+      <RedlineMap projectId={projectId} />
     </>
   );
 }

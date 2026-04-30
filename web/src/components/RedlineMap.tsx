@@ -47,14 +47,18 @@ const API_BASE =
   process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/+$/, "") ||
   "http://127.0.0.1:8000";
 
-const CLEARED_ENGINEERING_PLANS_PREFIX = "osp_cleared_engineering_plans:";
+const CLEARED_ENGINEERING_PLANS_PREFIX = "osp_cleared_engineering_plans";
 
-function clearedEngineeringPlansStorageKey(sessionId: string | null): string | null {
-  return sessionId ? `${CLEARED_ENGINEERING_PLANS_PREFIX}${sessionId}` : null;
+function clearedEngineeringPlansStorageKey(projectId: string | undefined, sessionId: string | null): string | null {
+  if (!sessionId) return null;
+  const scopedProjectId = projectId?.trim();
+  return scopedProjectId
+    ? `${CLEARED_ENGINEERING_PLANS_PREFIX}:${scopedProjectId}:${sessionId}`
+    : `${CLEARED_ENGINEERING_PLANS_PREFIX}:${sessionId}`;
 }
 
-function readClearedEngineeringPlanIds(sessionId = getStoredSessionId()): Set<string> {
-  const key = clearedEngineeringPlansStorageKey(sessionId);
+function readClearedEngineeringPlanIds(projectId?: string, sessionId = getStoredSessionId(projectId)): Set<string> {
+  const key = clearedEngineeringPlansStorageKey(projectId, sessionId);
   if (!key || typeof window === "undefined") return new Set();
   try {
     const raw = window.localStorage.getItem(key);
@@ -65,8 +69,8 @@ function readClearedEngineeringPlanIds(sessionId = getStoredSessionId()): Set<st
   }
 }
 
-function rememberClearedEngineeringPlans(plans: EngineeringPlan[], sessionId = getStoredSessionId()): void {
-  const key = clearedEngineeringPlansStorageKey(sessionId);
+function rememberClearedEngineeringPlans(plans: EngineeringPlan[], projectId?: string, sessionId = getStoredSessionId(projectId)): void {
+  const key = clearedEngineeringPlansStorageKey(projectId, sessionId);
   if (!key || typeof window === "undefined") return;
   const planIds = plans.map((plan) => plan.plan_id).filter((planId): planId is string => Boolean(planId));
   try {
@@ -80,16 +84,16 @@ function rememberClearedEngineeringPlans(plans: EngineeringPlan[], sessionId = g
   }
 }
 
-function withoutClearedEngineeringPlans(data: BackendState, sessionId = getStoredSessionId()): BackendState {
-  const clearedPlanIds = readClearedEngineeringPlanIds(sessionId);
+function withoutClearedEngineeringPlans(data: BackendState, projectId?: string, sessionId = getStoredSessionId(projectId)): BackendState {
+  const clearedPlanIds = readClearedEngineeringPlanIds(projectId, sessionId);
   if (clearedPlanIds.size === 0 || !Array.isArray(data.engineering_plans)) return data;
 
   const engineeringPlans = data.engineering_plans.filter((plan) => !clearedPlanIds.has(plan.plan_id));
   return engineeringPlans.length === data.engineering_plans.length ? data : { ...data, engineering_plans: engineeringPlans };
 }
 
-function withoutClearedEngineeringPlanSignals(signals: EngineeringPlanSignal[], sessionId = getStoredSessionId()): EngineeringPlanSignal[] {
-  const clearedPlanIds = readClearedEngineeringPlanIds(sessionId);
+function withoutClearedEngineeringPlanSignals(signals: EngineeringPlanSignal[], projectId?: string, sessionId = getStoredSessionId(projectId)): EngineeringPlanSignal[] {
+  const clearedPlanIds = readClearedEngineeringPlanIds(projectId, sessionId);
   if (clearedPlanIds.size === 0) return signals;
   return signals.filter((signal) => !signal.plan_id || !clearedPlanIds.has(signal.plan_id));
 }
@@ -551,6 +555,7 @@ function deriveDesignProjectName(
 
 type RedlineMapProps = {
   mode?: "mobileWalk" | "default";
+  projectId?: string;
 };
 
 type WorkspaceTab = "setup" | "map" | "reports" | "billing";
@@ -599,7 +604,7 @@ type GpsPhoto = {
   addedAt: number; // Date.now()
 };
 
-function OfficeRedlineMapInner({ mode = "default" }: RedlineMapProps) {
+function OfficeRedlineMapInner({ mode = "default", projectId }: RedlineMapProps) {
   const [activeWorkspaceTab, setActiveWorkspaceTab] = useState<WorkspaceTab>("setup");
   const [state, setState] = useState<BackendState | null>(null);
   const [busy, setBusy] = useState(false);
@@ -684,8 +689,10 @@ function OfficeRedlineMapInner({ mode = "default" }: RedlineMapProps) {
       .toLowerCase()
       .replace(/[^a-z0-9._-]+/g, "-")
       .replace(/^-+|-+$/g, "") || "default";
-    return `osp_project_planned_footage:${safeKey}`;
-  }, [activeJob]);
+    return projectId
+      ? `osp_project_planned_footage:${projectId}:${safeKey}`
+      : `osp_project_planned_footage:${safeKey}`;
+  }, [activeJob, projectId]);
 
   useEffect(() => {
     try {
@@ -1606,11 +1613,11 @@ ${buildFolder("Stations", stationPlacemarks)}
       setStatusTone("neutral");
     }
     try {
-      const response = await fetch(appendSessionId(`${API_BASE}/api/current-state`));
+      const response = await fetch(appendSessionId(`${API_BASE}/api/current-state`, projectId));
       const data: BackendState = await response.json();
-      const sessionId = rememberSessionFromResponse(data);
+      const sessionId = rememberSessionFromResponse(data, projectId);
       if (!response.ok || data.success === false) throw new Error(data.error || "Unable to load current state.");
-      setState(withoutClearedEngineeringPlans(data, sessionId));
+      setState(withoutClearedEngineeringPlans(data, projectId, sessionId));
       fetchPipelineDiag(); // Nova Phase 1 — non-blocking refresh
       if (data.warning) {
         setStatusText(String(data.warning));
@@ -1637,12 +1644,12 @@ ${buildFolder("Stations", stationPlacemarks)}
   // Nova Phase 1 — fire-and-forget. Non-fatal. Nova degrades gracefully if unavailable.
   async function fetchPipelineDiag(): Promise<void> {
     try {
-      const res = await fetch(appendSessionId(`${API_BASE}/api/debug/pipeline-diag`));
+      const res = await fetch(appendSessionId(`${API_BASE}/api/debug/pipeline-diag`, projectId));
       if (!res.ok) return;
       const data = await res.json();
       if (Array.isArray(data.pipeline_diag)) setPipelineDiag(data.pipeline_diag);
       if (Array.isArray(data.engineering_plan_signals)) {
-        setEngineeringPlanSignals(withoutClearedEngineeringPlanSignals(data.engineering_plan_signals));
+        setEngineeringPlanSignals(withoutClearedEngineeringPlanSignals(data.engineering_plan_signals, projectId));
       }
     } catch {
       // non-fatal — Nova works with whatever data it already has
@@ -1652,11 +1659,11 @@ ${buildFolder("Stations", stationPlacemarks)}
   async function handleReset() {
     setBusy(true);
     try {
-      const response = await fetch(appendSessionId(`${API_BASE}/api/reset-state`), { method: "POST" });
+      const response = await fetch(appendSessionId(`${API_BASE}/api/reset-state`, projectId), { method: "POST" });
       const data: BackendState = await response.json();
-      const sessionId = rememberSessionFromResponse(data);
+      const sessionId = rememberSessionFromResponse(data, projectId);
       if (!response.ok || data.success === false) throw new Error(data.error || "Reset failed.");
-      rememberClearedEngineeringPlans([...(state?.engineering_plans ?? []), ...(data.engineering_plans ?? [])], sessionId);
+      rememberClearedEngineeringPlans([...(state?.engineering_plans ?? []), ...(data.engineering_plans ?? [])], projectId, sessionId);
       setState({ ...data, engineering_plans: [] });
       // Nova Phase 1 — clear diagnostics on workspace reset
       setPipelineDiag([]);
@@ -1701,10 +1708,10 @@ ${buildFolder("Stations", stationPlacemarks)}
     try {
       const form = new FormData();
       form.append("file", file);
-      appendSessionIdToForm(form);
+      appendSessionIdToForm(form, projectId);
       const response = await fetch(`${API_BASE}/api/upload-design`, { method: "POST", body: form });
       const data: BackendState = await response.json();
-      rememberSessionFromResponse(data);
+      rememberSessionFromResponse(data, projectId);
       if (!response.ok || data.success === false) throw new Error(data.error || "Design upload failed.");
       setState(data);
       setDidInitialFit(false);
@@ -1736,10 +1743,10 @@ ${buildFolder("Stations", stationPlacemarks)}
     try {
       const form = new FormData();
       Array.from(files).forEach((file) => form.append("files", file));
-      appendSessionIdToForm(form);
+      appendSessionIdToForm(form, projectId);
       const response = await fetch(`${API_BASE}/api/upload-structured-bore-files`, { method: "POST", body: form });
       const data: BackendState = await response.json();
-      rememberSessionFromResponse(data);
+      rememberSessionFromResponse(data, projectId);
       if (!response.ok || data.success === false) throw new Error(data.error || "Structured bore upload failed.");
       setState(data);
       fetchPipelineDiag(); // Nova Phase 1 — refresh diagnostics after bore log upload
@@ -1771,16 +1778,16 @@ ${buildFolder("Stations", stationPlacemarks)}
     setStatusTone("neutral");
     try {
       const form = new FormData();
-      appendSessionIdToForm(form);
+      appendSessionIdToForm(form, projectId);
       Array.from(files).forEach((f) => form.append("files", f));
       const response = await fetch(`${API_BASE}/api/upload-engineering-plans`, { method: "POST", body: form });
       const data = await response.json();
-      rememberSessionFromResponse(data);
+      rememberSessionFromResponse(data, projectId);
       if (!response.ok || data.success === false) throw new Error(data.error || "Engineering plan upload failed.");
       setState((prev) => {
         if (!prev) return prev;
         const nextState = { ...prev, engineering_plans: data.engineering_plans ?? prev.engineering_plans };
-        return withoutClearedEngineeringPlans(nextState);
+        return withoutClearedEngineeringPlans(nextState, projectId);
       });
       fetchPipelineDiag(); // Nova Phase 1 — refresh plan signals after engineering plan upload
       setStatusText(String(data.message || "Engineering plans uploaded successfully."));
@@ -1810,13 +1817,13 @@ ${buildFolder("Stations", stationPlacemarks)}
           stationPointCount: (state?.station_points || []).length,
         },
       };
-      const response = await fetch(appendSessionId(`${API_BASE}/api/report-bug`), {
+      const response = await fetch(appendSessionId(`${API_BASE}/api/report-bug`, projectId), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
       const data = await response.json();
-      rememberSessionFromResponse(data);
+      rememberSessionFromResponse(data, projectId);
       if (!response.ok || data.success === false) throw new Error(data.error || "Note submission failed.");
       setStatusText(String(data.message || "Operator note submitted."));
       setStatusTone("success");
@@ -1850,10 +1857,10 @@ ${buildFolder("Stations", stationPlacemarks)}
     setStationPhotosLoading(true);
     try {
       const response = await fetch(
-        appendSessionId(`${API_BASE}/api/station-photos?station_identity=${encodeURIComponent(stationIdentity)}`)
+        appendSessionId(`${API_BASE}/api/station-photos?station_identity=${encodeURIComponent(stationIdentity)}`, projectId)
       );
       const data = await response.json();
-      rememberSessionFromResponse(data);
+      rememberSessionFromResponse(data, projectId);
       if (!response.ok || data.success === false) {
         throw new Error(data.error || "Unable to load station photos.");
       }
@@ -1892,14 +1899,14 @@ ${buildFolder("Stations", stationPlacemarks)}
         stationIdentityPart(selectedStation.lon, 8)
       );
       Array.from(files).forEach((file) => form.append("files", file));
-      appendSessionIdToForm(form);
+      appendSessionIdToForm(form, projectId);
 
       const response = await fetch(`${API_BASE}/api/station-photos/upload`, {
         method: "POST",
         body: form,
       });
       const data = await response.json();
-      rememberSessionFromResponse(data);
+      rememberSessionFromResponse(data, projectId);
       if (!response.ok || data.success === false) {
         throw new Error(data.error || "Station photo upload failed.");
       }
@@ -4552,9 +4559,9 @@ ${buildFolder("Stations", stationPlacemarks)}
   );
 }
 
-export default function RedlineMap({ mode = "default" }: RedlineMapProps) {
+export default function RedlineMap({ mode = "default", projectId }: RedlineMapProps) {
   if (mode === "mobileWalk") {
     return <MobileWalkContainer />;
   }
-  return <OfficeRedlineMapInner mode={mode} />;
+  return <OfficeRedlineMapInner mode={mode} projectId={projectId} />;
 }
