@@ -556,6 +556,8 @@ function deriveDesignProjectName(
 type RedlineMapProps = {
   mode?: "mobileWalk" | "default";
   projectId?: string;
+  /** When set (e.g. project route), replaces the generic operator workspace title. */
+  workspaceTitle?: string;
 };
 
 type WorkspaceTab = "setup" | "map" | "reports" | "billing";
@@ -604,7 +606,7 @@ type GpsPhoto = {
   addedAt: number; // Date.now()
 };
 
-function OfficeRedlineMapInner({ mode = "default", projectId }: RedlineMapProps) {
+function OfficeRedlineMapInner({ mode = "default", projectId, workspaceTitle }: RedlineMapProps) {
   const [activeWorkspaceTab, setActiveWorkspaceTab] = useState<WorkspaceTab>("setup");
   const [state, setState] = useState<BackendState | null>(null);
   const [busy, setBusy] = useState(false);
@@ -2233,6 +2235,7 @@ ${buildFolder("Stations", stationPlacemarks)}
   const hasGeneratedOutput = redlineSegments.length > 0 || stationPoints.length > 0;
   const desktopMapHeight = Math.max(MAP_HEIGHT, 900);
   const mapScrollGutterWidth = 34;
+  const isProjectWorkspace = Boolean(workspaceTitle?.trim());
 
   return (
     <div style={{ minHeight: "100vh", background: "linear-gradient(180deg, #eef3f8 0%, #f6f9fc 100%)", fontFamily: "Inter, ui-sans-serif, system-ui, sans-serif", color: "#0f172a" }}>
@@ -2376,37 +2379,75 @@ ${buildFolder("Stations", stationPlacemarks)}
       `}</style>
       <div className="osp-workspace-main" style={{ maxWidth: 1520, margin: "0 auto", padding: 20 }}>
         <div style={{ display: "grid", gap: 8 }}>
-          <div
-            style={{
-              background: "linear-gradient(135deg, #ffffff 0%, #f7fbff 52%, #eef6ff 100%)",
-              border: "1px solid #dbe4ee",
-              borderRadius: 18,
-              padding: "14px 18px",
-              boxShadow: "0 8px 20px rgba(15, 23, 42, 0.04)",
-            }}
-          >
-            <div style={{ display: "flex", justifyContent: "space-between", gap: 16, alignItems: "flex-start", flexWrap: "wrap" }}>
-              <div style={{ maxWidth: 720 }}>
-                <div style={{ fontSize: 22, fontWeight: 900, letterSpacing: -0.5, color: "#0f172a" }}>OSP Redlining Operator Workspace</div>
-                <div style={{ marginTop: 6, fontSize: 14, color: "#526173", lineHeight: 1.5 }}>
-                  Upload design and bore logs, review the map, then use Reports and Billing for outputs.
-                </div>
+          {isProjectWorkspace ? (
+            <div
+              style={{
+                display: "flex",
+                flexWrap: "wrap",
+                alignItems: "center",
+                gap: 10,
+                padding: "6px 10px",
+                background: "#ffffff",
+                border: "1px solid #e2e8f0",
+                borderRadius: 10,
+              }}
+            >
+              <input
+                value={jobLabel}
+                onChange={(e) => setJobLabel(e.target.value)}
+                placeholder="Optional local beta job label"
+                style={{
+                  flex: "1 1 200px",
+                  minWidth: 160,
+                  maxWidth: 520,
+                  borderRadius: 10,
+                  border: "1px solid #cfd8e3",
+                  background: "#fff",
+                  padding: "8px 11px",
+                  outline: "none",
+                  fontSize: 14,
+                }}
+              />
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 8, flex: "0 0 auto" }}>
+                <button onClick={() => fetchState("Refreshing backend state...")} disabled={busy} style={buttonStyle("#ffffff", "#0f172a", "#cfd8e3", busy)}>Refresh State</button>
+                <button onClick={handleReset} disabled={busy} style={buttonStyle("#0f172a", "#ffffff", "#0f172a", busy)}>Clear Workspace</button>
               </div>
+            </div>
+          ) : (
+            <div
+              style={{
+                background: "linear-gradient(135deg, #ffffff 0%, #f7fbff 52%, #eef6ff 100%)",
+                border: "1px solid #dbe4ee",
+                borderRadius: 18,
+                padding: "14px 18px",
+                boxShadow: "0 8px 20px rgba(15, 23, 42, 0.04)",
+              }}
+            >
+              <div style={{ display: "flex", justifyContent: "space-between", gap: 16, alignItems: "flex-start", flexWrap: "wrap" }}>
+                <div style={{ maxWidth: 720 }}>
+                  <div style={{ fontSize: 22, fontWeight: 900, letterSpacing: -0.5, color: "#0f172a" }}>
+                    OSP Redlining Operator Workspace
+                  </div>
+                  <div style={{ marginTop: 6, fontSize: 14, color: "#526173", lineHeight: 1.5 }}>
+                    Upload design and bore logs, review the map, then use Reports and Billing for outputs.
+                  </div>
+                </div>
 
-              <div style={{ display: "grid", gap: 10, minWidth: 320, flex: "0 1 360px" }}>
-                <input
-                  value={jobLabel}
-                  onChange={(e) => setJobLabel(e.target.value)}
-                  placeholder="Optional local beta job label"
-                  style={{ borderRadius: 14, border: "1px solid #cfd8e3", background: "#fff", padding: "12px 14px", outline: "none", fontSize: 14 }}
-                />
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 10 }}>
-                  <button onClick={() => fetchState("Refreshing backend state...")} disabled={busy} style={buttonStyle("#ffffff", "#0f172a", "#cfd8e3", busy)}>Refresh State</button>
-                  <button onClick={handleReset} disabled={busy} style={buttonStyle("#0f172a", "#ffffff", "#0f172a", busy)}>Clear Workspace</button>
+                <div style={{ display: "grid", gap: 10, minWidth: 320, flex: "0 1 360px" }}>
+                  <input
+                    value={jobLabel}
+                    onChange={(e) => setJobLabel(e.target.value)}
+                    placeholder="Optional local beta job label"
+                    style={{ borderRadius: 14, border: "1px solid #cfd8e3", background: "#fff", padding: "12px 14px", outline: "none", fontSize: 14 }}
+                  />
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 10 }}>
+                    <button onClick={() => fetchState("Refreshing backend state...")} disabled={busy} style={buttonStyle("#ffffff", "#0f172a", "#cfd8e3", busy)}>Refresh State</button>
+                    <button onClick={handleReset} disabled={busy} style={buttonStyle("#0f172a", "#ffffff", "#0f172a", busy)}>Clear Workspace</button>
+                  </div>
                 </div>
               </div>
             </div>
-          </div>
+          )}
 
           <StatusBanner tone={statusTone} text={statusText} />
 
@@ -4513,7 +4554,11 @@ ${buildFolder("Stations", stationPlacemarks)}
 
         {/* Footer */}
         <div className="rpt-footer">
-          <span>OSP Redlining Operator Workspace — Field Report</span>
+          <span>
+            {workspaceTitle?.trim()
+              ? `${workspaceTitle.trim()} — Field Report`
+              : "OSP Redlining Operator Workspace — Field Report"}
+          </span>
           <span>{new Date().toISOString().slice(0, 10)}</span>
         </div>
       </div>
@@ -4521,9 +4566,9 @@ ${buildFolder("Stations", stationPlacemarks)}
   );
 }
 
-export default function RedlineMap({ mode = "default", projectId }: RedlineMapProps) {
+export default function RedlineMap({ mode = "default", projectId, workspaceTitle }: RedlineMapProps) {
   if (mode === "mobileWalk") {
     return <MobileWalkContainer />;
   }
-  return <OfficeRedlineMapInner mode={mode} projectId={projectId} />;
+  return <OfficeRedlineMapInner mode={mode} projectId={projectId} workspaceTitle={workspaceTitle} />;
 }
