@@ -1,12 +1,14 @@
 "use client";
 
 import {
+  Suspense,
   useCallback,
   useEffect,
   useMemo,
   useRef,
   useState,
 } from "react";
+import { useSearchParams } from "next/navigation";
 
 import { getJobs, getJobById, type Job, type Route } from "@/lib/api";
 import { getOrCreateSessionId } from "@/lib/session";
@@ -180,6 +182,7 @@ type MapController = {
   // These are no-ops until the map has been initialized.
   setDesignRoutes(routes: ReadonlyArray<Route>): void;
   clearDesignRoutes(): void;
+  syncStationMarkers(entries: ReadonlyArray<StationEntry>): void;
 };
 
 function createMapController(): MapController {
@@ -193,6 +196,7 @@ function createMapController(): MapController {
   // Phase 4C: design-route layers. We hold references so we can remove just
   // the design polylines (and not the breadcrumb polyline) on each update.
   const designLayers: Array<ReturnType<LeafletNS["polyline"]>> = [];
+  let stationLayerGroup: ReturnType<LeafletNS["layerGroup"]> | null = null;
 
   function clearDesignLayersInternal(): void {
     while (designLayers.length > 0) {
@@ -237,6 +241,8 @@ function createMapController(): MapController {
           opacity: 0.9,
         }).addTo(map);
 
+        stationLayerGroup = L.layerGroup().addTo(map);
+
         return true;
       } catch {
         // Caller will render the fallback panel.
@@ -247,6 +253,13 @@ function createMapController(): MapController {
     destroy(): void {
       try {
         clearDesignLayersInternal();
+        try {
+          stationLayerGroup?.clearLayers();
+          stationLayerGroup?.remove();
+        } catch {
+          /* ignore */
+        }
+        stationLayerGroup = null;
         polyline?.remove();
         positionMarker?.remove();
         positionHalo?.remove();
@@ -389,6 +402,35 @@ function createMapController(): MapController {
         /* ignore */
       }
     },
+
+    syncStationMarkers(entries: ReadonlyArray<StationEntry>): void {
+      if (!L || !map || !stationLayerGroup) return;
+      try {
+        stationLayerGroup.clearLayers();
+        for (const e of entries) {
+          if (!Number.isFinite(e.lat) || !Number.isFinite(e.lon)) continue;
+          const latlng: [number, number] = [e.lat, e.lon];
+          const cm = L.circleMarker(latlng, {
+            radius: 8,
+            color: "#fef3c7",
+            weight: 2,
+            fillColor: "#c2410c",
+            fillOpacity: 1,
+            interactive: false,
+          });
+          cm.bindTooltip(String(e.station_number), {
+            permanent: true,
+            direction: "top",
+            offset: [0, -6],
+            className: "walk-station-tt",
+            opacity: 1,
+          });
+          stationLayerGroup.addLayer(cm);
+        }
+      } catch {
+        /* ignore */
+      }
+    },
   };
 }
 
@@ -514,7 +556,13 @@ function stationBackspace(current: string): string {
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
-export default function WalkPage() {
+function WalkPageInner() {
+  const searchParams = useSearchParams();
+  const walkProjectScope = useMemo(() => {
+    const t = searchParams.get("projectId")?.trim();
+    return t && t.length > 0 ? t : undefined;
+  }, [searchParams]);
+
   const [hydrated, setHydrated] = useState(false);
   const [sessionId, setSessionId] = useState<string | null>(null);
 
@@ -620,9 +668,12 @@ export default function WalkPage() {
           : todayIso(),
       section: persisted?.section ?? DEFAULT_FORM.section,
     });
-    setSessionId(getOrCreateSessionId());
     setHydrated(true);
   }, []);
+
+  useEffect(() => {
+    setSessionId(getOrCreateSessionId(walkProjectScope));
+  }, [walkProjectScope]);
 
   useEffect(() => {
     if (!hydrated) return;
@@ -633,7 +684,7 @@ export default function WalkPage() {
     setJobsLoading(true);
     setJobsError(null);
     try {
-      const data = await getJobs();
+      const data = await getJobs(walkProjectScope);
       setJobs(data);
     } catch (err: unknown) {
       setJobsError(
@@ -643,7 +694,7 @@ export default function WalkPage() {
     } finally {
       setJobsLoading(false);
     }
-  }, []);
+  }, [walkProjectScope]);
 
   useEffect(() => {
     fetchJobs();
@@ -725,7 +776,7 @@ export default function WalkPage() {
     let cancelled = false;
     void (async () => {
       try {
-        const detail = await getJobById(form.jobId);
+        const detail = await getJobById(form.jobId, walkProjectScope);
         if (cancelled) return;
         setDesignRoutes(Array.isArray(detail.routes) ? detail.routes : []);
       } catch {
@@ -738,7 +789,7 @@ export default function WalkPage() {
     return () => {
       cancelled = true;
     };
-  }, [form.jobId, hydrated, selectedJob]);
+  }, [form.jobId, hydrated, selectedJob, walkProjectScope]);
 
   // Phase 4C: push design routes into the map controller. Deterministic
   // gating only — no debouncing, no rAF, no delay. Runs whenever any of
@@ -756,6 +807,14 @@ export default function WalkPage() {
     // FORCE apply routes
     controller.setDesignRoutes(designRoutes);
   }, [mapReady, mapAvailable, designRoutes]);
+
+  useEffect(() => {
+    if (!mapReady) return;
+    if (!mapAvailable) return;
+    const controller = mapControllerRef.current;
+    if (!controller) return;
+    controller.syncStationMarkers(stationEntries);
+  }, [mapReady, mapAvailable, stationEntries]);
 
   // ── Handlers ───────────────────────────────────────────────────────────────
 
@@ -1028,6 +1087,7 @@ export default function WalkPage() {
       // Phase 4C: design-route overlay is intentionally NOT cleared here —
       // it belongs to the selected job, not to a single walk session.
       mapControllerRef.current?.resetTrail();
+      mapControllerRef.current?.syncStationMarkers([]);
 
       setStatus("walking");
       startGpsWatch();
@@ -1948,6 +2008,20 @@ export default function WalkPage() {
         />
       )}
     </div>
+  );
+}
+
+export default function WalkPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="flex min-h-screen items-center justify-center bg-slate-950 text-slate-400 text-sm">
+          Loading…
+        </div>
+      }
+    >
+      <WalkPageInner />
+    </Suspense>
   );
 }
 

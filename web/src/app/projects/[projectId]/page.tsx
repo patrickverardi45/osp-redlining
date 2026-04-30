@@ -48,6 +48,20 @@ export default async function ProjectPage({ params }: ProjectPageProps) {
         <p style={{ margin: "6px 0 0", color: "#64748b", fontSize: 14, lineHeight: 1.45 }}>
           Project workspace — design, bore logs, reports, and billing are scoped to this job.
         </p>
+        <p style={{ margin: "10px 0 0" }}>
+          <Link
+            href={`/walk?projectId=${encodeURIComponent(projectId)}`}
+            style={{
+              display: "inline-block",
+              color: "#0f172a",
+              fontSize: 13,
+              fontWeight: 700,
+              textDecoration: "underline",
+            }}
+          >
+            Field walk (mobile)
+          </Link>
+        </p>
       </header>
       <RedlineMap projectId={projectId} workspaceTitle={projectDisplayName} />
     </>

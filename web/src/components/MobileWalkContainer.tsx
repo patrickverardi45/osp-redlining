@@ -1,6 +1,7 @@
 "use client";
 
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import MobileWalkUI, {
   type MobileWalkAddEntryPayload,
 } from "@/components/MobileWalkUI";
@@ -19,6 +20,8 @@ type Props = {
   officeContextService?: OfficeContextService;
   crew?: string;
   print?: string;
+  /** When set, scopes current-state / session to this project (overrides URL). */
+  projectId?: string;
 };
 
 type EntryExtras = {
@@ -126,12 +129,21 @@ function classifyGpsError(raw: string | null | undefined): {
   };
 }
 
-export default function MobileWalkContainer({
+function MobileWalkContainerInner({
   service = defaultWalkService,
   officeContextService = defaultOfficeContextService,
   crew: crewProp,
   print: printProp,
+  projectId: projectIdProp,
 }: Props) {
+  const searchParams = useSearchParams();
+  const walkProjectScope = useMemo(() => {
+    const fromProp = projectIdProp?.trim();
+    if (fromProp) return fromProp;
+    const q = searchParams.get("projectId")?.trim();
+    return q && q.length > 0 ? q : undefined;
+  }, [projectIdProp, searchParams]);
+
   const [busy, setBusy] = useState(false);
   const [activeSession, setActiveSession] = useState<WalkSessionSnapshot | null>(null);
   const [showAddEntryModal, setShowAddEntryModal] = useState(false);
@@ -213,7 +225,7 @@ export default function MobileWalkContainer({
     let cancelled = false;
     (async () => {
       try {
-        const ctx = await officeContextService.fetchRouteContext();
+        const ctx = await officeContextService.fetchRouteContext(walkProjectScope);
         if (!cancelled) {
           setRouteContext(ctx);
           setRouteContextLoaded(true);
@@ -230,7 +242,7 @@ export default function MobileWalkContainer({
     return () => {
       cancelled = true;
     };
-  }, [officeContextService]);
+  }, [officeContextService, walkProjectScope]);
 
   // Auto-clear only SUCCESS/NEUTRAL status toasts. Errors stick until the
   // next action so the user cannot miss them.
@@ -552,5 +564,19 @@ export default function MobileWalkContainer({
         </div>
       ) : null}
     </div>
+  );
+}
+
+export default function MobileWalkContainer(props: Props) {
+  return (
+    <Suspense
+      fallback={
+        <div className="flex min-h-screen items-center justify-center bg-slate-950 text-slate-400 text-sm">
+          Loading…
+        </div>
+      }
+    >
+      <MobileWalkContainerInner {...props} />
+    </Suspense>
   );
 }

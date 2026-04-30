@@ -171,14 +171,14 @@ export interface GenerateReportResult {
 
 // ─── API calls ────────────────────────────────────────────────────────────────
 
-export async function getJobs(): Promise<Job[]> {
-  const res = await fetch(appendSessionId(`${BASE_URL}/jobs`), { cache: "no-store" });
+export async function getJobs(projectId?: string): Promise<Job[]> {
+  const res = await fetch(appendSessionId(`${BASE_URL}/jobs`, projectId), { cache: "no-store" });
   if (!res.ok) throw new Error(`Failed to fetch jobs: ${res.status} ${res.statusText}`);
   return res.json();
 }
 
-export async function getJobById(jobId: string): Promise<JobDetail> {
-  const res = await fetch(appendSessionId(`${BASE_URL}/jobs/${jobId}`), { cache: "no-store" });
+export async function getJobById(jobId: string, projectId?: string): Promise<JobDetail> {
+  const res = await fetch(appendSessionId(`${BASE_URL}/jobs/${jobId}`, projectId), { cache: "no-store" });
   if (!res.ok) throw new Error(`Failed to fetch job ${jobId}: ${res.status} ${res.statusText}`);
   return res.json();
 }

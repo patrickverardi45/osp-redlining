@@ -50,17 +50,17 @@ function cleanCoords(coords: number[][] | undefined | null): number[][] {
 
 export interface OfficeContextService {
   /** Fetch the currently assigned route context. Safe to call on mount. */
-  fetchRouteContext(): Promise<RouteContext>;
+  fetchRouteContext(projectId?: string): Promise<RouteContext>;
 }
 
 class HttpOfficeContextService implements OfficeContextService {
-  async fetchRouteContext(): Promise<RouteContext> {
-    const response = await fetch(appendSessionId(`${API_BASE}/api/current-state`));
+  async fetchRouteContext(projectId?: string): Promise<RouteContext> {
+    const response = await fetch(appendSessionId(`${API_BASE}/api/current-state`, projectId));
     if (!response.ok) {
       throw new Error(`current-state request failed: ${response.status}`);
     }
     const data: BackendState = await response.json();
-    rememberSessionFromResponse(data);
+    rememberSessionFromResponse(data, projectId);
 
     const selectedName =
       (typeof data.selected_route_name === "string" && data.selected_route_name.trim()) ||
