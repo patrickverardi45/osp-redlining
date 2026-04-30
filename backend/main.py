@@ -8828,27 +8828,7 @@ def _office_routes_payload() -> List[Dict[str, Any]]:
             }
         )
 
-    if routes:
-        return routes
-
-    synthetic_coords = [
-        [-96.39862, 30.16654],
-        [-96.39815, 30.16691],
-        [-96.39771, 30.16725],
-        [-96.39731, 30.16757],
-    ]
-    return [
-        {
-            "id": "route-demo-1",
-            "route_name": "Demo Mainline A",
-            "length_ft": 420.0,
-            "segment_count": max(0, len(synthetic_coords) - 1),
-            "geometry": {
-                "type": "LineString",
-                "coordinates": synthetic_coords,
-            },
-        }
-    ]
+    return routes
 
 
 def _office_sessions_payload(job_id: str, session_id: str) -> List[Dict[str, Any]]:
