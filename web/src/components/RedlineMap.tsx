@@ -562,6 +562,8 @@ type RedlineMapProps = {
 
 type WorkspaceTab = "setup" | "map" | "reports" | "billing";
 
+type BillingApprovalStatus = "not_submitted" | "pending" | "approved";
+
 const WORKSPACE_TABS: Array<{ id: WorkspaceTab; label: string }> = [
   { id: "setup", label: "Setup" },
   { id: "map", label: "Map" },
@@ -625,6 +627,7 @@ function OfficeRedlineMapInner({ mode = "default", projectId, workspaceTitle }: 
   const [extraExceptionLabel, setExtraExceptionLabel] = useState("");
   const [extraExceptionAmount, setExtraExceptionAmount] = useState("");
   const [extraExceptionNote, setExtraExceptionNote] = useState("");
+  const [billingApprovalStatus, setBillingApprovalStatus] = useState<BillingApprovalStatus>("not_submitted");
   // Nova Phase 1 — read-only job intelligence state. Never mutates other state.
   const [pipelineDiag, setPipelineDiag] = useState<PipelineDiagEntry[]>([]);
   const [engineeringPlanSignals, setEngineeringPlanSignals] = useState<EngineeringPlanSignal[]>([]);
@@ -1702,6 +1705,7 @@ ${buildFolder("Stations", stationPlacemarks)}
       // regardless of whether the backend reset succeeded.
       clearGpsPhotos();
       setManualFootage("");
+      setBillingApprovalStatus("not_submitted");
       setBusy(false);
     }
   }
@@ -2233,6 +2237,9 @@ ${buildFolder("Stations", stationPlacemarks)}
   const hasDesign = (kmzLineFeatures.length || kmzPolygonFeatures.length) > 0;
   const hasBoreFiles = (state?.loaded_field_data_files || 0) > 0;
   const hasGeneratedOutput = redlineSegments.length > 0 || stationPoints.length > 0;
+  const billingChecklistComplete =
+    hasDesign && hasBoreFiles && (stationPhotos.length > 0 || gpsPhotos.length > 0);
+  const billingApproved = billingApprovalStatus === "approved";
   const desktopMapHeight = Math.max(MAP_HEIGHT, 900);
   const mapScrollGutterWidth = 34;
   const isProjectWorkspace = Boolean(workspaceTitle?.trim());
@@ -2505,6 +2512,21 @@ ${buildFolder("Stations", stationPlacemarks)}
             subtitle="KMZ design, structured bore logs, and optional engineering plan PDFs/images. Same upload behavior as before."
             style={{ display: activeWorkspaceTab === "setup" ? "block" : "none" }}
           >
+            <div
+              style={{
+                marginBottom: 14,
+                padding: "8px 12px",
+                borderRadius: 10,
+                border: "1px solid #e2e8f0",
+                background: "#f8fafc",
+                fontSize: 12,
+                color: "#475569",
+                lineHeight: 1.5,
+              }}
+            >
+              <span style={{ fontWeight: 800, color: "#0f172a" }}>Workflow: </span>
+              Upload KMZ and bore logs (optional plans) → review on the Map tab → open Reports or Billing / Export for summaries and print.
+            </div>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 16, alignItems: "start" }}>
               <label style={uploadCardStyle(busy)}>
                 <input
@@ -2626,28 +2648,6 @@ ${buildFolder("Stations", stationPlacemarks)}
                   })}
                 </div>
               )}
-            </div>
-          </Section>
-
-          <Section
-            title="2. Actions"
-            subtitle="Refresh or clear the workspace."
-            style={{ display: activeWorkspaceTab === "setup" ? "block" : "none", order: 4 }}
-          >
-            <div style={{ display: "grid", gap: 12, maxWidth: 560 }}>
-              <div style={{ border: "1px solid #dbe4ee", borderRadius: 16, padding: 14, background: "#fbfdff" }}>
-                <div style={{ fontSize: 14, fontWeight: 800 }}>Workflow</div>
-                <div style={{ marginTop: 6, fontSize: 13, color: "#64748b", lineHeight: 1.6 }}>
-                  1. Upload KMZ and bore logs (optional engineering plans).<br />
-                  2. Review output on the map.<br />
-                  3. Open Reports / Billing for summaries and export.
-                </div>
-              </div>
-
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 12 }}>
-                <button onClick={() => fetchState("Refreshing backend state...")} disabled={busy} style={buttonStyle("#ffffff", "#0f172a", "#cfd8e3", busy)}>Refresh Backend State</button>
-                <button onClick={handleReset} disabled={busy} style={buttonStyle("#0f172a", "#ffffff", "#0f172a", busy)}>Clear Workspace</button>
-              </div>
             </div>
           </Section>
 
@@ -4271,12 +4271,13 @@ ${buildFolder("Stations", stationPlacemarks)}
                           }
                           onChange={(e) => setManualFootage(e.target.value)}
                           placeholder={calculatedCoveredFootage > 0 ? undefined : "Enter footage (ft)"}
-                          style={{ borderRadius: 12, border: "1px solid #cfd8e3", padding: "10px 12px", background: "#ffffff", fontSize: 14 }}
+                          disabled={billingApproved}
+                          style={{ borderRadius: 12, border: "1px solid #cfd8e3", padding: "10px 12px", background: billingApproved ? "#f1f5f9" : "#ffffff", fontSize: 14 }}
                         />
                       </label>
                       <label style={{ display: "grid", gap: 6, fontSize: 13, color: "#475569" }}>
                         <span>Cost per foot ($)</span>
-                        <input value={costPerFoot} onChange={(e) => setCostPerFoot(e.target.value)} style={{ borderRadius: 12, border: "1px solid #cfd8e3", padding: "10px 12px", background: "#ffffff", fontSize: 14 }} />
+                        <input value={costPerFoot} onChange={(e) => setCostPerFoot(e.target.value)} disabled={billingApproved} style={{ borderRadius: 12, border: "1px solid #cfd8e3", padding: "10px 12px", background: billingApproved ? "#f1f5f9" : "#ffffff", fontSize: 14 }} />
                       </label>
                       <div style={{ display: "grid", gap: 6, fontSize: 13, color: "#475569", gridColumn: "1 / -1" }}>
                         <span>Base total</span>
@@ -4293,29 +4294,31 @@ ${buildFolder("Stations", stationPlacemarks)}
                       {exceptions.map((item) => (
                         <div key={item.id} style={{ display: "grid", gap: 6 }}>
                           <div style={{ display: "grid", gridTemplateColumns: "1.4fr 0.8fr auto", gap: 10, alignItems: "center" }}>
-                            <input value={item.label} onChange={(e) => handleExceptionChange(item.id, "label", e.target.value)} style={{ borderRadius: 12, border: "1px solid #cfd8e3", padding: "10px 12px", background: "#ffffff", fontSize: 14 }} />
-                            <input value={item.amount} onChange={(e) => handleExceptionChange(item.id, "amount", e.target.value)} placeholder="0.00" style={{ borderRadius: 12, border: "1px solid #cfd8e3", padding: "10px 12px", background: "#ffffff", fontSize: 14 }} />
-                            <button onClick={() => handleRemoveException(item.id)} style={buttonStyle("#ffffff", "#0f172a", "#000000", false)}>Remove</button>
+                            <input value={item.label} onChange={(e) => handleExceptionChange(item.id, "label", e.target.value)} disabled={billingApproved} style={{ borderRadius: 12, border: "1px solid #cfd8e3", padding: "10px 12px", background: billingApproved ? "#f1f5f9" : "#ffffff", fontSize: 14 }} />
+                            <input value={item.amount} onChange={(e) => handleExceptionChange(item.id, "amount", e.target.value)} placeholder="0.00" disabled={billingApproved} style={{ borderRadius: 12, border: "1px solid #cfd8e3", padding: "10px 12px", background: billingApproved ? "#f1f5f9" : "#ffffff", fontSize: 14 }} />
+                            <button type="button" onClick={() => handleRemoveException(item.id)} disabled={billingApproved} style={buttonStyle("#ffffff", "#0f172a", "#000000", billingApproved)}>Remove</button>
                           </div>
                           <input
                             value={item.note || ""}
                             onChange={(e) => handleExceptionChange(item.id, "note", e.target.value)}
                             placeholder="Note / context (optional)"
-                            style={{ borderRadius: 8, border: "1px solid #e2e8f0", padding: "6px 10px", background: "#f8fafc", fontSize: 12, color: "#475569" }}
+                            disabled={billingApproved}
+                            style={{ borderRadius: 8, border: "1px solid #e2e8f0", padding: "6px 10px", background: billingApproved ? "#f1f5f9" : "#f8fafc", fontSize: 12, color: "#475569" }}
                           />
                         </div>
                       ))}
                       <div style={{ display: "grid", gap: 6 }}>
                         <div style={{ display: "grid", gridTemplateColumns: "1.4fr 0.8fr auto", gap: 10, alignItems: "center" }}>
-                          <input value={extraExceptionLabel} onChange={(e) => setExtraExceptionLabel(e.target.value)} placeholder="Add exception label" style={{ borderRadius: 12, border: "1px solid #cfd8e3", padding: "10px 12px", background: "#ffffff", fontSize: 14 }} />
-                          <input value={extraExceptionAmount} onChange={(e) => setExtraExceptionAmount(e.target.value)} placeholder="0.00" style={{ borderRadius: 12, border: "1px solid #cfd8e3", padding: "10px 12px", background: "#ffffff", fontSize: 14 }} />
-                          <button onClick={handleAddException} style={buttonStyle("#0f172a", "#ffffff", "#000000", false)}>Add</button>
+                          <input value={extraExceptionLabel} onChange={(e) => setExtraExceptionLabel(e.target.value)} placeholder="Add exception label" disabled={billingApproved} style={{ borderRadius: 12, border: "1px solid #cfd8e3", padding: "10px 12px", background: billingApproved ? "#f1f5f9" : "#ffffff", fontSize: 14 }} />
+                          <input value={extraExceptionAmount} onChange={(e) => setExtraExceptionAmount(e.target.value)} placeholder="0.00" disabled={billingApproved} style={{ borderRadius: 12, border: "1px solid #cfd8e3", padding: "10px 12px", background: billingApproved ? "#f1f5f9" : "#ffffff", fontSize: 14 }} />
+                          <button type="button" onClick={handleAddException} disabled={billingApproved} style={buttonStyle("#0f172a", "#ffffff", "#000000", billingApproved)}>Add</button>
                         </div>
                         <input
                           value={extraExceptionNote}
                           onChange={(e) => setExtraExceptionNote(e.target.value)}
                           placeholder="Note / context (optional)"
-                          style={{ borderRadius: 8, border: "1px solid #e2e8f0", padding: "6px 10px", background: "#f8fafc", fontSize: 12, color: "#475569" }}
+                          disabled={billingApproved}
+                          style={{ borderRadius: 8, border: "1px solid #e2e8f0", padding: "6px 10px", background: billingApproved ? "#f1f5f9" : "#f8fafc", fontSize: 12, color: "#475569" }}
                         />
                       </div>
                     </div>
@@ -4330,6 +4333,69 @@ ${buildFolder("Stations", stationPlacemarks)}
                     <SmallRow label="Base total" value={toMoney(baseBillingTotal)} />
                     <SmallRow label="Exception total" value={toMoney(exceptionTotal)} />
                     <SmallRow label="Final total" value={toMoney(finalBillingTotal)} />
+                  </ShellCard>
+
+                  <ShellCard
+                    title="Evidence checklist"
+                    description="Design, bore files, and at least one field photo (station-attached or geotagged) before submit."
+                  >
+                    <div style={{ display: "grid", gap: 10, fontSize: 13, color: "#334155" }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                        <span style={{ fontWeight: 800, color: hasDesign ? "#166534" : "#94a3b8", minWidth: 18 }}>{hasDesign ? "✓" : "○"}</span>
+                        <span>KMZ design loaded</span>
+                      </div>
+                      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                        <span style={{ fontWeight: 800, color: hasBoreFiles ? "#166534" : "#94a3b8", minWidth: 18 }}>{hasBoreFiles ? "✓" : "○"}</span>
+                        <span>Structured bore logs loaded</span>
+                      </div>
+                      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                        <span style={{ fontWeight: 800, color: stationPhotos.length > 0 || gpsPhotos.length > 0 ? "#166534" : "#94a3b8", minWidth: 18 }}>
+                          {stationPhotos.length > 0 || gpsPhotos.length > 0 ? "✓" : "○"}
+                        </span>
+                        <span>Field photos ({stationPhotos.length} station / {gpsPhotos.length} geotagged)</span>
+                      </div>
+                    </div>
+                  </ShellCard>
+
+                  <ShellCard title="Approval" description="Submit billing for review, then record approval. Values above lock after approval.">
+                    <div style={{ display: "grid", gap: 12 }}>
+                      {billingApprovalStatus === "not_submitted" ? (
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => setBillingApprovalStatus("pending")}
+                            disabled={busy || !billingChecklistComplete}
+                            style={{
+                              ...buttonStyle("#0f172a", "#ffffff", "#000000", busy || !billingChecklistComplete),
+                              justifySelf: "start",
+                            }}
+                          >
+                            Submit for Approval
+                          </button>
+                          {!billingChecklistComplete ? (
+                            <div style={{ fontSize: 12, color: "#64748b", lineHeight: 1.45 }}>
+                              Complete every checklist item before submitting.
+                            </div>
+                          ) : null}
+                        </>
+                      ) : null}
+                      {billingApprovalStatus === "pending" ? (
+                        <>
+                          <div style={{ fontSize: 14, fontWeight: 800, color: "#92400e" }}>Status: Pending Approval</div>
+                          <button
+                            type="button"
+                            onClick={() => setBillingApprovalStatus("approved")}
+                            disabled={busy}
+                            style={{ ...buttonStyle("#0f172a", "#ffffff", "#000000", busy), justifySelf: "start" }}
+                          >
+                            Mark Approved
+                          </button>
+                        </>
+                      ) : null}
+                      {billingApprovalStatus === "approved" ? (
+                        <div style={{ fontSize: 14, fontWeight: 800, color: "#166534" }}>Status: Approved</div>
+                      ) : null}
+                    </div>
                   </ShellCard>
                 </div>
               </Section>

@@ -9,6 +9,7 @@ import os
 import re
 import shutil
 import threading
+import time
 import uuid
 import zipfile
 import xml.etree.ElementTree as ET
@@ -8580,9 +8581,9 @@ def walk_test_event(payload: _WalkTestDict[str, _WalkTestAny] = Body(default={})
 
 
 # ---------------------------------------------------------------------------
-# Phase 2A walk endpoints: start / breadcrumbs / end.
-# Session-scoped. Append-only writes into walk_breadcrumbs and walk_meta.
-# Station events and Send Home are intentionally not implemented here yet.
+# Phase 2A walk endpoints: start / breadcrumbs / station-events / end.
+# Session-scoped. Append-only writes into walk_breadcrumbs, walk_station_events, walk_meta.
+# Send Home is intentionally not implemented here yet.
 # ---------------------------------------------------------------------------
 
 WALK_BREADCRUMB_CAP = 50000
@@ -8623,6 +8624,59 @@ def _walk_clean_breadcrumb(point: Any) -> Optional[Dict[str, Any]]:
         "lat": lat,
         "lon": lon,
         "ts": ts or _walk_iso_now(),
+    }
+    if accuracy_m is not None:
+        cleaned["accuracy_m"] = accuracy_m
+    return cleaned
+
+
+def _walk_clean_station_event(ev: Any) -> Optional[Dict[str, Any]]:
+    """Validate/normalize one station event from /api/walk/station-events."""
+    if not isinstance(ev, dict):
+        return None
+    station_number = str(ev.get("station_number") or "").strip()
+    if not station_number:
+        return None
+    try:
+        depth_ft = float(ev.get("depth_ft"))
+        boc_ft = float(ev.get("boc_ft"))
+        lat = float(ev.get("lat"))
+        lon = float(ev.get("lon"))
+    except (TypeError, ValueError):
+        return None
+    if not (-90.0 <= lat <= 90.0) or not (-180.0 <= lon <= 180.0):
+        return None
+    accuracy_raw = ev.get("accuracy_m")
+    accuracy_m: Optional[float]
+    try:
+        accuracy_m = float(accuracy_raw) if accuracy_raw is not None else None
+    except (TypeError, ValueError):
+        accuracy_m = None
+    if accuracy_m is not None and accuracy_m > WALK_ACCURACY_HARD_LIMIT_M:
+        return None
+    ts_raw = ev.get("ts")
+    if isinstance(ts_raw, bool):
+        ts_ms = int(time.time() * 1000)
+    elif isinstance(ts_raw, (int, float)):
+        fv = float(ts_raw)
+        if math.isnan(fv) or math.isinf(fv):
+            ts_ms = int(time.time() * 1000)
+        else:
+            ts_ms = int(fv)
+    elif isinstance(ts_raw, str) and ts_raw.strip():
+        try:
+            ts_ms = int(datetime.fromisoformat(ts_raw.replace("Z", "+00:00")).timestamp() * 1000)
+        except Exception:
+            ts_ms = int(time.time() * 1000)
+    else:
+        ts_ms = int(time.time() * 1000)
+    cleaned: Dict[str, Any] = {
+        "station_number": station_number,
+        "depth_ft": depth_ft,
+        "boc_ft": boc_ft,
+        "lat": lat,
+        "lon": lon,
+        "ts": ts_ms,
     }
     if accuracy_m is not None:
         cleaned["accuracy_m"] = accuracy_m
@@ -8698,6 +8752,26 @@ def walk_breadcrumbs(payload: Dict[str, Any] = Body(default={})) -> JSONResponse
                 breadcrumb_count=len(existing),
                 truncated=truncated,
             )
+    except Exception as exc:
+        return _err(str(exc), session_id=resolved_session_id)
+
+
+@app.post("/api/walk/station-events")
+def walk_station_events(payload: Dict[str, Any] = Body(default={})) -> JSONResponse:
+    body_session_id = payload.get("session_id") if isinstance(payload, dict) else None
+    resolved_session_id = _resolve_session_id(body_session_id)
+    try:
+        raw_events = payload.get("events") if isinstance(payload, dict) else None
+        incoming = list(raw_events) if isinstance(raw_events, list) else []
+        with _session_scope(resolved_session_id):
+            existing = list(STATE.get("walk_station_events") or [])
+            for raw_ev in incoming:
+                cleaned = _walk_clean_station_event(raw_ev)
+                if cleaned is None:
+                    continue
+                existing.append(cleaned)
+            STATE["walk_station_events"] = existing
+            return JSONResponse({"ok": True, "count": len(existing)})
     except Exception as exc:
         return _err(str(exc), session_id=resolved_session_id)
 

@@ -1304,6 +1304,26 @@ export default function WalkPage() {
     if (photoInputRef.current) {
       photoInputRef.current.value = "";
     }
+
+    const sid = sessionIdRef.current;
+    if (sid) {
+      void postJson("/api/walk/station-events", {
+        session_id: sid,
+        events: [
+          {
+            station_number: entry.station_number,
+            depth_ft: entry.depth_ft,
+            boc_ft: entry.boc_ft,
+            lat: entry.lat,
+            lon: entry.lon,
+            accuracy_m: entry.accuracy_m,
+            ts: Date.now(),
+          },
+        ],
+      }).catch(() => {
+        /* keep local entry; non-blocking */
+      });
+    }
   }, [entryDraft, photoDraft]);
 
   // Phase 3B-B + 3C: standalone "Add Photo" path. Independent of station
