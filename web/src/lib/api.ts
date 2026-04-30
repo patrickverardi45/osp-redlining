@@ -183,6 +183,19 @@ export async function getJobById(jobId: string, projectId?: string): Promise<Job
   return res.json();
 }
 
+export interface WalkRouteContextResponse {
+  routes: Route[];
+  route_count: number;
+}
+
+/** Project-scoped design routes for mobile walk (persisted KMZ), not session-local. */
+export async function getWalkRouteContext(projectId: string): Promise<WalkRouteContextResponse> {
+  const q = encodeURIComponent(projectId.trim());
+  const res = await fetch(`${BASE_URL}/api/walk/route-context?projectId=${q}`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Failed to fetch walk route context: ${res.status} ${res.statusText}`);
+  return res.json();
+}
+
 export async function updateJobStatus(
   jobId: string,
   status: JobStatus

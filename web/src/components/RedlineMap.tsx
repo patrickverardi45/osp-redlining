@@ -1718,6 +1718,8 @@ ${buildFolder("Stations", stationPlacemarks)}
       const form = new FormData();
       form.append("file", file);
       appendSessionIdToForm(form, projectId);
+      const scopedProject = projectId?.trim();
+      if (scopedProject) form.append("project_id", scopedProject);
       const response = await fetch(appendSessionId(`${API_BASE}/api/upload-design`, projectId), { method: "POST", body: form });
       const data: BackendState = await response.json();
       rememberSessionFromResponse(data, projectId);

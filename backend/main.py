@@ -20,7 +20,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import boto3
 import pandas as pd
-from fastapi import Body, FastAPI, File, Form, UploadFile
+from fastapi import Body, FastAPI, File, Form, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
@@ -29,6 +29,8 @@ BASE_DIR = Path(__file__).resolve().parent
 BASE_UPLOAD_DIR = os.getenv("OSP_UPLOAD_DIR") or str(BASE_DIR / "uploads")
 UPLOADS_DIR = Path(BASE_UPLOAD_DIR)
 os.makedirs(UPLOADS_DIR, exist_ok=True)
+PROJECT_ROUTE_CONTEXT_DIR = UPLOADS_DIR / "project_route_context"
+os.makedirs(PROJECT_ROUTE_CONTEXT_DIR, exist_ok=True)
 
 app = FastAPI(title="OSP Redlining Mapping Layer")
 app.mount("/uploads", StaticFiles(directory=BASE_UPLOAD_DIR), name="uploads")
@@ -6751,6 +6753,7 @@ def _summary_payload(include_debug: bool = False) -> Dict[str, Any]:
 async def upload_design(
     file: UploadFile = File(...),
     session_id: Optional[str] = Form(None),
+    project_id: Optional[str] = Form(None),
 ) -> JSONResponse:
     resolved_session_id = _resolve_session_id(session_id)
     try:
@@ -6797,6 +6800,16 @@ async def upload_design(
                     "group_count": 0,
                     "unique_matched_routes": 0,
                 }
+
+            walk_project_id = _normalize_walk_project_id(project_id)
+            if walk_project_id:
+                try:
+                    _save_project_route_context(
+                        walk_project_id,
+                        list(STATE.get("route_catalog", []) or []),
+                    )
+                except Exception:
+                    pass
 
             payload = _summary_payload()
             if rebuild_warning:
@@ -8799,20 +8812,9 @@ def walk_end(payload: Dict[str, Any] = Body(default={})) -> JSONResponse:
         return _err(str(exc), session_id=resolved_session_id)
 
 
-# ---------------------------------------------------------------------------
-# Temporary office dashboard endpoints.
-# Added as a minimal self-contained block at the bottom of the file so nothing
-# above this line is modified. Remove or replace this section once the real
-# jobs/session/station persistence layer ships.
-# ---------------------------------------------------------------------------
-
-def _office_iso_now() -> str:
-    return datetime.now(timezone.utc).isoformat()
-
-
-def _office_routes_payload() -> List[Dict[str, Any]]:
+def _routes_payload_from_catalog(route_catalog: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
     routes: List[Dict[str, Any]] = []
-    for route in STATE.get("route_catalog", []) or []:
+    for route in route_catalog or []:
         coords = route.get("coords") or []
         geometry = {
             "type": "LineString",
@@ -8829,6 +8831,71 @@ def _office_routes_payload() -> List[Dict[str, Any]]:
         )
 
     return routes
+
+
+def _normalize_walk_project_id(value: Optional[str]) -> Optional[str]:
+    raw = str(value or "").strip()
+    if not raw or len(raw) > 128:
+        return None
+    if not re.fullmatch(r"[a-zA-Z0-9._-]+", raw):
+        return None
+    return raw
+
+
+def _project_route_context_path(project_id: str) -> Path:
+    return PROJECT_ROUTE_CONTEXT_DIR / f"{project_id}.json"
+
+
+def _save_project_route_context(project_id: str, route_catalog: List[Dict[str, Any]]) -> None:
+    path = _project_route_context_path(project_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    doc = {
+        "version": 1,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+        "route_catalog": route_catalog,
+    }
+    path.write_text(json.dumps(doc, ensure_ascii=False), encoding="utf-8")
+
+
+def _load_project_route_context_doc(project_id: str) -> Optional[Dict[str, Any]]:
+    path = _project_route_context_path(project_id)
+    if not path.is_file():
+        return None
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        return raw if isinstance(raw, dict) else None
+    except Exception:
+        return None
+
+
+@app.get("/api/walk/route-context")
+def get_walk_route_context(projectId: Optional[str] = Query(None)) -> Dict[str, Any]:
+    normalized = _normalize_walk_project_id(projectId)
+    if not normalized:
+        return {"routes": [], "route_count": 0}
+    doc = _load_project_route_context_doc(normalized)
+    if not doc:
+        return {"routes": [], "route_count": 0}
+    catalog = doc.get("route_catalog")
+    if not isinstance(catalog, list):
+        return {"routes": [], "route_count": 0}
+    routes = _routes_payload_from_catalog(catalog)
+    return {"routes": routes, "route_count": len(routes)}
+
+
+# ---------------------------------------------------------------------------
+# Temporary office dashboard endpoints.
+# Added as a minimal self-contained block at the bottom of the file so nothing
+# above this line is modified. Remove or replace this section once the real
+# jobs/session/station persistence layer ships.
+# ---------------------------------------------------------------------------
+
+def _office_iso_now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _office_routes_payload() -> List[Dict[str, Any]]:
+    return _routes_payload_from_catalog(STATE.get("route_catalog", []) or [])
 
 
 def _office_sessions_payload(job_id: str, session_id: str) -> List[Dict[str, Any]]:

@@ -10,7 +10,7 @@ import {
 } from "react";
 import { useSearchParams } from "next/navigation";
 
-import { getJobs, getJobById, type Job, type Route } from "@/lib/api";
+import { getJobs, getJobById, getWalkRouteContext, type Job, type Route } from "@/lib/api";
 import { getOrCreateSessionId } from "@/lib/session";
 
 // ─── Configuration ────────────────────────────────────────────────────────────
@@ -465,6 +465,15 @@ const DEFAULT_FORM: WalkFormFields = {
   section: "",
 };
 
+/** Office mock job id from /jobs — never treat as a persisted default selection. */
+const OFFICE_MOCK_JOB_ID = "test-job";
+
+function normalizeStoredJobId(jobId: string): string {
+  const t = jobId.trim();
+  if (!t || t === OFFICE_MOCK_JOB_ID) return "";
+  return t;
+}
+
 function readPersistedForm(): WalkFormFields | null {
   if (typeof window === "undefined") return null;
   try {
@@ -486,7 +495,11 @@ function readPersistedForm(): WalkFormFields | null {
 function writePersistedForm(fields: WalkFormFields): void {
   if (typeof window === "undefined") return;
   try {
-    window.localStorage.setItem(FORM_STORAGE_KEY, JSON.stringify(fields));
+    const jobId = normalizeStoredJobId(fields.jobId);
+    window.localStorage.setItem(
+      FORM_STORAGE_KEY,
+      JSON.stringify({ ...fields, jobId }),
+    );
   } catch {
     /* ignore */
   }
@@ -631,6 +644,9 @@ function WalkPageInner() {
   // value (derived from selectedJob.route_count, NOT from this state)
   // distinguishes the two for UI purposes.
   const [designRoutes, setDesignRoutes] = useState<Route[]>([]);
+  /** Design routes persisted server-side per project (KMZ from workspace). */
+  const [projectWalkRoutes, setProjectWalkRoutes] = useState<Route[]>([]);
+  const [projectWalkRoutesFetched, setProjectWalkRoutesFetched] = useState(false);
 
   const watchIdRef = useRef<number | null>(null);
   const pendingPointsRef = useRef<Breadcrumb[]>([]);
@@ -659,8 +675,10 @@ function WalkPageInner() {
 
   useEffect(() => {
     const persisted = readPersistedForm();
+    const rawJobId =
+      typeof persisted?.jobId === "string" ? persisted.jobId : DEFAULT_FORM.jobId;
     setForm({
-      jobId: persisted?.jobId ?? DEFAULT_FORM.jobId,
+      jobId: normalizeStoredJobId(rawJobId),
       crew: persisted?.crew ?? DEFAULT_FORM.crew,
       date:
         persisted?.date && persisted.date.length > 0
@@ -701,6 +719,40 @@ function WalkPageInner() {
   }, [fetchJobs]);
 
   useEffect(() => {
+    if (!hydrated || jobsLoading) return;
+    const valid = new Set(jobs.map((j) => j.id));
+    if (!form.jobId) return;
+    if (!valid.has(form.jobId)) {
+      setForm((prev) => ({ ...prev, jobId: "" }));
+    }
+  }, [hydrated, jobsLoading, jobs, form.jobId]);
+
+  useEffect(() => {
+    if (!walkProjectScope) {
+      setProjectWalkRoutes([]);
+      setProjectWalkRoutesFetched(true);
+      return;
+    }
+    setProjectWalkRoutesFetched(false);
+    let cancelled = false;
+    void (async () => {
+      try {
+        const data = await getWalkRouteContext(walkProjectScope);
+        if (cancelled) return;
+        setProjectWalkRoutes(Array.isArray(data.routes) ? data.routes : []);
+      } catch {
+        if (cancelled) return;
+        setProjectWalkRoutes([]);
+      } finally {
+        if (!cancelled) setProjectWalkRoutesFetched(true);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [walkProjectScope]);
+
+  useEffect(() => {
     return () => {
       if (watchIdRef.current !== null && typeof navigator !== "undefined") {
         try {
@@ -728,7 +780,7 @@ function WalkPageInner() {
           : j.job_name || j.id,
       }));
     }
-    return [{ id: "test-job", label: "test-job" }];
+    return [{ id: OFFICE_MOCK_JOB_ID, label: "test-job" }];
   }, [jobs]);
 
   const shortSessionId = useMemo(() => {
@@ -757,10 +809,19 @@ function WalkPageInner() {
 
   const routeContext: RouteContextState = useMemo(() => {
     if (!hydrated) return "unknown";
+    if (walkProjectScope && !projectWalkRoutesFetched) return "unknown";
+    if (walkProjectScope && projectWalkRoutes.length > 0) return "available";
     if (!form.jobId) return "unknown";
     if (!selectedJob) return "unknown"; // fallback option, or job list still loading
     return selectedJob.route_count > 0 ? "available" : "missing";
-  }, [hydrated, form.jobId, selectedJob]);
+  }, [
+    hydrated,
+    walkProjectScope,
+    projectWalkRoutesFetched,
+    projectWalkRoutes.length,
+    form.jobId,
+    selectedJob,
+  ]);
 
   // Phase 4C: fetch the selected job's detail (routes with geometry) when
   // the user picks a real job. We deliberately gate on `selectedJob` so the
@@ -791,22 +852,30 @@ function WalkPageInner() {
     };
   }, [form.jobId, hydrated, selectedJob, walkProjectScope]);
 
+  const mapDesignRoutes = useMemo(() => {
+    if (walkProjectScope && projectWalkRoutes.length > 0) {
+      return projectWalkRoutes;
+    }
+    return designRoutes;
+  }, [walkProjectScope, projectWalkRoutes, designRoutes]);
+
   // Phase 4C: push design routes into the map controller. Deterministic
   // gating only — no debouncing, no rAF, no delay. Runs whenever any of
-  // the three preconditions changes; when all are satisfied, force-applies
-  // the routes. The controller's setDesignRoutes is idempotent (wipes its
-  // previous overlay before drawing) so repeated calls are safe.
+  // the preconditions change. When routes are empty, clear the overlay.
   useEffect(() => {
     if (!mapReady) return;
     if (!mapAvailable) return;
-    if (!designRoutes || designRoutes.length === 0) return;
 
     const controller = mapControllerRef.current;
     if (!controller) return;
 
-    // FORCE apply routes
-    controller.setDesignRoutes(designRoutes);
-  }, [mapReady, mapAvailable, designRoutes]);
+    if (!mapDesignRoutes || mapDesignRoutes.length === 0) {
+      controller.clearDesignRoutes();
+      return;
+    }
+
+    controller.setDesignRoutes(mapDesignRoutes);
+  }, [mapReady, mapAvailable, mapDesignRoutes]);
 
   useEffect(() => {
     if (!mapReady) return;
@@ -1882,7 +1951,7 @@ function WalkPageInner() {
               className="h-14 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 text-base text-slate-100 focus:border-slate-500 focus:outline-none focus:ring-2 focus:ring-slate-500 disabled:opacity-60"
             >
               <option value="">
-                {jobsLoading ? "Loading jobs…" : "Select a job"}
+                {jobsLoading ? "Loading jobs…" : "Select job"}
               </option>
               {jobOptions.map((opt) => (
                 <option key={opt.id} value={opt.id}>
