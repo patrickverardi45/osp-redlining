@@ -7,36 +7,23 @@ interface JobHeaderProps {
   job: JobDetail;
 }
 
-const STATUS_CONFIG: Record<string, { label: string; className: string }> = {
-  pending: {
-    label: "Pending",
-    className:
-      "inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-gray-100 text-gray-700",
-  },
-  in_progress: {
-    label: "In Progress",
-    className:
-      "inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-blue-100 text-blue-700",
-  },
-  complete: {
-    label: "Complete",
-    className:
-      "inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-green-100 text-green-700",
-  },
-  on_hold: {
-    label: "On Hold",
-    className:
-      "inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-yellow-100 text-yellow-700",
-  },
+const STATUS_PILL: Record<string, { label: string; tone: string }> = {
+  pending: { label: "Pending", tone: "tl-pill" },
+  in_progress: { label: "In Progress", tone: "tl-pill tl-pill-info" },
+  complete: { label: "Complete", tone: "tl-pill tl-pill-success" },
+  on_hold: { label: "On Hold", tone: "tl-pill tl-pill-warn" },
+  qa_review: { label: "QA Review", tone: "tl-pill tl-pill-warn" },
+  closeout_ready: { label: "Closeout Ready", tone: "tl-pill tl-pill-accent" },
 };
 
 function StatusBadge({ status }: { status: string }) {
-  const config = STATUS_CONFIG[status] ?? {
-    label: status,
-    className:
-      "inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-gray-100 text-gray-600",
+  const config = STATUS_PILL[status] ?? {
+    label: status
+      .replace(/_/g, " ")
+      .replace(/\b\w/g, (c) => c.toUpperCase()),
+    tone: "tl-pill",
   };
-  return <span className={config.className}>{config.label}</span>;
+  return <span className={config.tone}>{config.label}</span>;
 }
 
 function StatCard({
@@ -48,16 +35,20 @@ function StatCard({
   value: number;
   highlight?: boolean;
 }) {
+  const valueColor =
+    highlight && value > 0 ? "#fca5a5" : "var(--tl-text)";
   return (
-    <div className="bg-white border border-gray-200 rounded-lg px-6 py-4 shadow-sm text-center min-w-[100px]">
+    <div
+      className="tl-card tl-card-padded"
+      style={{ minWidth: 120, textAlign: "center" }}
+    >
       <div
-        className={`text-3xl font-bold ${
-          highlight && value > 0 ? "text-red-600" : "text-gray-800"
-        }`}
+        className="tl-metric-value tl-metric-value-lg"
+        style={{ color: valueColor, marginTop: 0, fontSize: 30 }}
       >
         {value}
       </div>
-      <div className="text-xs text-gray-500 mt-1 uppercase tracking-wide font-medium">
+      <div className="tl-metric-label" style={{ marginTop: 6 }}>
         {label}
       </div>
     </div>
@@ -80,30 +71,61 @@ function formatLastSync(ts: string | null): string {
 
 export default function JobHeader({ job }: JobHeaderProps) {
   return (
-    <div className="space-y-5">
+    <div style={{ display: "grid", gap: 20 }}>
       {/* Breadcrumb */}
-      <nav className="text-sm text-gray-500">
-        <Link href="/jobs" className="hover:text-blue-600 hover:underline">
+      <nav style={{ fontSize: 13, color: "var(--tl-text-muted)" }}>
+        <Link href="/jobs" className="tl-link">
           Jobs
         </Link>
-        <span className="mx-2 text-gray-300">/</span>
-        <span className="text-gray-800 font-medium">{job.job_code}</span>
+        <span style={{ margin: "0 8px", color: "var(--tl-text-faint)" }}>/</span>
+        <span style={{ color: "var(--tl-text)", fontWeight: 600 }}>
+          {job.job_code}
+        </span>
       </nav>
 
       {/* Title row */}
-      <div className="flex items-start justify-between gap-4 flex-wrap">
+      <div
+        style={{
+          display: "flex",
+          alignItems: "flex-start",
+          justifyContent: "space-between",
+          gap: 16,
+          flexWrap: "wrap",
+        }}
+      >
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">{job.job_name}</h1>
-          <p className="text-sm text-gray-400 font-mono mt-0.5">{job.job_code}</p>
-          <p className="text-xs text-gray-400 mt-1">{formatLastSync(job.last_sync_at)}</p>
+          <div className="tl-eyebrow">TrueLine · Job</div>
+          <h1 className="tl-h1" style={{ margin: "8px 0 4px", fontSize: 26 }}>
+            {job.job_name}
+          </h1>
+          <p
+            style={{
+              margin: 0,
+              color: "var(--tl-text-muted)",
+              fontFamily:
+                "ui-monospace, SFMono-Regular, Menlo, monospace",
+              fontSize: 12,
+            }}
+          >
+            {job.job_code}
+          </p>
+          <p
+            style={{
+              margin: "6px 0 0",
+              color: "var(--tl-text-faint)",
+              fontSize: 12,
+            }}
+          >
+            {formatLastSync(job.last_sync_at)}
+          </p>
         </div>
-        <div className="pt-1">
+        <div style={{ paddingTop: 4 }}>
           <StatusBadge status={job.status} />
         </div>
       </div>
 
       {/* Stat cards */}
-      <div className="flex gap-4 flex-wrap">
+      <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
         <StatCard label="Routes" value={job.route_count} />
         <StatCard label="Sessions" value={job.session_count} />
         <StatCard label="Exceptions" value={job.exception_count} highlight />

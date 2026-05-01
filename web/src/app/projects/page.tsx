@@ -204,25 +204,102 @@ function summarizeState(state: ProjectState, projectId: string): ProjectSummary 
 }
 
 export default function ProjectsPage() {
+  const [showNewProjectNotice, setShowNewProjectNotice] = useState(false);
+
   return (
-    <main style={{ minHeight: "100vh", background: "#f5f7fa", color: "#172033", fontFamily: "Arial, sans-serif", padding: "32px" }}>
-      <div style={{ maxWidth: "1180px", margin: "0 auto" }}>
-        <header style={{ marginBottom: "24px" }}>
-          <div style={{ color: "#64748b", fontSize: "13px", fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase" }}>
-            OSP Redlining
+    <main className="tl-page">
+      <div className="tl-page-inner">
+        <header style={{ marginBottom: 28 }}>
+          <div
+            style={{
+              display: "flex",
+              alignItems: "flex-start",
+              justifyContent: "space-between",
+              gap: 16,
+              flexWrap: "wrap",
+            }}
+          >
+            <div style={{ minWidth: 0 }}>
+              <div className="tl-eyebrow">TrueLine · Field Operations Platform</div>
+              <h1 className="tl-h1">Project Dashboard</h1>
+              <p className="tl-subtle" style={{ margin: 0, maxWidth: 720 }}>
+                Manage active OSP redlining projects, review design and field
+                progress, and open each project workspace.
+              </p>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => setShowNewProjectNotice((v) => !v)}
+              className="tl-btn tl-btn-primary"
+              aria-expanded={showNewProjectNotice}
+              aria-controls="new-project-notice"
+              style={{ flexShrink: 0, whiteSpace: "nowrap" }}
+            >
+              + New Project
+            </button>
           </div>
-          <h1 style={{ margin: "8px 0 8px", fontSize: "34px", lineHeight: 1.1 }}>Project Dashboard</h1>
-          <p style={{ margin: 0, maxWidth: "720px", color: "#526173", fontSize: "16px", lineHeight: 1.6 }}>
-            Manage active OSP redlining projects, review progress, and open each project workspace.
-          </p>
+
+          {showNewProjectNotice && (
+            <div
+              id="new-project-notice"
+              role="status"
+              className="tl-card"
+              style={{
+                marginTop: 16,
+                padding: "12px 14px",
+                display: "flex",
+                alignItems: "flex-start",
+                justifyContent: "space-between",
+                gap: 12,
+                borderColor: "var(--tl-amber-border)",
+                background: "var(--tl-surface)",
+                color: "#fde68a",
+                fontSize: 13,
+                lineHeight: 1.5,
+              }}
+            >
+              <div>
+                <strong style={{ fontWeight: 700 }}>
+                  Coming next: project creation.
+                </strong>{" "}
+                Backend wiring for new-project setup isn&apos;t hooked up yet —
+                this button is a placeholder so the workflow has a home in the
+                UI.
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowNewProjectNotice(false)}
+                className="tl-btn tl-btn-ghost"
+                aria-label="Dismiss new project notice"
+                style={{
+                  fontSize: 12,
+                  padding: "4px 10px",
+                  color: "#fde68a",
+                  borderColor: "var(--tl-amber-border)",
+                }}
+              >
+                Close
+              </button>
+            </div>
+          )}
+
+          <div style={{ display: "flex", gap: 10, marginTop: 16, flexWrap: "wrap" }}>
+            <Link href="/jobs" className="tl-btn tl-btn-ghost">
+              Office Jobs
+            </Link>
+            <Link href="/jobs/inbox" className="tl-btn tl-btn-ghost">
+              Field Submissions Inbox
+            </Link>
+          </div>
         </header>
 
         <section
           aria-label="Project list"
           style={{
             display: "grid",
-            gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))",
-            gap: "16px",
+            gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))",
+            gap: 16,
           }}
         >
           {projects.map((project) => (
@@ -300,52 +377,31 @@ function ProjectCard({ project }: { project: Project }) {
     };
   }, [project.projectId]);
 
-  const statusColor =
+  const pillClass =
     summary.status === "Design loaded"
-      ? "#166534"
+      ? "tl-pill tl-pill-success"
       : summary.status === "No uploads yet"
-        ? "#92400e"
-        : "#475569";
-  const statusBackground =
-    summary.status === "Design loaded"
-      ? "#dcfce7"
-      : summary.status === "No uploads yet"
-        ? "#fef3c7"
-        : "#e2e8f0";
+        ? "tl-pill tl-pill-warn"
+        : "tl-pill";
 
   return (
     <article
-      style={{
-        display: "grid",
-        gap: "16px",
-        border: "1px solid #dbe3ee",
-        borderRadius: "16px",
-        background: "#ffffff",
-        padding: "18px",
-        boxShadow: "0 8px 22px rgba(15, 23, 42, 0.06)",
-      }}
+      className="tl-card tl-card-padded tl-card-hover"
+      style={{ display: "grid", gap: 16 }}
     >
-      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: "12px" }}>
+      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12 }}>
         <div>
-          <h2 style={{ margin: 0, color: "#0f172a", fontSize: "20px", lineHeight: 1.25 }}>{project.name}</h2>
-          <div style={{ marginTop: "6px", color: "#64748b", fontSize: "14px" }}>{project.location}</div>
+          <h2 className="tl-h2" style={{ fontSize: 18 }}>
+            {project.name}
+          </h2>
+          <div style={{ marginTop: 4, color: "var(--tl-text-muted)", fontSize: 13 }}>
+            {project.location}
+          </div>
         </div>
-        <span
-          style={{
-            borderRadius: "999px",
-            background: statusBackground,
-            color: statusColor,
-            fontSize: "12px",
-            fontWeight: 800,
-            padding: "5px 9px",
-            whiteSpace: "nowrap",
-          }}
-        >
-          {summary.status}
-        </span>
+        <span className={pillClass}>{summary.status}</span>
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
         <Metric label="Design" value={summary.kmzLoaded ? "Design loaded" : summary.hasSession ? "Not loaded" : "No data yet"} />
         <Metric
           label="Planned footage"
@@ -357,58 +413,44 @@ function ProjectCard({ project }: { project: Project }) {
         />
         <Metric
           label="Completion"
-          value={
-            !summary.hasLiveState
-              ? "—"
-              : summary.completion ?? "—"
-          }
+          value={!summary.hasLiveState ? "—" : summary.completion ?? "—"}
+          accent={summary.completion ? "info" : undefined}
         />
         <Metric label="Bore logs" value={!summary.hasLiveState ? "—" : String(summary.boreLogs ?? 0)} />
         <Metric label="Photos" value={!summary.hasLiveState ? "—" : String(summary.photos ?? 0)} />
         {summary.lastUpdated ? <Metric label="Last updated" value={summary.lastUpdated} /> : null}
       </div>
 
-      <Link
-        href={project.href}
-        style={{
-          display: "inline-flex",
-          alignItems: "center",
-          justifyContent: "center",
-          borderRadius: "10px",
-          background: "#0f172a",
-          color: "#ffffff",
-          fontSize: "14px",
-          fontWeight: 800,
-          padding: "10px 12px",
-          textDecoration: "none",
-        }}
-      >
-        Open Project
+      <Link href={project.href} className="tl-btn tl-btn-primary">
+        Open Project →
       </Link>
     </article>
   );
 }
 
-function Metric({ label, value }: { label: string; value: string }) {
+function Metric({
+  label,
+  value,
+  accent,
+}: {
+  label: string;
+  value: string;
+  accent?: "info" | "success" | "warn" | "danger";
+}) {
+  const accentColor =
+    accent === "info"
+      ? "#7dd3fc"
+      : accent === "success"
+        ? "#86efac"
+        : accent === "warn"
+          ? "#fcd34d"
+          : accent === "danger"
+            ? "#fca5a5"
+            : "var(--tl-text)";
   return (
-    <div
-      style={{
-        border: "1px solid #edf2f7",
-        borderRadius: "12px",
-        background: "#f8fafc",
-        padding: "10px",
-      }}
-    >
-      <div style={{ color: "#64748b", fontSize: "12px", fontWeight: 700 }}>{label}</div>
-      <div
-        style={{
-          marginTop: "4px",
-          color: "#0f172a",
-          fontSize: "14px",
-          fontWeight: 800,
-          overflowWrap: "anywhere",
-        }}
-      >
+    <div className="tl-metric">
+      <div className="tl-metric-label">{label}</div>
+      <div className="tl-metric-value" style={{ color: accentColor }}>
         {value}
       </div>
     </div>

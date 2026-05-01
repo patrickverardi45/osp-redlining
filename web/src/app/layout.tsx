@@ -12,7 +12,8 @@ export default function RootLayout({
         style={{
           margin: 0,
           padding: 0,
-          background: "#f6f8fb",
+          background: "#0b0f17",
+          color: "#e6ecf5",
         }}
       >
         {children}

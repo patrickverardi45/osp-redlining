@@ -151,3 +151,318 @@
 .leaflet-container .leaflet-control-zoom {
   z-index: 800;
 }
+
+/* ─────────────────────────────────────────────────────────────────────────
+   TrueLine design system — dark dashboard chrome
+   Scoped to .tl-* classes so existing screens that don't opt in are untouched.
+   ─────────────────────────────────────────────────────────────────────── */
+:root {
+  --tl-bg: #0b0f17;
+  --tl-bg-grid: #0e1421;
+  --tl-surface: #121a2a;
+  --tl-surface-2: #18223a;
+  --tl-surface-hover: #1d2945;
+  --tl-border: #1f2a3d;
+  --tl-border-strong: #2c3a55;
+  --tl-text: #f3f6fb;
+  --tl-text-muted: #b3becf;
+  --tl-text-faint: #8a93a4;
+  --tl-accent: #f5d020;
+  --tl-accent-hover: #fde047;
+  --tl-accent-ink: #0b0f17;
+  --tl-red: #ef4444;
+  --tl-red-soft: rgba(239, 68, 68, 0.14);
+  --tl-red-border: rgba(239, 68, 68, 0.4);
+  --tl-green: #22c55e;
+  --tl-green-soft: rgba(34, 197, 94, 0.14);
+  --tl-green-border: rgba(34, 197, 94, 0.4);
+  --tl-blue: #38bdf8;
+  --tl-blue-soft: rgba(56, 189, 248, 0.14);
+  --tl-blue-border: rgba(56, 189, 248, 0.4);
+  --tl-amber: #f59e0b;
+  --tl-amber-soft: rgba(245, 158, 11, 0.14);
+  --tl-amber-border: rgba(245, 158, 11, 0.4);
+  --tl-shadow-card: 0 4px 12px rgba(0, 0, 0, 0.35);
+}
+
+/* Page wrapper — apply to top-level dashboard pages */
+.tl-page {
+  min-height: 100vh;
+  background: var(--tl-bg);
+  color: var(--tl-text);
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+.tl-page-inner {
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 28px 24px 56px;
+}
+
+.tl-page-inner-wide {
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 28px 24px 56px;
+}
+
+/* Eyebrow / page header */
+.tl-eyebrow {
+  color: var(--tl-accent);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.tl-h1 {
+  margin: 8px 0 8px;
+  color: var(--tl-text);
+  font-size: 30px;
+  font-weight: 700;
+  line-height: 1.15;
+  letter-spacing: -0.01em;
+}
+
+.tl-h2 {
+  margin: 0;
+  color: var(--tl-text);
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: -0.005em;
+}
+
+.tl-subtle {
+  color: var(--tl-text-muted);
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.tl-divider {
+  border: 0;
+  border-top: 1px solid var(--tl-border);
+  margin: 0;
+}
+
+/* Cards / surfaces */
+.tl-card {
+  background: var(--tl-surface);
+  border: 1px solid var(--tl-border);
+  border-radius: 14px;
+  box-shadow: var(--tl-shadow-card);
+}
+
+.tl-card-padded {
+  padding: 18px;
+}
+
+.tl-card-hover {
+  transition: border-color 120ms ease, transform 120ms ease,
+    background-color 120ms ease;
+}
+.tl-card-hover:hover {
+  border-color: var(--tl-border-strong);
+  background: var(--tl-surface-2);
+}
+
+/* Metric tile inside a card */
+.tl-metric {
+  background: var(--tl-bg-grid);
+  border: 1px solid var(--tl-border);
+  border-radius: 10px;
+  padding: 10px 12px;
+}
+.tl-metric-label {
+  color: var(--tl-text-faint);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.tl-metric-value {
+  margin-top: 4px;
+  color: var(--tl-text);
+  font-size: 16px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+.tl-metric-value-lg {
+  font-size: 26px;
+}
+
+/* Buttons */
+.tl-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border-radius: 10px;
+  font-size: 13px;
+  font-weight: 700;
+  padding: 9px 14px;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: background-color 120ms ease, border-color 120ms ease,
+    color 120ms ease;
+  text-decoration: none;
+}
+.tl-btn-primary {
+  background: var(--tl-accent);
+  color: var(--tl-accent-ink);
+  border-color: var(--tl-accent);
+}
+.tl-btn-primary:hover {
+  background: var(--tl-accent-hover);
+  border-color: var(--tl-accent-hover);
+}
+.tl-btn-ghost {
+  background: transparent;
+  color: var(--tl-text);
+  border-color: var(--tl-border-strong);
+}
+.tl-btn-ghost:hover {
+  background: var(--tl-surface-2);
+  border-color: var(--tl-text-muted);
+}
+.tl-btn-toggle-active {
+  background: var(--tl-surface-2);
+  color: var(--tl-text);
+  border-color: var(--tl-accent);
+}
+
+/* Status pills */
+.tl-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  border: 1px solid var(--tl-border-strong);
+  background: transparent;
+  color: var(--tl-text-muted);
+  white-space: nowrap;
+}
+.tl-pill-info {
+  color: #7dd3fc;
+  background: var(--tl-blue-soft);
+  border-color: var(--tl-blue-border);
+}
+.tl-pill-warn {
+  color: #fcd34d;
+  background: var(--tl-amber-soft);
+  border-color: var(--tl-amber-border);
+}
+.tl-pill-success {
+  color: #86efac;
+  background: var(--tl-green-soft);
+  border-color: var(--tl-green-border);
+}
+.tl-pill-danger {
+  color: #fca5a5;
+  background: var(--tl-red-soft);
+  border-color: var(--tl-red-border);
+}
+.tl-pill-accent {
+  color: var(--tl-accent-ink);
+  background: var(--tl-accent);
+  border-color: var(--tl-accent);
+}
+
+/* Inputs (lightweight; for shell-level controls only) */
+.tl-input {
+  background: var(--tl-bg-grid);
+  border: 1px solid var(--tl-border);
+  border-radius: 10px;
+  color: var(--tl-text);
+  padding: 9px 12px;
+  font-size: 13px;
+  outline: none;
+  transition: border-color 120ms ease;
+}
+.tl-input:focus {
+  border-color: var(--tl-accent);
+}
+
+/* Top app bar / nav (in case a layout component opts in) */
+.tl-topbar {
+  background: var(--tl-bg);
+  border-bottom: 1px solid var(--tl-border);
+}
+
+/* Section heading row */
+.tl-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+/* Tables on dark cards */
+.tl-table-wrap {
+  border: 1px solid var(--tl-border);
+  border-radius: 14px;
+  overflow: hidden;
+  background: var(--tl-surface);
+  box-shadow: var(--tl-shadow-card);
+}
+.tl-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  color: var(--tl-text);
+}
+.tl-table thead {
+  background: var(--tl-bg-grid);
+}
+.tl-table th {
+  text-align: left;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--tl-text-faint);
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--tl-border);
+}
+.tl-table td {
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--tl-border);
+  color: var(--tl-text);
+  vertical-align: top;
+}
+.tl-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+.tl-table tbody tr:hover {
+  background: var(--tl-surface-hover);
+}
+
+/* Link inside dark surfaces */
+.tl-link {
+  color: #7dd3fc;
+  text-decoration: none;
+}
+.tl-link:hover {
+  color: #bae6fd;
+  text-decoration: underline;
+}
+
+/* Light surface that "floats" inside a tl-page (used to wrap legacy
+   white panels so they look intentional on the dark background). */
+.tl-light-frame {
+  background: #ffffff;
+  border: 1px solid var(--tl-border);
+  border-radius: 14px;
+  box-shadow: var(--tl-shadow-card);
+  padding: 18px;
+  color: #0f172a;
+}

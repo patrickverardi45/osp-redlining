@@ -22,23 +22,25 @@ function ViewToggle({
   mode: ViewMode;
   onChange: (m: ViewMode) => void;
 }) {
-  const base =
-    "px-3 py-1.5 text-xs font-semibold rounded border transition-colors";
-  const active = "bg-gray-800 text-white border-gray-800";
-  const inactive =
-    "bg-white text-gray-600 border-gray-200 hover:border-gray-400";
-
   return (
-    <div className="flex items-center gap-1">
+    <div style={{ display: "inline-flex", gap: 6 }}>
       <button
         onClick={() => onChange("pipeline")}
-        className={`${base} ${mode === "pipeline" ? active : inactive}`}
+        className={
+          mode === "pipeline"
+            ? "tl-btn tl-btn-toggle-active"
+            : "tl-btn tl-btn-ghost"
+        }
+        style={{ fontSize: 12, padding: "6px 12px" }}
       >
         Pipeline View
       </button>
       <button
         onClick={() => onChange("all")}
-        className={`${base} ${mode === "all" ? active : inactive}`}
+        className={
+          mode === "all" ? "tl-btn tl-btn-toggle-active" : "tl-btn tl-btn-ghost"
+        }
+        style={{ fontSize: 12, padding: "6px 12px" }}
       >
         All Jobs
       </button>
@@ -76,25 +78,25 @@ export default function JobsPage() {
   }, [fetchJobs]);
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      <div className="max-w-6xl mx-auto px-6 py-10 space-y-8">
-
+    <div className="tl-page">
+      <div className="tl-page-inner-wide" style={{ display: "grid", gap: 28 }}>
         {/* Page header */}
-        <div className="flex items-start justify-between flex-wrap gap-4">
+        <div className="tl-section-head">
           <div>
-            <h1 className="text-2xl font-bold text-gray-900">Jobs</h1>
-            <p className="text-sm text-gray-500 mt-1">
+            <div className="tl-eyebrow">TrueLine · Office</div>
+            <h1 className="tl-h1" style={{ margin: "8px 0 6px" }}>
+              Jobs
+            </h1>
+            <p className="tl-subtle" style={{ margin: 0 }}>
               OSP Redlining + Walk Verification — Office Dashboard
             </p>
           </div>
           {!loading && !error && (
-            <div className="flex items-center gap-2">
-              {/* Phase 4D: discoverability for the Field Submissions Inbox.
-                  No global sidebar in this app, so we surface the link in
-                  the page header next to the view toggle. */}
+            <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
               <Link
                 href="/jobs/inbox"
-                className="px-3 py-1.5 text-xs font-semibold rounded border bg-white text-gray-700 border-gray-200 hover:border-gray-400 transition-colors"
+                className="tl-btn tl-btn-ghost"
+                style={{ fontSize: 12, padding: "6px 12px" }}
               >
                 Field Submissions Inbox
               </Link>
@@ -105,20 +107,28 @@ export default function JobsPage() {
 
         {/* Loading */}
         {loading && (
-          <div className="text-sm text-gray-400 py-10 text-center">
-            Loading jobs…
+          <div className="tl-card tl-card-padded" style={{ textAlign: "center" }}>
+            <span className="tl-subtle">Loading jobs…</span>
           </div>
         )}
 
         {/* Error */}
         {!loading && error && (
           <div>
-            <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-              <span className="font-semibold">Error loading jobs:</span> {error}
+            <div
+              className="tl-card tl-card-padded"
+              style={{
+                borderColor: "var(--tl-red-border)",
+                background: "var(--tl-surface)",
+                color: "#fee2e2",
+              }}
+            >
+              <span style={{ fontWeight: 700 }}>Error loading jobs:</span> {error}
             </div>
             <button
               onClick={fetchJobs}
-              className="mt-3 px-3 py-1.5 rounded text-sm font-medium bg-gray-800 text-white hover:bg-gray-700 transition-colors"
+              className="tl-btn tl-btn-primary"
+              style={{ marginTop: 12 }}
             >
               Retry
             </button>
@@ -128,23 +138,21 @@ export default function JobsPage() {
         {/* Dashboard content */}
         {!loading && !error && (
           <>
-            {/* Summary cards */}
             <JobsSummaryCards jobs={jobs} />
-
-            {/* Attention panel — only shown when there are attention jobs */}
             <AttentionJobsPanel jobs={jobs} />
 
-            {/* View divider */}
-            <hr className="border-gray-200" />
+            <hr className="tl-divider" />
 
-            {/* Pipeline or flat view */}
             {viewMode === "pipeline" ? (
               <JobsPipelineView jobs={jobs} onRefresh={fetchJobs} />
             ) : (
               <>
                 <JobsTable jobs={jobs} onRefresh={fetchJobs} />
                 {jobs.length > 0 && (
-                  <p className="text-xs text-gray-400 text-right">
+                  <p
+                    className="tl-subtle"
+                    style={{ textAlign: "right", fontSize: 12, margin: 0 }}
+                  >
                     {jobs.length} job{jobs.length !== 1 ? "s" : ""} total
                   </p>
                 )}
@@ -152,7 +160,6 @@ export default function JobsPage() {
             )}
           </>
         )}
-
       </div>
     </div>
   );

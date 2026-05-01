@@ -1,19 +1,5 @@
 // web/src/app/jobs/[jobId]/page.tsx
 // Client component — re-fetches after mutations (status change, exception resolve, report generation).
-//
-// Phase 4E additions:
-//   - Reads optional `?session=<id>` query parameter so the Field
-//     Submissions Inbox can hand off a specific submission for review.
-//   - Renders a Selected Submission Review panel above Map Review when
-//     a session is selected.
-//   - Highlights the selected row in the Walk Sessions table.
-//   - Passes the selected id through to the Map Review panel so the
-//     matching walk track can be emphasized.
-//
-// Hard rules respected:
-//   - read-only, no redlines generated, no approve / reject actions
-//   - no backend changes
-//   - no fake data — the selected session must come from job.sessions[]
 "use client";
 
 import { useState, useEffect, useCallback, useMemo } from "react";
@@ -50,12 +36,19 @@ const OfficeMapReviewPanel = dynamic(
     ssr: false,
     loading: () => (
       <section>
-        <h2 className="text-base font-semibold text-gray-800 mb-3">
+        <h2 className="tl-h2" style={{ marginBottom: 12 }}>
           Map Review
         </h2>
         <div
-          className="rounded-lg border border-gray-200 bg-gray-50 flex items-center justify-center text-sm text-gray-400"
-          style={{ height: "540px" }}
+          className="tl-card"
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            color: "var(--tl-text-faint)",
+            fontSize: 13,
+            height: 540,
+          }}
         >
           Loading map…
         </div>
@@ -70,10 +63,6 @@ export default function JobDetailPage() {
   const params = useParams();
   const jobId = params.jobId as string;
 
-  // Phase 4E: pick up the optional `session` query parameter. Empty / missing
-  // means "no specific session selected" — the page renders exactly as it
-  // did before. We trim and coalesce to null so downstream components have a
-  // single clean shape to work with.
   const searchParams = useSearchParams();
   const rawSelectedSessionId = searchParams?.get("session") ?? "";
   const selectedSessionId = rawSelectedSessionId.trim() || null;
@@ -103,10 +92,6 @@ export default function JobDetailPage() {
     fetchJob();
   }, [fetchJob]);
 
-  // Phase 4E: resolve the selected id against the loaded sessions. Done here
-  // (rather than inside the review panel) so we can pass either the real
-  // Session record or `null` (meaning "selected, but not on this job — stale
-  // link") to the panel without re-walking the array there.
   const selectedSession = useMemo<Session | null>(() => {
     if (!selectedSessionId || !job) return null;
     return (
@@ -117,16 +102,18 @@ export default function JobDetailPage() {
   // ── Loading ────────────────────────────────────────────────────────────────
   if (loading) {
     return (
-      <div className="min-h-screen bg-gray-50">
-        <div className="max-w-5xl mx-auto px-6 py-10">
-          <nav className="text-sm text-gray-500 mb-6">
-            <Link href="/jobs" className="hover:text-blue-600 hover:underline">
+      <div className="tl-page">
+        <div className="tl-page-inner">
+          <nav style={{ fontSize: 13, color: "var(--tl-text-muted)", marginBottom: 22 }}>
+            <Link href="/jobs" className="tl-link">
               Jobs
             </Link>
-            <span className="mx-2 text-gray-300">/</span>
-            <span className="text-gray-400">Loading…</span>
+            <span style={{ margin: "0 8px", color: "var(--tl-text-faint)" }}>/</span>
+            <span style={{ color: "var(--tl-text-faint)" }}>Loading…</span>
           </nav>
-          <div className="text-sm text-gray-400">Loading job data…</div>
+          <div className="tl-card tl-card-padded" style={{ textAlign: "center" }}>
+            <span className="tl-subtle">Loading job data…</span>
+          </div>
         </div>
       </div>
     );
@@ -135,21 +122,29 @@ export default function JobDetailPage() {
   // ── Error ──────────────────────────────────────────────────────────────────
   if (error) {
     return (
-      <div className="min-h-screen bg-gray-50">
-        <div className="max-w-5xl mx-auto px-6 py-10">
-          <nav className="text-sm text-gray-500 mb-6">
-            <Link href="/jobs" className="hover:text-blue-600 hover:underline">
+      <div className="tl-page">
+        <div className="tl-page-inner">
+          <nav style={{ fontSize: 13, color: "var(--tl-text-muted)", marginBottom: 22 }}>
+            <Link href="/jobs" className="tl-link">
               Jobs
             </Link>
-            <span className="mx-2 text-gray-300">/</span>
-            <span className="text-gray-800">Error</span>
+            <span style={{ margin: "0 8px", color: "var(--tl-text-faint)" }}>/</span>
+            <span style={{ color: "var(--tl-text)" }}>Error</span>
           </nav>
-          <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-            <span className="font-semibold">Error loading job:</span> {error}
+          <div
+            className="tl-card tl-card-padded"
+            style={{
+              borderColor: "var(--tl-red-border)",
+              background: "var(--tl-surface)",
+              color: "#fee2e2",
+            }}
+          >
+            <span style={{ fontWeight: 700 }}>Error loading job:</span> {error}
           </div>
           <button
             onClick={fetchJob}
-            className="mt-4 px-3 py-1.5 rounded text-sm font-medium bg-gray-800 text-white hover:bg-gray-700 transition-colors"
+            className="tl-btn tl-btn-primary"
+            style={{ marginTop: 16 }}
           >
             Retry
           </button>
@@ -162,47 +157,38 @@ export default function JobDetailPage() {
 
   // ── Detail view ────────────────────────────────────────────────────────────
   return (
-    <div className="min-h-screen bg-gray-50">
-      <div className="max-w-5xl mx-auto px-6 py-10 space-y-10">
-
+    <div className="tl-page">
+      <div className="tl-page-inner" style={{ display: "grid", gap: 32 }}>
         {/* Job Header */}
         <JobHeader job={job} />
 
-        {/* ── Workflow Actions — near top so office staff sees status first ── */}
+        {/* Workflow Actions */}
         <WorkflowActionsPanel
           jobId={job.id}
           currentStatus={job.status}
           onMutated={fetchJob}
         />
 
-        <hr className="border-gray-200" />
+        <hr className="tl-divider" />
 
-        {/* Design / KMZ setup */}
         <DesignSetupPanel onMutated={fetchJob} />
 
-        <hr className="border-gray-200" />
+        <hr className="tl-divider" />
 
-        {/* Routes */}
         <RouteListPanel routes={job.routes ?? []} />
 
-        {/* Walk Sessions — Phase 4E: highlight the inbox-selected session */}
         <SessionListPanel
           sessions={job.sessions ?? []}
           highlightedSessionId={selectedSessionId}
         />
 
-        {/* Exceptions — interactive, refreshes job on mutation */}
         <ExceptionSummaryPanel
           exceptions={job.exceptions ?? []}
           onMutated={fetchJob}
         />
 
-        <hr className="border-gray-200" />
+        <hr className="tl-divider" />
 
-        {/* Phase 4E: Selected Submission Review — only when a `session`
-            query param is present. Sits directly above the map so the
-            reviewer's eye flows from "what was submitted" to "what does
-            it look like on the map". */}
         {selectedSessionId && (
           <SelectedSubmissionReviewPanel
             selectedSessionId={selectedSessionId}
@@ -210,27 +196,25 @@ export default function JobDetailPage() {
           />
         )}
 
-        {/* Map — Leaflet, client-only. Phase 4E: passes the selected
-            session id so the matching walk track is emphasized. */}
         <OfficeMapReviewPanel
           job={job}
           selectedSessionId={selectedSessionId}
         />
 
-        <hr className="border-gray-200" />
+        <hr className="tl-divider" />
 
-        {/* Report generation + artifact list */}
         <ReportActionsPanel jobId={job.id} onGenerated={fetchJob} />
         <ArtifactsPanel artifacts={job.artifacts ?? []} />
 
         {/* ── Closeout Review ──────────────────────────────────────────────── */}
-        <hr className="border-gray-200" />
+        <hr className="tl-divider" />
 
         <div>
-          <h2 className="text-lg font-bold text-gray-900 mb-1">
+          <div className="tl-eyebrow">Closeout</div>
+          <h2 className="tl-h1" style={{ fontSize: 22, margin: "8px 0 4px" }}>
             Closeout Review
           </h2>
-          <p className="text-sm text-gray-500">
+          <p className="tl-subtle" style={{ margin: 0 }}>
             Pre-export readiness check and package summary for this job.
           </p>
         </div>
@@ -239,7 +223,6 @@ export default function JobDetailPage() {
         <CloseoutContentSummaryPanel job={job} />
         <SessionCoveragePanel sessions={job.sessions ?? []} />
         <OpenIssuesPanel exceptions={job.exceptions ?? []} />
-
       </div>
     </div>
   );

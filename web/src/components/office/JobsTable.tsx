@@ -41,84 +41,101 @@ function formatDate(ts: string | null): string {
 export default function JobsTable({ jobs, onRefresh }: JobsTableProps) {
   if (jobs.length === 0) {
     return (
-      <div className="text-center py-16 text-gray-400 text-sm">
-        No jobs found.
+      <div
+        className="tl-card tl-card-padded"
+        style={{ textAlign: "center", padding: "48px 18px" }}
+      >
+        <span className="tl-subtle">No jobs found.</span>
       </div>
     );
   }
 
   return (
-    <div className="overflow-x-auto rounded-lg border border-gray-200 shadow-sm">
-      <table className="min-w-full divide-y divide-gray-200 text-sm">
-        <thead className="bg-gray-50">
+    <div className="tl-table-wrap" style={{ overflowX: "auto" }}>
+      <table className="tl-table">
+        <thead>
           <tr>
-            <th className="px-4 py-3 text-left font-semibold text-gray-600 uppercase tracking-wider text-xs">
-              Job
-            </th>
-            <th className="px-4 py-3 text-left font-semibold text-gray-600 uppercase tracking-wider text-xs">
-              Code
-            </th>
-            <th className="px-4 py-3 text-left font-semibold text-gray-600 uppercase tracking-wider text-xs">
-              Status
-            </th>
-            <th className="px-4 py-3 text-center font-semibold text-gray-600 uppercase tracking-wider text-xs">
-              Routes
-            </th>
-            <th className="px-4 py-3 text-center font-semibold text-gray-600 uppercase tracking-wider text-xs">
-              Sessions
-            </th>
-            <th className="px-4 py-3 text-center font-semibold text-gray-600 uppercase tracking-wider text-xs">
-              Exceptions
-            </th>
-            <th className="px-4 py-3 text-left font-semibold text-gray-600 uppercase tracking-wider text-xs">
-              Last Sync
-            </th>
-            <th className="px-4 py-3 text-left font-semibold text-gray-600 uppercase tracking-wider text-xs">
-              Actions
-            </th>
+            <th>Job</th>
+            <th>Code</th>
+            <th>Status</th>
+            <th style={{ textAlign: "center" }}>Routes</th>
+            <th style={{ textAlign: "center" }}>Sessions</th>
+            <th style={{ textAlign: "center" }}>Exceptions</th>
+            <th>Last Sync</th>
+            <th>Actions</th>
           </tr>
         </thead>
-        <tbody className="bg-white divide-y divide-gray-100">
+        <tbody>
           {jobs.map((job) => (
-            <tr
-              key={job.id}
-              className="hover:bg-gray-50 transition-colors align-top"
-            >
-              <td className="px-4 py-3">
+            <tr key={job.id}>
+              <td>
                 <Link
                   href={`/jobs/${job.id}`}
-                  className="font-medium text-blue-600 hover:text-blue-800 hover:underline"
+                  className="tl-link"
+                  style={{ fontWeight: 600 }}
                 >
                   {job.job_name}
                 </Link>
               </td>
-              <td className="px-4 py-3 text-gray-500 font-mono text-xs">
+              <td
+                style={{
+                  color: "var(--tl-text-muted)",
+                  fontFamily:
+                    "ui-monospace, SFMono-Regular, Menlo, monospace",
+                  fontSize: 12,
+                }}
+              >
                 {job.job_code}
               </td>
-              <td className="px-4 py-3">
+              <td>
                 <StatusBadge status={job.status} />
               </td>
-              <td className="px-4 py-3 text-center text-gray-700 font-medium tabular-nums">
+              <td
+                style={{
+                  textAlign: "center",
+                  fontVariantNumeric: "tabular-nums",
+                  fontWeight: 600,
+                }}
+              >
                 {job.route_count}
               </td>
-              <td className="px-4 py-3 text-center text-gray-700 font-medium tabular-nums">
+              <td
+                style={{
+                  textAlign: "center",
+                  fontVariantNumeric: "tabular-nums",
+                  fontWeight: 600,
+                }}
+              >
                 {job.session_count}
               </td>
-              <td className="px-4 py-3 text-center tabular-nums">
+              <td
+                style={{
+                  textAlign: "center",
+                  fontVariantNumeric: "tabular-nums",
+                }}
+              >
                 <span
-                  className={
-                    job.exception_count > 0
-                      ? "font-semibold text-red-600"
-                      : "text-gray-400"
-                  }
+                  style={{
+                    color:
+                      job.exception_count > 0
+                        ? "#fca5a5"
+                        : "var(--tl-text-faint)",
+                    fontWeight: job.exception_count > 0 ? 700 : 500,
+                  }}
                 >
                   {job.exception_count}
                 </span>
               </td>
-              <td className="px-4 py-3 text-gray-400 text-xs whitespace-nowrap">
+              <td
+                style={{
+                  color: "var(--tl-text-faint)",
+                  fontSize: 12,
+                  whiteSpace: "nowrap",
+                }}
+              >
                 {formatDate(job.last_sync_at)}
               </td>
-              <td className="px-4 py-3">
+              <td>
                 <JobStatusActionButtons
                   jobId={job.id}
                   currentStatus={job.status}

@@ -297,19 +297,19 @@ function kmzLineStroke(feature: KmzLineFeature): string {
     feature.stroke ||
     feature.color ||
     (feature.role === "backbone"
-      ? "rgba(168, 213, 245, 0.34)"
+      ? "rgba(59, 130, 246, 0.78)"
       : feature.role === "terminal_tail"
-      ? "rgba(250, 204, 21, 0.28)"
-      : "rgba(183, 211, 231, 0.26)")
+      ? "rgba(251, 191, 36, 0.16)"
+      : "rgba(96, 165, 250, 0.66)")
   );
 }
 
 function kmzLineWidth(feature: KmzLineFeature): number {
   const raw = feature.stroke_width ?? feature.width;
   if (typeof raw === "number" && Number.isFinite(raw)) {
-    return clamp(raw * 0.66, 0.85, 2.4);
+    return clamp(raw * 0.62, 0.74, 2.18);
   }
-  return feature.role === "backbone" ? 1.5 : 1.05;
+  return feature.role === "backbone" ? 1.38 : 0.78;
 }
 
 function kmzPolygonFill(feature: KmzPolygonFeature): string {
@@ -328,29 +328,47 @@ function kmzPolygonOpacity(feature: KmzPolygonFeature): number {
   return 0.038;
 }
 
+/** Render-only: simplify KMZ clutter for demos; does not mutate data. */
+function presentationKmzPaint(
+  feature: KmzLineFeature,
+  presentationView: boolean
+): { omit: boolean; casingOpacity: number; lineOpacity: number } {
+  if (!presentationView) {
+    return { omit: false, casingOpacity: 1, lineOpacity: 0.94 };
+  }
+  const role = feature.role;
+  if (role === "backbone" || role === "underground_cable") {
+    return { omit: false, casingOpacity: 1, lineOpacity: 0.94 };
+  }
+  if (role === "terminal_tail") {
+    return { omit: true, casingOpacity: 0, lineOpacity: 0 };
+  }
+  return { omit: false, casingOpacity: 0.12, lineOpacity: 0.14 };
+}
+
 // ─── Evidence-layer color assignment ───────────────────────────────────────
 // Deterministic: same evidence_layer_id always maps to the same color.
 // Colors are chosen for high contrast on the dark map background.
 const EVIDENCE_LAYER_PALETTE = [
-  "rgba(220, 38, 38, 1)",   // red
-  "rgba(220, 38, 38, 1)",   // red
-  "rgba(220, 38, 38, 1)",   // red
-  "rgba(220, 38, 38, 1)",   // red
-  "rgba(220, 38, 38, 1)",   // red
-  "rgba(220, 38, 38, 1)",   // red
-  "rgba(220, 38, 38, 1)",   // red
-  "rgba(220, 38, 38, 1)",   // red
+  "rgba(248, 52, 62, 1)",   // red — cleaner, less muddy on dark base
+  "rgba(248, 52, 62, 1)",
+  "rgba(248, 52, 62, 1)",
+  "rgba(248, 52, 62, 1)",
+  "rgba(248, 52, 62, 1)",
+  "rgba(248, 52, 62, 1)",
+  "rgba(248, 52, 62, 1)",
+  "rgba(248, 52, 62, 1)",
 ];
 
 const EVIDENCE_LAYER_CASING_PALETTE = [
-  "rgba(69, 10, 10, 0.84)", // red casing
-  "rgba(69, 10, 10, 0.84)", // red casing
-  "rgba(69, 10, 10, 0.84)", // red casing
-  "rgba(69, 10, 10, 0.84)", // red casing
-  "rgba(69, 10, 10, 0.84)", // red casing
-  "rgba(69, 10, 10, 0.84)", // red casing
-  "rgba(69, 10, 10, 0.84)", // red casing
-  "rgba(69, 10, 10, 0.84)", // red casing
+  "rgba(22, 10, 12, 0.42)", // subtler dark casing
+  "rgba(22, 10, 12, 0.42)",
+  "rgba(22, 10, 12, 0.42)",
+  "rgba(22, 10, 12, 0.42)",
+  "rgba(22, 10, 12, 0.42)",
+  "rgba(22, 10, 12, 0.42)",
+  "rgba(22, 10, 12, 0.42)",
+  "rgba(22, 10, 12, 0.42)",
 ];
 
 function layerPaletteIndex(layerId: string | undefined | null): number {
@@ -492,7 +510,9 @@ const miniMapButton: React.CSSProperties = {
   height: 36,
   borderRadius: 999,
   padding: "0 12px",
-  border: "1px solid rgba(148, 163, 184, 0.28)",
+  borderWidth: 1,
+  borderStyle: "solid",
+  borderColor: "rgba(148, 163, 184, 0.28)",
   background: "rgba(2, 6, 23, 0.72)",
   color: "#e2e8f0",
   fontWeight: 800,
@@ -656,6 +676,7 @@ function OfficeRedlineMapInner({ mode = "default", projectId, workspaceTitle }: 
   const [hoverStationIndex, setHoverStationIndex] = useState<number | null>(null);
   const [showStations, setShowStations] = useState(false);
   const [showPlannedRouteHighlight, setShowPlannedRouteHighlight] = useState(false);
+  const [presentationView, setPresentationView] = useState(false);
   // Evidence-layer visibility: Set of hidden layer ids. Empty = all visible.
   const [hiddenLayers, setHiddenLayers] = useState<Set<string>>(new Set());
   const [focusedNovaIssue, setFocusedNovaIssue] = useState<FocusedNovaIssue | null>(null);
@@ -2878,16 +2899,21 @@ ${buildFolder("Stations", stationPlacemarks)}
                   }} style={miniMapButton}>Fit Stations</button>
                   <button onClick={() => setShowStations((current) => !current)} style={miniMapButton}>{showStations ? "Hide Stations" : "Show Stations"}</button>
                   <button
-                    onClick={() => setShowPlannedRouteHighlight((current) => !current)}
-                    title="Highlights loaded design/KMZ route context. This is not exact remaining-work detection."
+                    type="button"
+                    onClick={() => setPresentationView((v) => !v)}
+                    title="Hides or dims secondary design lines and background texture for cleaner demos. Does not change data."
                     style={{
                       ...miniMapButton,
-                      background: showPlannedRouteHighlight ? "rgba(120, 53, 15, 0.82)" : miniMapButton.background,
-                      borderColor: showPlannedRouteHighlight ? "rgba(250, 204, 21, 0.54)" : miniMapButton.borderColor,
-                      color: showPlannedRouteHighlight ? "#fef3c7" : miniMapButton.color,
+                      ...(presentationView
+                        ? {
+                            background: "rgba(30, 58, 95, 0.88)",
+                            borderColor: "rgba(147, 197, 253, 0.42)",
+                            color: "#e0f2fe",
+                          }
+                        : {}),
                     }}
                   >
-                    Planned Route Highlight
+                    {presentationView ? "Normal View" : "Presentation View"}
                   </button>
                 </div>
                 {renderBounds && projectionMetrics && allCoords.length > 0 ? (
@@ -2905,12 +2931,7 @@ ${buildFolder("Stations", stationPlacemarks)}
                     }}
                   >
                     {/* ─── Visual polish — SVG defs ───────────────────────── */}
-                    {/* Grid pattern: faint cool-blue dots/lines that pan and  */}
-                    {/* zoom with the map (they live in world coords). Sized   */}
-                    {/* in world units; the visual frequency stays roughly     */}
-                    {/* constant because the SVG viewBox scales with zoom.     */}
-                    {/* Redline glow: feGaussianBlur + feMerge so the bright   */}
-                    {/* red stroke gets a soft red bloom around it.            */}
+                    {/* Grid: faint L-shaped corner ticks (world coords).       */}
                     <defs>
                       <pattern
                         id="map-grid-pattern"
@@ -2923,8 +2944,8 @@ ${buildFolder("Stations", stationPlacemarks)}
                         <path
                           d="M 40 0 L 0 0 0 40"
                           fill="none"
-                          stroke="rgba(120, 180, 220, 0.05)"
-                          strokeWidth="0.6"
+                          stroke="rgba(120, 180, 220, 0.032)"
+                          strokeWidth="0.5"
                           vectorEffect="non-scaling-stroke"
                         />
                       </pattern>
@@ -2941,9 +2962,9 @@ ${buildFolder("Stations", stationPlacemarks)}
                         height="96"
                         patternUnits="userSpaceOnUse"
                       >
-                        <circle cx="18" cy="22" r="1.1" fill="rgba(148, 163, 184, 0.055)" />
-                        <circle cx="68" cy="34" r="1.4" fill="rgba(132, 204, 22, 0.045)" />
-                        <circle cx="42" cy="76" r="1.2" fill="rgba(56, 189, 248, 0.035)" />
+                        <circle cx="18" cy="22" r="1.1" fill="rgba(148, 163, 184, 0.035)" />
+                        <circle cx="68" cy="34" r="1.4" fill="rgba(132, 204, 22, 0.028)" />
+                        <circle cx="42" cy="76" r="1.2" fill="rgba(56, 189, 248, 0.024)" />
                       </pattern>
                       <pattern
                         id="map-grid-pattern-coarse"
@@ -2956,24 +2977,11 @@ ${buildFolder("Stations", stationPlacemarks)}
                         <path
                           d="M 200 0 L 0 0 0 200"
                           fill="none"
-                          stroke="rgba(140, 195, 235, 0.08)"
-                          strokeWidth="0.9"
+                          stroke="rgba(140, 195, 235, 0.048)"
+                          strokeWidth="0.72"
                           vectorEffect="non-scaling-stroke"
                         />
                       </pattern>
-                      <filter
-                        id="redline-glow"
-                        x="-20%"
-                        y="-20%"
-                        width="140%"
-                        height="140%"
-                      >
-                        <feGaussianBlur stdDeviation="1.6" result="redBlur" />
-                        <feMerge>
-                          <feMergeNode in="redBlur" />
-                          <feMergeNode in="SourceGraphic" />
-                        </feMerge>
-                      </filter>
                     </defs>
 
                     <g id="kmz-design-layer">
@@ -2991,6 +2999,7 @@ ${buildFolder("Stations", stationPlacemarks)}
                         width={projectionMetrics?.worldWidth || PROJECTION_BASE_WIDTH}
                         height={projectionMetrics?.worldHeight || PROJECTION_BASE_WIDTH}
                         fill="url(#terrain-speckle-pattern)"
+                        opacity={presentationView ? 0.42 : 1}
                         pointerEvents="none"
                       />
                       {/* Fine grid */}
@@ -3000,6 +3009,7 @@ ${buildFolder("Stations", stationPlacemarks)}
                         width={projectionMetrics?.worldWidth || PROJECTION_BASE_WIDTH}
                         height={projectionMetrics?.worldHeight || PROJECTION_BASE_WIDTH}
                         fill="url(#map-grid-pattern)"
+                        opacity={presentationView ? 0.32 : 1}
                         pointerEvents="none"
                       />
                       {/* Coarse grid for stronger structure at low zoom */}
@@ -3009,11 +3019,14 @@ ${buildFolder("Stations", stationPlacemarks)}
                         width={projectionMetrics?.worldWidth || PROJECTION_BASE_WIDTH}
                         height={projectionMetrics?.worldHeight || PROJECTION_BASE_WIDTH}
                         fill="url(#map-grid-pattern-coarse)"
+                        opacity={presentationView ? 0.35 : 1}
                         pointerEvents="none"
                       />
 
                       {kmzLinePaths.map((line, idx) => {
                         const feature = kmzLineFeatures[idx];
+                        const presentationPaint = presentationKmzPaint(feature, presentationView);
+                        if (presentationPaint.omit) return null;
                         const stroke = kmzLineStroke(feature);
                         const width = kmzLineWidth(feature);
                         return line.path ? (
@@ -3021,8 +3034,9 @@ ${buildFolder("Stations", stationPlacemarks)}
                             <path
                               d={line.path}
                               fill="none"
-                              stroke="rgba(12,18,28,0.18)"
-                              strokeWidth={width + 0.8}
+                              stroke="rgba(10, 16, 26, 0.1)"
+                              strokeOpacity={presentationPaint.casingOpacity}
+                              strokeWidth={width + 0.45}
                               strokeLinecap="round"
                               strokeLinejoin="round"
                               vectorEffect="non-scaling-stroke"
@@ -3031,7 +3045,7 @@ ${buildFolder("Stations", stationPlacemarks)}
                               d={line.path}
                               fill="none"
                               stroke={stroke}
-                              strokeOpacity={0.9}
+                              strokeOpacity={presentationPaint.lineOpacity}
                               strokeWidth={width}
                               strokeLinecap="round"
                               strokeLinejoin="round"
@@ -3040,7 +3054,7 @@ ${buildFolder("Stations", stationPlacemarks)}
                           </g>
                         ) : null;
                       })}
-                      {showPlannedRouteHighlight ? (
+                      {showPlannedRouteHighlight && !presentationView ? (
                         <g id="planned-route-highlight-layer" pointerEvents="none">
                           {kmzLinePaths.map((line, idx) => {
                             const feature = kmzLineFeatures[idx];
@@ -3050,14 +3064,13 @@ ${buildFolder("Stations", stationPlacemarks)}
                                 key={`planned-highlight-${line.id}`}
                                 d={line.path}
                                 fill="none"
-                                stroke="rgba(250, 204, 21, 0.88)"
-                                strokeWidth={Math.max(width + 3.2, 4.2)}
+                                stroke="rgba(253, 224, 112, 0.48)"
+                                strokeWidth={Math.max(width + 1.45, 2.85)}
                                 strokeLinecap="round"
                                 strokeLinejoin="round"
-                                strokeDasharray="10 7"
-                                strokeOpacity={0.82}
+                                strokeDasharray="6 14"
+                                strokeOpacity={0.3}
                                 vectorEffect="non-scaling-stroke"
-                                filter="url(#redline-glow)"
                               />
                             ) : null;
                           })}
@@ -3084,7 +3097,7 @@ ${buildFolder("Stations", stationPlacemarks)}
                                 d={line.path}
                                 fill="none"
                                 stroke="rgba(196, 181, 253, 0.48)"
-                                strokeWidth={7.1}
+                                strokeWidth={5.45}
                                 strokeLinecap="round"
                                 strokeLinejoin="round"
                                 vectorEffect="non-scaling-stroke"
@@ -3095,7 +3108,7 @@ ${buildFolder("Stations", stationPlacemarks)}
                               d={line.path}
                               fill="none"
                               stroke={segCasing}
-                              strokeWidth={6.2}
+                              strokeWidth={4.62}
                               strokeLinecap="round"
                               strokeLinejoin="round"
                               vectorEffect="non-scaling-stroke"
@@ -3104,18 +3117,17 @@ ${buildFolder("Stations", stationPlacemarks)}
                               d={line.path}
                               fill="none"
                               stroke={segStroke}
-                              strokeWidth={4.35}
+                              strokeWidth={3.05}
                               strokeLinecap="round"
                               strokeLinejoin="round"
                               vectorEffect="non-scaling-stroke"
-                              filter="url(#redline-glow)"
                             />
                             {isNovaFocused && (
                               <path
                                 d={line.path}
                                 fill="none"
                                 stroke="#facc15"
-                                strokeWidth={8.5}
+                                strokeWidth={6.45}
                                 strokeLinecap="round"
                                 strokeLinejoin="round"
                                 strokeOpacity={0.9}

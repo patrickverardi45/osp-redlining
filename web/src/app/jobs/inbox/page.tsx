@@ -9,17 +9,6 @@
 //
 // This page does NOT mutate session state. It does not approve, reject, or
 // otherwise change anything. It is a visibility-only view.
-//
-// Status mapping (Phase 4D):
-//   - Any session whose `status` is "ended" is treated as "Needs Review".
-//   - All other statuses (active, paused, syncing, anything else) are
-//     considered in-progress and excluded from the inbox.
-//
-// Filters operate on `started_at`:
-//   - "Needs Review" — every ended session, regardless of date
-//   - "Today"        — ended sessions started today (local time)
-//   - "This Week"    — ended sessions started within the last 7 days
-//                      (rolling, inclusive of today)
 "use client";
 
 import Link from "next/link";
@@ -49,30 +38,43 @@ export default function FieldSubmissionsInboxPage() {
   } = useFieldSubmissions("needs_review");
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      <div className="max-w-6xl mx-auto px-6 py-10 space-y-6">
-        {/* Breadcrumb / back link. The office app has no global sidebar, so
-            we provide a simple way back to the jobs list. */}
-        <nav className="text-sm text-gray-500">
-          <Link href="/jobs" className="hover:text-blue-600 hover:underline">
+    <div className="tl-page">
+      <div className="tl-page-inner-wide" style={{ display: "grid", gap: 22 }}>
+        {/* Breadcrumb */}
+        <nav
+          style={{ fontSize: 13, color: "var(--tl-text-muted)" }}
+        >
+          <Link href="/jobs" className="tl-link">
             Jobs
           </Link>
-          <span className="mx-2 text-gray-300">/</span>
-          <span className="text-gray-800">Field Submissions Inbox</span>
+          <span style={{ margin: "0 8px", color: "var(--tl-text-faint)" }}>
+            /
+          </span>
+          <span style={{ color: "var(--tl-text)" }}>
+            Field Submissions Inbox
+          </span>
         </nav>
 
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">
+          <div className="tl-eyebrow">TrueLine · Field</div>
+          <h1 className="tl-h1" style={{ margin: "8px 0 6px" }}>
             Field Submissions Inbox
           </h1>
-          <p className="text-sm text-gray-500 mt-1">
+          <p className="tl-subtle" style={{ margin: 0 }}>
             Walk sessions sent in from the field, ready for office review.
             Read-only — nothing here mutates job or session state.
           </p>
         </div>
 
         {/* Filter chips */}
-        <div className="flex flex-wrap items-center gap-2">
+        <div
+          style={{
+            display: "flex",
+            flexWrap: "wrap",
+            alignItems: "center",
+            gap: 8,
+          }}
+        >
           {FILTER_KEYS.map((key) => {
             const active = filter === key;
             return (
@@ -80,31 +82,54 @@ export default function FieldSubmissionsInboxPage() {
                 key={key}
                 type="button"
                 onClick={() => setFilter(key)}
-                className={`px-3 py-1.5 rounded-full text-xs font-medium border transition-colors ${
-                  active
-                    ? "bg-gray-800 text-white border-gray-800"
-                    : "bg-white text-gray-700 border-gray-200 hover:border-gray-400"
-                }`}
+                className={
+                  active ? "tl-btn tl-btn-toggle-active" : "tl-btn tl-btn-ghost"
+                }
+                style={{
+                  borderRadius: 999,
+                  fontSize: 12,
+                  padding: "6px 12px",
+                }}
               >
                 {FIELD_SUBMISSIONS_FILTER_LABELS[key]}
                 <span
-                  className={`ml-2 inline-flex items-center justify-center rounded-full px-1.5 text-[10px] font-semibold ${
-                    active
-                      ? "bg-white/20 text-white"
-                      : "bg-gray-100 text-gray-600"
-                  }`}
+                  style={{
+                    marginLeft: 8,
+                    display: "inline-flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    borderRadius: 999,
+                    padding: "0 6px",
+                    fontSize: 10,
+                    fontWeight: 700,
+                    background: active
+                      ? "rgba(11,15,23,0.25)"
+                      : "var(--tl-bg-grid)",
+                    color: active
+                      ? "var(--tl-accent-ink)"
+                      : "var(--tl-text-muted)",
+                    border: active
+                      ? "1px solid rgba(11,15,23,0.25)"
+                      : "1px solid var(--tl-border)",
+                  }}
                 >
                   {counts[key]}
                 </span>
               </button>
             );
           })}
-          <div className="ml-auto">
+          <div style={{ marginLeft: "auto" }}>
             <button
               type="button"
               onClick={refresh}
               disabled={loading}
-              className="px-3 py-1.5 rounded text-xs font-medium bg-white border border-gray-200 text-gray-700 hover:border-gray-400 disabled:opacity-50 disabled:cursor-not-allowed"
+              className="tl-btn tl-btn-ghost"
+              style={{
+                fontSize: 12,
+                padding: "6px 12px",
+                opacity: loading ? 0.6 : 1,
+                cursor: loading ? "not-allowed" : "pointer",
+              }}
             >
               {loading ? "Refreshing…" : "Refresh"}
             </button>
@@ -113,33 +138,52 @@ export default function FieldSubmissionsInboxPage() {
 
         {/* Loading */}
         {loading && (
-          <div className="text-sm text-gray-400 py-10 text-center">
-            Loading field submissions…
+          <div
+            className="tl-card tl-card-padded"
+            style={{ textAlign: "center" }}
+          >
+            <span className="tl-subtle">Loading field submissions…</span>
           </div>
         )}
 
         {/* Hard error */}
         {!loading && error && (
           <div>
-            <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-              <span className="font-semibold">
+            <div
+              className="tl-card tl-card-padded"
+              style={{
+                borderColor: "var(--tl-red-border)",
+                background: "var(--tl-surface)",
+                color: "#fee2e2",
+              }}
+            >
+              <span style={{ fontWeight: 700 }}>
                 Error loading field submissions:
               </span>{" "}
               {error}
             </div>
             <button
               onClick={refresh}
-              className="mt-3 px-3 py-1.5 rounded text-sm font-medium bg-gray-800 text-white hover:bg-gray-700 transition-colors"
+              className="tl-btn tl-btn-primary"
+              style={{ marginTop: 12 }}
             >
               Retry
             </button>
           </div>
         )}
 
-        {/* Soft / partial failures — show inbox but warn that some jobs
-            could not be loaded. */}
+        {/* Soft / partial failures */}
         {!loading && !error && partialFailures > 0 && (
-          <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-2 text-xs text-amber-800">
+          <div
+            className="tl-card"
+            style={{
+              padding: "10px 14px",
+              borderColor: "var(--tl-amber-border)",
+              background: "var(--tl-surface)",
+              color: "#fde68a",
+              fontSize: 12,
+            }}
+          >
             {partialFailures === 1
               ? "1 job could not be loaded; its sessions are not shown."
               : `${partialFailures} jobs could not be loaded; their sessions are not shown.`}
@@ -148,98 +192,120 @@ export default function FieldSubmissionsInboxPage() {
 
         {/* Empty state */}
         {!loading && !error && filteredRows.length === 0 && (
-          <div className="rounded-lg border border-dashed border-gray-200 bg-white py-16 text-center text-sm text-gray-400">
+          <div
+            className="tl-card"
+            style={{
+              border: "1px dashed var(--tl-border-strong)",
+              padding: "56px 18px",
+              textAlign: "center",
+              color: "var(--tl-text-faint)",
+              fontSize: 13,
+            }}
+          >
             No field submissions ready for review.
           </div>
         )}
 
         {/* Inbox rows */}
         {!loading && !error && filteredRows.length > 0 && (
-          <div className="overflow-x-auto rounded-lg border border-gray-200 bg-white shadow-sm">
-            <table className="min-w-full divide-y divide-gray-200 text-sm">
-              <thead className="bg-gray-50">
+          <div className="tl-table-wrap" style={{ overflowX: "auto" }}>
+            <table className="tl-table">
+              <thead>
                 <tr>
-                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">
-                    Status
-                  </th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">
-                    Job
-                  </th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">
-                    Session
-                  </th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">
-                    Crew
-                  </th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">
-                    Date
-                  </th>
-                  <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-gray-500">
-                    Stations
-                  </th>
-                  <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-gray-500">
-                    Photos
-                  </th>
-                  <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-gray-500">
-                    Breadcrumbs
-                  </th>
-                  <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-gray-500">
-                    {""}
-                  </th>
+                  <th>Status</th>
+                  <th>Job</th>
+                  <th>Session</th>
+                  <th>Crew</th>
+                  <th>Date</th>
+                  <th style={{ textAlign: "right" }}>Stations</th>
+                  <th style={{ textAlign: "right" }}>Photos</th>
+                  <th style={{ textAlign: "right" }}>Breadcrumbs</th>
+                  <th style={{ textAlign: "right" }}></th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-gray-100">
+              <tbody>
                 {filteredRows.map((row) => {
                   const session = row.session;
                   return (
-                    <tr
-                      key={`${row.jobId}:${session.id}`}
-                      className="hover:bg-gray-50 transition-colors"
-                    >
-                      <td className="px-4 py-3 whitespace-nowrap">
-                        <span className="inline-flex items-center rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-800">
+                    <tr key={`${row.jobId}:${session.id}`}>
+                      <td style={{ whiteSpace: "nowrap" }}>
+                        <span className="tl-pill tl-pill-warn">
                           Needs Review
                         </span>
                       </td>
-                      <td className="px-4 py-3">
+                      <td>
                         <Link
                           href={`/jobs/${row.jobId}?session=${encodeURIComponent(session.id)}`}
-                          className="font-medium text-gray-900 hover:text-blue-600 hover:underline"
+                          className="tl-link"
+                          style={{ fontWeight: 600 }}
                         >
                           {row.jobLabel}
                         </Link>
                       </td>
-                      <td className="px-4 py-3 font-mono text-xs text-gray-700 whitespace-nowrap">
+                      <td
+                        style={{
+                          fontFamily:
+                            "ui-monospace, SFMono-Regular, Menlo, monospace",
+                          fontSize: 12,
+                          whiteSpace: "nowrap",
+                          color: "var(--tl-text-muted)",
+                        }}
+                      >
                         {shortenSessionId(session.id)}
                       </td>
-                      <td className="px-4 py-3 text-gray-700">
+                      <td>
                         {session.crew_name?.trim() || (
-                          <span className="text-gray-400">—</span>
+                          <span style={{ color: "var(--tl-text-faint)" }}>
+                            —
+                          </span>
                         )}
                       </td>
-                      <td className="px-4 py-3 whitespace-nowrap">
-                        <div className="text-gray-700">
+                      <td style={{ whiteSpace: "nowrap" }}>
+                        <div style={{ color: "var(--tl-text)" }}>
                           {formatSessionDate(session.started_at)}
                         </div>
-                        <div className="text-[11px] text-gray-400">
+                        <div
+                          style={{
+                            fontSize: 11,
+                            color: "var(--tl-text-faint)",
+                          }}
+                        >
                           {formatSessionDateTime(session.started_at)}
                         </div>
                       </td>
-                      <td className="px-4 py-3 text-right tabular-nums text-gray-700">
+                      <td
+                        style={{
+                          textAlign: "right",
+                          fontVariantNumeric: "tabular-nums",
+                        }}
+                      >
                         {safeCount(session.station_count).toLocaleString()}
                       </td>
-                      <td className="px-4 py-3 text-right tabular-nums text-gray-700">
+                      <td
+                        style={{
+                          textAlign: "right",
+                          fontVariantNumeric: "tabular-nums",
+                        }}
+                      >
                         {safeCount(session.photo_count).toLocaleString()}
                       </td>
-                      <td className="px-4 py-3 text-right tabular-nums text-gray-700">
+                      <td
+                        style={{
+                          textAlign: "right",
+                          fontVariantNumeric: "tabular-nums",
+                        }}
+                      >
                         {safeCount(
                           session.track_point_count,
                         ).toLocaleString()}
                       </td>
-                      <td className="px-4 py-3 text-right whitespace-nowrap">
+                      <td
+                        style={{ textAlign: "right", whiteSpace: "nowrap" }}
+                      >
                         <Link
                           href={`/jobs/${row.jobId}?session=${encodeURIComponent(session.id)}`}
-                          className="text-xs font-medium text-blue-600 hover:underline"
+                          className="tl-link"
+                          style={{ fontSize: 12, fontWeight: 600 }}
                         >
                           View Session →
                         </Link>

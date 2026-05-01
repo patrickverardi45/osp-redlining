@@ -70,39 +70,68 @@ function JobRow({
   onRefresh: () => void;
 }) {
   return (
-    <tr className="hover:bg-gray-50 transition-colors align-top">
-      <td className="px-4 py-3">
+    <tr>
+      <td>
         <Link
           href={`/jobs/${job.id}`}
-          className="font-medium text-blue-600 hover:text-blue-800 hover:underline text-sm"
+          className="tl-link"
+          style={{ fontWeight: 600, fontSize: 13 }}
         >
           {job.job_name}
         </Link>
       </td>
-      <td className="px-4 py-3 text-gray-500 font-mono text-xs whitespace-nowrap">
+      <td
+        style={{
+          color: "var(--tl-text-muted)",
+          fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+          fontSize: 12,
+          whiteSpace: "nowrap",
+        }}
+      >
         {job.job_code}
       </td>
-      <td className="px-4 py-3 text-center text-gray-700 text-sm tabular-nums">
+      <td
+        style={{
+          textAlign: "center",
+          fontVariantNumeric: "tabular-nums",
+        }}
+      >
         {job.route_count}
       </td>
-      <td className="px-4 py-3 text-center text-gray-700 text-sm tabular-nums">
+      <td
+        style={{
+          textAlign: "center",
+          fontVariantNumeric: "tabular-nums",
+        }}
+      >
         {job.session_count}
       </td>
-      <td className="px-4 py-3 text-center text-sm tabular-nums">
+      <td
+        style={{
+          textAlign: "center",
+          fontVariantNumeric: "tabular-nums",
+        }}
+      >
         <span
-          className={
-            job.exception_count > 0
-              ? "font-semibold text-red-600"
-              : "text-gray-400"
-          }
+          style={{
+            color:
+              job.exception_count > 0 ? "#fca5a5" : "var(--tl-text-faint)",
+            fontWeight: job.exception_count > 0 ? 700 : 500,
+          }}
         >
           {job.exception_count}
         </span>
       </td>
-      <td className="px-4 py-3 text-xs text-gray-400 whitespace-nowrap">
+      <td
+        style={{
+          color: "var(--tl-text-faint)",
+          fontSize: 12,
+          whiteSpace: "nowrap",
+        }}
+      >
         {formatDate(job.last_sync_at)}
       </td>
-      <td className="px-4 py-3">
+      <td>
         <JobStatusActionButtons
           jobId={job.id}
           currentStatus={job.status}
@@ -126,50 +155,61 @@ function StageGroup({
   onRefresh: () => void;
 }) {
   return (
-    <div className="rounded-lg border border-gray-200 bg-white shadow-sm overflow-hidden">
-      <div className="flex items-center justify-between px-4 py-3 bg-gray-50 border-b border-gray-200">
-        <div className="flex items-center gap-2">
+    <div className="tl-card" style={{ overflow: "hidden" }}>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          padding: "12px 16px",
+          background: "var(--tl-bg-grid)",
+          borderBottom: "1px solid var(--tl-border)",
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
           <StatusBadge status={stage.key} />
-          <span className="text-xs text-gray-400">{stage.description}</span>
+          <span style={{ color: "var(--tl-text-faint)", fontSize: 12 }}>
+            {stage.description}
+          </span>
         </div>
-        <span className="text-xs font-semibold text-gray-500 tabular-nums">
+        <span
+          style={{
+            color: "var(--tl-text-muted)",
+            fontSize: 12,
+            fontWeight: 700,
+            fontVariantNumeric: "tabular-nums",
+          }}
+        >
           {jobs.length} job{jobs.length !== 1 ? "s" : ""}
         </span>
       </div>
 
       {jobs.length === 0 ? (
-        <div className="px-4 py-4 text-sm text-gray-400 text-center">
+        <div
+          style={{
+            padding: "16px",
+            textAlign: "center",
+            color: "var(--tl-text-faint)",
+            fontSize: 13,
+          }}
+        >
           No jobs in this stage.
         </div>
       ) : (
-        <div className="overflow-x-auto">
-          <table className="min-w-full divide-y divide-gray-100 text-sm">
+        <div style={{ overflowX: "auto" }}>
+          <table className="tl-table">
             <thead>
-              <tr className="bg-gray-50/50">
-                <th className="px-4 py-2 text-left text-xs font-semibold text-gray-400 uppercase tracking-wider">
-                  Job
-                </th>
-                <th className="px-4 py-2 text-left text-xs font-semibold text-gray-400 uppercase tracking-wider">
-                  Code
-                </th>
-                <th className="px-4 py-2 text-center text-xs font-semibold text-gray-400 uppercase tracking-wider">
-                  Routes
-                </th>
-                <th className="px-4 py-2 text-center text-xs font-semibold text-gray-400 uppercase tracking-wider">
-                  Sessions
-                </th>
-                <th className="px-4 py-2 text-center text-xs font-semibold text-gray-400 uppercase tracking-wider">
-                  Exceptions
-                </th>
-                <th className="px-4 py-2 text-left text-xs font-semibold text-gray-400 uppercase tracking-wider">
-                  Last Sync
-                </th>
-                <th className="px-4 py-2 text-left text-xs font-semibold text-gray-400 uppercase tracking-wider">
-                  Actions
-                </th>
+              <tr>
+                <th>Job</th>
+                <th>Code</th>
+                <th style={{ textAlign: "center" }}>Routes</th>
+                <th style={{ textAlign: "center" }}>Sessions</th>
+                <th style={{ textAlign: "center" }}>Exceptions</th>
+                <th>Last Sync</th>
+                <th>Actions</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-gray-100">
+            <tbody>
               {jobs.map((job) => (
                 <JobRow key={job.id} job={job} onRefresh={onRefresh} />
               ))}
@@ -201,7 +241,7 @@ export default function JobsPipelineView({
   }
 
   return (
-    <div className="space-y-4">
+    <div style={{ display: "grid", gap: 14 }}>
       {PIPELINE_STAGES.map((stage) => (
         <StageGroup
           key={stage.key}

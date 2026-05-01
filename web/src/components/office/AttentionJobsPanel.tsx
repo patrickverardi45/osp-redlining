@@ -42,51 +42,66 @@ export default function AttentionJobsPanel({ jobs }: AttentionJobsPanelProps) {
 
   return (
     <section>
-      <div className="flex items-center gap-2 mb-3">
-        <h2 className="text-base font-semibold text-gray-800">
-          Needs Attention
-        </h2>
-        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-red-100 text-red-700">
-          {attentionJobs.length}
-        </span>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 10,
+          marginBottom: 12,
+        }}
+      >
+        <h2 className="tl-h2">Needs Attention</h2>
+        <span className="tl-pill tl-pill-danger">{attentionJobs.length}</span>
       </div>
 
-      <div className="rounded-lg border border-red-200 bg-red-50/30 overflow-hidden shadow-sm">
-        <table className="min-w-full divide-y divide-red-100 text-sm">
-          <thead className="bg-red-50">
+      <div
+        className="tl-table-wrap"
+        style={{
+          borderColor: "var(--tl-red-border)",
+          background: "var(--tl-surface)",
+        }}
+      >
+        <table className="tl-table">
+          <thead>
             <tr>
-              <th className="px-4 py-2.5 text-left text-xs font-semibold text-red-700 uppercase tracking-wider">
-                Job
-              </th>
-              <th className="px-4 py-2.5 text-left text-xs font-semibold text-red-700 uppercase tracking-wider">
-                Code
-              </th>
-              <th className="px-4 py-2.5 text-left text-xs font-semibold text-red-700 uppercase tracking-wider">
-                Why
-              </th>
-              <th className="px-4 py-2.5 text-left text-xs font-semibold text-red-700 uppercase tracking-wider">
-                Last Sync
-              </th>
+              <th style={{ color: "#fca5a5" }}>Job</th>
+              <th style={{ color: "#fca5a5" }}>Code</th>
+              <th style={{ color: "#fca5a5" }}>Why</th>
+              <th style={{ color: "#fca5a5" }}>Last Sync</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-red-100 bg-white">
+          <tbody>
             {attentionJobs.map((job) => (
-              <tr key={job.id} className="hover:bg-red-50/50 transition-colors">
-                <td className="px-4 py-2.5">
+              <tr key={job.id}>
+                <td>
                   <Link
                     href={`/jobs/${job.id}`}
-                    className="font-medium text-blue-600 hover:text-blue-800 hover:underline"
+                    className="tl-link"
+                    style={{ fontWeight: 600 }}
                   >
                     {job.job_name}
                   </Link>
                 </td>
-                <td className="px-4 py-2.5 text-gray-500 font-mono text-xs">
+                <td
+                  style={{
+                    color: "var(--tl-text-muted)",
+                    fontFamily:
+                      "ui-monospace, SFMono-Regular, Menlo, monospace",
+                    fontSize: 12,
+                  }}
+                >
                   {job.job_code}
                 </td>
-                <td className="px-4 py-2.5 text-sm text-gray-700">
+                <td style={{ color: "var(--tl-text)" }}>
                   {attentionReason(job)}
                 </td>
-                <td className="px-4 py-2.5 text-xs text-gray-400 whitespace-nowrap">
+                <td
+                  style={{
+                    color: "var(--tl-text-faint)",
+                    fontSize: 12,
+                    whiteSpace: "nowrap",
+                  }}
+                >
                   {formatDate(job.last_sync_at)}
                 </td>
               </tr>
