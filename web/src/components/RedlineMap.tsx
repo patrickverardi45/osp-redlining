@@ -4180,7 +4180,7 @@ ${buildFolder("Stations", stationPlacemarks)}
                       </div>
                     ) : null}
                     <div style={{ display: "grid", gap: 8 }}>
-                      {projectCompletionSummary.plannedSource !== "manual" ? (
+                      {projectCompletionSummary.plannedSource !== "manual" && (state?.engineering_plans?.length ?? 0) === 0 ? (
                         <div style={{ justifySelf: "start", borderRadius: 999, background: "#fef3c7", color: "#92400e", border: "1px solid #fbbf24", padding: "4px 9px", fontSize: 11, fontWeight: 900, textTransform: "uppercase", letterSpacing: 0.3 }}>
                           Enter engineering/material takeoff total to calculate full project completion.
                         </div>
