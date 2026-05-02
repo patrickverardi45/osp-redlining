@@ -85,23 +85,34 @@ STATE: Dict[str, Any] = {
 }
 
 
-def _clear_engineering_plan_storage() -> None:
-    """Remove uploaded engineering plans and reset their disk-backed index."""
+def _clear_engineering_plan_storage_for_session(session_id: str) -> None:
+    """Remove engineering plan files and index rows for this session only.
+
+    The global index.json holds records for multiple sessions; workspace reset
+    must not delete other sessions' evidence on disk.
+    """
+    sid = str(session_id or "").strip()
+    if not sid:
+        return
     try:
-        if ENGINEERING_PLAN_ROOT.exists():
-            for child in ENGINEERING_PLAN_ROOT.iterdir():
-                if child.is_dir():
-                    shutil.rmtree(child)
-                else:
-                    child.unlink(missing_ok=True)
-        _save_engineering_plan_index({"plans": []})
+        session_folder = ENGINEERING_PLAN_ROOT / _safe_filename(sid)
+        if session_folder.is_dir():
+            shutil.rmtree(session_folder)
+        index_data = _load_engineering_plan_index()
+        plans = index_data.get("plans")
+        if not isinstance(plans, list):
+            plans = []
+        index_data["plans"] = [
+            r for r in plans if str(r.get("session_id") or "").strip() != sid
+        ]
+        _save_engineering_plan_index(index_data)
     except Exception:
         pass  # non-fatal: workspace state still resets if disk cleanup fails
 
 
 def _reset_workspace_state() -> None:
-    # Clear uploaded engineering plan evidence before wiping STATE.
-    _clear_engineering_plan_storage()
+    # Clear this session's engineering plan evidence only (see _clear_engineering_plan_storage_for_session).
+    _clear_engineering_plan_storage_for_session(str(STATE.get("_session_id_hint") or ""))
     # Clear persisted Nova override decisions for this session.
     _clear_nova_overrides_for_session(STATE.get("_session_id_hint", ""))
     preserved_bug_reports = list(STATE.get("bug_reports", []) or [])
