@@ -8812,6 +8812,19 @@ def walk_end(payload: Dict[str, Any] = Body(default={})) -> JSONResponse:
             STATE["walk_meta"] = meta
             breadcrumb_count = len(STATE.get("walk_breadcrumbs") or [])
             station_event_count = len(STATE.get("walk_station_events") or [])
+            # Persist to disk so the office can see this submission across devices.
+            # Wrapped in its own try/except: a disk failure must never block the
+            # walk end response — the in-memory session is the authoritative store.
+            try:
+                _save_walk_submission(
+                    session_id=resolved_session_id,
+                    meta=meta,
+                    breadcrumbs=list(STATE.get("walk_breadcrumbs") or []),
+                    station_events=list(STATE.get("walk_station_events") or []),
+                )
+                print("WALK SUBMISSION SAVED", resolved_session_id)
+            except Exception as e:
+                print("WALK SUBMISSION FAILED", str(e))
             return _ok(
                 session_id=resolved_session_id,
                 walk_active=False,
@@ -8934,6 +8947,172 @@ def get_walk_route_context(projectId: Optional[str] = Query(None)) -> Dict[str, 
 
 
 # ---------------------------------------------------------------------------
+# Walk submission disk persistence.
+# Completed walks are written to uploads/walk_submissions/<session_id>.json
+# and enumerated via uploads/walk_submissions/index.json so the office can
+# see field submissions across devices without sharing a browser session.
+# Pattern mirrors reviewer_exceptions storage already in use.
+# ---------------------------------------------------------------------------
+
+WALK_SUBMISSIONS_DIR = UPLOADS_DIR / "walk_submissions"
+WALK_SUBMISSIONS_INDEX_PATH = WALK_SUBMISSIONS_DIR / "index.json"
+
+
+def _ensure_walk_submissions_storage() -> None:
+    WALK_SUBMISSIONS_DIR.mkdir(parents=True, exist_ok=True)
+    if not WALK_SUBMISSIONS_INDEX_PATH.exists():
+        WALK_SUBMISSIONS_INDEX_PATH.write_text(
+            json.dumps({"submissions": []}, indent=2),
+            encoding="utf-8",
+        )
+
+
+def _load_walk_submissions_index() -> Dict[str, Any]:
+    _ensure_walk_submissions_storage()
+    try:
+        data = json.loads(WALK_SUBMISSIONS_INDEX_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        data = {"submissions": []}
+    if not isinstance(data, dict):
+        data = {"submissions": []}
+    if not isinstance(data.get("submissions"), list):
+        data["submissions"] = []
+    return data
+
+
+def _save_walk_submissions_index(data: Dict[str, Any]) -> None:
+    _ensure_walk_submissions_storage()
+    tmp = WALK_SUBMISSIONS_INDEX_PATH.with_suffix(".tmp")
+    tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    tmp.replace(WALK_SUBMISSIONS_INDEX_PATH)
+
+
+def _walk_submission_sid(session_id: str) -> str:
+    return re.sub(r"[^a-zA-Z0-9_-]", "_", str(session_id or "").strip())[:80]
+
+
+def _save_walk_submission(
+    session_id: str,
+    meta: Dict[str, Any],
+    breadcrumbs: List[Dict[str, Any]],
+    station_events: List[Dict[str, Any]],
+) -> None:
+    sid = str(session_id or "").strip()
+    if not sid:
+        return
+    _ensure_walk_submissions_storage()
+    job_id = str(meta.get("job_id") or "").strip() or "test-job"
+    ended_at = str(meta.get("ended_at") or _walk_iso_now())
+
+    track_coords = [
+        [float(pt["lon"]), float(pt["lat"])]
+        for pt in breadcrumbs
+        if isinstance(pt, dict)
+        and pt.get("lat") is not None
+        and pt.get("lon") is not None
+    ]
+    track_geometry: Optional[Dict[str, Any]] = (
+        {"type": "LineString", "coordinates": track_coords}
+        if len(track_coords) >= 2
+        else None
+    )
+
+    doc = {
+        "session_id": sid,
+        "job_id": job_id,
+        "walk_meta": meta,
+        "walk_breadcrumbs": breadcrumbs,
+        "walk_station_events": station_events,
+        "ended_at": ended_at,
+        "station_count": len(station_events),
+        "breadcrumb_count": len(breadcrumbs),
+        "track_geometry": track_geometry,
+    }
+    safe_sid = _walk_submission_sid(sid)
+    doc_path = WALK_SUBMISSIONS_DIR / f"{safe_sid}.json"
+    tmp = doc_path.with_suffix(".tmp")
+    target_path = doc_path
+    print("WRITING FILE:", target_path)
+    tmp.write_text(json.dumps(doc, ensure_ascii=False), encoding="utf-8")
+    tmp.replace(doc_path)
+
+    summary = {
+        "session_id": sid,
+        "job_id": job_id,
+        "ended_at": ended_at,
+        "station_count": len(station_events),
+        "breadcrumb_count": len(breadcrumbs),
+        "crew": str(meta.get("crew") or ""),
+        "date": str(meta.get("date") or ""),
+        "section": str(meta.get("section") or ""),
+        "filename": f"{safe_sid}.json",
+    }
+    idx = _load_walk_submissions_index()
+    subs = [s for s in idx["submissions"] if str(s.get("session_id") or "") != sid]
+    subs.append(summary)
+    subs.sort(key=lambda s: str(s.get("ended_at") or ""), reverse=True)
+    idx["submissions"] = subs
+    _save_walk_submissions_index(idx)
+
+
+def _load_walk_submission_doc(filename: str) -> Optional[Dict[str, Any]]:
+    path = WALK_SUBMISSIONS_DIR / filename
+    if not path.is_file():
+        return None
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        return raw if isinstance(raw, dict) else None
+    except Exception:
+        return None
+
+
+def _load_walk_submissions_for_job(job_id: str) -> List[Dict[str, Any]]:
+    """Return all walk submission summaries for a job, most recent first.
+    'test-job' or empty job_id returns all submissions (V1 single-job behaviour)."""
+    safe_jid = str(job_id or "").strip()
+    idx = _load_walk_submissions_index()
+    subs = idx.get("submissions") or []
+    if safe_jid and safe_jid != "test-job":
+        subs = [s for s in subs if str(s.get("job_id") or "") == safe_jid]
+    return list(subs)
+
+
+@app.get("/api/debug/walk-submissions")
+def debug_walk_submissions_readonly() -> Dict[str, Any]:
+    """TEMPORARY: inspect disk walk submissions on deploy (e.g. Render). Read-only."""
+    try:
+        dir_exists = WALK_SUBMISSIONS_DIR.is_dir()
+        files: List[str] = []
+        if dir_exists:
+            files = sorted(
+                p.name for p in WALK_SUBMISSIONS_DIR.iterdir() if p.is_file()
+            )
+        index_contents: Any = []
+        count = 0
+        if WALK_SUBMISSIONS_INDEX_PATH.is_file():
+            raw = json.loads(WALK_SUBMISSIONS_INDEX_PATH.read_text(encoding="utf-8"))
+            index_contents = raw
+            if isinstance(raw, dict) and isinstance(raw.get("submissions"), list):
+                count = len(raw["submissions"])
+            elif isinstance(raw, list):
+                count = len(raw)
+        return {
+            "count": count,
+            "index": index_contents,
+            "dir_exists": dir_exists,
+            "files": files,
+        }
+    except Exception as e:
+        return {
+            "count": 0,
+            "index": [],
+            "dir_exists": False,
+            "files": [],
+            "error": str(e),
+        }
+
+
+# ---------------------------------------------------------------------------
 # Temporary office dashboard endpoints.
 # Added as a minimal self-contained block at the bottom of the file so nothing
 # above this line is modified. Remove or replace this section once the real
@@ -9020,6 +9199,32 @@ def _office_sessions_payload(job_id: str, session_id: str) -> List[Dict[str, Any
     if routes and routes[0].get("geometry", {}).get("coordinates"):
         coords = routes[0]["geometry"]["coordinates"]
         track_geometry = {"type": "LineString", "coordinates": coords[: min(len(coords), 8)]}
+
+    # Real field submissions from disk — visible across all devices regardless of
+    # which KMZ (if any) the office browser has loaded in its own session.
+    disk_submissions = _load_walk_submissions_for_job(job_id)
+    disk_sessions: List[Dict[str, Any]] = []
+    for sub in disk_submissions:
+        doc = _load_walk_submission_doc(str(sub.get("filename") or ""))
+        sub_track = (doc.get("track_geometry") if doc else None) or sub.get("track_geometry")
+        disk_sessions.append({
+            "id": str(sub.get("session_id") or f"{job_id}-disk-session"),
+            "crew_name": str(sub.get("crew") or "Field Crew"),
+            "status": "ended",
+            "started_at": str(sub.get("ended_at") or _office_iso_now()),
+            "ended_at": str(sub.get("ended_at") or _office_iso_now()),
+            "station_count": int(sub.get("station_count") or 0),
+            "photo_count": 0,
+            "latest_photo_url": None,
+            "track_point_count": len(sub_track.get("coordinates", [])) if isinstance(sub_track, dict) else 0,
+            "track_geometry": sub_track,
+        })
+    if disk_sessions:
+        return disk_sessions
+
+    # Fallback: mocked session from the office browser's own in-memory state.
+    # Only shown when no real field submissions exist yet so existing behaviour
+    # is preserved for sessions that pre-date disk persistence.
     if not routes:
         return []
     station_count = len(STATE.get("station_points") or []) or 3
@@ -9055,7 +9260,37 @@ def _office_stations_payload(job_id: str, routes: Sequence[Dict[str, Any]]) -> L
                     "review_status": str(point.get("review_status") or "auto_ok"),
                 }
             )
-    elif routes:
+        return stations
+
+    # Walk-submission fallback: use station_events from the most recent persisted
+    # field walk when the office session has no committed station_points of its own.
+    disk_submissions = _load_walk_submissions_for_job(job_id)
+    if disk_submissions:
+        doc = _load_walk_submission_doc(str(disk_submissions[0].get("filename") or ""))
+        walk_events = (doc.get("walk_station_events") or []) if doc else []
+        for idx, ev in enumerate(walk_events[:50], start=1):
+            if not isinstance(ev, dict):
+                continue
+            try:
+                lat = float(ev.get("lat") or ev.get("latitude") or 0.0)
+                lon = float(ev.get("lon") or ev.get("longitude") or 0.0)
+            except (TypeError, ValueError):
+                continue
+            stations.append({
+                "id": f"{job_id}-walk-station-{idx}",
+                "station_number": str(ev.get("station_number") or f"{idx}+00"),
+                "depth_ft": ev.get("depth_ft"),
+                "boc_ft": ev.get("boc_ft"),
+                "latitude": lat,
+                "longitude": lon,
+                "review_status": "auto_ok",
+            })
+        if stations:
+            return stations
+
+    # Coord-fallback: synthesise placeholder stations from route geometry so
+    # the UI has something to render before any field data arrives.
+    if routes:
         coords = routes[0].get("geometry", {}).get("coordinates") or []
         for idx, coord in enumerate(coords[:3], start=1):
             stations.append(
