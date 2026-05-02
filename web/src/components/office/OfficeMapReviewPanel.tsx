@@ -64,6 +64,11 @@ const SELECTED_HALO_OPACITY = 0.5;
 const FIT_PADDING: [number, number] = [24, 24];
 const FIT_MAX_ZOOM = 18;
 
+// Field station drops (job.stations) — drawn last so they sit above tracks.
+const STATION_RING = "#0f172a"; // slate-900
+const STATION_FILL = "#ffffff";
+const STATION_RADIUS = 9;
+
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 type LeafletNS = typeof import("leaflet");
@@ -118,6 +123,9 @@ export default function OfficeMapReviewPanel({
   const mapRef = useRef<ReturnType<LeafletNS["map"]> | null>(null);
   const designLayersRef = useRef<Array<ReturnType<LeafletNS["polyline"]>>>([]);
   const sessionLayersRef = useRef<Array<ReturnType<LeafletNS["polyline"]>>>([]);
+  const stationLayersRef = useRef<
+    Array<ReturnType<LeafletNS["circleMarker"]>>
+  >([]);
   const selectedHaloRef = useRef<ReturnType<LeafletNS["polyline"]> | null>(
     null,
   );
@@ -177,6 +185,7 @@ export default function OfficeMapReviewPanel({
       leafletNsRef.current = null;
       designLayersRef.current = [];
       sessionLayersRef.current = [];
+      stationLayersRef.current = [];
       selectedHaloRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -208,6 +217,14 @@ export default function OfficeMapReviewPanel({
       }
     }
     sessionLayersRef.current = [];
+    for (const layer of stationLayersRef.current) {
+      try {
+        layer.remove();
+      } catch {
+        /* ignore */
+      }
+    }
+    stationLayersRef.current = [];
     if (selectedHaloRef.current) {
       try {
         selectedHaloRef.current.remove();
@@ -272,12 +289,46 @@ export default function OfficeMapReviewPanel({
       }
     });
 
+    // ── Field stations (job.stations) — circle markers + labels, on top ───
+    const stationLatLngs: Array<[number, number]> = [];
+    const stationsList = Array.isArray(job.stations) ? job.stations : [];
+    for (const st of stationsList) {
+      const lat = Number(st.latitude);
+      const lon = Number(st.longitude);
+      if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
+      stationLatLngs.push([lat, lon]);
+      const label = String(st.station_number ?? "").trim() || "—";
+      const marker = L.circleMarker([lat, lon], {
+        radius: STATION_RADIUS,
+        color: STATION_RING,
+        weight: 2,
+        fillColor: STATION_FILL,
+        fillOpacity: 1,
+        interactive: false,
+      });
+      marker.bindTooltip(label, {
+        permanent: true,
+        direction: "top",
+        offset: [0, -8],
+        opacity: 1,
+      });
+      marker.addTo(map);
+      stationLayersRef.current.push(marker);
+    }
+
+    for (const ll of stationLatLngs) {
+      allLatLngs.push(ll);
+    }
+
     // ── Fit ───────────────────────────────────────────────────────────────
     // Prefer the selected session's bounds when one is selected. Otherwise
     // fit the union of every drawn polyline. If nothing was drawn the empty
     // states render as overlays and we leave the world view alone.
+    // Include station drops in the bounds so markers stay in view.
     const fitTarget =
-      selectedLatLngs.length >= 2 ? selectedLatLngs : allLatLngs;
+      selectedLatLngs.length >= 2
+        ? [...selectedLatLngs, ...stationLatLngs]
+        : allLatLngs;
     if (fitTarget.length >= 2) {
       try {
         const bounds = L.latLngBounds(fitTarget);
@@ -306,6 +357,7 @@ export default function OfficeMapReviewPanel({
     job.id,
     (job.routes ?? []).length,
     (job.sessions ?? []).length,
+    (job.stations ?? []).length,
     selectedSessionId ?? null,
   ]);
 
@@ -317,6 +369,11 @@ export default function OfficeMapReviewPanel({
   const hasAnyWalkPath = (job.sessions ?? []).some(
     (s) => geometryToLatLngs(s.track_geometry).length >= 2,
   );
+  const hasStations = (job.stations ?? []).some((st) => {
+    const lat = Number(st.latitude);
+    const lon = Number(st.longitude);
+    return Number.isFinite(lat) && Number.isFinite(lon);
+  });
 
   // Selected-session subtitle for the header (compact ID + crew if known).
   const selectedSession =
@@ -369,7 +426,7 @@ export default function OfficeMapReviewPanel({
         </div>
 
         {/* Legend (only shown when there's something to label). */}
-        {(hasDesign || hasAnyWalkPath) && (
+        {(hasDesign || hasAnyWalkPath || hasStations) && (
           <div className="flex flex-wrap items-center gap-4 border-t border-gray-100 bg-gray-50 px-4 py-2 text-xs text-gray-600">
             {hasDesign && (
               <div className="flex items-center gap-2">
@@ -404,6 +461,19 @@ export default function OfficeMapReviewPanel({
                   ))}
                 </span>
                 Walk session tracks
+              </div>
+            )}
+            {hasStations && (
+              <div className="flex items-center gap-2">
+                <span
+                  className="inline-block rounded-full border-2 border-gray-900 bg-white"
+                  style={{
+                    width: 12,
+                    height: 12,
+                    boxSizing: "border-box",
+                  }}
+                />
+                Station drops
               </div>
             )}
             {selectedSession && (
