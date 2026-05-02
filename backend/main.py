@@ -9127,6 +9127,88 @@ def _office_routes_payload() -> List[Dict[str, Any]]:
     return _routes_payload_from_catalog(STATE.get("route_catalog", []) or [])
 
 
+def _office_field_session_ids_for_job(job_id: str) -> set[str]:
+    """session_id values from persisted walk submissions for this job (field walks)."""
+    out: set[str] = set()
+    try:
+        subs = _load_walk_submissions_for_job(job_id)
+    except Exception:
+        return out
+    for sub in subs:
+        if not isinstance(sub, dict):
+            continue
+        sid = str(sub.get("session_id") or "").strip()
+        if sid:
+            out.add(sid)
+    return out
+
+
+def _office_disk_session_photo_aggregate(field_session_id: str) -> Tuple[int, Optional[str]]:
+    """Count + latest file URL for station photos tied to a field walk session_id."""
+    sid = str(field_session_id or "").strip()
+    if not sid:
+        return 0, None
+    try:
+        index_data = _load_station_photo_index()
+    except Exception:
+        return 0, None
+    raw = index_data.get("photos") if isinstance(index_data, dict) else None
+    records: List[Dict[str, Any]] = [
+        r for r in (raw or []) if isinstance(r, dict)
+    ]
+    matching = [
+        r
+        for r in records
+        if _station_photo_record_matches_session(r, sid)
+        and _station_photo_record_is_valid(r)
+    ]
+    if not matching:
+        return 0, None
+    matching.sort(
+        key=lambda rec: str(rec.get("uploaded_at") or ""),
+        reverse=True,
+    )
+    return len(matching), _station_photo_record_public_url(matching[0])
+
+
+def _office_disk_walk_station_list(job_id: str) -> List[Dict[str, Any]]:
+    """Stations from the most recent on-disk walk submission, if any."""
+    stations: List[Dict[str, Any]] = []
+    try:
+        disk_submissions = _load_walk_submissions_for_job(job_id)
+    except Exception:
+        return stations
+    if not disk_submissions:
+        return stations
+    try:
+        doc = _load_walk_submission_doc(str(disk_submissions[0].get("filename") or ""))
+    except Exception:
+        return stations
+    walk_events = (doc.get("walk_station_events") or []) if doc else []
+    if not isinstance(walk_events, list):
+        return stations
+    for idx, ev in enumerate(walk_events[:50], start=1):
+        if not isinstance(ev, dict):
+            continue
+        try:
+            lat = float(ev.get("lat") or ev.get("latitude") or 0.0)
+            lon = float(ev.get("lon") or ev.get("longitude") or 0.0)
+        except (TypeError, ValueError):
+            continue
+        stations.append(
+            {
+                "id": f"{job_id}-walk-station-{idx}",
+                "station_number": str(ev.get("station_number") or f"{idx}+00"),
+                "depth_ft": ev.get("depth_ft"),
+                "boc_ft": ev.get("boc_ft"),
+                "latitude": lat,
+                "longitude": lon,
+                "review_status": "auto_ok",
+            }
+        )
+    return stations
+
+
 def _office_sessions_payload(job_id: str, session_id: str) -> List[Dict[str, Any]]:
     # Temporary mocked session derived from current route presence so the office
     # UI can render with believable data before the real walk/session backend is ready.
@@ -9207,15 +9289,17 @@ def _office_sessions_payload(job_id: str, session_id: str) -> List[Dict[str, Any
     for sub in disk_submissions:
         doc = _load_walk_submission_doc(str(sub.get("filename") or ""))
         sub_track = (doc.get("track_geometry") if doc else None) or sub.get("track_geometry")
+        fsid = str(sub.get("session_id") or "").strip() or f"{job_id}-disk-session"
+        p_count, p_latest = _office_disk_session_photo_aggregate(fsid)
         disk_sessions.append({
-            "id": str(sub.get("session_id") or f"{job_id}-disk-session"),
+            "id": fsid,
             "crew_name": str(sub.get("crew") or "Field Crew"),
             "status": "ended",
             "started_at": str(sub.get("ended_at") or _office_iso_now()),
             "ended_at": str(sub.get("ended_at") or _office_iso_now()),
             "station_count": int(sub.get("station_count") or 0),
-            "photo_count": 0,
-            "latest_photo_url": None,
+            "photo_count": p_count,
+            "latest_photo_url": p_latest,
             "track_point_count": len(sub_track.get("coordinates", [])) if isinstance(sub_track, dict) else 0,
             "track_geometry": sub_track,
         })
@@ -9260,6 +9344,30 @@ def _office_stations_payload(job_id: str, routes: Sequence[Dict[str, Any]]) -> L
                     "review_status": str(point.get("review_status") or "auto_ok"),
                 }
             )
+        walk_extra = _office_disk_walk_station_list(job_id)
+        if walk_extra:
+            seen = {
+                (
+                    str(s.get("station_number") or ""),
+                    round(float(s.get("latitude") or 0.0), 4),
+                    round(float(s.get("longitude") or 0.0), 4),
+                )
+                for s in stations
+            }
+            next_i = len(stations) + 1
+            for w in walk_extra:
+                key = (
+                    str(w.get("station_number") or ""),
+                    round(float(w.get("latitude") or 0.0), 4),
+                    round(float(w.get("longitude") or 0.0), 4),
+                )
+                if key in seen:
+                    continue
+                seen.add(key)
+                row = dict(w)
+                row["id"] = f"{job_id}-walk-station-{next_i}"
+                next_i += 1
+                stations.append(row)
         return stations
 
     # Walk-submission fallback: use station_events from the most recent persisted
@@ -9276,15 +9384,17 @@ def _office_stations_payload(job_id: str, routes: Sequence[Dict[str, Any]]) -> L
                 lon = float(ev.get("lon") or ev.get("longitude") or 0.0)
             except (TypeError, ValueError):
                 continue
-            stations.append({
-                "id": f"{job_id}-walk-station-{idx}",
-                "station_number": str(ev.get("station_number") or f"{idx}+00"),
-                "depth_ft": ev.get("depth_ft"),
-                "boc_ft": ev.get("boc_ft"),
-                "latitude": lat,
-                "longitude": lon,
-                "review_status": "auto_ok",
-            })
+            stations.append(
+                {
+                    "id": f"{job_id}-walk-station-{idx}",
+                    "station_number": str(ev.get("station_number") or f"{idx}+00"),
+                    "depth_ft": ev.get("depth_ft"),
+                    "boc_ft": ev.get("boc_ft"),
+                    "latitude": lat,
+                    "longitude": lon,
+                    "review_status": "auto_ok",
+                }
+            )
         if stations:
             return stations
 
@@ -9307,19 +9417,70 @@ def _office_stations_payload(job_id: str, routes: Sequence[Dict[str, Any]]) -> L
     return stations
 
 
-def _office_photos_payload(job_id: str, stations: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    if not stations:
+def _office_photos_payload(
+    job_id: str,
+    stations: Sequence[Dict[str, Any]],
+    office_session_id: str = "",
+) -> List[Dict[str, Any]]:
+    """Photos from station_photos index scoped to this job's field sessions + office session."""
+    try:
+        index_data = _load_station_photo_index()
+    except Exception:
+        index_data = {"photos": []}
+    raw = index_data.get("photos") if isinstance(index_data, dict) else None
+    if not isinstance(raw, list):
+        raw = []
+    records: List[Dict[str, Any]] = [r for r in raw if isinstance(r, dict)]
+
+    scope_ids: set[str] = set(_office_field_session_ids_for_job(job_id))
+    osid = str(office_session_id or "").strip()
+    if osid:
+        scope_ids.add(osid)
+
+    if not scope_ids:
         return []
-    first = stations[0]
-    return [
-        {
-            "id": f"{job_id}-photo-1",
-            "station_id": first.get("id"),
-            "latitude": first.get("latitude"),
-            "longitude": first.get("longitude"),
-            "thumbnail_url": None,
-        }
-    ]
+
+    stations_list = list(stations) if stations else []
+    keyed: List[Tuple[str, Dict[str, Any]]] = []
+
+    for record in records:
+        rid = str(record.get("session_id") or "").strip()
+        if not rid or rid not in scope_ids:
+            continue
+        if not _station_photo_record_is_valid(record):
+            continue
+        photo_id = str(record.get("photo_id") or "").strip()
+        if not photo_id:
+            continue
+        try:
+            lat_val = float(str(record.get("lat") or "").strip() or 0)
+            lon_val = float(str(record.get("lon") or "").strip() or 0)
+        except (TypeError, ValueError):
+            lat_val, lon_val = 0.0, 0.0
+        thumb = _station_photo_record_public_url(record)
+        station_id_match: Optional[str] = None
+        slabel = str(record.get("station_label") or "").strip()
+        if slabel:
+            for st in stations_list:
+                if str(st.get("station_number") or "").strip() == slabel:
+                    sid_m = st.get("id")
+                    station_id_match = str(sid_m) if sid_m is not None else None
+                    break
+        keyed.append(
+            (
+                str(record.get("uploaded_at") or ""),
+                {
+                    "id": photo_id,
+                    "station_id": station_id_match,
+                    "latitude": lat_val,
+                    "longitude": lon_val,
+                    "thumbnail_url": thumb,
+                },
+            )
+        )
+
+    keyed.sort(key=lambda x: x[0], reverse=True)
+    return [item[1] for item in keyed]
 
 
 REVIEWER_EXCEPTION_ROOT = UPLOADS_DIR / "reviewer_exceptions"
@@ -9506,7 +9667,7 @@ def get_job_by_id(job_id: str, session_id: Optional[str] = None) -> Dict[str, An
         routes = _office_routes_payload()
         sessions = _office_sessions_payload(safe_job_id, resolved_session_id)
         stations = _office_stations_payload(safe_job_id, routes)
-        photos = _office_photos_payload(safe_job_id, stations)
+        photos = _office_photos_payload(safe_job_id, stations, resolved_session_id)
         exceptions = _office_exceptions_payload(safe_job_id, stations)
         exceptions.extend(_office_reviewer_exceptions_payload(safe_job_id))
         artifacts = _office_artifacts_payload(safe_job_id)
