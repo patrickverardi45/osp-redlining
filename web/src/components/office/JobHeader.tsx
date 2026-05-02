@@ -94,7 +94,7 @@ export default function JobHeader({ job }: JobHeaderProps) {
         }}
       >
         <div>
-          <div className="tl-eyebrow">TrueLine · Job</div>
+          <div className="tl-eyebrow">Job</div>
           <h1 className="tl-h1" style={{ margin: "8px 0 4px", fontSize: 26 }}>
             {job.job_name}
           </h1>

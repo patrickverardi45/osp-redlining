@@ -48,7 +48,7 @@ export default async function ProjectPage({ params }: ProjectPageProps) {
               ← Back to Dashboard
             </Link>
             <div className="tl-eyebrow" style={{ marginTop: 10 }}>
-              TrueLine · Workspace
+              Workspace
             </div>
             <h1
               className="tl-h1"

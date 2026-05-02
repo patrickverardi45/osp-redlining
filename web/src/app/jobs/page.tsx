@@ -83,7 +83,7 @@ export default function JobsPage() {
         {/* Page header */}
         <div className="tl-section-head">
           <div>
-            <div className="tl-eyebrow">TrueLine · Office</div>
+            <div className="tl-eyebrow">Office</div>
             <h1 className="tl-h1" style={{ margin: "8px 0 6px" }}>
               Jobs
             </h1>

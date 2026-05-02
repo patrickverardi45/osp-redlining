@@ -220,7 +220,7 @@ export default function ProjectsPage() {
             }}
           >
             <div style={{ minWidth: 0 }}>
-              <div className="tl-eyebrow">TrueLine · Field Operations Platform</div>
+              <div className="tl-eyebrow">Workspace</div>
               <h1 className="tl-h1">Project Dashboard</h1>
               <p className="tl-subtle" style={{ margin: 0, maxWidth: 720 }}>
                 Manage active OSP redlining projects, review design and field

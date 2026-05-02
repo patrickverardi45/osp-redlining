@@ -56,7 +56,7 @@ export default function FieldSubmissionsInboxPage() {
         </nav>
 
         <div>
-          <div className="tl-eyebrow">TrueLine · Field</div>
+          <div className="tl-eyebrow">Field</div>
           <h1 className="tl-h1" style={{ margin: "8px 0 6px" }}>
             Field Submissions Inbox
           </h1>

@@ -45,15 +45,13 @@ export default function LandingPage() {
   return (
     <div className={styles.root}>
       <nav className={styles.nav}>
-        <Link href="/" className={styles.navLogo}>
+        <Link href="/" className={styles.navLogo} aria-label="Home">
           <div className={styles.navLogoMark}>
             <svg viewBox="0 0 16 16" fill="#0a0c0f" aria-hidden>
               <path d="M8 1L14 4.5V11.5L8 15L2 11.5V4.5L8 1Z" />
             </svg>
           </div>
-          <span className={styles.navLogoName}>
-            TRUE<span>LINE</span>
-          </span>
+          <span className={styles.navLogoName}>{"\u00A0"}</span>
         </Link>
         <ul className={styles.navLinks}>
           <li>
@@ -90,8 +88,8 @@ export default function LandingPage() {
               Tracking
             </div>
             <h1 className={styles.heroTitle}>
-              <span>TRUE</span>
-              <span className={styles.line2}>LINE.</span>
+              <span>FIELD</span>
+              <span className={styles.line2}>OPS.</span>
               <span className={styles.line3}>
                 FIELD <span className={styles.accent}>VERIFIED.</span> OFFICE{" "}
                 <span className={styles.accent}>READY.</span>
@@ -1025,7 +1023,7 @@ export default function LandingPage() {
           <div className={`${styles.loginFormCard} ${styles.fadeIn}`}>
             <div className={styles.formLogo}>
               <div className={styles.formLogoMark} />
-              <span className={styles.formLogoName}>TRUELINE</span>
+              <span className={styles.formLogoName}>PORTAL</span>
             </div>
             <div className={styles.formTitle}>Welcome</div>
             <div className={styles.formSubtitle}>
@@ -1093,7 +1091,7 @@ export default function LandingPage() {
               <em>FASTER?</em>
             </h2>
             <p className={styles.ctaSub}>
-              Get your team on TrueLine and replace scattered markups, status
+              Get your team on one platform and replace scattered markups, status
               phone tag, and paper closeout packets with one connected platform.
             </p>
           </div>
@@ -1112,10 +1110,10 @@ export default function LandingPage() {
         <div className={styles.footerInner}>
           <div className={styles.footerLogo}>
             <div className={styles.footerLogoMark} />
-            <span className={styles.footerLogoName}>TRUELINE</span>
+            <span className={styles.footerLogoName}>{"\u00A0"}</span>
           </div>
           <div className={styles.footerCopy}>
-            © {new Date().getFullYear()} TrueLine · Field Operations Platform
+            © {new Date().getFullYear()} Field Operations Platform
           </div>
           <div className={styles.footerLinks}>
             <a href="#">Privacy</a>
