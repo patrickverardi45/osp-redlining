@@ -61,6 +61,60 @@ const DESIGN_ROUTE_STYLE = {
   opacity: 0.8,
 } as const;
 
+/** Backend engineered path segments (GET /api/engineered-segments). GeoJSON LineString, lon/lat order. */
+export type EngineeredSegment = {
+  geometry?: { type?: string; coordinates?: unknown };
+  method?: string;
+  confidence?: string;
+  warnings?: unknown[];
+};
+
+const ENGINEERED_SEGMENT_POLL_MS = 10_000;
+
+const GPS_BREADCRUMB_PRIMARY_STYLE = {
+  color: "#38bdf8",
+  weight: 4,
+  opacity: 0.9,
+} as const;
+
+const GPS_BREADCRUMB_EVIDENCE_STYLE = {
+  color: "#94a3b8",
+  weight: 2,
+  opacity: 0.38,
+  dashArray: "4 8",
+} as const;
+
+function engineeredConfidenceColor(confidence: string | undefined): string {
+  const c = String(confidence ?? "").toLowerCase();
+  if (c === "high") return "#16a34a";
+  if (c === "medium") return "#d97706";
+  if (c === "low") return "#dc2626";
+  return "#64748b";
+}
+
+async function fetchEngineeredSegmentsForSession(
+  sessionId: string,
+): Promise<EngineeredSegment[]> {
+  try {
+    const res = await fetch(
+      `${API_BASE}/api/engineered-segments?session_id=${encodeURIComponent(sessionId)}`,
+      { cache: "no-store" },
+    );
+    if (!res.ok) return [];
+    const data: unknown = await res.json();
+    if (Array.isArray(data)) return data as EngineeredSegment[];
+    if (data && typeof data === "object") {
+      const o = data as Record<string, unknown>;
+      if (Array.isArray(o.segments)) return o.segments as EngineeredSegment[];
+      if (Array.isArray(o.engineered_segments))
+        return o.engineered_segments as EngineeredSegment[];
+    }
+    return [];
+  } catch {
+    return [];
+  }
+}
+
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 type WalkFormFields = {
@@ -182,6 +236,8 @@ type MapController = {
   // These are no-ops until the map has been initialized.
   setDesignRoutes(routes: ReadonlyArray<Route>): void;
   clearDesignRoutes(): void;
+  /** Engineered walk path (above design KMZ). Empty → thick primary GPS trail; non-empty → faint GPS + thick segments. */
+  setEngineeredSegments(segments: ReadonlyArray<EngineeredSegment>): void;
   syncStationMarkers(entries: ReadonlyArray<StationEntry>): void;
 };
 
@@ -198,7 +254,40 @@ function createMapController(): MapController {
   // Phase 4C: design-route layers. We hold references so we can remove just
   // the design polylines (and not the breadcrumb polyline) on each update.
   const designLayers: Array<ReturnType<LeafletNS["polyline"]>> = [];
+  const engineeredLayers: Array<ReturnType<LeafletNS["polyline"]>> = [];
   let stationLayerGroup: ReturnType<LeafletNS["layerGroup"]> | null = null;
+
+  function clearEngineeredLayersInternal(): void {
+    while (engineeredLayers.length > 0) {
+      const layer = engineeredLayers.pop();
+      try {
+        layer?.remove();
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+
+  function raiseWalkDecorationsAbovePathLayers(): void {
+    for (const layer of engineeredLayers) {
+      try {
+        layer.bringToFront();
+      } catch {
+        /* ignore */
+      }
+    }
+    try {
+      stationLayerGroup?.bringToFront();
+    } catch {
+      /* ignore */
+    }
+    try {
+      positionHalo?.bringToFront();
+      positionMarker?.bringToFront();
+    } catch {
+      /* ignore */
+    }
+  }
 
   function clearDesignLayersInternal(): void {
     while (designLayers.length > 0) {
@@ -237,10 +326,17 @@ function createMapController(): MapController {
           maxZoom: 19,
         }).addTo(map);
 
+        // Panes: GPS bottom → KMZ design → engineered (then markers on top).
+        const paneBreadcrumb = map.createPane("walkBreadcrumb");
+        const paneDesign = map.createPane("walkDesign");
+        const paneEngineered = map.createPane("walkEngineered");
+        paneBreadcrumb.style.zIndex = "395";
+        paneDesign.style.zIndex = "405";
+        paneEngineered.style.zIndex = "415";
+
         polyline = L.polyline([], {
-          color: "#38bdf8", // sky-400
-          weight: 4,
-          opacity: 0.9,
+          ...GPS_BREADCRUMB_PRIMARY_STYLE,
+          pane: "walkBreadcrumb",
         }).addTo(map);
 
         stationLayerGroup = L.layerGroup().addTo(map);
@@ -254,6 +350,7 @@ function createMapController(): MapController {
 
     destroy(): void {
       try {
+        clearEngineeredLayersInternal();
         clearDesignLayersInternal();
         try {
           stationLayerGroup?.clearLayers();
@@ -351,6 +448,7 @@ function createMapController(): MapController {
         clearDesignLayersInternal();
         if (routes.length === 0) {
           designRouteBoundsApplied = false;
+          raiseWalkDecorationsAbovePathLayers();
           return;
         }
         // Collect every drawn coordinate so we can fit the view to the
@@ -378,11 +476,13 @@ function createMapController(): MapController {
             opacity: DESIGN_ROUTE_STYLE.opacity,
             dashArray: DESIGN_ROUTE_STYLE.dashArray,
             interactive: false,
+            pane: "walkDesign",
           });
           layer.addTo(map);
           designLayers.push(layer);
           allLatLngs.push(...latlngs);
         }
+        raiseWalkDecorationsAbovePathLayers();
         // Fit so the design polyline is on-screen. If GPS already centered the
         // map (hasCentered), we still fit once when project/job routes arrive —
         // otherwise the line is drawn at ~33°N but the view stays on the user's
@@ -416,6 +516,56 @@ function createMapController(): MapController {
       try {
         clearDesignLayersInternal();
         designRouteBoundsApplied = false;
+        raiseWalkDecorationsAbovePathLayers();
+      } catch {
+        /* ignore */
+      }
+    },
+
+    setEngineeredSegments(segments: ReadonlyArray<EngineeredSegment>): void {
+      if (!L || !map) return;
+      try {
+        clearEngineeredLayersInternal();
+        const hasEng = segments.length > 0;
+        if (polyline) {
+          if (hasEng) {
+            polyline.setStyle({ ...GPS_BREADCRUMB_EVIDENCE_STYLE });
+          } else {
+            polyline.setStyle({
+              ...GPS_BREADCRUMB_PRIMARY_STYLE,
+              dashArray: "",
+            });
+          }
+        }
+        for (const seg of segments) {
+          const g = seg.geometry;
+          if (!g) continue;
+          const typeStr = String(g.type ?? "").toLowerCase().replace(/\s/g, "");
+          if (typeStr !== "linestring") continue;
+          const coords = g.coordinates;
+          if (!Array.isArray(coords) || coords.length < 2) continue;
+          const latlngTuples: Array<[number, number]> = [];
+          for (const pair of coords) {
+            if (!Array.isArray(pair) || pair.length < 2) continue;
+            const lon = Number(pair[0]);
+            const lat = Number(pair[1]);
+            if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
+            latlngTuples.push([lat, lon]);
+          }
+          if (latlngTuples.length < 2) continue;
+          const layer = L.polyline(latlngTuples, {
+            color: engineeredConfidenceColor(seg.confidence),
+            weight: 6,
+            opacity: 0.92,
+            lineCap: "round",
+            lineJoin: "round",
+            interactive: false,
+            pane: "walkEngineered",
+          });
+          layer.addTo(map);
+          engineeredLayers.push(layer);
+        }
+        raiseWalkDecorationsAbovePathLayers();
       } catch {
         /* ignore */
       }
@@ -445,6 +595,7 @@ function createMapController(): MapController {
           });
           stationLayerGroup.addLayer(cm);
         }
+        raiseWalkDecorationsAbovePathLayers();
       } catch {
         /* ignore */
       }
@@ -756,6 +907,9 @@ function WalkPageInner() {
   /** Design routes persisted server-side per project (KMZ from workspace). */
   const [projectWalkRoutes, setProjectWalkRoutes] = useState<Route[]>([]);
   const [projectWalkRoutesFetched, setProjectWalkRoutesFetched] = useState(false);
+  /** Set from /api/walk/route-context when route_count > 0 or routes.length > 0 (any source, e.g. latest_project_fallback). */
+  const [projectWalkRouteContextOk, setProjectWalkRouteContextOk] =
+    useState(false);
 
   const watchIdRef = useRef<number | null>(null);
   const pendingPointsRef = useRef<Breadcrumb[]>([]);
@@ -837,27 +991,36 @@ function WalkPageInner() {
   }, [hydrated, jobsLoading, jobs, form.jobId]);
 
   useEffect(() => {
-    if (!walkProjectScope) {
-      setProjectWalkRoutes([]);
-      setProjectWalkRoutesFetched(true);
-      return;
-    }
     setProjectWalkRoutesFetched(false);
+    setProjectWalkRouteContextOk(false);
     let cancelled = false;
     void (async () => {
       try {
-        const res = await fetch(
-          `${API_BASE}/api/walk/route-context?projectId=${encodeURIComponent(walkProjectScope.trim())}`,
-          { cache: "no-store" },
-        );
+        const url = walkProjectScope
+          ? `${API_BASE}/api/walk/route-context?projectId=${encodeURIComponent(
+              walkProjectScope.trim(),
+            )}`
+          : `${API_BASE}/api/walk/route-context`;
+        const res = await fetch(url, { cache: "no-store" });
         if (cancelled) return;
         if (!res.ok) throw new Error(String(res.status));
         const data: unknown = await res.json();
         if (cancelled) return;
+        console.log("[walk] route-context received:", data);
+        const root = asRecord(data);
+        const routeCountRaw = root?.route_count;
+        const routeCount =
+          typeof routeCountRaw === "number"
+            ? routeCountRaw
+            : Number(routeCountRaw) || 0;
+        const routesLen = Array.isArray(root?.routes) ? root.routes.length : 0;
+        const routeLoaded = routeCount > 0 || routesLen > 0;
+        setProjectWalkRouteContextOk(routeLoaded);
         setProjectWalkRoutes(normalizeWalkRouteContextPayload(data));
       } catch {
         if (cancelled) return;
         setProjectWalkRoutes([]);
+        setProjectWalkRouteContextOk(false);
       } finally {
         if (!cancelled) setProjectWalkRoutesFetched(true);
       }
@@ -924,15 +1087,17 @@ function WalkPageInner() {
 
   const routeContext: RouteContextState = useMemo(() => {
     if (!hydrated) return "unknown";
-    if (walkProjectScope && !projectWalkRoutesFetched) return "unknown";
-    if (walkProjectScope && projectWalkRoutes.length > 0) return "available";
+    if (!projectWalkRoutesFetched) return "unknown";
+    if (projectWalkRouteContextOk || projectWalkRoutes.length > 0) {
+      return "available";
+    }
     if (!form.jobId) return "unknown";
     if (!selectedJob) return "unknown"; // fallback option, or job list still loading
     return selectedJob.route_count > 0 ? "available" : "missing";
   }, [
     hydrated,
-    walkProjectScope,
     projectWalkRoutesFetched,
+    projectWalkRouteContextOk,
     projectWalkRoutes.length,
     form.jobId,
     selectedJob,
@@ -968,11 +1133,11 @@ function WalkPageInner() {
   }, [form.jobId, hydrated, selectedJob, walkProjectScope]);
 
   const mapDesignRoutes = useMemo(() => {
-    if (walkProjectScope && projectWalkRoutes.length > 0) {
+    if (projectWalkRoutes.length > 0) {
       return projectWalkRoutes;
     }
     return designRoutes;
-  }, [walkProjectScope, projectWalkRoutes, designRoutes]);
+  }, [projectWalkRoutes, designRoutes]);
 
   // Phase 4C: push design routes into the map controller. Deterministic
   // gating only — no debouncing, no rAF, no delay. Runs whenever any of
@@ -1150,6 +1315,57 @@ function WalkPageInner() {
       void flushBreadcrumbs();
     }, FLUSH_INTERVAL_MS);
   }, [flushBreadcrumbs]);
+
+  // Prime geolocation on mount so iOS Safari shows the permission prompt without
+  // waiting for "Start Walk". Does not start breadcrumb capture or flush timer.
+  useEffect(() => {
+    let cancelled = false;
+    if (typeof navigator === "undefined" || !navigator.geolocation) {
+      setGpsStatus("unsupported");
+      return;
+    }
+    setGpsStatus("requesting");
+    console.log("[walk] requesting geolocation");
+    try {
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          if (cancelled) return;
+          const { latitude, longitude, accuracy } = pos.coords;
+          const accuracy_m = Number.isFinite(accuracy) ? accuracy : null;
+          mapControllerRef.current?.setPosition(latitude, longitude);
+          if (accuracy_m !== null && accuracy_m > ACCURACY_FILTER_M) {
+            setGpsStatus("poor");
+            setLatestPoint({ lat: latitude, lon: longitude, accuracy_m });
+            return;
+          }
+          setLatestPoint({ lat: latitude, lon: longitude, accuracy_m });
+          setGpsStatus(
+            accuracy_m !== null && accuracy_m > POOR_ACCURACY_M
+              ? "poor"
+              : "active",
+          );
+        },
+        (err) => {
+          if (cancelled) return;
+          if (err.code === err.PERMISSION_DENIED) {
+            setGpsStatus("denied");
+          } else {
+            setGpsStatus("error");
+          }
+        },
+        {
+          enableHighAccuracy: true,
+          maximumAge: 0,
+          timeout: 30000,
+        },
+      );
+    } catch {
+      if (!cancelled) setGpsStatus("error");
+    }
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // Phase 3B-A + 3B-B: revoke object URLs for every saved entry's photo,
   // the current entry-form draft photo, AND the standalone photo evidence

@@ -7,8 +7,8 @@
 // Print: station photo thumbnails embedded via absolute HTTP URL;
 //        blob-URL previews (GPS photos) shown in modal only, not in PDF export window.
 
-import React, { useState, useEffect, useCallback } from "react";
-import type { NovaSummary, PipelineDiagEntry, EngineeringPlanSignal } from "@/lib/types/nova";
+import React, { useState, useEffect, useCallback, useMemo } from "react";
+import type { NovaSummary, PipelineDiagEntry, EngineeringPlanSignal, QaFlagItem } from "@/lib/types/nova";
 import type { BackendState, GroupMatch, ExceptionCost, StationPhoto } from "@/lib/types/backend";
 import { toMoney } from "@/lib/format/money";
 import { formatNumber } from "@/lib/format/text";
@@ -104,6 +104,23 @@ const DECISION_LABEL: Record<string, string> = {
   "Needs Rework": "Requires Rework",
 };
 
+/** Must match NovaSummaryCard override `decision` values / API. */
+type OverrideDecision = "Reviewed" | "Accepted Override" | "Needs Rework";
+
+const CLOSEOUT_ACTION_USER = { name: "Demo PM", role: "PM" } as const;
+
+const CLOSEOUT_DECISION_OPTIONS: OverrideDecision[] = [
+  "Reviewed",
+  "Accepted Override",
+  "Needs Rework",
+];
+
+const AUTO_REASON_CLOSEOUT: Record<OverrideDecision, string> = {
+  Reviewed: "Reviewed in closeout packet.",
+  "Accepted Override": "Accepted in closeout packet for closeout continuity.",
+  "Needs Rework": "Marked for rework from closeout packet.",
+};
+
 // ── Status translation (internal → client-safe) ───────────────────────────────
 
 function translateStatus(raw: string): string {
@@ -118,6 +135,28 @@ function translateStatus(raw: string): string {
 
 function translateDecision(raw: string): string {
   return DECISION_LABEL[raw] ?? raw;
+}
+
+/** Same composite key as NovaSummaryCard `buildIssueId` — must match persisted `issue_key`. */
+function buildIssueId(item: QaFlagItem, index: number): string {
+  return [
+    item.sourceFile || "unknown",
+    item.severity,
+    item.issue,
+    item.rawReasons?.join("|") || "",
+    index,
+  ].join("::");
+}
+
+function decisionColumnStyle(override: ReviewOverride | undefined): { label: string; color: string } {
+  if (!override) {
+    return { label: "Needs Review", color: "#d97706" };
+  }
+  const d = override.decision;
+  if (d === "Reviewed") return { label: d, color: "#2563eb" };
+  if (d === "Accepted Override") return { label: d, color: "#16a34a" };
+  if (d === "Needs Rework") return { label: d, color: "#dc2626" };
+  return { label: d, color: "#64748b" };
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -207,17 +246,23 @@ function buildPrintHtml(
     </tr>`;
   }).join("");
 
-  const qaRows = qaItems.map((item) => {
+  const qaRows = qaItems
+    .map((item, itemIndex) => {
     const sevColor = SEV_COLOR[item.severity] ?? "#64748b";
     // Rewrite severity label for client audience
     const sevLabel = item.severity === "error" ? "ACTION REQUIRED" : item.severity === "warning" ? "REVIEW RECOMMENDED" : "INFO";
+    const issueId = buildIssueId(item, itemIndex);
+    const ov = overrides.find((o) => o.issue_key === issueId);
+    const dec = decisionColumnStyle(ov);
     return `<tr>
       <td style="padding:5px 8px;border:1px solid #e2e8f0;font-size:11px"><span style="color:${sevColor};font-weight:700">${sevLabel}</span></td>
       <td style="padding:5px 8px;border:1px solid #e2e8f0;font-size:11px;word-break:break-all">${shortFile(item.sourceFile)}</td>
       <td style="padding:5px 8px;border:1px solid #e2e8f0;font-size:11px"><strong>${item.issue}</strong><br/><span style="color:#475569">${item.meaning}</span></td>
       <td style="padding:5px 8px;border:1px solid #e2e8f0;font-size:11px">${item.resolution}</td>
+      <td style="padding:5px 8px;border:1px solid #e2e8f0;font-size:11px"><span style="color:${dec.color};font-weight:700">${dec.label}</span></td>
     </tr>`;
-  }).join("");
+  })
+    .join("");
 
   const overrideRows = overrides.map((ov) => {
     const clientDecision = translateDecision(ov.decision);
@@ -390,7 +435,7 @@ ${h2("Review Notes / Field Issues", "4")}
 ${qaItems.length === 0
   ? `<p style="font-size:13px;color:#16a34a;font-weight:600">✓ No review issues. All field records processed successfully.</p>`
   : `<table>
-  <thead><tr><th>Priority</th><th>Source File</th><th>Issue &amp; Detail</th><th>Recommended Action</th></tr></thead>
+  <thead><tr><th>Priority</th><th>Source File</th><th>Issue &amp; Detail</th><th>Recommended Action</th><th>Decision</th></tr></thead>
   <tbody>${qaRows}</tbody>
 </table>`}
 
@@ -504,11 +549,20 @@ export default function CloseoutPacket(props: CloseoutPacketProps) {
   const [overrides, setOverrides] = useState<ReviewOverride[]>([]);
   const [overridesLoaded, setOverridesLoaded] = useState(false);
   const [generating, setGenerating] = useState(false);
+  const [savingIssueId, setSavingIssueId] = useState<string | null>(null);
+  const [rowSaveErrors, setRowSaveErrors] = useState<Record<string, string>>({});
 
   const rawStatus = novaSummary.billingReadiness.status;
   const statusColor = STATUS_COLOR[rawStatus] ?? "#64748b";
   const statusDisplay = translateStatus(rawStatus);
   const qaItems = novaSummary.qaFlags.items;
+  const overrideByIssueKey = useMemo(() => {
+    const m = new Map<string, ReviewOverride>();
+    for (const o of overrides) {
+      if (o.issue_key) m.set(o.issue_key, o);
+    }
+    return m;
+  }, [overrides]);
   const plans = state?.engineering_plans ?? [];
   const boreLogs = state?.bore_log_summary ?? [];
   const hasPhotoEvidence = stationPhotos.length > 0 || geoTaggedPhotos.length > 0;
@@ -530,6 +584,74 @@ export default function CloseoutPacket(props: CloseoutPacketProps) {
     }
     load();
   }, [open, overridesLoaded]);
+
+  const saveCloseoutIssueDecision = useCallback(
+    async (
+      item: QaFlagItem,
+      index: number,
+      decision: OverrideDecision,
+      previousOverride: ReviewOverride | undefined,
+    ) => {
+      const issueId = buildIssueId(item, index);
+      const record: ReviewOverride = {
+        id: issueId,
+        source_file: item.sourceFile,
+        group_idx: null,
+        issue_key: issueId,
+        decision,
+        reason: AUTO_REASON_CLOSEOUT[decision],
+        created_by: CLOSEOUT_ACTION_USER.name,
+        role: CLOSEOUT_ACTION_USER.role,
+        created_at: new Date().toISOString(),
+      };
+
+      setSavingIssueId(issueId);
+      setRowSaveErrors((prev) => {
+        const next = { ...prev };
+        delete next[issueId];
+        return next;
+      });
+      setOverrides((prev) => [...prev.filter((o) => o.issue_key !== issueId), record]);
+
+      const sessionId = getStoredSessionId();
+      if (!sessionId || !API_BASE) {
+        setOverrides((prev) => {
+          const filtered = prev.filter((o) => o.issue_key !== issueId);
+          return previousOverride ? [...filtered, previousOverride] : filtered;
+        });
+        setRowSaveErrors((prev) => ({
+          ...prev,
+          [issueId]: !sessionId ? "No session — sign in again." : "API not configured.",
+        }));
+        setSavingIssueId(null);
+        return;
+      }
+
+      try {
+        const res = await fetch(`${API_BASE}/api/nova-overrides`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ...record, session_id: sessionId }),
+        });
+        if (!res.ok) {
+          const text = await res.text().catch(() => "");
+          throw new Error(text.trim() || `Save failed (${res.status})`);
+        }
+      } catch (e) {
+        setOverrides((prev) => {
+          const filtered = prev.filter((o) => o.issue_key !== issueId);
+          return previousOverride ? [...filtered, previousOverride] : filtered;
+        });
+        setRowSaveErrors((prev) => ({
+          ...prev,
+          [issueId]: e instanceof Error ? e.message : "Save failed.",
+        }));
+      } finally {
+        setSavingIssueId(null);
+      }
+    },
+    [],
+  );
 
   // Close on Escape
   useEffect(() => {
@@ -774,12 +896,30 @@ export default function CloseoutPacket(props: CloseoutPacketProps) {
                   <div style={{ overflowX: "auto" }}>
                     <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
                       <thead>
-                        <tr>{["Priority", "Source File", "Issue", "Detail", "Recommended Action"].map((h) => <th key={h} style={thS}>{h}</th>)}</tr>
+                        <tr>{["Priority", "Source File", "Issue", "Detail", "Recommended Action", "Decision", "Actions"].map((h) => <th key={h} style={thS}>{h}</th>)}</tr>
                       </thead>
                       <tbody>
                         {qaItems.map((item, i) => {
                           const sevColor = SEV_COLOR[item.severity] ?? "#64748b";
                           const sevLabel = item.severity === "error" ? "ACTION REQUIRED" : item.severity === "warning" ? "REVIEW RECOMMENDED" : "INFO";
+                          const issueId = buildIssueId(item, i);
+                          const ov = overrideByIssueKey.get(issueId);
+                          const dec = decisionColumnStyle(ov);
+                          const rowBusy = savingIssueId === issueId;
+                          const rowErr = rowSaveErrors[issueId];
+                          const actionsDisabled = !overridesLoaded || rowBusy;
+                          const btnBase: React.CSSProperties = {
+                            fontSize: 10,
+                            fontWeight: 700,
+                            padding: "4px 8px",
+                            borderRadius: 6,
+                            border: "1px solid #cbd5e1",
+                            cursor: actionsDisabled ? "not-allowed" : "pointer",
+                            background: "#fff",
+                            color: "#334155",
+                            fontFamily: "inherit",
+                            opacity: actionsDisabled ? 0.55 : 1,
+                          };
                           return (
                             <tr key={i}>
                               <td style={{ ...tdS, color: sevColor, fontWeight: 700 }}>{sevLabel}</td>
@@ -787,6 +927,27 @@ export default function CloseoutPacket(props: CloseoutPacketProps) {
                               <td style={{ ...tdS, fontWeight: 600 }}>{item.issue}</td>
                               <td style={tdS}>{item.meaning}</td>
                               <td style={tdS}>{item.resolution}</td>
+                              <td style={{ ...tdS, color: dec.color, fontWeight: 700 }}>
+                                {rowBusy ? "Saving…" : dec.label}
+                              </td>
+                              <td style={tdS}>
+                                <div style={{ display: "flex", flexWrap: "wrap", gap: 6, maxWidth: 280 }}>
+                                  {CLOSEOUT_DECISION_OPTIONS.map((opt) => (
+                                    <button
+                                      key={opt}
+                                      type="button"
+                                      disabled={actionsDisabled}
+                                      onClick={() => saveCloseoutIssueDecision(item, i, opt, ov)}
+                                      style={btnBase}
+                                    >
+                                      {opt === "Accepted Override" ? "Accept override" : opt === "Needs Rework" ? "Needs rework" : opt}
+                                    </button>
+                                  ))}
+                                </div>
+                                {rowErr ? (
+                                  <div style={{ marginTop: 6, fontSize: 10, color: "#dc2626", fontWeight: 600 }}>{rowErr}</div>
+                                ) : null}
+                              </td>
                             </tr>
                           );
                         })}

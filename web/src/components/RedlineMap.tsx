@@ -340,10 +340,7 @@ function presentationKmzPaint(
   if (role === "backbone" || role === "underground_cable") {
     return { omit: false, casingOpacity: 1, lineOpacity: 0.94 };
   }
-  if (role === "terminal_tail") {
-    return { omit: true, casingOpacity: 0, lineOpacity: 0 };
-  }
-  return { omit: false, casingOpacity: 0.12, lineOpacity: 0.14 };
+  return { omit: true, casingOpacity: 0, lineOpacity: 0 };
 }
 
 // ─── Evidence-layer color assignment ───────────────────────────────────────

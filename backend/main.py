@@ -8879,19 +8879,58 @@ def _load_project_route_context_doc(project_id: str) -> Optional[Dict[str, Any]]
         return None
 
 
+def _load_latest_project_route_context_doc() -> Optional[Dict[str, Any]]:
+    """V1 PROJECTS->JOBS bridge.
+
+    Walk currently runs against jobs (e.g. TEST-001) which have no route of
+    their own; KMZ uploads land under a project_id (e.g. brenham-phase-5).
+    When the walk asks for route-context for a job/project that has no route
+    file, fall back to the most recently uploaded KMZ across all projects so
+    field crews can still see a route. Read-only — never mutates project data,
+    never alters the upload flow, never edits session state.
+    """
+    try:
+        if not PROJECT_ROUTE_CONTEXT_DIR.is_dir():
+            return None
+        candidates = [p for p in PROJECT_ROUTE_CONTEXT_DIR.glob("*.json") if p.is_file()]
+    except Exception:
+        return None
+    if not candidates:
+        return None
+    try:
+        candidates.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+    except Exception:
+        return None
+    for path in candidates:
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        if isinstance(raw, dict) and isinstance(raw.get("route_catalog"), list):
+            return raw
+    return None
+
+
 @app.get("/api/walk/route-context")
 def get_walk_route_context(projectId: Optional[str] = Query(None)) -> Dict[str, Any]:
     normalized = _normalize_walk_project_id(projectId)
-    if not normalized:
-        return {"routes": [], "route_count": 0}
-    doc = _load_project_route_context_doc(normalized)
+    doc: Optional[Dict[str, Any]] = None
+    source = "project"
+    if normalized:
+        doc = _load_project_route_context_doc(normalized)
+    if not doc:
+        # V1 PROJECTS->JOBS bridge: jobs in /walk don't carry their own KMZ,
+        # so fall back to the most recently uploaded project route. Preserves
+        # prior empty-response behavior when no KMZ has ever been uploaded.
+        doc = _load_latest_project_route_context_doc()
+        source = "latest_project_fallback" if doc else "project"
     if not doc:
         return {"routes": [], "route_count": 0}
     catalog = doc.get("route_catalog")
     if not isinstance(catalog, list):
         return {"routes": [], "route_count": 0}
     routes = _routes_payload_from_catalog(catalog)
-    return {"routes": routes, "route_count": len(routes)}
+    return {"routes": routes, "route_count": len(routes), "source": source}
 
 
 # ---------------------------------------------------------------------------
@@ -9249,3 +9288,38 @@ def get_job_by_id(job_id: str, session_id: Optional[str] = None) -> Dict[str, An
             "exceptions": exceptions,
             "artifacts": artifacts,
         }
+
+
+# ---------------------------------------------------------------------------
+# Read-only V1 engineered-path endpoint.
+# Surgical, reversible: this entire block can be deleted to revert.
+# Reads-only — does not mutate session state, GPS breadcrumbs, or any storage.
+# Uses a lazy import to avoid any circular-import risk with the
+# app.services.engineered_segments module (which itself lazy-imports main).
+# ---------------------------------------------------------------------------
+
+import logging as _engineered_segments_logging
+
+_engineered_segments_logger = _engineered_segments_logging.getLogger("engineered_segments")
+
+
+@app.get("/api/engineered-segments")
+def get_engineered_segments(session_id: Optional[str] = Query(None)) -> Dict[str, Any]:
+    sid = str(session_id or "").strip()
+    if not sid:
+        return {"session_id": "", "segments": []}
+    try:
+        from app.services.engineered_segments import build_engineered_segments
+        segments = build_engineered_segments(sid)
+    except Exception as exc:
+        _engineered_segments_logger.exception(
+            "engineered_segments_failed for session_id=%s: %s", sid, exc
+        )
+        return {
+            "session_id": sid,
+            "segments": [],
+            "error": "engineered_segments_failed",
+        }
+    if not isinstance(segments, list):
+        segments = []
+    return {"session_id": sid, "segments": segments}
