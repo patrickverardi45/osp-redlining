@@ -255,7 +255,7 @@ function createMapController(): MapController {
   // the design polylines (and not the breadcrumb polyline) on each update.
   const designLayers: Array<ReturnType<LeafletNS["polyline"]>> = [];
   const engineeredLayers: Array<ReturnType<LeafletNS["polyline"]>> = [];
-  let stationLayerGroup: ReturnType<LeafletNS["layerGroup"]> | null = null;
+  let stationLayerGroup: ReturnType<LeafletNS["featureGroup"]> | null = null;
 
   function clearEngineeredLayersInternal(): void {
     while (engineeredLayers.length > 0) {
@@ -339,7 +339,7 @@ function createMapController(): MapController {
           pane: "walkBreadcrumb",
         }).addTo(map);
 
-        stationLayerGroup = L.layerGroup().addTo(map);
+        stationLayerGroup = L.featureGroup().addTo(map);
 
         return true;
       } catch {
