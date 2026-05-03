@@ -199,6 +199,63 @@ function snapLatLonToKmzPolylines(
   return { lat: bestLat, lon: bestLon };
 }
 
+/** Closest point on segment plus clamped segment parameter t ∈ [0,1]. */
+function closestPointWithTOnSegment(
+  lat: number,
+  lon: number,
+  a: number[],
+  b: number[],
+): { lat: number; lon: number; t: number } {
+  const alat = a[0];
+  const alon = a[1];
+  const blat = b[0];
+  const blon = b[1];
+  const dlat = blat - alat;
+  const dlon = blon - alon;
+  const len2 = dlat * dlat + dlon * dlon;
+  if (len2 < 1e-20) return { lat: alat, lon: alon, t: 0 };
+  let t = ((lat - alat) * dlat + (lon - alon) * dlon) / len2;
+  t = Math.max(0, Math.min(1, t));
+  return { lat: alat + t * dlat, lon: alon + t * dlon, t };
+}
+
+/**
+ * Arc length from the start of the winning KMZ polyline to the snapped point (planar lat/lon).
+ * Tie-break: smallest perpendicular distance² to segment chooses the segment.
+ */
+function distanceAlongPolylinesFromSnappedPoint(
+  snapLat: number,
+  snapLon: number,
+  polylines: number[][][],
+): { polyIdx: number; distAlong: number } {
+  if (!Number.isFinite(snapLat) || !Number.isFinite(snapLon) || polylines.length === 0) {
+    return { polyIdx: 0, distAlong: 0 };
+  }
+  let bestMetric = Infinity;
+  let bestPoly = 0;
+  let bestAlong = 0;
+  for (let pi = 0; pi < polylines.length; pi++) {
+    const line = polylines[pi];
+    let cumulative = 0;
+    for (let i = 0; i < line.length - 1; i++) {
+      const a = line[i];
+      const b = line[i + 1];
+      const slat = b[0] - a[0];
+      const slon = b[1] - a[1];
+      const segLen = Math.sqrt(slat * slat + slon * slon);
+      const { lat: clat, lon: clon, t } = closestPointWithTOnSegment(snapLat, snapLon, a, b);
+      const d2 = (clat - snapLat) ** 2 + (clon - snapLon) ** 2;
+      if (d2 < bestMetric) {
+        bestMetric = d2;
+        bestPoly = pi;
+        bestAlong = cumulative + t * segLen;
+      }
+      cumulative += segLen;
+    }
+  }
+  return { polyIdx: bestPoly, distAlong: bestAlong };
+}
+
 function normalizeSourceFileKey(value: unknown): string {
   return String(value ?? "")
     .trim()
@@ -1086,34 +1143,43 @@ function OfficeRedlineMapInner({ mode = "default", projectId, workspaceTitle }: 
         fieldStationsFiltered.map((st) => toNum(st.station_number)),
       );
     }
-    const fieldStationsSorted = fieldStationsFiltered
-      .slice()
-      .sort((a, b) => toNum(a.station_number) - toNum(b.station_number));
-    const sortedLog = fieldStationsSorted.map((st) => ({
-      station_number: st.station_number,
-      parsed: toNum(st.station_number),
-    }));
-    if (process.env.NODE_ENV === "development") {
-      console.log(
-        "[field-overlay] final sorted order (used for path + markers):",
-        sortedLog,
-      );
-    }
     const nanKeys = originalLog.filter((o) => !Number.isFinite(o.parsed));
     if (nanKeys.length > 0 && process.env.NODE_ENV === "development") {
       console.warn("[field-overlay] NaN / non-finite sort keys:", nanKeys);
     }
-    return fieldStationsSorted.map((st) => {
+    const withSnap = fieldStationsFiltered.map((st) => {
       const rawLat = Number(st.latitude);
       const rawLon = Number(st.longitude);
       const snapped = snapLatLonToKmzPolylines(rawLat, rawLon, kmzSnapPolylines);
-      return {
-        st,
-        displayLat: snapped.lat,
-        displayLon: snapped.lon,
-        world: projectWorldPoint(snapped.lat, snapped.lon, renderBounds, projectionMetrics),
-      };
+      const along =
+        kmzSnapPolylines.length > 0
+          ? distanceAlongPolylinesFromSnappedPoint(snapped.lat, snapped.lon, kmzSnapPolylines)
+          : { polyIdx: 0, distAlong: 0 };
+      return { st, snapped, along };
     });
+    const ordered =
+      kmzSnapPolylines.length > 0
+        ? withSnap.slice().sort((a, b) => {
+            if (a.along.polyIdx !== b.along.polyIdx) return a.along.polyIdx - b.along.polyIdx;
+            if (a.along.distAlong !== b.along.distAlong) return a.along.distAlong - b.along.distAlong;
+            return toNum(a.st.station_number) - toNum(b.st.station_number);
+          })
+        : withSnap.slice().sort((a, b) => toNum(a.st.station_number) - toNum(b.st.station_number));
+    if (process.env.NODE_ENV === "development") {
+      console.log("[field-overlay] order for path + markers (KMZ chainage):", {
+        polylineOrder: ordered.map((row) => ({
+          station_number: row.st.station_number,
+          polyIdx: row.along.polyIdx,
+          distAlong: row.along.distAlong,
+        })),
+      });
+    }
+    return ordered.map(({ st, snapped }) => ({
+      st,
+      displayLat: snapped.lat,
+      displayLon: snapped.lon,
+      world: projectWorldPoint(snapped.lat, snapped.lon, renderBounds, projectionMetrics),
+    }));
   }, [selectedFieldJobDetail, selectedFieldSessionId, renderBounds, projectionMetrics, kmzSnapPolylines]);
 
   const fieldStationPath = useMemo(() => {
