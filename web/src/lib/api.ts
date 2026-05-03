@@ -126,6 +126,8 @@ export interface Station {
   latitude: number;
   longitude: number;
   review_status: string;
+  /** Present when this row came from a persisted field walk session (office overlay filter). */
+  session_id?: string;
 }
 
 export interface Photo {

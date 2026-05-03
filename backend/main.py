@@ -9184,7 +9184,7 @@ def _office_disk_session_photo_aggregate(field_session_id: str) -> Tuple[int, Op
 
 
 def _office_disk_walk_station_list(job_id: str) -> List[Dict[str, Any]]:
-    """Stations from the most recent on-disk walk submission, if any."""
+    """Stations from all persisted walk submissions for this job (each row tagged with session_id)."""
     stations: List[Dict[str, Any]] = []
     try:
         disk_submissions = _load_walk_submissions_for_job(job_id)
@@ -9192,32 +9192,41 @@ def _office_disk_walk_station_list(job_id: str) -> List[Dict[str, Any]]:
         return stations
     if not disk_submissions:
         return stations
-    try:
-        doc = _load_walk_submission_doc(str(disk_submissions[0].get("filename") or ""))
-    except Exception:
-        return stations
-    walk_events = (doc.get("walk_station_events") or []) if doc else []
-    if not isinstance(walk_events, list):
-        return stations
-    for idx, ev in enumerate(walk_events[:50], start=1):
-        if not isinstance(ev, dict):
+    next_i = 1
+    for sub in disk_submissions:
+        if not isinstance(sub, dict):
             continue
         try:
-            lat = float(ev.get("lat") or ev.get("latitude") or 0.0)
-            lon = float(ev.get("lon") or ev.get("longitude") or 0.0)
-        except (TypeError, ValueError):
+            doc = _load_walk_submission_doc(str(sub.get("filename") or ""))
+        except Exception:
             continue
-        stations.append(
-            {
-                "id": f"{job_id}-walk-station-{idx}",
-                "station_number": str(ev.get("station_number") or f"{idx}+00"),
+        if not doc:
+            continue
+        fsid = str(doc.get("session_id") or sub.get("session_id") or "").strip()
+        walk_events = doc.get("walk_station_events") or []
+        if not isinstance(walk_events, list):
+            continue
+        for ev in walk_events[:50]:
+            if not isinstance(ev, dict):
+                continue
+            try:
+                lat = float(ev.get("lat") or ev.get("latitude") or 0.0)
+                lon = float(ev.get("lon") or ev.get("longitude") or 0.0)
+            except (TypeError, ValueError):
+                continue
+            row: Dict[str, Any] = {
+                "id": f"{job_id}-walk-station-{next_i}",
+                "station_number": str(ev.get("station_number") or f"{next_i}+00"),
                 "depth_ft": ev.get("depth_ft"),
                 "boc_ft": ev.get("boc_ft"),
                 "latitude": lat,
                 "longitude": lon,
                 "review_status": "auto_ok",
             }
-        )
+            if fsid:
+                row["session_id"] = fsid
+            stations.append(row)
+            next_i += 1
     return stations
 
 

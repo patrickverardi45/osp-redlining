@@ -993,26 +993,60 @@ function OfficeRedlineMapInner({ mode = "default", projectId, workspaceTitle }: 
 
   // ── Field session overlay: project selected inbox submission onto the workspace map ──
   const projectedFieldStations = useMemo(() => {
-    if (!selectedFieldJobDetail || !renderBounds || !projectionMetrics) return [];
-    return (selectedFieldJobDetail.stations ?? [])
-      .filter((st) => {
-        const lat = Number(st.latitude);
-        const lon = Number(st.longitude);
-        return Number.isFinite(lat) && Number.isFinite(lon) && !(lat === 0 && lon === 0);
-      })
+    if (!selectedFieldJobDetail || !renderBounds || !projectionMetrics || !selectedFieldSessionId) {
+      return [];
+    }
+    const toNum = (s: string) => {
+      const [major, minor] = s.split("+");
+      return (parseInt(major ?? "0", 10) * 100) + parseInt(minor ?? "0", 10);
+    };
+    const sessionFilter = selectedFieldSessionId.trim();
+    const fieldStationsFiltered = (selectedFieldJobDetail.stations ?? []).filter((st) => {
+      const lat = Number(st.latitude);
+      const lon = Number(st.longitude);
+      if (!Number.isFinite(lat) || !Number.isFinite(lon) || (lat === 0 && lon === 0)) {
+        return false;
+      }
+      const sid = String(st.session_id ?? "").trim();
+      if (!sid || sid !== sessionFilter) return false;
+      return true;
+    });
+    const originalLog = fieldStationsFiltered.map((st) => ({
+      station_number: st.station_number,
+      parsed: toNum(st.station_number),
+    }));
+    if (process.env.NODE_ENV === "development") {
+      console.log(
+        "[field-overlay] original station order (API / after lat-lon filter):",
+        originalLog,
+      );
+      console.log(
+        "[field-overlay] parsed numeric (same order):",
+        fieldStationsFiltered.map((st) => toNum(st.station_number)),
+      );
+    }
+    const fieldStationsSorted = fieldStationsFiltered
       .slice()
-      .sort((a, b) => {
-        const toNum = (s: string) => {
-          const [major, minor] = s.split("+");
-          return (parseInt(major ?? "0", 10) * 100) + parseInt(minor ?? "0", 10);
-        };
-        return toNum(a.station_number) - toNum(b.station_number);
-      })
-      .map((st) => ({
-        st,
-        world: projectWorldPoint(Number(st.latitude), Number(st.longitude), renderBounds, projectionMetrics),
-      }));
-  }, [selectedFieldJobDetail, renderBounds, projectionMetrics]);
+      .sort((a, b) => toNum(a.station_number) - toNum(b.station_number));
+    const sortedLog = fieldStationsSorted.map((st) => ({
+      station_number: st.station_number,
+      parsed: toNum(st.station_number),
+    }));
+    if (process.env.NODE_ENV === "development") {
+      console.log(
+        "[field-overlay] final sorted order (used for path + markers):",
+        sortedLog,
+      );
+    }
+    const nanKeys = originalLog.filter((o) => !Number.isFinite(o.parsed));
+    if (nanKeys.length > 0 && process.env.NODE_ENV === "development") {
+      console.warn("[field-overlay] NaN / non-finite sort keys:", nanKeys);
+    }
+    return fieldStationsSorted.map((st) => ({
+      st,
+      world: projectWorldPoint(Number(st.latitude), Number(st.longitude), renderBounds, projectionMetrics),
+    }));
+  }, [selectedFieldJobDetail, selectedFieldSessionId, renderBounds, projectionMetrics]);
 
   const fieldStationPath = useMemo(() => {
     if (projectedFieldStations.length < 2 || !renderBounds || !projectionMetrics) return "";
