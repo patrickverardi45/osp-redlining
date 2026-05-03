@@ -8795,6 +8795,18 @@ def walk_station_events(payload: Dict[str, Any] = Body(default={})) -> JSONRespo
                     continue
                 existing.append(cleaned)
             STATE["walk_station_events"] = existing
+            # Persist incrementally so the office sees stations immediately and
+            # data survives a backend restart before walk_end is called.
+            # Non-fatal: disk failure must never block this response.
+            try:
+                _save_walk_submission(
+                    session_id=resolved_session_id,
+                    meta=dict(STATE.get("walk_meta") or {}),
+                    breadcrumbs=list(STATE.get("walk_breadcrumbs") or []),
+                    station_events=existing,
+                )
+            except Exception:
+                pass
             return JSONResponse({"ok": True, "count": len(existing)})
     except Exception as exc:
         return _err(str(exc), session_id=resolved_session_id)
@@ -9331,20 +9343,46 @@ def _office_sessions_payload(job_id: str, session_id: str) -> List[Dict[str, Any
 def _office_stations_payload(job_id: str, routes: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
     station_points = list(STATE.get("station_points") or [])
     stations: List[Dict[str, Any]] = []
+
+    # Load persisted walk events once — used both for label override in the
+    # station_points branch and as the primary fallback when station_points is empty.
+    walk_extra = _office_disk_walk_station_list(job_id)
+
     if station_points:
+        # Build coord-keyed lookup of real field station_numbers from disk walk events
+        # so station_points rows lacking real labels get the field-entered value instead
+        # of a synthetic placeholder.
+        disk_label_by_coord = {}
+        for _we in walk_extra:
+            try:
+                _wlat = round(float(_we.get("latitude") or 0.0), 4)
+                _wlon = round(float(_we.get("longitude") or 0.0), 4)
+            except (TypeError, ValueError):
+                continue
+            _wsn = str(_we.get("station_number") or "").strip()
+            if _wsn and (_wlat, _wlon) != (0.0, 0.0):
+                disk_label_by_coord[(_wlat, _wlon)] = _wsn
+
         for idx, point in enumerate(station_points[:10], start=1):
+            pt_lat = float(point.get("lat") or 0.0)
+            pt_lon = float(point.get("lon") or 0.0)
+            # Prefer: office-entered label → matching disk walk label → neutral placeholder
+            label = (
+                str(point.get("station") or point.get("station_label") or "").strip()
+                or disk_label_by_coord.get((round(pt_lat, 4), round(pt_lon, 4)), "")
+                or "—"
+            )
             stations.append(
                 {
                     "id": str(point.get("station_id") or f"{job_id}-station-{idx}"),
-                    "station_number": str(point.get("station") or point.get("station_label") or f"{10+idx}+00"),
+                    "station_number": label,
                     "depth_ft": point.get("depth_ft"),
                     "boc_ft": point.get("boc_ft"),
-                    "latitude": float(point.get("lat") or 0.0),
-                    "longitude": float(point.get("lon") or 0.0),
+                    "latitude": pt_lat,
+                    "longitude": pt_lon,
                     "review_status": str(point.get("review_status") or "auto_ok"),
                 }
             )
-        walk_extra = _office_disk_walk_station_list(job_id)
         if walk_extra:
             seen = {
                 (
@@ -9372,31 +9410,12 @@ def _office_stations_payload(job_id: str, routes: Sequence[Dict[str, Any]]) -> L
 
     # Walk-submission fallback: use station_events from the most recent persisted
     # field walk when the office session has no committed station_points of its own.
-    disk_submissions = _load_walk_submissions_for_job(job_id)
-    if disk_submissions:
-        doc = _load_walk_submission_doc(str(disk_submissions[0].get("filename") or ""))
-        walk_events = (doc.get("walk_station_events") or []) if doc else []
-        for idx, ev in enumerate(walk_events[:50], start=1):
-            if not isinstance(ev, dict):
-                continue
-            try:
-                lat = float(ev.get("lat") or ev.get("latitude") or 0.0)
-                lon = float(ev.get("lon") or ev.get("longitude") or 0.0)
-            except (TypeError, ValueError):
-                continue
-            stations.append(
-                {
-                    "id": f"{job_id}-walk-station-{idx}",
-                    "station_number": str(ev.get("station_number") or f"{idx}+00"),
-                    "depth_ft": ev.get("depth_ft"),
-                    "boc_ft": ev.get("boc_ft"),
-                    "latitude": lat,
-                    "longitude": lon,
-                    "review_status": "auto_ok",
-                }
-            )
-        if stations:
-            return stations
+    for idx, ev_row in enumerate(walk_extra, start=1):
+        row = dict(ev_row)
+        row["id"] = f"{job_id}-walk-station-{idx}"
+        stations.append(row)
+    if stations:
+        return stations
 
     # Coord-fallback: synthesise placeholder stations from route geometry so
     # the UI has something to render before any field data arrives.
@@ -9406,7 +9425,7 @@ def _office_stations_payload(job_id: str, routes: Sequence[Dict[str, Any]]) -> L
             stations.append(
                 {
                     "id": f"{job_id}-station-{idx}",
-                    "station_number": f"{10+idx}+00",
+                    "station_number": f"route point {idx}",
                     "depth_ft": 4.0 + idx * 0.5,
                     "boc_ft": 2.0,
                     "latitude": float(coord[1]),

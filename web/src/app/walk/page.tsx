@@ -11,7 +11,10 @@ import {
 import { useSearchParams } from "next/navigation";
 
 import { getJobs, getJobById, type Job, type Route } from "@/lib/api";
-import { getOrCreateSessionId } from "@/lib/session";
+import {
+  getOrCreateSessionId,
+  rememberSessionFromResponse,
+} from "@/lib/session";
 
 // ─── Configuration ────────────────────────────────────────────────────────────
 
@@ -121,7 +124,6 @@ type WalkFormFields = {
   jobId: string;
   crew: string;
   date: string;
-  section: string;
 };
 
 type WalkStatus = "not_started" | "walking" | "ended";
@@ -155,11 +157,6 @@ type EndSummary = {
   gps_status: GpsStatus;
 };
 
-// Phase 2D: route-context banner state. "unknown" covers both "no job
-// selected yet" and "selected option is the offline fallback that has no Job
-// payload behind it" — in both cases we render no banner.
-type RouteContextState = "unknown" | "available" | "missing";
-
 // Phase 3B-A: per-entry photo metadata. We hold the original File handle
 // (cheap reference, no copy) for a future upload phase, plus a small
 // metadata snapshot for display. The object_url is created with
@@ -170,6 +167,7 @@ type EntryPhoto = {
   size_bytes: number;
   mime_type: string;
   object_url: string;
+  note: string;
 };
 
 // Phase 3A + 3B-A: a station entry captured during a walk. Stored locally
@@ -631,7 +629,6 @@ const DEFAULT_FORM: WalkFormFields = {
   jobId: "",
   crew: "",
   date: "",
-  section: "",
 };
 
 /** Office mock job id from /jobs — never treat as a persisted default selection. */
@@ -654,7 +651,6 @@ function readPersistedForm(): WalkFormFields | null {
       jobId: typeof parsed.jobId === "string" ? parsed.jobId : "",
       crew: typeof parsed.crew === "string" ? parsed.crew : "",
       date: typeof parsed.date === "string" ? parsed.date : "",
-      section: typeof parsed.section === "string" ? parsed.section : "",
     };
   } catch {
     return null;
@@ -681,6 +677,103 @@ async function postJson(path: string, body: unknown): Promise<Response> {
     body: JSON.stringify(body),
     cache: "no-store",
   });
+}
+
+/** Aligns with RedlineMap.tsx — backend _station_photo_identity_raw parts. */
+function stationIdentityPart(value: unknown, digits?: number): string {
+  if (value === null || value === undefined) return "";
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) return "";
+    return digits !== undefined ? value.toFixed(digits) : String(value);
+  }
+  return String(value).trim();
+}
+
+/**
+ * Same FormData shape as RedlineMap handleStationPhotoUpload.
+ * Non-blocking: errors are swallowed; preview / local state unchanged.
+ */
+function uploadStationPhotoFilesNonBlocking(
+  file: File,
+  opts: {
+    apiBase: string;
+    walkProjectScope: string | undefined;
+    /** Must match session_id sent with /api/walk/* (sessionIdRef). */
+    walkSessionId: string;
+    routeName: string;
+    sourceFile: string;
+    stationLabel: string;
+    mappedStationFt: unknown;
+    lat: number;
+    lon: number;
+    stationSummary: string;
+    note?: string;
+  },
+): void {
+  const walkSid = String(opts.walkSessionId || "").trim();
+  if (!walkSid) return;
+
+  const base = opts.apiBase.replace(/\/+$/, "");
+  const latStr = stationIdentityPart(opts.lat, 8);
+  const lonStr = stationIdentityPart(opts.lon, 8);
+  const mappedStr = stationIdentityPart(opts.mappedStationFt, 3);
+  const routeName = stationIdentityPart(opts.routeName);
+  const sourceFile = stationIdentityPart(opts.sourceFile);
+  const stationLabel = stationIdentityPart(opts.stationLabel);
+  const station_identity = [
+    routeName,
+    sourceFile,
+    stationLabel,
+    mappedStr,
+    latStr,
+    lonStr,
+  ].join("|");
+
+  const form = new FormData();
+  form.append("station_identity", station_identity);
+  form.append("station_summary", String(opts.stationSummary ?? "").trim());
+  form.append("route_name", routeName);
+  form.append("source_file", sourceFile);
+  form.append("station_label", stationLabel);
+  form.append("mapped_station_ft", mappedStr);
+  form.append("lat", latStr);
+  form.append("lon", lonStr);
+  form.append("files", file);
+  form.append("session_id", walkSid);
+  form.append("note", opts.note ?? "");
+
+  void fetch(`${base}/api/station-photos/upload`, {
+    method: "POST",
+    body: form,
+  })
+    .then((res) => res.json().catch(() => null))
+    .then((data) => {
+      if (data && typeof data === "object") {
+        rememberSessionFromResponse(data, opts.walkProjectScope);
+      }
+    })
+    .catch(() => {});
+}
+
+function stationPhotoDedupKey(file: File): string {
+  return `${file.name}:${file.size}:${file.lastModified}`;
+}
+
+function walkDraftHasCompleteStationFields(draft: {
+  station_number: string;
+  depth_ft: string;
+  boc_ft: string;
+}):
+  | { ok: true; stationNumber: string; depth: number; boc: number }
+  | { ok: false } {
+  const stationNumber = draft.station_number.trim();
+  const depthRaw = draft.depth_ft.trim();
+  const bocRaw = draft.boc_ft.trim();
+  if (!stationNumber || !depthRaw || !bocRaw) return { ok: false };
+  const depth = Number(depthRaw);
+  const boc = Number(bocRaw);
+  if (!Number.isFinite(depth) || !Number.isFinite(boc)) return { ok: false };
+  return { ok: true, stationNumber, depth, boc };
 }
 
 function newEntryId(): string {
@@ -896,20 +989,17 @@ function WalkPageInner() {
     null,
   );
   const [noteDraft, setNoteDraft] = useState<string>("");
+  /** Note applied to the next standalone evidence photo upload (optional). */
+  const [photoEvidencePrecaptureNote, setPhotoEvidencePrecaptureNote] =
+    useState("");
   const photoEvidenceInputRef = useRef<HTMLInputElement | null>(null);
 
   // Phase 4C: routes for the currently selected job. Fetched lazily via
-  // getJobById when the user picks a job from the list. Empty array means
-  // either nothing fetched yet OR the job has no routes — the routeContext
-  // value (derived from selectedJob.route_count, NOT from this state)
-  // distinguishes the two for UI purposes.
+  // projectWalkRoutes from /api/walk/route-context; designRoutes from
+  // getJobById when the user picks a job from the list.
   const [designRoutes, setDesignRoutes] = useState<Route[]>([]);
   /** Design routes persisted server-side per project (KMZ from workspace). */
   const [projectWalkRoutes, setProjectWalkRoutes] = useState<Route[]>([]);
-  const [projectWalkRoutesFetched, setProjectWalkRoutesFetched] = useState(false);
-  /** Set from /api/walk/route-context when route_count > 0 or routes.length > 0 (any source, e.g. latest_project_fallback). */
-  const [projectWalkRouteContextOk, setProjectWalkRouteContextOk] =
-    useState(false);
 
   const watchIdRef = useRef<number | null>(null);
   const pendingPointsRef = useRef<Breadcrumb[]>([]);
@@ -917,6 +1007,8 @@ function WalkPageInner() {
   const flushTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const flushInFlightRef = useRef<boolean>(false);
   const sessionIdRef = useRef<string | null>(null);
+  /** Dedup: station photo may upload on draft-complete capture + saveEntry. */
+  const uploadedStationPhotoKeysRef = useRef<Set<string>>(new Set());
 
   // Mirror of latestPoint for the entry-save path. Save reads from the ref
   // so we always pick up the most recent fix even if React hasn't flushed
@@ -947,7 +1039,6 @@ function WalkPageInner() {
         persisted?.date && persisted.date.length > 0
           ? persisted.date
           : todayIso(),
-      section: persisted?.section ?? DEFAULT_FORM.section,
     });
     setHydrated(true);
   }, []);
@@ -991,8 +1082,6 @@ function WalkPageInner() {
   }, [hydrated, jobsLoading, jobs, form.jobId]);
 
   useEffect(() => {
-    setProjectWalkRoutesFetched(false);
-    setProjectWalkRouteContextOk(false);
     let cancelled = false;
     void (async () => {
       try {
@@ -1007,22 +1096,10 @@ function WalkPageInner() {
         const data: unknown = await res.json();
         if (cancelled) return;
         console.log("[walk] route-context received:", data);
-        const root = asRecord(data);
-        const routeCountRaw = root?.route_count;
-        const routeCount =
-          typeof routeCountRaw === "number"
-            ? routeCountRaw
-            : Number(routeCountRaw) || 0;
-        const routesLen = Array.isArray(root?.routes) ? root.routes.length : 0;
-        const routeLoaded = routeCount > 0 || routesLen > 0;
-        setProjectWalkRouteContextOk(routeLoaded);
         setProjectWalkRoutes(normalizeWalkRouteContextPayload(data));
       } catch {
         if (cancelled) return;
         setProjectWalkRoutes([]);
-        setProjectWalkRouteContextOk(false);
-      } finally {
-        if (!cancelled) setProjectWalkRoutesFetched(true);
       }
     })();
     return () => {
@@ -1085,24 +1162,6 @@ function WalkPageInner() {
     [jobs, form.jobId],
   );
 
-  const routeContext: RouteContextState = useMemo(() => {
-    if (!hydrated) return "unknown";
-    if (!projectWalkRoutesFetched) return "unknown";
-    if (projectWalkRouteContextOk || projectWalkRoutes.length > 0) {
-      return "available";
-    }
-    if (!form.jobId) return "unknown";
-    if (!selectedJob) return "unknown"; // fallback option, or job list still loading
-    return selectedJob.route_count > 0 ? "available" : "missing";
-  }, [
-    hydrated,
-    projectWalkRoutesFetched,
-    projectWalkRouteContextOk,
-    projectWalkRoutes.length,
-    form.jobId,
-    selectedJob,
-  ]);
-
   // Phase 4C: fetch the selected job's detail (routes with geometry) when
   // the user picks a real job. We deliberately gate on `selectedJob` so the
   // offline "test-job" fallback (which has no backing Job record) doesn't
@@ -1138,6 +1197,11 @@ function WalkPageInner() {
     }
     return designRoutes;
   }, [projectWalkRoutes, designRoutes]);
+
+  const activeRouteNameForPhotos = useMemo(() => {
+    const r = mapDesignRoutes[0];
+    return typeof r?.route_name === "string" ? r.route_name : "";
+  }, [mapDesignRoutes]);
 
   // Phase 4C: push design routes into the map controller. Deterministic
   // gating only — no debouncing, no rAF, no delay. Runs whenever any of
@@ -1292,6 +1356,7 @@ function WalkPageInner() {
     };
 
     const onError = (err: GeolocationPositionError) => {
+      console.warn("GPS ERROR", err.code, err.message);
       if (err.code === err.PERMISSION_DENIED) {
         setGpsStatus("denied");
       } else {
@@ -1302,8 +1367,8 @@ function WalkPageInner() {
     try {
       const id = navigator.geolocation.watchPosition(onSuccess, onError, {
         enableHighAccuracy: true,
-        maximumAge: 1000,
-        timeout: 30000,
+        timeout: 10000,
+        maximumAge: 0,
       });
       watchIdRef.current = id;
     } catch {
@@ -1315,57 +1380,6 @@ function WalkPageInner() {
       void flushBreadcrumbs();
     }, FLUSH_INTERVAL_MS);
   }, [flushBreadcrumbs]);
-
-  // Prime geolocation on mount so iOS Safari shows the permission prompt without
-  // waiting for "Start Walk". Does not start breadcrumb capture or flush timer.
-  useEffect(() => {
-    let cancelled = false;
-    if (typeof navigator === "undefined" || !navigator.geolocation) {
-      setGpsStatus("unsupported");
-      return;
-    }
-    setGpsStatus("requesting");
-    console.log("[walk] requesting geolocation");
-    try {
-      navigator.geolocation.getCurrentPosition(
-        (pos) => {
-          if (cancelled) return;
-          const { latitude, longitude, accuracy } = pos.coords;
-          const accuracy_m = Number.isFinite(accuracy) ? accuracy : null;
-          mapControllerRef.current?.setPosition(latitude, longitude);
-          if (accuracy_m !== null && accuracy_m > ACCURACY_FILTER_M) {
-            setGpsStatus("poor");
-            setLatestPoint({ lat: latitude, lon: longitude, accuracy_m });
-            return;
-          }
-          setLatestPoint({ lat: latitude, lon: longitude, accuracy_m });
-          setGpsStatus(
-            accuracy_m !== null && accuracy_m > POOR_ACCURACY_M
-              ? "poor"
-              : "active",
-          );
-        },
-        (err) => {
-          if (cancelled) return;
-          if (err.code === err.PERMISSION_DENIED) {
-            setGpsStatus("denied");
-          } else {
-            setGpsStatus("error");
-          }
-        },
-        {
-          enableHighAccuracy: true,
-          maximumAge: 0,
-          timeout: 30000,
-        },
-      );
-    } catch {
-      if (!cancelled) setGpsStatus("error");
-    }
-    return () => {
-      cancelled = true;
-    };
-  }, []);
 
   // Phase 3B-A + 3B-B: revoke object URLs for every saved entry's photo,
   // the current entry-form draft photo, AND the standalone photo evidence
@@ -1421,6 +1435,58 @@ function WalkPageInner() {
 
   const handleStart = useCallback(async () => {
     if (isStarting) return;
+
+    if (typeof navigator === "undefined" || !navigator.geolocation) {
+      setGpsStatus("unsupported");
+      setActionError("Geolocation is not available in this browser.");
+      return;
+    }
+
+    const gpsPrimed = await new Promise<boolean>((resolve) => {
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          const { latitude, longitude, accuracy } = pos.coords;
+          const accuracy_m = Number.isFinite(accuracy) ? accuracy : null;
+          mapControllerRef.current?.setPosition(latitude, longitude);
+          if (accuracy_m !== null && accuracy_m > ACCURACY_FILTER_M) {
+            setGpsStatus("poor");
+            setLatestPoint({ lat: latitude, lon: longitude, accuracy_m });
+            resolve(true);
+            return;
+          }
+          setLatestPoint({ lat: latitude, lon: longitude, accuracy_m });
+          setGpsStatus(
+            accuracy_m !== null && accuracy_m > POOR_ACCURACY_M
+              ? "poor"
+              : "active",
+          );
+          resolve(true);
+        },
+        (err) => {
+          console.warn("GPS ERROR", err.code, err.message);
+          if (err.code === err.PERMISSION_DENIED) {
+            setGpsStatus("denied");
+            setActionError(
+              "GPS permission denied. Allow location for this site, then tap Start Walk again.",
+            );
+          } else {
+            setGpsStatus("error");
+            setActionError(
+              "Could not read GPS. Check location settings and try again.",
+            );
+          }
+          resolve(false);
+        },
+        {
+          enableHighAccuracy: true,
+          timeout: 10000,
+          maximumAge: 0,
+        },
+      );
+    });
+
+    if (!gpsPrimed) return;
+
     setIsStarting(true);
     try {
       setActionError(null);
@@ -1437,7 +1503,6 @@ function WalkPageInner() {
           job_label: selectedJobOption?.label ?? form.jobId,
           crew: form.crew,
           date: form.date,
-          section: form.section,
         });
         if (!res.ok) {
           setActionError(`Start Walk failed (${res.status}).`);
@@ -1454,7 +1519,6 @@ function WalkPageInner() {
 
       pendingPointsRef.current = [];
       lastAcceptedRef.current = null;
-      setLatestPoint(null);
       setPointCount(0);
       setServerPointCount(0);
       setSentHome(false);
@@ -1478,10 +1542,12 @@ function WalkPageInner() {
       }
       setPhotoEvidenceList([]);
       setPhotoEvidenceError(null);
+      setPhotoEvidencePrecaptureNote("");
       resetNoteEditor();
       if (photoEvidenceInputRef.current) {
         photoEvidenceInputRef.current.value = "";
       }
+      uploadedStationPhotoKeysRef.current = new Set();
 
       // Wipe any previous trail so a re-Start doesn't visually merge walks.
       // Phase 4C: design-route overlay is intentionally NOT cleared here —
@@ -1498,7 +1564,6 @@ function WalkPageInner() {
     form.crew,
     form.date,
     form.jobId,
-    form.section,
     isStarting,
     revokeAllPhotoUrls,
     resetNoteEditor,
@@ -1688,9 +1753,44 @@ function WalkPageInner() {
         size_bytes: file.size,
         mime_type: file.type || "image/*",
         object_url,
+        note: "",
       });
+
+      // Immediate upload (RedlineMap FormData pattern) when walk is active,
+      // GPS is known, and station draft is complete — avoids wrong identity
+      // from partial drafts. Otherwise saveEntry uploads on commit.
+      if (
+        status === "walking" &&
+        sessionIdRef.current &&
+        latestPointRef.current
+      ) {
+        const complete = walkDraftHasCompleteStationFields(entryDraft);
+        if (complete.ok) {
+          const pt = latestPointRef.current;
+          const key = stationPhotoDedupKey(file);
+          uploadedStationPhotoKeysRef.current.add(key);
+          uploadStationPhotoFilesNonBlocking(file, {
+            apiBase: API_BASE,
+            walkProjectScope,
+            walkSessionId: sessionIdRef.current,
+            routeName: activeRouteNameForPhotos,
+            sourceFile: "",
+            stationLabel: complete.stationNumber,
+            mappedStationFt: complete.depth,
+            lat: pt.lat,
+            lon: pt.lon,
+            stationSummary: "",
+            note: "",
+          });
+        }
+      }
     },
-    [],
+    [
+      entryDraft,
+      status,
+      walkProjectScope,
+      activeRouteNameForPhotos,
+    ],
   );
 
   const clearPhotoDraft = useCallback(() => {
@@ -1740,6 +1840,8 @@ function WalkPageInner() {
       return;
     }
 
+    const attachedPhoto = photoDraft;
+
     const entry: StationEntry = {
       id: newEntryId(),
       station_number: stationNumber,
@@ -1752,7 +1854,7 @@ function WalkPageInner() {
       // Hand off the draft photo (its object URL belongs to the entry now;
       // we do NOT revoke it here — it will be revoked on Start New Walk or
       // unmount).
-      photo: photoDraft,
+      photo: attachedPhoto,
     };
 
     setStationEntries((prev) => [...prev, entry]);
@@ -1763,6 +1865,34 @@ function WalkPageInner() {
     setPhotoDraft(null);
     if (photoInputRef.current) {
       photoInputRef.current.value = "";
+    }
+
+    if (attachedPhoto) {
+      const sidUpload = sessionIdRef.current;
+      if (sidUpload) {
+        const key = stationPhotoDedupKey(attachedPhoto.file);
+        const alreadyUploaded = uploadedStationPhotoKeysRef.current.has(key);
+        const noteTrim = (attachedPhoto.note ?? "").trim();
+        const opts = {
+          apiBase: API_BASE,
+          walkProjectScope,
+          walkSessionId: sidUpload,
+          routeName: activeRouteNameForPhotos,
+          sourceFile: "",
+          stationLabel: entry.station_number,
+          mappedStationFt: entry.depth_ft,
+          lat: entry.lat,
+          lon: entry.lon,
+          stationSummary: "",
+          note: attachedPhoto.note || "",
+        };
+        if (!alreadyUploaded) {
+          uploadedStationPhotoKeysRef.current.add(key);
+          uploadStationPhotoFilesNonBlocking(attachedPhoto.file, opts);
+        } else if (noteTrim.length > 0) {
+          uploadStationPhotoFilesNonBlocking(attachedPhoto.file, opts);
+        }
+      }
     }
 
     const sid = sessionIdRef.current;
@@ -1784,7 +1914,7 @@ function WalkPageInner() {
         /* keep local entry; non-blocking */
       });
     }
-  }, [entryDraft, photoDraft]);
+  }, [entryDraft, photoDraft, walkProjectScope, activeRouteNameForPhotos]);
 
   // Phase 3B-B + 3C: standalone "Add Photo" path. Independent of station
   // entry. Reuses the same size cap and object-URL convention but does not
@@ -1850,8 +1980,26 @@ function WalkPageInner() {
         ts: new Date().toISOString(),
       };
 
+      const noteValue = photoEvidencePrecaptureNote.trim();
+      setPhotoEvidencePrecaptureNote("");
+
       setPhotoEvidenceError(null);
       setPhotoEvidenceList((prev) => [...prev, evidence]);
+      if (sessionIdRef.current) {
+        uploadStationPhotoFilesNonBlocking(file, {
+          apiBase: API_BASE,
+          walkProjectScope,
+          walkSessionId: sessionIdRef.current,
+          routeName: activeRouteNameForPhotos,
+          sourceFile: "",
+          stationLabel: "",
+          mappedStationFt: "",
+          lat: point.lat,
+          lon: point.lon,
+          stationSummary: "",
+          note: noteValue,
+        });
+      }
       // Phase 3C: open the note editor for this fresh photo so the user
       // can tag it without an extra tap. Note remains optional — they can
       // skip without typing.
@@ -1861,7 +2009,7 @@ function WalkPageInner() {
       // onChange.
       event.target.value = "";
     },
-    [],
+    [walkProjectScope, activeRouteNameForPhotos, photoEvidencePrecaptureNote],
   );
 
   // Phase 3C + 3C-4: note editor handlers for freeform photo evidence.
@@ -1879,13 +2027,36 @@ function WalkPageInner() {
     const id = noteEditingPhotoId;
     if (!id) return;
     const trimmed = noteDraft.trim();
-    setPhotoEvidenceList((prev) =>
-      prev.map((p) =>
+    setPhotoEvidenceList((prev) => {
+      const next = prev.map((p) =>
         p.id === id ? { ...p, note: trimmed || undefined } : p,
-      ),
-    );
+      );
+      const ph = next.find((p) => p.id === id);
+      if (ph && trimmed && sessionIdRef.current) {
+        uploadStationPhotoFilesNonBlocking(ph.file, {
+          apiBase: API_BASE,
+          walkProjectScope,
+          walkSessionId: sessionIdRef.current,
+          routeName: activeRouteNameForPhotos,
+          sourceFile: "",
+          stationLabel: "",
+          mappedStationFt: "",
+          lat: ph.lat,
+          lon: ph.lon,
+          stationSummary: "",
+          note: trimmed,
+        });
+      }
+      return next;
+    });
     resetNoteEditor();
-  }, [noteDraft, noteEditingPhotoId, resetNoteEditor]);
+  }, [
+    noteDraft,
+    noteEditingPhotoId,
+    resetNoteEditor,
+    walkProjectScope,
+    activeRouteNameForPhotos,
+  ]);
 
   // ── Render ─────────────────────────────────────────────────────────────────
 
@@ -1945,11 +2116,6 @@ function WalkPageInner() {
             </div>
           </dl>
         </section>
-
-        {/* Phase 2D: route context banner. Informational only — does not
-            block Start Walk. Hidden when no job is selected or when we
-            cannot read a Job payload (offline fallback option). */}
-        <RouteContextBanner state={routeContext} />
 
         {(status === "walking" || status === "ended") && (
           <section
@@ -2074,6 +2240,27 @@ function WalkPageInner() {
               onChange={handlePhotoEvidenceSelected}
               className="hidden"
             />
+
+            {status === "walking" && (
+              <div className="mt-3 flex flex-col gap-2">
+                <label
+                  htmlFor="evidence-precapture-note"
+                  className="text-xs font-medium uppercase tracking-wide text-slate-400"
+                >
+                  Add note (optional)
+                </label>
+                <textarea
+                  id="evidence-precapture-note"
+                  value={photoEvidencePrecaptureNote}
+                  onChange={(e) =>
+                    setPhotoEvidencePrecaptureNote(e.target.value)
+                  }
+                  rows={2}
+                  placeholder="Applied to the next photo you add…"
+                  className="w-full resize-y rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500 focus:border-slate-500 focus:outline-none focus:ring-2 focus:ring-slate-500"
+                />
+              </div>
+            )}
 
             {status === "walking" && (
               <div className="mt-3">
@@ -2321,20 +2508,6 @@ function WalkPageInner() {
               className="h-14 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 text-base text-slate-100 focus:border-slate-500 focus:outline-none focus:ring-2 focus:ring-slate-500 disabled:opacity-60"
             />
           </Field>
-
-          <Field label="Section / Segment" htmlFor="walk-section">
-            <input
-              id="walk-section"
-              type="text"
-              inputMode="text"
-              autoComplete="off"
-              placeholder="e.g. STA 100+00 — STA 110+00"
-              value={form.section}
-              onChange={(e) => updateField("section", e.target.value)}
-              disabled={status === "walking"}
-              className="h-14 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 text-base text-slate-100 placeholder:text-slate-500 focus:border-slate-500 focus:outline-none focus:ring-2 focus:ring-slate-500 disabled:opacity-60"
-            />
-          </Field>
         </section>
 
         <section aria-label="Walk actions" className="flex flex-col gap-3">
@@ -2399,6 +2572,9 @@ function WalkPageInner() {
           photoDraft={photoDraft}
           photoInputRef={photoInputRef}
           onPhotoSelected={handlePhotoSelected}
+          onPhotoNoteChange={(note) =>
+            setPhotoDraft((d) => (d ? { ...d, note } : null))
+          }
           onClearPhoto={clearPhotoDraft}
           onCancel={closeEntryForm}
           onSave={saveEntry}
@@ -2572,31 +2748,6 @@ function GpsBadge({ status }: { status: GpsStatus }) {
   );
 }
 
-function RouteContextBanner({ state }: { state: RouteContextState }) {
-  if (state === "unknown") return null;
-  if (state === "available") {
-    return (
-      <div
-        role="status"
-        className="rounded-xl border border-emerald-800/60 bg-emerald-900/20 px-4 py-3 text-sm text-emerald-200"
-      >
-        Route context available for this job.
-      </div>
-    );
-  }
-  // missing — Phase 4C: this is the empty-state copy required by the spec
-  // when the selected job has no design route to overlay.
-  return (
-    <div
-      role="status"
-      className="rounded-xl border border-amber-700/60 bg-amber-900/20 px-4 py-3 text-sm text-amber-200"
-    >
-      No design route loaded for this job yet. Office must upload the KMZ
-      before field walking.
-    </div>
-  );
-}
-
 function BigButton({
   variant,
   onClick,
@@ -2734,6 +2885,7 @@ function EntrySheet({
   photoDraft,
   photoInputRef,
   onPhotoSelected,
+  onPhotoNoteChange,
   onClearPhoto,
   onCancel,
   onSave,
@@ -2754,6 +2906,7 @@ function EntrySheet({
   photoDraft: EntryPhoto | null;
   photoInputRef: React.MutableRefObject<HTMLInputElement | null>;
   onPhotoSelected: (event: React.ChangeEvent<HTMLInputElement>) => void;
+  onPhotoNoteChange: (note: string) => void;
   onClearPhoto: () => void;
   onCancel: () => void;
   onSave: () => void;
@@ -2917,6 +3070,24 @@ function EntrySheet({
                 >
                   Remove
                 </button>
+              </div>
+            )}
+            {photoDraft && (
+              <div className="flex flex-col gap-1">
+                <label
+                  htmlFor="entry-photo-note"
+                  className="text-xs font-medium uppercase tracking-wide text-slate-400"
+                >
+                  Add note (optional)
+                </label>
+                <textarea
+                  id="entry-photo-note"
+                  value={photoDraft.note}
+                  onChange={(e) => onPhotoNoteChange(e.target.value)}
+                  rows={3}
+                  placeholder="Description…"
+                  className="w-full resize-y rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-base text-slate-100 placeholder:text-slate-500 focus:border-slate-500 focus:outline-none focus:ring-2 focus:ring-slate-500"
+                />
               </div>
             )}
           </div>

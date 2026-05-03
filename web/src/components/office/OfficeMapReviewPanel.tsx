@@ -5,10 +5,11 @@
 // Read-only Leaflet map for the job detail page. Shows:
 //   - Design routes from job.routes[*].geometry  → dashed gray polylines
 //   - Walk session tracks from job.sessions[*].track_geometry
-//                                                → solid colored polylines
-//                                                  (one color per session)
+//                                                → muted grey-blue when not focused;
+//                                                  bright palette color + halo when selected
 //   - When `selectedSessionId` is provided, that session's track is drawn
-//     thicker with a yellow halo and the map auto-fits to it on first load.
+//     brighter/thicker with a yellow halo; all other sessions stay visible in
+//     muted grey-blue. Bounds always fit the full cumulative geometry + stations.
 //
 // Pure vanilla Leaflet via dynamic import inside useEffect. The parent on
 // /jobs/[jobId] already wraps this component with `next/dynamic({ssr:false})`
@@ -22,7 +23,7 @@
 //   - GeoJSON is [lon, lat]; Leaflet wants [lat, lng] — swap on read
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef } from "react";
 
 import type { JobDetail, Route, Session } from "@/lib/api";
 
@@ -51,9 +52,13 @@ const SESSION_COLORS: ReadonlyArray<string> = [
   "#3b82f6", // blue-500
 ];
 
-const SESSION_WEIGHT_DEFAULT = 4;
-const SESSION_WEIGHT_SELECTED = 6;
-const SESSION_OPACITY = 0.95;
+// Non-selected walks: recede so the selected path reads as the focus.
+const TRACK_MUTED_COLOR = "#94a3b8"; // slate-400 — grey-blue
+const TRACK_MUTED_WEIGHT = 3;
+const TRACK_MUTED_OPACITY = 0.48;
+
+const SESSION_WEIGHT_SELECTED = 7;
+const SESSION_OPACITY_SELECTED = 0.95;
 
 // Selected-session halo (drawn underneath the session line). Soft yellow,
 // matches the "focused" cue used elsewhere in the workspace.
@@ -75,9 +80,8 @@ type LeafletNS = typeof import("leaflet");
 
 type OfficeMapReviewPanelProps = {
   job: JobDetail;
-  // Phase 4E: when present, that session's track is emphasized and the map
-  // fits to it on initial render. null/undefined means "no specific session
-  // selected" — we fit to all geometry instead.
+  // Phase 4E: when present, that session's track is emphasized (others stay
+  // visible, muted). Bounds always include every track and station on the job.
   selectedSessionId?: string | null;
 };
 
@@ -117,6 +121,7 @@ export default function OfficeMapReviewPanel({
   job,
   selectedSessionId,
 }: OfficeMapReviewPanelProps) {
+  const sessionSelection = selectedSessionId ?? null;
   const containerRef = useRef<HTMLDivElement | null>(null);
   // Keep the live Leaflet map + layer references in refs (not state) so we
   // never trigger re-renders from inside the imperative Leaflet update path.
@@ -130,6 +135,7 @@ export default function OfficeMapReviewPanel({
     null,
   );
   const leafletNsRef = useRef<LeafletNS | null>(null);
+  const renderLayersRef = useRef<() => void>(() => {});
 
   // Mount Leaflet exactly once. We deliberately use an empty dep array — the
   // job-data effect below handles all subsequent updates by mutating layers
@@ -163,9 +169,10 @@ export default function OfficeMapReviewPanel({
 
         leafletNsRef.current = L;
         mapRef.current = map;
+        map.invalidateSize();
 
-        // Trigger a render of the layers now that the map is alive.
-        renderLayers();
+        // Trigger a render of the layers now that the map is alive (latest draw fn).
+        renderLayersRef.current();
       } catch {
         // Leaflet failed to load — leave the empty container; the parent
         // already shows a "Loading map…" skeleton via dynamic loading and
@@ -188,14 +195,13 @@ export default function OfficeMapReviewPanel({
       stationLayersRef.current = [];
       selectedHaloRef.current = null;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Redraw layers whenever the input data or the selection changes.
   // We declare renderLayers outside the effect so the mount-effect can call
   // it as soon as the map is live, then this effect handles every later
   // change.
-  const renderLayers = () => {
+  const renderLayers = useCallback(() => {
     const L = leafletNsRef.current;
     const map = mapRef.current;
     if (!L || !map) return;
@@ -235,7 +241,6 @@ export default function OfficeMapReviewPanel({
     }
 
     const allLatLngs: Array<[number, number]> = [];
-    const selectedLatLngs: Array<[number, number]> = [];
 
     // ── Design routes (dashed gray, drawn first / underneath) ─────────────
     const routes: Route[] = Array.isArray(job.routes) ? job.routes : [];
@@ -261,7 +266,7 @@ export default function OfficeMapReviewPanel({
       if (latlngs.length < 2) return;
 
       const isSelected =
-        Boolean(selectedSessionId) && session.id === selectedSessionId;
+        Boolean(sessionSelection) && session.id === sessionSelection;
 
       // Halo first (so the selected session's color sits on top of it).
       if (isSelected) {
@@ -276,16 +281,15 @@ export default function OfficeMapReviewPanel({
       }
 
       const layer = L.polyline(latlngs, {
-        color: colorForIndex(idx),
-        weight: isSelected ? SESSION_WEIGHT_SELECTED : SESSION_WEIGHT_DEFAULT,
-        opacity: SESSION_OPACITY,
+        color: isSelected ? colorForIndex(idx) : TRACK_MUTED_COLOR,
+        weight: isSelected ? SESSION_WEIGHT_SELECTED : TRACK_MUTED_WEIGHT,
+        opacity: isSelected ? SESSION_OPACITY_SELECTED : TRACK_MUTED_OPACITY,
         interactive: false,
       });
       layer.addTo(map);
       sessionLayersRef.current.push(layer);
       for (const ll of latlngs) {
         allLatLngs.push(ll);
-        if (isSelected) selectedLatLngs.push(ll);
       }
     });
 
@@ -295,7 +299,7 @@ export default function OfficeMapReviewPanel({
     for (const st of stationsList) {
       const lat = Number(st.latitude);
       const lon = Number(st.longitude);
-      if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
+      if (!Number.isFinite(lat) || !Number.isFinite(lon) || (lat === 0 && lon === 0)) continue;
       stationLatLngs.push([lat, lon]);
       const label = String(st.station_number ?? "").trim() || "—";
       const marker = L.circleMarker([lat, lon], {
@@ -321,45 +325,28 @@ export default function OfficeMapReviewPanel({
     }
 
     // ── Fit ───────────────────────────────────────────────────────────────
-    // Prefer the selected session's bounds when one is selected. Otherwise
-    // fit the union of every drawn polyline. If nothing was drawn the empty
-    // states render as overlays and we leave the world view alone.
-    // Include station drops in the bounds so markers stay in view.
-    const fitTarget =
-      selectedLatLngs.length >= 2
-        ? [...selectedLatLngs, ...stationLatLngs]
-        : allLatLngs;
-    if (fitTarget.length >= 2) {
+    // Always fit the union of every design route, session track, and station
+    // so changing the highlighted session does not crop other walks from view.
+    // Filter null-island [0,0] coords that appear when GPS data is missing.
+    const boundsPoints = allLatLngs.filter(([lat, lon]) => !(lat === 0 && lon === 0));
+    if (boundsPoints.length >= 2) {
       try {
-        const bounds = L.latLngBounds(fitTarget);
+        map.invalidateSize();
+        const bounds = L.latLngBounds(boundsPoints);
         if (bounds.isValid()) {
-          map.fitBounds(bounds, {
-            padding: FIT_PADDING,
-            maxZoom: FIT_MAX_ZOOM,
-            animate: false,
-          });
+          map.fitBounds(bounds, { padding: [20, 20] });
         }
       } catch {
         /* ignore */
       }
     }
-  };
+  }, [job, sessionSelection]);
+
+  renderLayersRef.current = renderLayers;
 
   useEffect(() => {
     renderLayers();
-    // We pass the heavy bits as dependency surrogates: the route count, the
-    // session count, and the selected id. We deliberately avoid putting the
-    // arrays themselves in the dep list because they're new identities on
-    // every parent fetch, but their geometry rarely changes within a single
-    // session view.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [
-    job.id,
-    (job.routes ?? []).length,
-    (job.sessions ?? []).length,
-    (job.stations ?? []).length,
-    selectedSessionId ?? null,
-  ]);
+  }, [renderLayers]);
 
   // ── Empty-state messaging ──────────────────────────────────────────────────
   // Both can fire at once: a job may have no design and no walks yet.
@@ -444,23 +431,33 @@ export default function OfficeMapReviewPanel({
             )}
             {hasAnyWalkPath && (
               <div className="flex items-center gap-2">
-                <span className="inline-flex items-center gap-1">
-                  {/* Show up to four palette swatches as a hint that each
-                      walked session gets its own color. */}
-                  {SESSION_COLORS.slice(0, 4).map((c) => (
+                <span className="inline-flex items-center gap-1.5">
+                  <span
+                    className="inline-block"
+                    style={{
+                      width: 18,
+                      height: TRACK_MUTED_WEIGHT,
+                      background: TRACK_MUTED_COLOR,
+                      opacity: TRACK_MUTED_OPACITY + 0.35,
+                      borderRadius: 1,
+                    }}
+                  />
+                  {selectedSession ? (
                     <span
-                      key={c}
                       className="inline-block"
                       style={{
-                        width: 12,
-                        height: 3,
-                        background: c,
+                        width: 18,
+                        height: SESSION_WEIGHT_SELECTED - 2,
+                        background: SESSION_COLORS[0],
+                        opacity: SESSION_OPACITY_SELECTED,
                         borderRadius: 1,
                       }}
                     />
-                  ))}
+                  ) : null}
                 </span>
-                Walk session tracks
+                {selectedSession
+                  ? "Other walks / selected walk"
+                  : "Walk session tracks"}
               </div>
             )}
             {hasStations && (
