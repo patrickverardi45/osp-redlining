@@ -10,6 +10,9 @@
 //   - When `selectedSessionId` is provided, that session's track is drawn
 //     brighter/thicker with a yellow halo; all other sessions stay visible in
 //     muted grey-blue. Bounds always fit the full cumulative geometry + stations.
+//   - Straight station-to-station polyline (recording order) in sky blue,
+//     above walk tracks, under station markers
+//   - Field station markers from job.stations
 //
 // Pure vanilla Leaflet via dynamic import inside useEffect. The parent on
 // /jobs/[jobId] already wraps this component with `next/dynamic({ssr:false})`
@@ -25,7 +28,7 @@
 
 import { useCallback, useEffect, useRef } from "react";
 
-import type { JobDetail, Route, Session } from "@/lib/api";
+import type { JobDetail, Route, Session, Station } from "@/lib/api";
 
 // ─── Visual constants ─────────────────────────────────────────────────────────
 
@@ -68,6 +71,12 @@ const SELECTED_HALO_OPACITY = 0.5;
 
 const FIT_PADDING: [number, number] = [24, 24];
 const FIT_MAX_ZOOM = 18;
+
+// Station-to-station path (straight segments, recording order) — above GPS
+// session tracks, below station markers.
+const STATION_PATH_COLOR = "#0ea5e9"; // sky-500
+const STATION_PATH_WEIGHT = 5;
+const STATION_PATH_OPACITY = 0.9;
 
 // Field station drops (job.stations) — drawn last so they sit above tracks.
 const STATION_RING = "#0f172a"; // slate-900
@@ -115,6 +124,41 @@ function shortenId(rawId: string): string {
   return rawId.length <= 8 ? rawId : rawId.slice(0, 8);
 }
 
+/** Optional `uploaded_at` on station payloads when backend provides it. */
+function stationUploadedAtMs(st: Station): number | null {
+  const raw = (st as Station & { uploaded_at?: string | null }).uploaded_at;
+  if (typeof raw !== "string" || !raw.trim()) return null;
+  const t = Date.parse(raw);
+  return Number.isFinite(t) ? t : null;
+}
+
+/**
+ * Stations in recording order (uploaded_at ascending when present; else array
+ * index). Valid coords only; skips (0,0); drops consecutive duplicate points.
+ */
+function orderedStationPathLatLngs(stationsList: Station[]): Array<[number, number]> {
+  const withIdx = stationsList.map((st, index) => ({ st, index }));
+  withIdx.sort((a, b) => {
+    const ta = stationUploadedAtMs(a.st);
+    const tb = stationUploadedAtMs(b.st);
+    if (ta !== null && tb !== null && ta !== tb) return ta - tb;
+    if (ta !== null && tb === null) return -1;
+    if (ta === null && tb !== null) return 1;
+    return a.index - b.index;
+  });
+  const out: Array<[number, number]> = [];
+  for (const { st } of withIdx) {
+    const lat = Number(st.latitude);
+    const lon = Number(st.longitude);
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
+    if (lat === 0 && lon === 0) continue;
+    const prev = out[out.length - 1];
+    if (prev && prev[0] === lat && prev[1] === lon) continue;
+    out.push([lat, lon]);
+  }
+  return out;
+}
+
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export default function OfficeMapReviewPanel({
@@ -128,6 +172,9 @@ export default function OfficeMapReviewPanel({
   const mapRef = useRef<ReturnType<LeafletNS["map"]> | null>(null);
   const designLayersRef = useRef<Array<ReturnType<LeafletNS["polyline"]>>>([]);
   const sessionLayersRef = useRef<Array<ReturnType<LeafletNS["polyline"]>>>([]);
+  const stationPathLayersRef = useRef<
+    Array<ReturnType<LeafletNS["polyline"]>>
+  >([]);
   const stationLayersRef = useRef<
     Array<ReturnType<LeafletNS["circleMarker"]>>
   >([]);
@@ -192,6 +239,7 @@ export default function OfficeMapReviewPanel({
       leafletNsRef.current = null;
       designLayersRef.current = [];
       sessionLayersRef.current = [];
+      stationPathLayersRef.current = [];
       stationLayersRef.current = [];
       selectedHaloRef.current = null;
     };
@@ -223,6 +271,14 @@ export default function OfficeMapReviewPanel({
       }
     }
     sessionLayersRef.current = [];
+    for (const layer of stationPathLayersRef.current) {
+      try {
+        layer.remove();
+      } catch {
+        /* ignore */
+      }
+    }
+    stationPathLayersRef.current = [];
     for (const layer of stationLayersRef.current) {
       try {
         layer.remove();
@@ -293,9 +349,27 @@ export default function OfficeMapReviewPanel({
       }
     });
 
+    // ── Station-to-station path (straight line, recording order) ─────────
+    // Above session/GPS polylines; station markers drawn on top next.
+    const stationsList = Array.isArray(job.stations) ? job.stations : [];
+    const stationPathLatLngs = orderedStationPathLatLngs(stationsList);
+    if (stationPathLatLngs.length >= 2) {
+      const pathLayer = L.polyline(stationPathLatLngs, {
+        color: STATION_PATH_COLOR,
+        weight: STATION_PATH_WEIGHT,
+        opacity: STATION_PATH_OPACITY,
+        smoothFactor: 0,
+        interactive: false,
+      });
+      pathLayer.addTo(map);
+      stationPathLayersRef.current.push(pathLayer);
+      for (const ll of stationPathLatLngs) {
+        allLatLngs.push(ll);
+      }
+    }
+
     // ── Field stations (job.stations) — circle markers + labels, on top ───
     const stationLatLngs: Array<[number, number]> = [];
-    const stationsList = Array.isArray(job.stations) ? job.stations : [];
     for (const st of stationsList) {
       const lat = Number(st.latitude);
       const lon = Number(st.longitude);
@@ -361,6 +435,10 @@ export default function OfficeMapReviewPanel({
     const lon = Number(st.longitude);
     return Number.isFinite(lat) && Number.isFinite(lon);
   });
+  const hasStationPath =
+    orderedStationPathLatLngs(
+      Array.isArray(job.stations) ? job.stations : [],
+    ).length >= 2;
 
   // Selected-session subtitle for the header (compact ID + crew if known).
   const selectedSession =
@@ -413,7 +491,7 @@ export default function OfficeMapReviewPanel({
         </div>
 
         {/* Legend (only shown when there's something to label). */}
-        {(hasDesign || hasAnyWalkPath || hasStations) && (
+        {(hasDesign || hasAnyWalkPath || hasStations || hasStationPath) && (
           <div className="flex flex-wrap items-center gap-4 border-t border-gray-100 bg-gray-50 px-4 py-2 text-xs text-gray-600">
             {hasDesign && (
               <div className="flex items-center gap-2">
@@ -458,6 +536,21 @@ export default function OfficeMapReviewPanel({
                 {selectedSession
                   ? "Other walks / selected walk"
                   : "Walk session tracks"}
+              </div>
+            )}
+            {hasStationPath && (
+              <div className="flex items-center gap-2">
+                <span
+                  className="inline-block"
+                  style={{
+                    width: 22,
+                    height: STATION_PATH_WEIGHT,
+                    background: STATION_PATH_COLOR,
+                    opacity: STATION_PATH_OPACITY,
+                    borderRadius: 1,
+                  }}
+                />
+                Station path
               </div>
             )}
             {hasStations && (

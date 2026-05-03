@@ -32,7 +32,13 @@ const COMPACT_ROW_LIMIT = 5;
 
 const FILTER_KEYS: InboxFilter[] = ["needs_review", "today", "week"];
 
-export default function FieldSubmissionsInboxPanel() {
+type FieldSubmissionsInboxPanelProps = {
+  onSelectSession?: (sessionId: string, jobId: string) => void;
+};
+
+export default function FieldSubmissionsInboxPanel({
+  onSelectSession,
+}: FieldSubmissionsInboxPanelProps) {
   const {
     filteredRows,
     counts,
@@ -283,16 +289,26 @@ export default function FieldSubmissionsInboxPanel() {
                         </span>
                       </Td>
                       <Td>
-                        <Link
-                          href={`/jobs/${row.jobId}?session=${encodeURIComponent(session.id)}`}
+                        <button
+                          type="button"
+                          onClick={() =>
+                            onSelectSession?.(session.id, row.jobId)
+                          }
                           style={{
                             color: "#0f172a",
                             fontWeight: 700,
                             textDecoration: "none",
+                            border: "none",
+                            background: "none",
+                            padding: 0,
+                            margin: 0,
+                            cursor: "pointer",
+                            font: "inherit",
+                            textAlign: "left",
                           }}
                         >
                           {row.jobLabel}
-                        </Link>
+                        </button>
                       </Td>
                       <Td>
                         <span
@@ -335,18 +351,26 @@ export default function FieldSubmissionsInboxPanel() {
                         {safeCount(session.track_point_count).toLocaleString()}
                       </Td>
                       <Td align="right">
-                        <Link
-                          href={`/jobs/${row.jobId}?session=${encodeURIComponent(session.id)}`}
+                        <button
+                          type="button"
+                          onClick={() =>
+                            onSelectSession?.(session.id, row.jobId)
+                          }
                           style={{
                             fontSize: 12,
                             fontWeight: 700,
                             color: "#1d4ed8",
                             textDecoration: "none",
                             whiteSpace: "nowrap",
+                            border: "none",
+                            background: "none",
+                            padding: 0,
+                            margin: 0,
+                            cursor: "pointer",
                           }}
                         >
                           View →
-                        </Link>
+                        </button>
                       </Td>
                     </tr>
                   );

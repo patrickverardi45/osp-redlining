@@ -1007,7 +1007,7 @@ function WalkPageInner() {
   const flushTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const flushInFlightRef = useRef<boolean>(false);
   const sessionIdRef = useRef<string | null>(null);
-  /** Dedup: station photo may upload on draft-complete capture + saveEntry. */
+  /** Dedup: same station photo file must not upload twice for one save path. */
   const uploadedStationPhotoKeysRef = useRef<Set<string>>(new Set());
 
   // Mirror of latestPoint for the entry-save path. Save reads from the ref
@@ -1755,42 +1755,8 @@ function WalkPageInner() {
         object_url,
         note: "",
       });
-
-      // Immediate upload (RedlineMap FormData pattern) when walk is active,
-      // GPS is known, and station draft is complete — avoids wrong identity
-      // from partial drafts. Otherwise saveEntry uploads on commit.
-      if (
-        status === "walking" &&
-        sessionIdRef.current &&
-        latestPointRef.current
-      ) {
-        const complete = walkDraftHasCompleteStationFields(entryDraft);
-        if (complete.ok) {
-          const pt = latestPointRef.current;
-          const key = stationPhotoDedupKey(file);
-          uploadedStationPhotoKeysRef.current.add(key);
-          uploadStationPhotoFilesNonBlocking(file, {
-            apiBase: API_BASE,
-            walkProjectScope,
-            walkSessionId: sessionIdRef.current,
-            routeName: activeRouteNameForPhotos,
-            sourceFile: "",
-            stationLabel: complete.stationNumber,
-            mappedStationFt: complete.depth,
-            lat: pt.lat,
-            lon: pt.lon,
-            stationSummary: "",
-            note: "",
-          });
-        }
-      }
     },
-    [
-      entryDraft,
-      status,
-      walkProjectScope,
-      activeRouteNameForPhotos,
-    ],
+    [],
   );
 
   const clearPhotoDraft = useCallback(() => {
@@ -1871,26 +1837,21 @@ function WalkPageInner() {
       const sidUpload = sessionIdRef.current;
       if (sidUpload) {
         const key = stationPhotoDedupKey(attachedPhoto.file);
-        const alreadyUploaded = uploadedStationPhotoKeysRef.current.has(key);
-        const noteTrim = (attachedPhoto.note ?? "").trim();
-        const opts = {
-          apiBase: API_BASE,
-          walkProjectScope,
-          walkSessionId: sidUpload,
-          routeName: activeRouteNameForPhotos,
-          sourceFile: "",
-          stationLabel: entry.station_number,
-          mappedStationFt: entry.depth_ft,
-          lat: entry.lat,
-          lon: entry.lon,
-          stationSummary: "",
-          note: attachedPhoto.note || "",
-        };
-        if (!alreadyUploaded) {
+        if (!uploadedStationPhotoKeysRef.current.has(key)) {
           uploadedStationPhotoKeysRef.current.add(key);
-          uploadStationPhotoFilesNonBlocking(attachedPhoto.file, opts);
-        } else if (noteTrim.length > 0) {
-          uploadStationPhotoFilesNonBlocking(attachedPhoto.file, opts);
+          uploadStationPhotoFilesNonBlocking(attachedPhoto.file, {
+            apiBase: API_BASE,
+            walkProjectScope,
+            walkSessionId: sidUpload,
+            routeName: activeRouteNameForPhotos,
+            sourceFile: "",
+            stationLabel: entry.station_number,
+            mappedStationFt: entry.depth_ft,
+            lat: entry.lat,
+            lon: entry.lon,
+            stationSummary: "",
+            note: attachedPhoto.note || "",
+          });
         }
       }
     }

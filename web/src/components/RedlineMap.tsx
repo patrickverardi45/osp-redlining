@@ -34,6 +34,9 @@ import {
 } from "@/lib/map/constants";
 import MobileWalkContainer from "@/components/MobileWalkContainer";
 import FieldSubmissionsInboxPanel from "@/components/office/FieldSubmissionsInboxPanel";
+import SelectedSubmissionReviewPanel from "@/components/office/SelectedSubmissionReviewPanel";
+import { getJobById } from "@/lib/api";
+import type { JobDetail } from "@/lib/api";
 import { clamp, formatNumber, cleanDisplayText, formatDisplayDate } from "@/lib/format/text";
 import { toMoney } from "@/lib/format/money";
 import { extractGps } from "@/lib/photos/exif";
@@ -686,6 +689,28 @@ function OfficeRedlineMapInner({ mode = "default", projectId, workspaceTitle }: 
   const focusedNovaIssueTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const focusStatusTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  const [selectedFieldSessionId, setSelectedFieldSessionId] = useState<string | null>(null);
+  const [selectedFieldJobId, setSelectedFieldJobId] = useState<string | null>(null);
+  const [selectedFieldJobDetail, setSelectedFieldJobDetail] = useState<JobDetail | null>(null);
+  const [selectedFieldJobLoading, setSelectedFieldJobLoading] = useState(false);
+  const [selectedFieldJobError, setSelectedFieldJobError] = useState<string | null>(null);
+
+  const selectedFieldSession = useMemo(() => {
+    if (!selectedFieldSessionId || !selectedFieldJobDetail) return null;
+    return (
+      (selectedFieldJobDetail.sessions ?? []).find((s) => s.id === selectedFieldSessionId) ??
+      null
+    );
+  }, [selectedFieldSessionId, selectedFieldJobDetail]);
+
+  const clearFieldSubmissionSelection = useCallback(() => {
+    setSelectedFieldSessionId(null);
+    setSelectedFieldJobId(null);
+    setSelectedFieldJobDetail(null);
+    setSelectedFieldJobError(null);
+    setSelectedFieldJobLoading(false);
+  }, []);
+
   const routeCoords = useMemo(() => cleanCoords(state?.route_coords || []), [state]);
   const redlineSegments = state?.redline_segments || [];
   const stationPoints = state?.station_points || [];
@@ -742,6 +767,36 @@ function OfficeRedlineMapInner({ mode = "default", projectId, workspaceTitle }: 
       // localStorage can be unavailable in restricted browser contexts.
     }
   }, [manualProjectPlannedFootage, projectPlannedFootageStorageKey]);
+
+  useEffect(() => {
+    if (!selectedFieldJobId) {
+      setSelectedFieldJobDetail(null);
+      setSelectedFieldJobError(null);
+      setSelectedFieldJobLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setSelectedFieldJobLoading(true);
+    setSelectedFieldJobError(null);
+    void getJobById(selectedFieldJobId, projectId)
+      .then((detail) => {
+        if (!cancelled) setSelectedFieldJobDetail(detail);
+      })
+      .catch((err: unknown) => {
+        if (!cancelled) {
+          setSelectedFieldJobDetail(null);
+          setSelectedFieldJobError(
+            err instanceof Error ? err.message : "Failed to load job",
+          );
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setSelectedFieldJobLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedFieldJobId, projectId]);
 
   const kmzLineFeatures = useMemo(
     () =>
@@ -3819,7 +3874,63 @@ ${buildFolder("Stations", stationPlacemarks)}
               {/* ─── Phase 4D: Field Submissions Inbox ───────────────────── */}
               {/* Secondary in Map tab: keep the map as the first workspace surface. */}
               <div style={{ display: activeWorkspaceTab === "map" ? "block" : "none" }}>
-                <FieldSubmissionsInboxPanel />
+                <FieldSubmissionsInboxPanel
+                  onSelectSession={(sessionId, jobId) => {
+                    setSelectedFieldSessionId(sessionId);
+                    setSelectedFieldJobId(jobId);
+                  }}
+                />
+                {selectedFieldSessionId ? (
+                  <div style={{ marginTop: 16 }}>
+                    <div
+                      style={{
+                        display: "flex",
+                        justifyContent: "flex-end",
+                        marginBottom: 10,
+                      }}
+                    >
+                      <button
+                        type="button"
+                        onClick={clearFieldSubmissionSelection}
+                        style={{
+                          padding: "6px 12px",
+                          fontSize: 12,
+                          fontWeight: 700,
+                          borderRadius: 10,
+                          border: "1px solid #cfd8e3",
+                          background: "#ffffff",
+                          color: "#0f172a",
+                          cursor: "pointer",
+                        }}
+                      >
+                        Clear selection
+                      </button>
+                    </div>
+                    {selectedFieldJobLoading ? (
+                      <div style={{ fontSize: 13, color: "#64748b" }}>Loading job…</div>
+                    ) : null}
+                    {selectedFieldJobError ? (
+                      <div
+                        style={{
+                          border: "1px solid #fecaca",
+                          background: "#fef2f2",
+                          color: "#991b1b",
+                          borderRadius: 12,
+                          padding: "10px 12px",
+                          fontSize: 13,
+                        }}
+                      >
+                        {selectedFieldJobError}
+                      </div>
+                    ) : null}
+                    {!selectedFieldJobLoading && !selectedFieldJobError && selectedFieldJobDetail ? (
+                      <SelectedSubmissionReviewPanel
+                        selectedSessionId={selectedFieldSessionId}
+                        session={selectedFieldSession}
+                      />
+                    ) : null}
+                  </div>
+                ) : null}
               </div>
 
               <div
