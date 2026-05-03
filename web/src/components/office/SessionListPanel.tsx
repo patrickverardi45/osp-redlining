@@ -7,7 +7,8 @@
 
 "use client";
 
-import type { Session } from "@/lib/api";
+import { useState } from "react";
+import type { Photo, Session } from "@/lib/api";
 import {
   useSessionReview,
   useSessionReviewNote,
@@ -15,6 +16,7 @@ import {
 
 interface SessionListPanelProps {
   sessions: Session[];
+  photos?: Photo[];
   highlightedSessionId?: string | null;
 }
 
@@ -131,6 +133,20 @@ function shortenSessionId(rawId: string): string {
   return rawId.length <= 8 ? rawId : rawId.slice(0, 8);
 }
 
+type SessionPhotoGallery =
+  | { kind: "list"; photos: Photo[] }
+  | { kind: "fallback"; url: string };
+
+function sortPhotosByUploadedDesc(items: Photo[]): Photo[] {
+  return [...items].sort((a, b) => {
+    const ta = a.uploaded_at ? new Date(a.uploaded_at).getTime() : NaN;
+    const tb = b.uploaded_at ? new Date(b.uploaded_at).getTime() : NaN;
+    const na = Number.isFinite(ta) ? ta : 0;
+    const nb = Number.isFinite(tb) ? tb : 0;
+    return nb - na;
+  });
+}
+
 function calcDuration(start: string, end: string | null): string {
   if (!end) return "In progress";
   const diffMs = new Date(end).getTime() - new Date(start).getTime();
@@ -144,8 +160,11 @@ function calcDuration(start: string, end: string | null): string {
 
 export default function SessionListPanel({
   sessions,
+  photos = [],
   highlightedSessionId,
 }: SessionListPanelProps) {
+  const [gallery, setGallery] = useState<SessionPhotoGallery | null>(null);
+
   return (
     <section>
       <div className="flex items-center justify-between mb-3">
@@ -206,6 +225,10 @@ export default function SessionListPanel({
                 const isHighlighted =
                   Boolean(highlightedSessionId) &&
                   session.id === highlightedSessionId;
+                const sessionPhotos = photos.filter(
+                  (p) =>
+                    p.session_id != null && String(p.session_id) === session.id,
+                );
                 return (
                   <tr
                     key={session.id}
@@ -255,15 +278,32 @@ export default function SessionListPanel({
                       {session.photo_count}
                     </td>
                     <td className="px-4 py-3 text-center">
-                      {session.latest_photo_url ? (
-                        <a
-                          href={resolvePhotoUrl(session.latest_photo_url)}
-                          target="_blank"
-                          rel="noopener noreferrer"
+                      {sessionPhotos.length > 0 ? (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setGallery({
+                              kind: "list",
+                              photos: sortPhotosByUploadedDesc(sessionPhotos),
+                            })
+                          }
                           className="text-blue-600 hover:underline text-xs font-medium"
                         >
-                          View Photo
-                        </a>
+                          {`View photos (${sessionPhotos.length})`}
+                        </button>
+                      ) : session.latest_photo_url ? (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setGallery({
+                              kind: "fallback",
+                              url: String(session.latest_photo_url),
+                            })
+                          }
+                          className="text-blue-600 hover:underline text-xs font-medium"
+                        >
+                          View photo
+                        </button>
                       ) : (
                         <span className="text-gray-300 text-xs">-</span>
                       )}
@@ -275,6 +315,92 @@ export default function SessionListPanel({
           </table>
         </div>
       )}
+
+      {gallery ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <button
+            type="button"
+            aria-label="Close gallery"
+            className="absolute inset-0 bg-black/50"
+            onClick={() => setGallery(null)}
+          />
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label="Session photos"
+            className="relative flex max-h-[90vh] w-full max-w-3xl flex-col rounded-lg bg-white shadow-xl"
+          >
+            <div className="flex shrink-0 items-center justify-between border-b border-gray-200 px-4 py-3">
+              <h3 className="text-sm font-semibold text-gray-900">Photos</h3>
+              <button
+                type="button"
+                onClick={() => setGallery(null)}
+                className="rounded-md border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50"
+              >
+                Close
+              </button>
+            </div>
+            <div className="min-h-0 overflow-y-auto p-4">
+              {gallery.kind === "list" ? (
+                <div className="flex flex-col gap-6">
+                  {gallery.photos.map((photo) => (
+                    <div
+                      key={photo.id}
+                      className="rounded-lg border border-gray-100 bg-gray-50/80 p-3"
+                    >
+                      {photo.thumbnail_url ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img
+                          src={resolvePhotoUrl(photo.thumbnail_url)}
+                          alt=""
+                          className="mx-auto max-h-72 w-auto max-w-full rounded-md object-contain"
+                        />
+                      ) : (
+                        <p className="text-xs text-gray-500">No image URL</p>
+                      )}
+                      {(photo.station_label?.trim() ||
+                        photo.note?.trim() ||
+                        photo.uploaded_at) && (
+                        <dl className="mt-2 space-y-1 text-xs text-gray-600">
+                          {photo.station_label?.trim() ? (
+                            <div>
+                              <dt className="font-medium text-gray-500">
+                                Station
+                              </dt>
+                              <dd>{photo.station_label}</dd>
+                            </div>
+                          ) : null}
+                          {photo.note?.trim() ? (
+                            <div>
+                              <dt className="font-medium text-gray-500">Note</dt>
+                              <dd>{photo.note}</dd>
+                            </div>
+                          ) : null}
+                          {photo.uploaded_at ? (
+                            <div>
+                              <dt className="font-medium text-gray-500">
+                                Uploaded
+                              </dt>
+                              <dd>{formatTimestamp(photo.uploaded_at)}</dd>
+                            </div>
+                          ) : null}
+                        </dl>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={resolvePhotoUrl(gallery.url)}
+                  alt=""
+                  className="mx-auto max-h-[70vh] w-auto max-w-full rounded-md object-contain"
+                />
+              )}
+            </div>
+          </div>
+        </div>
+      ) : null}
     </section>
   );
 }

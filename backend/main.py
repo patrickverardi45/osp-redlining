@@ -9485,18 +9485,20 @@ def _office_photos_payload(
                     sid_m = st.get("id")
                     station_id_match = str(sid_m) if sid_m is not None else None
                     break
-        keyed.append(
-            (
-                str(record.get("uploaded_at") or ""),
-                {
-                    "id": photo_id,
-                    "station_id": station_id_match,
-                    "latitude": lat_val,
-                    "longitude": lon_val,
-                    "thumbnail_url": thumb,
-                },
-            )
-        )
+        photo_obj: Dict[str, Any] = {
+            "id": photo_id,
+            "station_id": station_id_match,
+            "latitude": lat_val,
+            "longitude": lon_val,
+            "thumbnail_url": thumb,
+            "session_id": rid,
+            "uploaded_at": str(record.get("uploaded_at") or ""),
+            "station_label": slabel,
+        }
+        note_val = str(record.get("note") or "").strip()
+        if note_val:
+            photo_obj["note"] = note_val
+        keyed.append((str(record.get("uploaded_at") or ""), photo_obj))
 
     keyed.sort(key=lambda x: x[0], reverse=True)
     return [item[1] for item in keyed]

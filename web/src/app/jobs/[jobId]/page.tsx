@@ -179,6 +179,7 @@ export default function JobDetailPage() {
 
         <SessionListPanel
           sessions={job.sessions ?? []}
+          photos={job.photos ?? []}
           highlightedSessionId={selectedSessionId}
         />
 

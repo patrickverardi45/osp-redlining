@@ -134,6 +134,10 @@ export interface Photo {
   latitude: number;
   longitude: number;
   thumbnail_url: string | null;
+  session_id?: string;
+  uploaded_at?: string | null;
+  station_label?: string | null;
+  note?: string | null;
 }
 
 export interface Exception {
