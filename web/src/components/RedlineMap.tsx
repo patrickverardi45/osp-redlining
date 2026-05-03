@@ -1000,6 +1000,14 @@ function OfficeRedlineMapInner({ mode = "default", projectId, workspaceTitle }: 
         const lon = Number(st.longitude);
         return Number.isFinite(lat) && Number.isFinite(lon) && !(lat === 0 && lon === 0);
       })
+      .slice()
+      .sort((a, b) => {
+        const toNum = (s: string) => {
+          const [major, minor] = s.split("+");
+          return (parseInt(major ?? "0", 10) * 100) + parseInt(minor ?? "0", 10);
+        };
+        return toNum(a.station_number) - toNum(b.station_number);
+      })
       .map((st) => ({
         st,
         world: projectWorldPoint(Number(st.latitude), Number(st.longitude), renderBounds, projectionMetrics),
