@@ -12,7 +12,6 @@ import { useSearchParams } from "next/navigation";
 
 import { getJobs, getJobById, type Job, type Route } from "@/lib/api";
 import {
-  getOrCreateSessionId,
   rememberSessionFromResponse,
 } from "@/lib/session";
 
@@ -1044,10 +1043,6 @@ function WalkPageInner() {
   }, []);
 
   useEffect(() => {
-    setSessionId(getOrCreateSessionId(walkProjectScope));
-  }, [walkProjectScope]);
-
-  useEffect(() => {
     if (!hydrated) return;
     writePersistedForm(form);
   }, [form, hydrated]);
@@ -1491,11 +1486,13 @@ function WalkPageInner() {
     try {
       setActionError(null);
       setEndSummary(null);
-      const sid = sessionIdRef.current;
-      if (!sid) {
-        setActionError("Session not ready. Please refresh.");
-        return;
-      }
+      const newWalkSessionId =
+        typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+          ? crypto.randomUUID()
+          : `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 12)}`;
+      sessionIdRef.current = newWalkSessionId;
+      setSessionId(newWalkSessionId);
+      const sid = newWalkSessionId;
       try {
         const res = await postJson("/api/walk/start", {
           session_id: sid,
