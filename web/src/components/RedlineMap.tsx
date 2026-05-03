@@ -991,6 +991,38 @@ function OfficeRedlineMapInner({ mode = "default", projectId, workspaceTitle }: 
       .filter((item): item is { photo: GpsPhoto; world: ScreenPoint } => Boolean(item));
   }, [gpsPhotos, renderBounds, projectionMetrics]);
 
+  // ── Field session overlay: project selected inbox submission onto the workspace map ──
+  const projectedFieldStations = useMemo(() => {
+    if (!selectedFieldJobDetail || !renderBounds || !projectionMetrics) return [];
+    return (selectedFieldJobDetail.stations ?? [])
+      .filter((st) => {
+        const lat = Number(st.latitude);
+        const lon = Number(st.longitude);
+        return Number.isFinite(lat) && Number.isFinite(lon) && !(lat === 0 && lon === 0);
+      })
+      .map((st) => ({
+        st,
+        world: projectWorldPoint(Number(st.latitude), Number(st.longitude), renderBounds, projectionMetrics),
+      }));
+  }, [selectedFieldJobDetail, renderBounds, projectionMetrics]);
+
+  const fieldStationPath = useMemo(() => {
+    if (projectedFieldStations.length < 2 || !renderBounds || !projectionMetrics) return "";
+    return buildWorldPath(
+      projectedFieldStations.map(({ st }) => [Number(st.latitude), Number(st.longitude)]),
+      renderBounds,
+      projectionMetrics,
+    );
+  }, [projectedFieldStations, renderBounds, projectionMetrics]);
+
+  const fieldTrackPath = useMemo(() => {
+    const geo = selectedFieldSession?.track_geometry;
+    if (!geo || !renderBounds || !projectionMetrics) return "";
+    // GeoJSON coordinates are [lon, lat] — swap to [lat, lon] for buildWorldPath
+    const coords = (geo.coordinates ?? []).map(([lon, lat]): [number, number] => [lat, lon]);
+    return buildWorldPath(coords, renderBounds, projectionMetrics);
+  }, [selectedFieldSession, renderBounds, projectionMetrics]);
+
   const visibleLabelIndices = useMemo(() => {
     const result = new Set<number>();
     if (!showStations || !projectedStations.length || !projectionMetrics) return result;
@@ -3286,6 +3318,65 @@ ${buildFolder("Stations", stationPlacemarks)}
                             </g>
                           );
                         })}
+                      </g>
+                    ) : null}
+
+                    {/* ─── Field session overlay ───────────────────────── */}
+                    {/* GPS track + station path + markers for the selected */}
+                    {/* inbox submission. Renders above design/walk layers.  */}
+                    {selectedFieldSessionId ? (
+                      <g id="field-session-overlay" pointerEvents="none">
+                        {fieldTrackPath ? (
+                          <path
+                            d={fieldTrackPath}
+                            fill="none"
+                            stroke="#f97316"
+                            strokeWidth={4}
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            strokeOpacity={0.9}
+                            vectorEffect="non-scaling-stroke"
+                          />
+                        ) : null}
+                        {fieldStationPath ? (
+                          <path
+                            d={fieldStationPath}
+                            fill="none"
+                            stroke="#ef4444"
+                            strokeWidth={4}
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            strokeDasharray="5 4"
+                            strokeOpacity={0.85}
+                            vectorEffect="non-scaling-stroke"
+                          />
+                        ) : null}
+                        {projectedFieldStations.map(({ st, world }) => (
+                          <g key={`field-station-${st.id}`}>
+                            <circle
+                              cx={world.x}
+                              cy={world.y}
+                              r={4}
+                              fill="#facc15"
+                              stroke="rgba(14,24,34,0.85)"
+                              strokeWidth={0.8}
+                              vectorEffect="non-scaling-stroke"
+                            />
+                            <text
+                              x={world.x + 4.5}
+                              y={world.y - 3.5}
+                              fill="#facc15"
+                              fontSize={5}
+                              fontWeight="700"
+                              stroke="rgba(14,24,34,0.85)"
+                              strokeWidth={2.5}
+                              paintOrder="stroke"
+                              style={{ userSelect: "none" }}
+                            >
+                              {st.station_number}
+                            </text>
+                          </g>
+                        ))}
                       </g>
                     ) : null}
 
