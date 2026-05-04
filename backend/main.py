@@ -778,6 +778,13 @@ def _normalize_station_text(value: Any) -> Optional[str]:
             return None
         return f"{int(left)}+{int(right):02d}"
     digits = "".join(ch for ch in text if ch.isdigit())
+    if not digits:
+        return None
+    # Numeric zero (0, 0.0, "0", "00", "0.0", etc.) is the start station
+    # 0+00. Without this guard the < 3-digit rule below drops it and the
+    # bore-log start row never enters the system.
+    if int(digits) == 0:
+        return "0+00"
     if len(digits) < 3:
         return None
     return f"{int(digits[:-2])}+{int(digits[-2:]):02d}"
