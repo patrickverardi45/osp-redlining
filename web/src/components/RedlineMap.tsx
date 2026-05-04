@@ -696,7 +696,7 @@ type RedlineMapProps = {
   workspaceTitle?: string;
 };
 
-type WorkspaceTab = "setup" | "map" | "reports" | "billing";
+type WorkspaceTab = "workspace" | "closeout";
 
 type BoreLogRow = {
   station: string;
@@ -739,10 +739,8 @@ function csvEscapeCell(value: unknown): string {
 type BillingApprovalStatus = "not_submitted" | "pending" | "approved";
 
 const WORKSPACE_TABS: Array<{ id: WorkspaceTab; label: string }> = [
-  { id: "setup", label: "Setup" },
-  { id: "map", label: "Map" },
-  { id: "reports", label: "Reports" },
-  { id: "billing", label: "Billing / Export" },
+  { id: "workspace", label: "Workspace" },
+  { id: "closeout", label: "Closeout" },
 ];
 
 type NovaIssueFocusPayload = {
@@ -783,7 +781,7 @@ type GpsPhoto = {
 };
 
 function OfficeRedlineMapInner({ mode = "default", projectId, workspaceTitle }: RedlineMapProps) {
-  const [activeWorkspaceTab, setActiveWorkspaceTab] = useState<WorkspaceTab>("map");
+  const [activeWorkspaceTab, setActiveWorkspaceTab] = useState<WorkspaceTab>("workspace");
   const [state, setState] = useState<BackendState | null>(null);
   const [busy, setBusy] = useState(false);
   const [statusTone, setStatusTone] = useState<NoteTone>("neutral");
@@ -2835,7 +2833,7 @@ ${buildFolder("Stations", stationPlacemarks)}
                     OSP Redlining Operator Workspace
                   </div>
                   <div style={{ marginTop: 6, fontSize: 14, color: "#526173", lineHeight: 1.5 }}>
-                    Upload design and bore logs, review the map, then use Reports and Billing for outputs.
+                    Upload design and bore logs, review the map on the Workspace tab, then use Closeout for reports and billing.
                   </div>
                 </div>
 
@@ -2909,7 +2907,7 @@ ${buildFolder("Stations", stationPlacemarks)}
           <Section
             title="1. Upload"
             subtitle="KMZ design, structured bore logs, and optional engineering plan PDFs/images. Same upload behavior as before."
-            style={{ display: activeWorkspaceTab === "setup" ? "block" : "none" }}
+            style={{ display: activeWorkspaceTab === "workspace" ? "block" : "none" }}
           >
             <div
               style={{
@@ -2924,7 +2922,7 @@ ${buildFolder("Stations", stationPlacemarks)}
               }}
             >
               <span style={{ fontWeight: 800, color: "#0f172a" }}>Workflow: </span>
-              Upload KMZ and bore logs (optional plans) → review on the Map tab → open Reports or Billing / Export for summaries and print.
+                    Upload KMZ and bore logs (optional plans) → review on the Workspace tab, then open Closeout for reports, billing, and export.
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 16, alignItems: "start" }}>
               <label style={uploadCardStyle(busy)}>
@@ -3051,30 +3049,25 @@ ${buildFolder("Stations", stationPlacemarks)}
           </Section>
 
           <Section
-            title={activeWorkspaceTab === "setup" ? "Field Photo Evidence" : "Map Review"}
-            subtitle={
-              activeWorkspaceTab === "setup"
-                ? "Station-attached photos and geotagged photo review, using the existing photo state and upload behavior."
-                : undefined
-            }
+            title="Map & field tools"
+            subtitle={undefined}
             style={{
-              display: activeWorkspaceTab === "map" || activeWorkspaceTab === "setup" ? "block" : "none",
-              border: activeWorkspaceTab === "map" ? "none" : "1px solid #cbd5e1",
-              background: activeWorkspaceTab === "map" ? "transparent" : "#ffffff",
-              boxShadow: activeWorkspaceTab === "map" ? "none" : "0 18px 42px rgba(15, 23, 42, 0.10)",
-              order: activeWorkspaceTab === "setup" ? 3 : undefined,
+              display: activeWorkspaceTab === "workspace" ? "block" : "none",
+              border: "none",
+              background: "transparent",
+              boxShadow: "none",
             }}
             headerStyle={{
-              display: activeWorkspaceTab === "map" ? "none" : "flex",
+              display: "none",
             }}
             contentStyle={{
-              padding: activeWorkspaceTab === "map" ? 0 : 18,
+              padding: 0,
             }}
           >
-            <div style={{ display: "grid", gap: activeWorkspaceTab === "map" ? 6 : 18 }}>
+            <div style={{ display: "grid", gap: 6 }}>
 
               {/* ─── Bore Log Layers panel ───────────────────────────── */}
-              {activeWorkspaceTab === "map" && (state?.bore_log_summary?.length ?? 0) > 0 && (() => {
+              {activeWorkspaceTab === "workspace" && (state?.bore_log_summary?.length ?? 0) > 0 && (() => {
                 const layers = state!.bore_log_summary!;
                 const allVisible = layers.every((e) => !e.evidence_layer_id || !hiddenLayers.has(e.evidence_layer_id));
                 const allHidden  = layers.every((e) => e.evidence_layer_id && hiddenLayers.has(e.evidence_layer_id));
@@ -3085,7 +3078,7 @@ ${buildFolder("Stations", stationPlacemarks)}
                       borderRadius: 10,
                       background: "rgba(255, 255, 255, 0.7)",
                       padding: "3px 7px",
-                      order: -1,
+                      order: 20,
                     }}
                   >
                     {/* Header row */}
@@ -3213,7 +3206,7 @@ ${buildFolder("Stations", stationPlacemarks)}
               {/* ─── Map + Inspector wrapper ─────────────────────────── */}
               {/* Inspector is position:absolute so map container width    */}
               {/* never changes — projection stays stable on station click. */}
-              <div style={{ position: "relative", display: activeWorkspaceTab === "map" ? "block" : "none", order: -2 }}>
+              <div style={{ position: "relative", display: activeWorkspaceTab === "workspace" ? "block" : "none", order: 25 }}>
                 <div
                   ref={mapContainerRef}
                   style={{
@@ -4256,8 +4249,9 @@ ${buildFolder("Stations", stationPlacemarks)}
 
               {/* ─── Phase 4D: Field Submissions Inbox ───────────────────── */}
               {/* Secondary in Map tab: keep the map as the first workspace surface. */}
-              <div style={{ display: activeWorkspaceTab === "map" ? "block" : "none" }}>
+              <div style={{ display: activeWorkspaceTab === "workspace" ? "block" : "none", order: 30 }}>
                 <FieldSubmissionsInboxPanel
+                  collapsible
                   onSelectSession={(sessionId, jobId) => {
                     setSelectedFieldSessionId(sessionId);
                     setSelectedFieldJobId(jobId);
@@ -4781,8 +4775,9 @@ ${buildFolder("Stations", stationPlacemarks)}
                   borderRadius: 16,
                   background: "#ffffff",
                   padding: 16,
-                  display: activeWorkspaceTab === "setup" ? "grid" : "none",
+                  display: activeWorkspaceTab === "workspace" ? "grid" : "none",
                   gap: 14,
+                  order: 10,
                 }}
               >
                 <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start", flexWrap: "wrap" }}>
@@ -4896,8 +4891,9 @@ ${buildFolder("Stations", stationPlacemarks)}
                   borderRadius: 16,
                   background: "#ffffff",
                   padding: 16,
-                  display: activeWorkspaceTab === "setup" ? "grid" : "none",
+                  display: activeWorkspaceTab === "workspace" ? "grid" : "none",
                   gap: 14,
+                  order: 15,
                 }}
               >
                 <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start", flexWrap: "wrap" }}>
@@ -5060,9 +5056,9 @@ ${buildFolder("Stations", stationPlacemarks)}
             </div>
           </Section>
 
-          <div style={{ display: activeWorkspaceTab === "reports" || activeWorkspaceTab === "billing" ? "grid" : "none", gridTemplateColumns: "1fr", gap: 18, alignItems: "start" }}>
+          <div style={{ display: activeWorkspaceTab === "closeout" ? "grid" : "none", gridTemplateColumns: "1fr", gap: 18, alignItems: "start" }}>
             
-<Section title="4. Reports" subtitle="Real report output built from current job data, redline sections, pricing inputs, and exception totals." style={{ display: activeWorkspaceTab === "reports" ? "block" : "none" }}>
+<Section title="4. Reports" subtitle="Real report output built from current job data, redline sections, pricing inputs, and exception totals." style={{ display: activeWorkspaceTab === "closeout" ? "block" : "none" }}>
               <div className="print-report" style={{ display: "grid", gap: 14 }}>
                 <ShellCard
                   title="Field-to-billing report"
@@ -5211,7 +5207,7 @@ ${buildFolder("Stations", stationPlacemarks)}
               </div>
             </Section>
 
-            <div style={{ display: activeWorkspaceTab === "billing" ? "grid" : "none", gap: 18 }}>
+            <div style={{ display: activeWorkspaceTab === "closeout" ? "grid" : "none", gap: 18 }}>
               <Section title="5. Pricing / Crews / Exceptions" subtitle="Real billing controls using actual footage plus editable exception costs.">
                 <div style={{ display: "grid", gap: 14 }}>
                   <ShellCard

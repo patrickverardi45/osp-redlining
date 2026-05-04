@@ -14,6 +14,7 @@
 "use client";
 
 import Link from "next/link";
+import { useState } from "react";
 
 import {
   FIELD_SUBMISSIONS_FILTER_LABELS,
@@ -38,12 +39,16 @@ type FieldSubmissionsInboxPanelProps = {
    *  Used by the in-workspace embed so the workflow stays inside
    *  /projects/[projectId]. Defaults to true to preserve existing callers. */
   showViewAllLink?: boolean;
+  /** When true, filter chips + table start collapsed; header + refresh stay visible. */
+  collapsible?: boolean;
 };
 
 export default function FieldSubmissionsInboxPanel({
   onSelectSession,
   showViewAllLink = true,
+  collapsible = false,
 }: FieldSubmissionsInboxPanelProps) {
+  const [inboxExpanded, setInboxExpanded] = useState(false);
   const {
     filteredRows,
     counts,
@@ -99,6 +104,31 @@ export default function FieldSubmissionsInboxPanel({
         </div>
 
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+          {collapsible ? (
+            <button
+              type="button"
+              onClick={() => setInboxExpanded((e) => !e)}
+              aria-expanded={inboxExpanded}
+              style={{
+                padding: "6px 12px",
+                fontSize: 12,
+                fontWeight: 700,
+                borderRadius: 10,
+                border: "1px solid #0f172a",
+                background: inboxExpanded ? "#f1f5f9" : "#ffffff",
+                color: "#0f172a",
+                cursor: "pointer",
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 6,
+              }}
+            >
+              <span style={{ fontSize: 11, color: "#64748b" }}>
+                {inboxExpanded ? "▼" : "▶"}
+              </span>
+              {inboxExpanded ? "Hide submissions" : "Show submissions"}
+            </button>
+          ) : null}
           <button
             type="button"
             onClick={refresh}
@@ -135,9 +165,28 @@ export default function FieldSubmissionsInboxPanel({
             </Link>
           ) : null}
         </div>
+
+        {collapsible && !inboxExpanded ? (
+          <div
+            style={{
+              marginTop: 12,
+              fontSize: 12,
+              fontWeight: 600,
+              color: "#64748b",
+              lineHeight: 1.5,
+            }}
+          >
+            {FIELD_SUBMISSIONS_FILTER_LABELS.needs_review}: {counts.needs_review}
+            <span style={{ color: "#cbd5e1", margin: "0 8px" }}>·</span>
+            {FIELD_SUBMISSIONS_FILTER_LABELS.today}: {counts.today}
+            <span style={{ color: "#cbd5e1", margin: "0 8px" }}>·</span>
+            {FIELD_SUBMISSIONS_FILTER_LABELS.week}: {counts.week}
+          </div>
+        ) : null}
       </div>
 
       {/* Filter chips */}
+      {collapsible && !inboxExpanded ? null : (
       <div
         style={{
           padding: "12px 18px",
@@ -185,8 +234,10 @@ export default function FieldSubmissionsInboxPanel({
           );
         })}
       </div>
+      )}
 
       {/* Body */}
+      {collapsible && !inboxExpanded ? null : (
       <div style={{ padding: 18 }}>
         {loading && (
           <div
@@ -410,6 +461,7 @@ export default function FieldSubmissionsInboxPanel({
           </div>
         )}
       </div>
+      )}
     </div>
   );
 }
