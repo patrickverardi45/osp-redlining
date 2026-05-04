@@ -9159,6 +9159,133 @@ def debug_walk_submissions_readonly() -> Dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
+# MVP bore-log read endpoint.
+# Surfaces a walk session's saved station events as structured bore-log rows,
+# joined to the per-station photo count. Read-only: does not mutate session
+# state, walk submissions, or the photo index. Reuses existing helpers
+# (_walk_submission_sid, _load_walk_submission_doc, _load_station_photo_index,
+# _normalize_station_text, _station_to_feet) — no new persistence path.
+# ---------------------------------------------------------------------------
+
+
+def _walk_bore_log_iso_from_ts(ts_value: Any) -> Optional[str]:
+    """Convert a station-event timestamp (ms epoch int, ISO string, or other)
+    into an ISO-8601 UTC string. Returns None when the value is unusable."""
+    if ts_value is None:
+        return None
+    if isinstance(ts_value, bool):
+        return None
+    if isinstance(ts_value, (int, float)):
+        try:
+            fv = float(ts_value)
+        except (TypeError, ValueError):
+            return None
+        if math.isnan(fv) or math.isinf(fv):
+            return None
+        # Walk-v2 / walk send millisecond epoch ints; tolerate seconds too.
+        seconds = fv / 1000.0 if fv > 1e11 else fv
+        try:
+            return datetime.fromtimestamp(seconds, tz=timezone.utc).isoformat()
+        except (OverflowError, OSError, ValueError):
+            return None
+    if isinstance(ts_value, str):
+        text = ts_value.strip()
+        if not text:
+            return None
+        try:
+            parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        except ValueError:
+            return text
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc).isoformat()
+    return None
+
+
+@app.get("/api/walk-sessions/{session_id}/bore-log")
+def get_walk_session_bore_log(session_id: str) -> List[Dict[str, Any]]:
+    """MVP: walk session → structured bore-log rows.
+
+    Pure read; never mutates session state, walk submissions, or photo index.
+    Does not synthesize stations the field crew never saved.
+    """
+    sid = str(session_id or "").strip()
+    if not sid:
+        return []
+
+    safe_sid = _walk_submission_sid(sid)
+    if not safe_sid:
+        return []
+
+    doc = _load_walk_submission_doc(f"{safe_sid}.json")
+    if not isinstance(doc, dict):
+        return []
+
+    raw_events = doc.get("walk_station_events")
+    if not isinstance(raw_events, list):
+        return []
+
+    # Build per-station-label photo counts scoped to this session in one pass
+    # over the photo index, so we don't re-scan per station.
+    photo_counts_by_label: Dict[str, int] = {}
+    try:
+        photo_index = _load_station_photo_index()
+    except Exception:
+        photo_index = {"photos": []}
+    for record in (photo_index.get("photos") or []):
+        if not isinstance(record, dict):
+            continue
+        if str(record.get("session_id") or "").strip() != sid:
+            continue
+        label = str(record.get("station_label") or "").strip()
+        if not label:
+            continue
+        photo_counts_by_label[label] = photo_counts_by_label.get(label, 0) + 1
+
+    rows: List[Dict[str, Any]] = []
+    for ev in raw_events:
+        if not isinstance(ev, dict):
+            continue
+        station_label = str(ev.get("station_number") or "").strip()
+        if not station_label:
+            continue
+        station_ft = _station_to_feet(station_label)
+        if station_ft is None:
+            # Spec: skip rows without a resolvable station_ft.
+            continue
+
+        depth_raw = ev.get("depth_ft")
+        depth_ft: Optional[float]
+        try:
+            depth_ft = float(depth_raw) if depth_raw is not None else None
+        except (TypeError, ValueError):
+            depth_ft = None
+
+        boc_raw = ev.get("boc_ft")
+        boc_ft: Optional[float]
+        try:
+            boc_ft = float(boc_raw) if boc_raw is not None else None
+        except (TypeError, ValueError):
+            boc_ft = None
+
+        notes = str(ev.get("note") or "").strip()
+        timestamp_iso = _walk_bore_log_iso_from_ts(ev.get("ts"))
+
+        rows.append({
+            "station": station_label,
+            "station_ft": float(station_ft),
+            "depth_ft": depth_ft,
+            "boc_ft": boc_ft,
+            "notes": notes,
+            "photo_count": int(photo_counts_by_label.get(station_label, 0)),
+            "timestamp": timestamp_iso,
+        })
+
+    rows.sort(key=lambda r: float(r.get("station_ft") or 0.0))
+    return rows
+
+
+# ---------------------------------------------------------------------------
 # Temporary office dashboard endpoints.
 # Added as a minimal self-contained block at the bottom of the file so nothing
 # above this line is modified. Remove or replace this section once the real
