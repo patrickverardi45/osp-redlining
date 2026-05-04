@@ -95,10 +95,51 @@ export default function WalkV2Page() {
   const [bocFt, setBocFt] = useState<string>("");
   const [note, setNote] = useState<string>("");
   const [pendingPhotos, setPendingPhotos] = useState<File[]>([]);
+  const [thumbUrls, setThumbUrls] = useState<string[]>([]);
   const [savedStations, setSavedStations] = useState<SavedStation[]>([]);
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState<Status>({ kind: "idle", text: "" });
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [lastFix, setLastFix] = useState<GpsFix | null>(null);
+  const cameraInputRef = useRef<HTMLInputElement | null>(null);
+  const libraryInputRef = useRef<HTMLInputElement | null>(null);
+  // Hidden breadcrumb buffer (prep for later sync; intentionally not rendered
+  // and not POSTed). Kept in a ref to avoid re-render on every GPS tick.
+  const breadcrumbsRef = useRef<GpsFix[]>([]);
+
+  useEffect(() => {
+    const urls = pendingPhotos.map((f) => URL.createObjectURL(f));
+    setThumbUrls(urls);
+    return () => {
+      urls.forEach((u) => URL.revokeObjectURL(u));
+    };
+  }, [pendingPhotos]);
+
+  // Light GPS watcher: runs only while a walk is active. Updates a small
+  // status indicator and silently buffers points for future use.
+  useEffect(() => {
+    if (!active) return;
+    if (typeof navigator === "undefined" || !navigator.geolocation) return;
+    const id = navigator.geolocation.watchPosition(
+      (pos) => {
+        const fix: GpsFix = {
+          lat: pos.coords.latitude,
+          lon: pos.coords.longitude,
+          accuracyM:
+            typeof pos.coords.accuracy === "number" ? pos.coords.accuracy : null,
+          ts: pos.timestamp || Date.now(),
+        };
+        const buf = breadcrumbsRef.current;
+        buf.push(fix);
+        if (buf.length > 5000) breadcrumbsRef.current = buf.slice(-5000);
+        setLastFix(fix);
+      },
+      () => {
+        // Soft-fail: Save Station does its own one-shot fix anyway.
+      },
+      { enableHighAccuracy: true, maximumAge: 5000, timeout: 15000 },
+    );
+    return () => navigator.geolocation.clearWatch(id);
+  }, [active]);
 
   // ─── boot: restore active walk + draft form ──────────────────────────────
   useEffect(() => {
@@ -143,6 +184,11 @@ export default function WalkV2Page() {
   const selectedJob = useMemo(
     () => jobs.find((j) => j.id === jobId) || null,
     [jobs, jobId],
+  );
+
+  const totalPhotosThisWalk = useMemo(
+    () => savedStations.reduce((sum, s) => sum + (s.photoCount || 0), 0),
+    [savedStations],
   );
 
   // ─── start walk ──────────────────────────────────────────────────────────
@@ -318,7 +364,8 @@ export default function WalkV2Page() {
       setBocFt("");
       setNote("");
       setPendingPhotos([]);
-      if (fileInputRef.current) fileInputRef.current.value = "";
+      if (cameraInputRef.current) cameraInputRef.current.value = "";
+      if (libraryInputRef.current) libraryInputRef.current.value = "";
       setStatus({
         kind: "ok",
         text: `Saved ${trimmed}${uploadedPhotos ? ` with ${uploadedPhotos} photo${uploadedPhotos === 1 ? "" : "s"}` : ""}.`,
@@ -343,6 +390,8 @@ export default function WalkV2Page() {
       const res = await apiWalkEnd(active.walkSessionId);
       clearActiveWalk();
       setActive(null);
+      breadcrumbsRef.current = [];
+      setLastFix(null);
       setStatus({
         kind: "ok",
         text: `Walk ended. ${res.station_event_count} station${res.station_event_count === 1 ? "" : "s"} synced.`,
@@ -466,13 +515,50 @@ export default function WalkV2Page() {
           <section className="rounded-xl border border-emerald-300 bg-emerald-50 p-3 text-sm">
             <div className="flex items-center justify-between">
               <span className="font-medium text-emerald-900">Walk active</span>
-              <span className="font-mono text-[10px] text-emerald-800">
-                {active.walkSessionId}
+              <span
+                className="font-mono text-[10px] text-emerald-800"
+                title={active.walkSessionId}
+              >
+                {active.walkSessionId.slice(0, 20)}…
               </span>
             </div>
             <div className="mt-1 text-xs text-emerald-900">
               Job <span className="font-mono">{active.jobId}</span> · {active.crew}{" "}
               · {active.date}
+            </div>
+
+            <div className="mt-3 grid grid-cols-3 gap-2 text-center">
+              <div className="rounded bg-white/70 px-2 py-1.5">
+                <div className="text-[10px] uppercase tracking-wide text-emerald-800">
+                  Stations
+                </div>
+                <div className="text-base font-semibold text-emerald-900">
+                  {savedStations.length}
+                </div>
+              </div>
+              <div className="rounded bg-white/70 px-2 py-1.5">
+                <div className="text-[10px] uppercase tracking-wide text-emerald-800">
+                  Photos
+                </div>
+                <div className="text-base font-semibold text-emerald-900">
+                  {totalPhotosThisWalk}
+                </div>
+              </div>
+              <div className="rounded bg-white/70 px-2 py-1.5">
+                <div className="text-[10px] uppercase tracking-wide text-emerald-800">
+                  GPS
+                </div>
+                <div className="text-base font-semibold text-emerald-900">
+                  {lastFix?.accuracyM != null
+                    ? `${Math.round(lastFix.accuracyM)} m`
+                    : "—"}
+                </div>
+              </div>
+            </div>
+            <div className="mt-1 text-center text-[10px] font-mono text-emerald-800">
+              {lastFix
+                ? `${lastFix.lat.toFixed(5)}, ${lastFix.lon.toFixed(5)}`
+                : "waiting for GPS…"}
             </div>
           </section>
 
@@ -530,36 +616,77 @@ export default function WalkV2Page() {
               </label>
 
               <div>
-                <div className="text-xs font-medium text-slate-600">
-                  Photos ({pendingPhotos.length})
+                <div className="flex items-center justify-between">
+                  <div className="text-xs font-medium text-slate-600">
+                    Photos
+                  </div>
+                  <div className="text-xs text-slate-500">
+                    {pendingPhotos.length} attached
+                  </div>
                 </div>
+
                 <input
-                  ref={fileInputRef}
+                  ref={cameraInputRef}
                   type="file"
                   accept="image/*"
                   multiple
                   capture="environment"
                   onChange={handlePhotoChange}
-                  className="mt-1 block w-full text-sm"
+                  className="hidden"
                 />
+                <input
+                  ref={libraryInputRef}
+                  type="file"
+                  accept="image/*"
+                  multiple
+                  onChange={handlePhotoChange}
+                  className="hidden"
+                />
+                <div className="mt-1 grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => cameraInputRef.current?.click()}
+                    className="rounded-lg border border-slate-300 bg-white px-3 py-3 text-sm font-medium text-slate-800 active:bg-slate-100"
+                  >
+                    Take Photo
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => libraryInputRef.current?.click()}
+                    className="rounded-lg border border-slate-300 bg-white px-3 py-3 text-sm font-medium text-slate-800 active:bg-slate-100"
+                  >
+                    Choose Photo
+                  </button>
+                </div>
+
                 {pendingPhotos.length > 0 ? (
-                  <ul className="mt-2 space-y-1">
+                  <div className="mt-3 grid grid-cols-3 gap-2">
                     {pendingPhotos.map((f, i) => (
-                      <li
-                        key={`${f.name}-${i}`}
-                        className="flex items-center justify-between rounded border border-slate-200 px-2 py-1 text-xs"
+                      <div
+                        key={`${f.name}-${i}-${f.lastModified}`}
+                        className="relative overflow-hidden rounded border border-slate-200"
                       >
-                        <span className="truncate">{f.name}</span>
+                        {thumbUrls[i] ? (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img
+                            src={thumbUrls[i]}
+                            alt={f.name}
+                            className="block h-20 w-full object-cover"
+                          />
+                        ) : (
+                          <div className="h-20 w-full bg-slate-100" />
+                        )}
                         <button
                           type="button"
                           onClick={() => removePendingPhoto(i)}
-                          className="text-red-600"
+                          aria-label={`Remove photo ${i + 1}`}
+                          className="absolute right-0 top-0 rounded-bl bg-red-600/90 px-1.5 py-0.5 text-[10px] font-semibold text-white"
                         >
                           remove
                         </button>
-                      </li>
+                      </div>
                     ))}
-                  </ul>
+                  </div>
                 ) : null}
               </div>
 
