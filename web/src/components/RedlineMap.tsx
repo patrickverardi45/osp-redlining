@@ -854,6 +854,8 @@ function OfficeRedlineMapInner({ mode = "default", projectId, workspaceTitle }: 
   const [boreLogRows, setBoreLogRows] = useState<BoreLogRow[] | null>(null);
   const [boreLogLoading, setBoreLogLoading] = useState(false);
   const [boreLogError, setBoreLogError] = useState<string | null>(null);
+  const [fieldReviewPhotosOpen, setFieldReviewPhotosOpen] = useState(false);
+  const [fieldReviewBoreOpen, setFieldReviewBoreOpen] = useState(false);
 
   const selectedFieldSession = useMemo(() => {
     if (!selectedFieldSessionId || !selectedFieldJobDetail) return null;
@@ -883,6 +885,8 @@ function OfficeRedlineMapInner({ mode = "default", projectId, workspaceTitle }: 
     setBoreLogRows(null);
     setBoreLogError(null);
     setBoreLogLoading(false);
+    setFieldReviewPhotosOpen(false);
+    setFieldReviewBoreOpen(false);
   }, [selectedFieldSessionId]);
 
   const handleLoadBoreLog = useCallback(async () => {
@@ -4324,7 +4328,7 @@ ${buildFolder("Stations", stationPlacemarks)}
                                 background: "#ffffff",
                                 border: "1px solid #dbe4ee",
                                 borderRadius: 12,
-                                padding: "12px 14px",
+                                overflow: "hidden",
                               }}
                             >
                               <div
@@ -4334,129 +4338,164 @@ ${buildFolder("Stations", stationPlacemarks)}
                                   alignItems: "center",
                                   gap: 10,
                                   flexWrap: "wrap",
+                                  padding: "12px 14px",
+                                  borderBottom: fieldReviewPhotosOpen
+                                    ? "1px solid #eef2f7"
+                                    : "none",
                                 }}
                               >
-                                <div
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    setFieldReviewPhotosOpen((open) => !open)
+                                  }
                                   style={{
+                                    flex: "1 1 160px",
+                                    display: "flex",
+                                    alignItems: "center",
+                                    gap: 8,
+                                    border: "none",
+                                    background: "transparent",
+                                    cursor: "pointer",
+                                    padding: 0,
+                                    textAlign: "left",
                                     fontSize: 13,
                                     fontWeight: 700,
                                     color: "#0f172a",
                                   }}
+                                  aria-expanded={fieldReviewPhotosOpen}
                                 >
-                                  Photos for this submission
-                                  <span
-                                    style={{
-                                      marginLeft: 8,
-                                      fontSize: 12,
-                                      fontWeight: 500,
-                                      color: "#64748b",
-                                    }}
-                                  >
-                                    ({sessionPhotos.length})
+                                  <span style={{ fontSize: 11, color: "#64748b", width: 14 }}>
+                                    {fieldReviewPhotosOpen ? "▼" : "▶"}
                                   </span>
+                                  <span>
+                                    Photos for this submission
+                                    <span
+                                      style={{
+                                        marginLeft: 8,
+                                        fontSize: 12,
+                                        fontWeight: 500,
+                                        color: "#64748b",
+                                      }}
+                                    >
+                                      ({sessionPhotos.length})
+                                    </span>
+                                  </span>
+                                </button>
+                                <div
+                                  style={{
+                                    display: "flex",
+                                    flexWrap: "wrap",
+                                    gap: 8,
+                                    alignItems: "center",
+                                  }}
+                                >
+                                  {sessionPhotos.length > 0 ? (
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        setSelectedFieldGallery({
+                                          kind: "list",
+                                          photos: sortPhotosByUploadedDesc(sessionPhotos),
+                                        })
+                                      }
+                                      style={{
+                                        padding: "6px 12px",
+                                        fontSize: 12,
+                                        fontWeight: 700,
+                                        borderRadius: 10,
+                                        border: "1px solid #cfd8e3",
+                                        background: "#ffffff",
+                                        color: "#0f172a",
+                                        cursor: "pointer",
+                                      }}
+                                    >
+                                      {`View ${sessionPhotos.length} photo${sessionPhotos.length === 1 ? "" : "s"}`}
+                                    </button>
+                                  ) : fallbackUrl ? (
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        setSelectedFieldGallery({
+                                          kind: "fallback",
+                                          url: fallbackUrl,
+                                        })
+                                      }
+                                      style={{
+                                        padding: "6px 12px",
+                                        fontSize: 12,
+                                        fontWeight: 700,
+                                        borderRadius: 10,
+                                        border: "1px solid #cfd8e3",
+                                        background: "#ffffff",
+                                        color: "#0f172a",
+                                        cursor: "pointer",
+                                      }}
+                                    >
+                                      View photo
+                                    </button>
+                                  ) : null}
                                 </div>
-                                {sessionPhotos.length > 0 ? (
-                                  <button
-                                    type="button"
-                                    onClick={() =>
-                                      setSelectedFieldGallery({
-                                        kind: "list",
-                                        photos: sortPhotosByUploadedDesc(sessionPhotos),
-                                      })
-                                    }
-                                    style={{
-                                      padding: "6px 12px",
-                                      fontSize: 12,
-                                      fontWeight: 700,
-                                      borderRadius: 10,
-                                      border: "1px solid #cfd8e3",
-                                      background: "#ffffff",
-                                      color: "#0f172a",
-                                      cursor: "pointer",
-                                    }}
-                                  >
-                                    {`View ${sessionPhotos.length} photo${sessionPhotos.length === 1 ? "" : "s"}`}
-                                  </button>
-                                ) : fallbackUrl ? (
-                                  <button
-                                    type="button"
-                                    onClick={() =>
-                                      setSelectedFieldGallery({
-                                        kind: "fallback",
-                                        url: fallbackUrl,
-                                      })
-                                    }
-                                    style={{
-                                      padding: "6px 12px",
-                                      fontSize: 12,
-                                      fontWeight: 700,
-                                      borderRadius: 10,
-                                      border: "1px solid #cfd8e3",
-                                      background: "#ffffff",
-                                      color: "#0f172a",
-                                      cursor: "pointer",
-                                    }}
-                                  >
-                                    View photo
-                                  </button>
-                                ) : null}
                               </div>
-                              {sessionPhotos.length > 0 ? (
-                                <div
-                                  style={{
-                                    marginTop: 10,
-                                    display: "grid",
-                                    gridTemplateColumns: "repeat(auto-fill, minmax(80px, 1fr))",
-                                    gap: 6,
-                                  }}
-                                >
-                                  {sortPhotosByUploadedDesc(sessionPhotos)
-                                    .slice(0, 8)
-                                    .map((photo) => (
-                                      <button
-                                        key={photo.id}
-                                        type="button"
-                                        onClick={() =>
-                                          setSelectedFieldGallery({
-                                            kind: "list",
-                                            photos: sortPhotosByUploadedDesc(sessionPhotos),
-                                          })
-                                        }
-                                        title={photo.station_label || ""}
-                                        style={{
-                                          height: 64,
-                                          padding: 0,
-                                          borderRadius: 8,
-                                          border: "1px solid #e2e8f0",
-                                          backgroundColor: "#e5e7eb",
-                                          backgroundImage: photo.thumbnail_url
-                                            ? `url(${photo.thumbnail_url})`
-                                            : undefined,
-                                          backgroundSize: "cover",
-                                          backgroundPosition: "center",
-                                          cursor: "pointer",
-                                        }}
-                                        aria-label={
-                                          photo.station_label
-                                            ? `Photo at ${photo.station_label}`
-                                            : "Submission photo"
-                                        }
-                                      />
-                                    ))}
-                                </div>
-                              ) : (
-                                <div
-                                  style={{
-                                    marginTop: 8,
-                                    fontSize: 12,
-                                    color: "#94a3b8",
-                                  }}
-                                >
-                                  {fallbackUrl
-                                    ? "Photos available — click View photo to open."
-                                    : "No photos in this submission."}
-                                </div>
-                              )}
+                              {fieldReviewPhotosOpen ? (
+                                sessionPhotos.length > 0 ? (
+                                  <div
+                                    style={{
+                                      padding: "0 14px 12px",
+                                      display: "grid",
+                                      gridTemplateColumns:
+                                        "repeat(auto-fill, minmax(80px, 1fr))",
+                                      gap: 6,
+                                    }}
+                                  >
+                                    {sortPhotosByUploadedDesc(sessionPhotos)
+                                      .slice(0, 8)
+                                      .map((photo) => (
+                                        <button
+                                          key={photo.id}
+                                          type="button"
+                                          onClick={() =>
+                                            setSelectedFieldGallery({
+                                              kind: "list",
+                                              photos: sortPhotosByUploadedDesc(sessionPhotos),
+                                            })
+                                          }
+                                          title={photo.station_label || ""}
+                                          style={{
+                                            height: 64,
+                                            padding: 0,
+                                            borderRadius: 8,
+                                            border: "1px solid #e2e8f0",
+                                            backgroundColor: "#e5e7eb",
+                                            backgroundImage: photo.thumbnail_url
+                                              ? `url(${photo.thumbnail_url})`
+                                              : undefined,
+                                            backgroundSize: "cover",
+                                            backgroundPosition: "center",
+                                            cursor: "pointer",
+                                          }}
+                                          aria-label={
+                                            photo.station_label
+                                              ? `Photo at ${photo.station_label}`
+                                              : "Submission photo"
+                                          }
+                                        />
+                                      ))}
+                                  </div>
+                                ) : (
+                                  <div
+                                    style={{
+                                      padding: "0 14px 12px",
+                                      fontSize: 12,
+                                      color: "#94a3b8",
+                                    }}
+                                  >
+                                    {fallbackUrl
+                                      ? "Photos available — click View photo to open."
+                                      : "No photos in this submission."}
+                                  </div>
+                                )
+                              ) : null}
                             </div>
                           );
                         })()}
@@ -4466,7 +4505,7 @@ ${buildFolder("Stations", stationPlacemarks)}
                             background: "#ffffff",
                             border: "1px solid #dbe4ee",
                             borderRadius: 12,
-                            padding: "12px 14px",
+                            overflow: "hidden",
                           }}
                         >
                           <div
@@ -4476,29 +4515,50 @@ ${buildFolder("Stations", stationPlacemarks)}
                               alignItems: "center",
                               gap: 10,
                               flexWrap: "wrap",
+                              padding: "12px 14px",
+                              borderBottom: fieldReviewBoreOpen
+                                ? "1px solid #eef2f7"
+                                : "none",
                             }}
                           >
-                            <div
+                            <button
+                              type="button"
+                              onClick={() => setFieldReviewBoreOpen((open) => !open)}
                               style={{
+                                flex: "1 1 160px",
+                                display: "flex",
+                                alignItems: "center",
+                                gap: 8,
+                                border: "none",
+                                background: "transparent",
+                                cursor: "pointer",
+                                padding: 0,
+                                textAlign: "left",
                                 fontSize: 13,
                                 fontWeight: 700,
                                 color: "#0f172a",
                               }}
+                              aria-expanded={fieldReviewBoreOpen}
                             >
-                              Bore Log
-                              {boreLogRows ? (
-                                <span
-                                  style={{
-                                    marginLeft: 8,
-                                    fontSize: 12,
-                                    fontWeight: 500,
-                                    color: "#64748b",
-                                  }}
-                                >
-                                  ({boreLogRows.length})
-                                </span>
-                              ) : null}
-                            </div>
+                              <span style={{ fontSize: 11, color: "#64748b", width: 14 }}>
+                                {fieldReviewBoreOpen ? "▼" : "▶"}
+                              </span>
+                              <span>
+                                Bore Log
+                                {boreLogRows !== null ? (
+                                  <span
+                                    style={{
+                                      marginLeft: 8,
+                                      fontSize: 12,
+                                      fontWeight: 500,
+                                      color: "#64748b",
+                                    }}
+                                  >
+                                    ({boreLogRows.length})
+                                  </span>
+                                ) : null}
+                              </span>
+                            </button>
                             <div
                               style={{
                                 display: "flex",
@@ -4568,137 +4628,141 @@ ${buildFolder("Stations", stationPlacemarks)}
                               </button>
                             </div>
                           </div>
-                          {boreLogError ? (
-                            <div
-                              style={{
-                                marginTop: 10,
-                                border: "1px solid #fecaca",
-                                background: "#fef2f2",
-                                color: "#991b1b",
-                                borderRadius: 8,
-                                padding: "8px 10px",
-                                fontSize: 12,
-                              }}
-                            >
-                              {boreLogError}
-                            </div>
-                          ) : null}
-                          {boreLogRows && boreLogRows.length === 0 ? (
-                            <div
-                              style={{
-                                marginTop: 10,
-                                fontSize: 12,
-                                color: "#94a3b8",
-                              }}
-                            >
-                              No bore log data
-                            </div>
-                          ) : null}
-                          {boreLogRows && boreLogRows.length > 0 ? (
-                            <div
-                              style={{
-                                marginTop: 10,
-                                overflowX: "auto",
-                              }}
-                            >
-                              <table
-                                style={{
-                                  width: "100%",
-                                  borderCollapse: "collapse",
-                                  fontSize: 12,
-                                }}
-                              >
-                                <thead>
-                                  <tr>
-                                    <th style={boreLogTh}>station</th>
-                                    <th style={{ ...boreLogTh, textAlign: "right" }}>
-                                      station_ft
-                                    </th>
-                                    <th style={{ ...boreLogTh, textAlign: "right" }}>
-                                      depth_ft
-                                    </th>
-                                    <th style={{ ...boreLogTh, textAlign: "right" }}>
-                                      boc_ft
-                                    </th>
-                                    <th style={boreLogTh}>notes</th>
-                                    <th style={{ ...boreLogTh, textAlign: "right" }}>
-                                      photo_count
-                                    </th>
-                                    <th style={boreLogTh}>timestamp</th>
-                                  </tr>
-                                </thead>
-                                <tbody>
-                                  {boreLogRows.map((row, idx) => (
-                                    <tr
-                                      key={`${row.station}-${idx}`}
-                                      style={{
-                                        borderTop: "1px solid #eef2f7",
-                                      }}
-                                    >
-                                      <td
-                                        style={{
-                                          ...boreLogTd,
-                                          fontFamily:
-                                            "ui-monospace, SFMono-Regular, Menlo, monospace",
-                                        }}
-                                      >
-                                        {row.station}
-                                      </td>
-                                      <td
-                                        style={{
-                                          ...boreLogTd,
-                                          textAlign: "right",
-                                          fontVariantNumeric: "tabular-nums",
-                                        }}
-                                      >
-                                        {row.station_ft}
-                                      </td>
-                                      <td
-                                        style={{
-                                          ...boreLogTd,
-                                          textAlign: "right",
-                                          fontVariantNumeric: "tabular-nums",
-                                        }}
-                                      >
-                                        {row.depth_ft == null ? "—" : row.depth_ft}
-                                      </td>
-                                      <td
-                                        style={{
-                                          ...boreLogTd,
-                                          textAlign: "right",
-                                          fontVariantNumeric: "tabular-nums",
-                                        }}
-                                      >
-                                        {row.boc_ft == null ? "—" : row.boc_ft}
-                                      </td>
-                                      <td style={boreLogTd}>
-                                        {row.notes || (
-                                          <span style={{ color: "#cbd5e1" }}>—</span>
-                                        )}
-                                      </td>
-                                      <td
-                                        style={{
-                                          ...boreLogTd,
-                                          textAlign: "right",
-                                          fontVariantNumeric: "tabular-nums",
-                                        }}
-                                      >
-                                        {row.photo_count}
-                                      </td>
-                                      <td
-                                        style={{
-                                          ...boreLogTd,
-                                          color: "#64748b",
-                                          whiteSpace: "nowrap",
-                                        }}
-                                      >
-                                        {row.timestamp || "—"}
-                                      </td>
-                                    </tr>
-                                  ))}
-                                </tbody>
-                              </table>
-                            </div>
+                          {fieldReviewBoreOpen ? (
+                            <>
+                              {boreLogError ? (
+                                <div
+                                  style={{
+                                    margin: "0 14px 10px",
+                                    border: "1px solid #fecaca",
+                                    background: "#fef2f2",
+                                    color: "#991b1b",
+                                    borderRadius: 8,
+                                    padding: "8px 10px",
+                                    fontSize: 12,
+                                  }}
+                                >
+                                  {boreLogError}
+                                </div>
+                              ) : null}
+                              {boreLogRows && boreLogRows.length === 0 ? (
+                                <div
+                                  style={{
+                                    margin: "0 14px 10px",
+                                    fontSize: 12,
+                                    color: "#94a3b8",
+                                  }}
+                                >
+                                  No bore log data
+                                </div>
+                              ) : null}
+                              {boreLogRows && boreLogRows.length > 0 ? (
+                                <div
+                                  style={{
+                                    margin: "0 14px 12px",
+                                    overflowX: "auto",
+                                  }}
+                                >
+                                  <table
+                                    style={{
+                                      width: "100%",
+                                      borderCollapse: "collapse",
+                                      fontSize: 12,
+                                    }}
+                                  >
+                                    <thead>
+                                      <tr>
+                                        <th style={boreLogTh}>station</th>
+                                        <th style={{ ...boreLogTh, textAlign: "right" }}>
+                                          station_ft
+                                        </th>
+                                        <th style={{ ...boreLogTh, textAlign: "right" }}>
+                                          depth_ft
+                                        </th>
+                                        <th style={{ ...boreLogTh, textAlign: "right" }}>
+                                          boc_ft
+                                        </th>
+                                        <th style={boreLogTh}>notes</th>
+                                        <th style={{ ...boreLogTh, textAlign: "right" }}>
+                                          photo_count
+                                        </th>
+                                        <th style={boreLogTh}>timestamp</th>
+                                      </tr>
+                                    </thead>
+                                    <tbody>
+                                      {boreLogRows.map((row, idx) => (
+                                        <tr
+                                          key={`${row.station}-${idx}`}
+                                          style={{
+                                            borderTop: "1px solid #eef2f7",
+                                          }}
+                                        >
+                                          <td
+                                            style={{
+                                              ...boreLogTd,
+                                              fontFamily:
+                                                "ui-monospace, SFMono-Regular, Menlo, monospace",
+                                            }}
+                                          >
+                                            {row.station}
+                                          </td>
+                                          <td
+                                            style={{
+                                              ...boreLogTd,
+                                              textAlign: "right",
+                                              fontVariantNumeric: "tabular-nums",
+                                            }}
+                                          >
+                                            {row.station_ft}
+                                          </td>
+                                          <td
+                                            style={{
+                                              ...boreLogTd,
+                                              textAlign: "right",
+                                              fontVariantNumeric: "tabular-nums",
+                                            }}
+                                          >
+                                            {row.depth_ft == null ? "—" : row.depth_ft}
+                                          </td>
+                                          <td
+                                            style={{
+                                              ...boreLogTd,
+                                              textAlign: "right",
+                                              fontVariantNumeric: "tabular-nums",
+                                            }}
+                                          >
+                                            {row.boc_ft == null ? "—" : row.boc_ft}
+                                          </td>
+                                          <td style={boreLogTd}>
+                                            {row.notes || (
+                                              <span style={{ color: "#cbd5e1" }}>—</span>
+                                            )}
+                                          </td>
+                                          <td
+                                            style={{
+                                              ...boreLogTd,
+                                              textAlign: "right",
+                                              fontVariantNumeric: "tabular-nums",
+                                            }}
+                                          >
+                                            {row.photo_count}
+                                          </td>
+                                          <td
+                                            style={{
+                                              ...boreLogTd,
+                                              color: "#64748b",
+                                              whiteSpace: "nowrap",
+                                            }}
+                                          >
+                                            {row.timestamp || "—"}
+                                          </td>
+                                        </tr>
+                                      ))}
+                                    </tbody>
+                                  </table>
+                                </div>
+                              ) : null}
+                            </>
                           ) : null}
                         </div>
                       </>
@@ -5016,11 +5080,15 @@ ${buildFolder("Stations", stationPlacemarks)}
                 </ShellCard>
 
                 <ShellCard
-                  title={projectCompletionSummary.plannedSource === "manual" ? "Project Completion Summary" : "As-Built Upload Summary"}
+                  title={
+                    projectCompletionSummary.plannedSource === "manual"
+                      ? "Project Completion Summary"
+                      : "Field footage & scope"
+                  }
                   description={
                     projectCompletionSummary.plannedSource === "manual"
                       ? "Overall drilled progress using the engineering/material takeoff total."
-                      : "Uploaded as-built footage and touched backend route scope only. This is not full project completion."
+                      : "Footage from as-built uploads and design route scope on the map."
                   }
                 >
                   <div style={{ display: "grid", gridTemplateColumns: projectCompletionSummary.plannedSource === "manual" ? "160px minmax(0, 1fr)" : "1fr", gap: 18, alignItems: "center" }}>
@@ -5066,11 +5134,6 @@ ${buildFolder("Stations", stationPlacemarks)}
                       </div>
                     ) : null}
                     <div style={{ display: "grid", gap: 8 }}>
-                      {projectCompletionSummary.plannedSource !== "manual" && (state?.engineering_plans?.length ?? 0) === 0 ? (
-                        <div style={{ justifySelf: "start", borderRadius: 999, background: "#fef3c7", color: "#92400e", border: "1px solid #fbbf24", padding: "4px 9px", fontSize: 11, fontWeight: 900, textTransform: "uppercase", letterSpacing: 0.3 }}>
-                          Enter engineering/material takeoff total to calculate full project completion.
-                        </div>
-                      ) : null}
                       {projectCompletionSummary.plannedSource === "manual" ? (
                         <>
                           <SmallRow label="Planned footage" value={`${formatNumber(projectCompletionSummary.plannedFootage)} ft`} />
@@ -5096,9 +5159,6 @@ ${buildFolder("Stations", stationPlacemarks)}
                                 : "--"
                             }
                           />
-                          <div style={{ fontSize: 12, color: "#64748b", fontWeight: 700 }}>
-                            Touched route scope is not full project completion.
-                          </div>
                         </>
                       )}
                       {projectCompletionSummary.plannedSource === "manual" ? (
