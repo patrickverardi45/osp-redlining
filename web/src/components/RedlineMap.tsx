@@ -745,7 +745,7 @@ type GpsPhoto = {
 };
 
 function OfficeRedlineMapInner({ mode = "default", projectId, workspaceTitle }: RedlineMapProps) {
-  const [activeWorkspaceTab, setActiveWorkspaceTab] = useState<WorkspaceTab>("setup");
+  const [activeWorkspaceTab, setActiveWorkspaceTab] = useState<WorkspaceTab>("map");
   const [state, setState] = useState<BackendState | null>(null);
   const [busy, setBusy] = useState(false);
   const [statusTone, setStatusTone] = useState<NoteTone>("neutral");
@@ -790,7 +790,7 @@ function OfficeRedlineMapInner({ mode = "default", projectId, workspaceTitle }: 
   const [boxZoom, setBoxZoom] = useState<{ startX: number; startY: number; endX: number; endY: number } | null>(null);
   const [selectedStationIndex, setSelectedStationIndex] = useState<number | null>(null);
   const [hoverStationIndex, setHoverStationIndex] = useState<number | null>(null);
-  const [showStations, setShowStations] = useState(false);
+  const [showStations, setShowStations] = useState(true);
   const [showPlannedRouteHighlight, setShowPlannedRouteHighlight] = useState(false);
   const [presentationView, setPresentationView] = useState(false);
   // Evidence-layer visibility: Set of hidden layer ids. Empty = all visible.
