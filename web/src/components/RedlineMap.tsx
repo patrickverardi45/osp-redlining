@@ -790,6 +790,7 @@ function OfficeRedlineMapInner({ mode = "default", projectId, workspaceTitle }: 
   const [statusText, setStatusText] = useState("Connecting to local beta backend...");
   const [jobLabel, setJobLabel] = useState("");
   const [notes, setNotes] = useState("");
+  const [operatorNotesNotRequired, setOperatorNotesNotRequired] = useState(false);
   const [manualProjectPlannedFootage, setManualProjectPlannedFootage] = useState("");
   const [costPerFoot, setCostPerFoot] = useState("5.00");
   const [manualFootage, setManualFootage] = useState("");
@@ -5324,6 +5325,7 @@ ${buildFolder("Stations", stationPlacemarks)}
                       hasBoreFiles={hasBoreFiles}
                       hasGeneratedOutput={hasGeneratedOutput}
                       notes={notes}
+                      operatorNotesNotRequired={operatorNotesNotRequired}
                       stationPhotos={stationPhotos}
                       geoTaggedPhotos={gpsPhotos.map((p) => ({
                         id: p.id,
@@ -5359,6 +5361,26 @@ ${buildFolder("Stations", stationPlacemarks)}
                       placeholder="Example: Route looked right but station spacing seemed compressed near sheet 14..."
                       style={{ width: "100%", minHeight: 140, borderRadius: 14, border: "1px solid #cfd8e3", padding: 12, outline: "none", resize: "vertical", fontSize: 14, background: "#ffffff" }}
                     />
+                    <label
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 8,
+                        marginTop: 10,
+                        fontSize: 13,
+                        color: "#475569",
+                        cursor: "pointer",
+                        userSelect: "none",
+                      }}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={operatorNotesNotRequired}
+                        onChange={(e) => setOperatorNotesNotRequired(e.target.checked)}
+                        style={{ width: 16, height: 16, flexShrink: 0 }}
+                      />
+                      No operator notes required
+                    </label>
                     <button
                       onClick={submitBugNote}
                       disabled={busy || !notes.trim()}
@@ -5372,6 +5394,21 @@ ${buildFolder("Stations", stationPlacemarks)}
             </div>
           </div>
         </div>
+        <p
+          className="no-print"
+          style={{
+            margin: "16px 0 0",
+            paddingTop: 14,
+            borderTop: "1px solid #e8eef5",
+            fontSize: 11,
+            color: "#94a3b8",
+            textAlign: "center",
+            fontWeight: 500,
+            letterSpacing: 0.01,
+          }}
+        >
+          Powered by Midway Data Tech Solutions
+        </p>
       </div>
 
       {/* ── Print-only report ── rendered in DOM always, visible only in @media print ── */}

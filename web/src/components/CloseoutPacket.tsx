@@ -74,6 +74,8 @@ export type CloseoutPacketProps = {
   geoTaggedPhotos: GeoTaggedPhoto[];
   /** Drilled ÷ planned footage from engineering takeoff (Reports). Null if no planned footage — not backend route completion_pct. */
   projectCompletionPercent: number | null;
+  /** When true, the closeout checklist treats operator notes as satisfied without text */
+  operatorNotesNotRequired?: boolean;
 };
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -211,6 +213,7 @@ function buildPrintHtml(
     stationPhotos,
     geoTaggedPhotos,
     projectCompletionPercent,
+    operatorNotesNotRequired = false,
   } = props;
 
   const routeName = state?.selected_route_name || state?.route_name || "—";
@@ -347,7 +350,10 @@ function buildPrintHtml(
     checkItem(overrides.length >= 0, overrides.length > 0 ? `Review decisions documented (${overrides.length} recorded)` : "No review decisions recorded"),
     checkItem(hasPhotoEvidence, hasPhotoEvidence ? `Field photo evidence attached (${stationPhotos.length + geoTaggedPhotos.length} photo${stationPhotos.length + geoTaggedPhotos.length !== 1 ? "s" : ""})` : "Field photo evidence not attached"),
     checkItem(rawStatus !== "Blocked", `Closeout review status: ${statusLabel}`),
-    checkItem(notes.trim().length > 0, "Operator notes provided"),
+    checkItem(
+      notes.trim().length > 0 || operatorNotesNotRequired === true,
+      "Operator notes provided",
+    ),
   ].join("");
 
   return `<!DOCTYPE html>
@@ -543,7 +549,11 @@ export default function CloseoutPacket(props: CloseoutPacketProps) {
     stationPhotos,
     geoTaggedPhotos,
     projectCompletionPercent,
+    operatorNotesNotRequired = false,
   } = props;
+
+  const operatorNotesChecklistOk =
+    notes.trim().length > 0 || operatorNotesNotRequired === true;
 
   const [open, setOpen] = useState(false);
   const [overrides, setOverrides] = useState<ReviewOverride[]>([]);
@@ -1190,7 +1200,7 @@ export default function CloseoutPacket(props: CloseoutPacketProps) {
                   <CI ok={overrides.length >= 0} label={overrides.length > 0 ? `Review decisions documented (${overrides.length} recorded)` : "No review decisions recorded"} />
                   <CI ok={hasPhotoEvidence} label={hasPhotoEvidence ? `Field photo evidence attached (${stationPhotos.length + geoTaggedPhotos.length} photo${stationPhotos.length + geoTaggedPhotos.length !== 1 ? "s" : ""})` : "Field photo evidence not attached"} />
                   <CI ok={rawStatus !== "Blocked"} label={`Closeout review status: ${statusDisplay}`} />
-                  <CI ok={notes.trim().length > 0} label="Operator notes provided" />
+                  <CI ok={operatorNotesChecklistOk} label="Operator notes provided" />
                 </div>
                 <div style={{ marginTop: 14, background: "#f1f5f9", border: "1px solid #e2e8f0", borderRadius: 8, padding: "10px 14px", fontSize: 12, color: "#475569", lineHeight: 1.6 }}>
                   <strong>Status key:</strong>{" "}
