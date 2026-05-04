@@ -35,6 +35,10 @@ import {
 import MobileWalkContainer from "@/components/MobileWalkContainer";
 import FieldSubmissionsInboxPanel from "@/components/office/FieldSubmissionsInboxPanel";
 import SelectedSubmissionReviewPanel from "@/components/office/SelectedSubmissionReviewPanel";
+import SessionPhotoGalleryModal, {
+  sortPhotosByUploadedDesc,
+  type SessionPhotoGallery,
+} from "@/components/office/SessionPhotoGalleryModal";
 import { getJobById } from "@/lib/api";
 import type { JobDetail } from "@/lib/api";
 import { clamp, formatNumber, cleanDisplayText, formatDisplayDate } from "@/lib/format/text";
@@ -806,6 +810,8 @@ function OfficeRedlineMapInner({ mode = "default", projectId, workspaceTitle }: 
   const [selectedFieldJobDetail, setSelectedFieldJobDetail] = useState<JobDetail | null>(null);
   const [selectedFieldJobLoading, setSelectedFieldJobLoading] = useState(false);
   const [selectedFieldJobError, setSelectedFieldJobError] = useState<string | null>(null);
+  const [selectedFieldGallery, setSelectedFieldGallery] =
+    useState<SessionPhotoGallery | null>(null);
 
   const selectedFieldSession = useMemo(() => {
     if (!selectedFieldSessionId || !selectedFieldJobDetail) return null;
@@ -821,7 +827,14 @@ function OfficeRedlineMapInner({ mode = "default", projectId, workspaceTitle }: 
     setSelectedFieldJobDetail(null);
     setSelectedFieldJobError(null);
     setSelectedFieldJobLoading(false);
+    setSelectedFieldGallery(null);
   }, []);
+
+  // Close any open gallery when the user switches to a different submission
+  // so the modal never shows stale photos from the previous selection.
+  useEffect(() => {
+    setSelectedFieldGallery(null);
+  }, [selectedFieldSessionId]);
 
   const routeCoords = useMemo(() => cleanCoords(state?.route_coords || []), [state]);
   const redlineSegments = state?.redline_segments || [];
@@ -4146,6 +4159,7 @@ ${buildFolder("Stations", stationPlacemarks)}
                     setSelectedFieldSessionId(sessionId);
                     setSelectedFieldJobId(jobId);
                   }}
+                  showViewAllLink={false}
                 />
                 {selectedFieldSessionId ? (
                   <div style={{ marginTop: 16 }}>
@@ -4191,13 +4205,170 @@ ${buildFolder("Stations", stationPlacemarks)}
                       </div>
                     ) : null}
                     {!selectedFieldJobLoading && !selectedFieldJobError && selectedFieldJobDetail ? (
-                      <SelectedSubmissionReviewPanel
-                        selectedSessionId={selectedFieldSessionId}
-                        session={selectedFieldSession}
-                      />
+                      <>
+                        <SelectedSubmissionReviewPanel
+                          selectedSessionId={selectedFieldSessionId}
+                          session={selectedFieldSession}
+                        />
+                        {(() => {
+                          const sessionPhotos = (selectedFieldJobDetail.photos ?? []).filter(
+                            (p) => String(p.session_id ?? "") === selectedFieldSessionId,
+                          );
+                          const fallbackUrl =
+                            sessionPhotos.length === 0 && selectedFieldSession?.latest_photo_url
+                              ? String(selectedFieldSession.latest_photo_url)
+                              : null;
+                          return (
+                            <div
+                              style={{
+                                marginTop: 12,
+                                background: "#ffffff",
+                                border: "1px solid #dbe4ee",
+                                borderRadius: 12,
+                                padding: "12px 14px",
+                              }}
+                            >
+                              <div
+                                style={{
+                                  display: "flex",
+                                  justifyContent: "space-between",
+                                  alignItems: "center",
+                                  gap: 10,
+                                  flexWrap: "wrap",
+                                }}
+                              >
+                                <div
+                                  style={{
+                                    fontSize: 13,
+                                    fontWeight: 700,
+                                    color: "#0f172a",
+                                  }}
+                                >
+                                  Photos for this submission
+                                  <span
+                                    style={{
+                                      marginLeft: 8,
+                                      fontSize: 12,
+                                      fontWeight: 500,
+                                      color: "#64748b",
+                                    }}
+                                  >
+                                    ({sessionPhotos.length})
+                                  </span>
+                                </div>
+                                {sessionPhotos.length > 0 ? (
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      setSelectedFieldGallery({
+                                        kind: "list",
+                                        photos: sortPhotosByUploadedDesc(sessionPhotos),
+                                      })
+                                    }
+                                    style={{
+                                      padding: "6px 12px",
+                                      fontSize: 12,
+                                      fontWeight: 700,
+                                      borderRadius: 10,
+                                      border: "1px solid #cfd8e3",
+                                      background: "#ffffff",
+                                      color: "#0f172a",
+                                      cursor: "pointer",
+                                    }}
+                                  >
+                                    {`View ${sessionPhotos.length} photo${sessionPhotos.length === 1 ? "" : "s"}`}
+                                  </button>
+                                ) : fallbackUrl ? (
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      setSelectedFieldGallery({
+                                        kind: "fallback",
+                                        url: fallbackUrl,
+                                      })
+                                    }
+                                    style={{
+                                      padding: "6px 12px",
+                                      fontSize: 12,
+                                      fontWeight: 700,
+                                      borderRadius: 10,
+                                      border: "1px solid #cfd8e3",
+                                      background: "#ffffff",
+                                      color: "#0f172a",
+                                      cursor: "pointer",
+                                    }}
+                                  >
+                                    View photo
+                                  </button>
+                                ) : null}
+                              </div>
+                              {sessionPhotos.length > 0 ? (
+                                <div
+                                  style={{
+                                    marginTop: 10,
+                                    display: "grid",
+                                    gridTemplateColumns: "repeat(auto-fill, minmax(80px, 1fr))",
+                                    gap: 6,
+                                  }}
+                                >
+                                  {sortPhotosByUploadedDesc(sessionPhotos)
+                                    .slice(0, 8)
+                                    .map((photo) => (
+                                      <button
+                                        key={photo.id}
+                                        type="button"
+                                        onClick={() =>
+                                          setSelectedFieldGallery({
+                                            kind: "list",
+                                            photos: sortPhotosByUploadedDesc(sessionPhotos),
+                                          })
+                                        }
+                                        title={photo.station_label || ""}
+                                        style={{
+                                          height: 64,
+                                          padding: 0,
+                                          borderRadius: 8,
+                                          border: "1px solid #e2e8f0",
+                                          backgroundColor: "#e5e7eb",
+                                          backgroundImage: photo.thumbnail_url
+                                            ? `url(${photo.thumbnail_url})`
+                                            : undefined,
+                                          backgroundSize: "cover",
+                                          backgroundPosition: "center",
+                                          cursor: "pointer",
+                                        }}
+                                        aria-label={
+                                          photo.station_label
+                                            ? `Photo at ${photo.station_label}`
+                                            : "Submission photo"
+                                        }
+                                      />
+                                    ))}
+                                </div>
+                              ) : (
+                                <div
+                                  style={{
+                                    marginTop: 8,
+                                    fontSize: 12,
+                                    color: "#94a3b8",
+                                  }}
+                                >
+                                  {fallbackUrl
+                                    ? "Photos available — click View photo to open."
+                                    : "No photos in this submission."}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })()}
+                      </>
                     ) : null}
                   </div>
                 ) : null}
+                <SessionPhotoGalleryModal
+                  gallery={selectedFieldGallery}
+                  onClose={() => setSelectedFieldGallery(null)}
+                />
               </div>
 
               <div

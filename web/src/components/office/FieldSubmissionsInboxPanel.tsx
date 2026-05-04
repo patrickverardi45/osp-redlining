@@ -34,10 +34,15 @@ const FILTER_KEYS: InboxFilter[] = ["needs_review", "today", "week"];
 
 type FieldSubmissionsInboxPanelProps = {
   onSelectSession?: (sessionId: string, jobId: string) => void;
+  /** When false, suppress links that route the user away to /jobs/inbox.
+   *  Used by the in-workspace embed so the workflow stays inside
+   *  /projects/[projectId]. Defaults to true to preserve existing callers. */
+  showViewAllLink?: boolean;
 };
 
 export default function FieldSubmissionsInboxPanel({
   onSelectSession,
+  showViewAllLink = true,
 }: FieldSubmissionsInboxPanelProps) {
   const {
     filteredRows,
@@ -112,21 +117,23 @@ export default function FieldSubmissionsInboxPanel({
           >
             {loading ? "Refreshing…" : "Refresh"}
           </button>
-          <Link
-            href="/jobs/inbox"
-            style={{
-              padding: "6px 12px",
-              fontSize: 12,
-              fontWeight: 700,
-              borderRadius: 10,
-              border: "1px solid #cfd8e3",
-              background: "#ffffff",
-              color: "#0f172a",
-              textDecoration: "none",
-            }}
-          >
-            View all →
-          </Link>
+          {showViewAllLink ? (
+            <Link
+              href="/jobs/inbox"
+              style={{
+                padding: "6px 12px",
+                fontSize: 12,
+                fontWeight: 700,
+                borderRadius: 10,
+                border: "1px solid #cfd8e3",
+                background: "#ffffff",
+                color: "#0f172a",
+                textDecoration: "none",
+              }}
+            >
+              View all →
+            </Link>
+          ) : null}
         </div>
       </div>
 
@@ -378,7 +385,7 @@ export default function FieldSubmissionsInboxPanel({
               </tbody>
             </table>
 
-            {overflow > 0 && (
+            {overflow > 0 && showViewAllLink && (
               <div
                 style={{
                   marginTop: 10,
