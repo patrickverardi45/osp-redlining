@@ -698,6 +698,44 @@ type RedlineMapProps = {
 
 type WorkspaceTab = "setup" | "map" | "reports" | "billing";
 
+type BoreLogRow = {
+  station: string;
+  station_ft: number;
+  depth_ft: number | null;
+  boc_ft: number | null;
+  notes: string;
+  photo_count: number;
+  timestamp: string | null;
+};
+
+const boreLogTh: React.CSSProperties = {
+  textAlign: "left",
+  padding: "6px 8px",
+  borderBottom: "1px solid #e2e8f0",
+  fontSize: 11,
+  fontWeight: 700,
+  textTransform: "uppercase",
+  letterSpacing: 0.04,
+  color: "#64748b",
+  whiteSpace: "nowrap",
+};
+
+const boreLogTd: React.CSSProperties = {
+  padding: "6px 8px",
+  verticalAlign: "top",
+  color: "#0f172a",
+};
+
+/** RFC 4180-style CSV cell: quote when needed; null/undefined → empty field. */
+function csvEscapeCell(value: unknown): string {
+  if (value == null) return "";
+  const s = String(value);
+  if (/[",\r\n]/.test(s)) {
+    return `"${s.replace(/"/g, '""')}"`;
+  }
+  return s;
+}
+
 type BillingApprovalStatus = "not_submitted" | "pending" | "approved";
 
 const WORKSPACE_TABS: Array<{ id: WorkspaceTab; label: string }> = [
@@ -812,6 +850,9 @@ function OfficeRedlineMapInner({ mode = "default", projectId, workspaceTitle }: 
   const [selectedFieldJobError, setSelectedFieldJobError] = useState<string | null>(null);
   const [selectedFieldGallery, setSelectedFieldGallery] =
     useState<SessionPhotoGallery | null>(null);
+  const [boreLogRows, setBoreLogRows] = useState<BoreLogRow[] | null>(null);
+  const [boreLogLoading, setBoreLogLoading] = useState(false);
+  const [boreLogError, setBoreLogError] = useState<string | null>(null);
 
   const selectedFieldSession = useMemo(() => {
     if (!selectedFieldSessionId || !selectedFieldJobDetail) return null;
@@ -828,13 +869,70 @@ function OfficeRedlineMapInner({ mode = "default", projectId, workspaceTitle }: 
     setSelectedFieldJobError(null);
     setSelectedFieldJobLoading(false);
     setSelectedFieldGallery(null);
+    setBoreLogRows(null);
+    setBoreLogError(null);
+    setBoreLogLoading(false);
   }, []);
 
-  // Close any open gallery when the user switches to a different submission
-  // so the modal never shows stale photos from the previous selection.
+  // Close any open gallery and discard cached bore-log rows when the user
+  // switches to a different submission so neither shows stale data from the
+  // previous selection.
   useEffect(() => {
     setSelectedFieldGallery(null);
+    setBoreLogRows(null);
+    setBoreLogError(null);
+    setBoreLogLoading(false);
   }, [selectedFieldSessionId]);
+
+  const handleLoadBoreLog = useCallback(async () => {
+    const sid = selectedFieldSessionId;
+    if (!sid) return;
+    setBoreLogLoading(true);
+    setBoreLogError(null);
+    try {
+      const res = await fetch(
+        `${API_BASE}/api/walk-sessions/${encodeURIComponent(sid)}/bore-log`,
+        { cache: "no-store" },
+      );
+      if (!res.ok) {
+        throw new Error(`Bore log fetch failed: ${res.status} ${res.statusText}`);
+      }
+      const data = (await res.json()) as BoreLogRow[];
+      setBoreLogRows(Array.isArray(data) ? data : []);
+    } catch (e) {
+      setBoreLogError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBoreLogLoading(false);
+    }
+  }, [selectedFieldSessionId]);
+
+  const handleExportBoreLogCsv = useCallback(() => {
+    if (!boreLogRows || boreLogRows.length === 0 || !selectedFieldSessionId?.trim()) return;
+    const header =
+      "station,station_ft,depth_ft,boc_ft,notes,photo_count,timestamp";
+    const lines = boreLogRows.map((r) =>
+      [
+        csvEscapeCell(r.station),
+        csvEscapeCell(r.station_ft),
+        csvEscapeCell(r.depth_ft),
+        csvEscapeCell(r.boc_ft),
+        csvEscapeCell(r.notes),
+        csvEscapeCell(r.photo_count),
+        csvEscapeCell(r.timestamp),
+      ].join(","),
+    );
+    const csv = [header, ...lines].join("\r\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `bore_log_${selectedFieldSessionId}.csv`;
+    a.rel = "noopener";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }, [boreLogRows, selectedFieldSessionId]);
 
   const routeCoords = useMemo(() => cleanCoords(state?.route_coords || []), [state]);
   const redlineSegments = state?.redline_segments || [];
@@ -4361,6 +4459,247 @@ ${buildFolder("Stations", stationPlacemarks)}
                             </div>
                           );
                         })()}
+                        <div
+                          style={{
+                            marginTop: 12,
+                            background: "#ffffff",
+                            border: "1px solid #dbe4ee",
+                            borderRadius: 12,
+                            padding: "12px 14px",
+                          }}
+                        >
+                          <div
+                            style={{
+                              display: "flex",
+                              justifyContent: "space-between",
+                              alignItems: "center",
+                              gap: 10,
+                              flexWrap: "wrap",
+                            }}
+                          >
+                            <div
+                              style={{
+                                fontSize: 13,
+                                fontWeight: 700,
+                                color: "#0f172a",
+                              }}
+                            >
+                              Bore Log
+                              {boreLogRows ? (
+                                <span
+                                  style={{
+                                    marginLeft: 8,
+                                    fontSize: 12,
+                                    fontWeight: 500,
+                                    color: "#64748b",
+                                  }}
+                                >
+                                  ({boreLogRows.length})
+                                </span>
+                              ) : null}
+                            </div>
+                            <div
+                              style={{
+                                display: "flex",
+                                flexWrap: "wrap",
+                                gap: 8,
+                                alignItems: "center",
+                              }}
+                            >
+                              <button
+                                type="button"
+                                onClick={handleLoadBoreLog}
+                                disabled={boreLogLoading}
+                                style={{
+                                  padding: "6px 12px",
+                                  fontSize: 12,
+                                  fontWeight: 700,
+                                  borderRadius: 10,
+                                  border: "1px solid #cfd8e3",
+                                  background: "#ffffff",
+                                  color: "#0f172a",
+                                  cursor: boreLogLoading ? "not-allowed" : "pointer",
+                                  opacity: boreLogLoading ? 0.6 : 1,
+                                }}
+                              >
+                                {boreLogLoading
+                                  ? "Loading…"
+                                  : boreLogRows
+                                    ? "Refresh Bore Log"
+                                    : "View Bore Log"}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={handleExportBoreLogCsv}
+                                disabled={
+                                  !boreLogRows ||
+                                  boreLogRows.length === 0 ||
+                                  !selectedFieldSessionId?.trim()
+                                }
+                                title={
+                                  boreLogRows && boreLogRows.length > 0
+                                    ? "Download loaded bore log as CSV"
+                                    : "Load bore log first to enable export"
+                                }
+                                style={{
+                                  padding: "6px 12px",
+                                  fontSize: 12,
+                                  fontWeight: 700,
+                                  borderRadius: 10,
+                                  border: "1px solid #cfd8e3",
+                                  background: "#ffffff",
+                                  color: "#0f172a",
+                                  cursor:
+                                    boreLogRows &&
+                                    boreLogRows.length > 0 &&
+                                    selectedFieldSessionId?.trim()
+                                      ? "pointer"
+                                      : "not-allowed",
+                                  opacity:
+                                    boreLogRows &&
+                                    boreLogRows.length > 0 &&
+                                    selectedFieldSessionId?.trim()
+                                      ? 1
+                                      : 0.5,
+                                }}
+                              >
+                                Export CSV
+                              </button>
+                            </div>
+                          </div>
+                          {boreLogError ? (
+                            <div
+                              style={{
+                                marginTop: 10,
+                                border: "1px solid #fecaca",
+                                background: "#fef2f2",
+                                color: "#991b1b",
+                                borderRadius: 8,
+                                padding: "8px 10px",
+                                fontSize: 12,
+                              }}
+                            >
+                              {boreLogError}
+                            </div>
+                          ) : null}
+                          {boreLogRows && boreLogRows.length === 0 ? (
+                            <div
+                              style={{
+                                marginTop: 10,
+                                fontSize: 12,
+                                color: "#94a3b8",
+                              }}
+                            >
+                              No bore log data
+                            </div>
+                          ) : null}
+                          {boreLogRows && boreLogRows.length > 0 ? (
+                            <div
+                              style={{
+                                marginTop: 10,
+                                overflowX: "auto",
+                              }}
+                            >
+                              <table
+                                style={{
+                                  width: "100%",
+                                  borderCollapse: "collapse",
+                                  fontSize: 12,
+                                }}
+                              >
+                                <thead>
+                                  <tr>
+                                    <th style={boreLogTh}>station</th>
+                                    <th style={{ ...boreLogTh, textAlign: "right" }}>
+                                      station_ft
+                                    </th>
+                                    <th style={{ ...boreLogTh, textAlign: "right" }}>
+                                      depth_ft
+                                    </th>
+                                    <th style={{ ...boreLogTh, textAlign: "right" }}>
+                                      boc_ft
+                                    </th>
+                                    <th style={boreLogTh}>notes</th>
+                                    <th style={{ ...boreLogTh, textAlign: "right" }}>
+                                      photo_count
+                                    </th>
+                                    <th style={boreLogTh}>timestamp</th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {boreLogRows.map((row, idx) => (
+                                    <tr
+                                      key={`${row.station}-${idx}`}
+                                      style={{
+                                        borderTop: "1px solid #eef2f7",
+                                      }}
+                                    >
+                                      <td
+                                        style={{
+                                          ...boreLogTd,
+                                          fontFamily:
+                                            "ui-monospace, SFMono-Regular, Menlo, monospace",
+                                        }}
+                                      >
+                                        {row.station}
+                                      </td>
+                                      <td
+                                        style={{
+                                          ...boreLogTd,
+                                          textAlign: "right",
+                                          fontVariantNumeric: "tabular-nums",
+                                        }}
+                                      >
+                                        {row.station_ft}
+                                      </td>
+                                      <td
+                                        style={{
+                                          ...boreLogTd,
+                                          textAlign: "right",
+                                          fontVariantNumeric: "tabular-nums",
+                                        }}
+                                      >
+                                        {row.depth_ft == null ? "—" : row.depth_ft}
+                                      </td>
+                                      <td
+                                        style={{
+                                          ...boreLogTd,
+                                          textAlign: "right",
+                                          fontVariantNumeric: "tabular-nums",
+                                        }}
+                                      >
+                                        {row.boc_ft == null ? "—" : row.boc_ft}
+                                      </td>
+                                      <td style={boreLogTd}>
+                                        {row.notes || (
+                                          <span style={{ color: "#cbd5e1" }}>—</span>
+                                        )}
+                                      </td>
+                                      <td
+                                        style={{
+                                          ...boreLogTd,
+                                          textAlign: "right",
+                                          fontVariantNumeric: "tabular-nums",
+                                        }}
+                                      >
+                                        {row.photo_count}
+                                      </td>
+                                      <td
+                                        style={{
+                                          ...boreLogTd,
+                                          color: "#64748b",
+                                          whiteSpace: "nowrap",
+                                        }}
+                                      >
+                                        {row.timestamp || "—"}
+                                      </td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          ) : null}
+                        </div>
                       </>
                     ) : null}
                   </div>
