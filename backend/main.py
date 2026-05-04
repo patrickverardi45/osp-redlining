@@ -8704,6 +8704,22 @@ def _walk_clean_station_event(ev: Any) -> Optional[Dict[str, Any]]:
     }
     if accuracy_m is not None:
         cleaned["accuracy_m"] = accuracy_m
+    # walk-v2 additive passthroughs. Optional. Server never invents these.
+    client_uuid_raw = ev.get("client_uuid")
+    if isinstance(client_uuid_raw, str):
+        cu = client_uuid_raw.strip()
+        if cu and len(cu) <= 128:
+            cleaned["client_uuid"] = cu
+    note_raw = ev.get("note")
+    if isinstance(note_raw, str):
+        note = note_raw.strip()
+        if note:
+            cleaned["note"] = note[:500]
+    crew_raw = ev.get("crew")
+    if isinstance(crew_raw, str):
+        crew = crew_raw.strip()
+        if crew:
+            cleaned["crew"] = crew[:120]
     return cleaned
 
 
@@ -8789,10 +8805,21 @@ def walk_station_events(payload: Dict[str, Any] = Body(default={})) -> JSONRespo
         incoming = list(raw_events) if isinstance(raw_events, list) else []
         with _session_scope(resolved_session_id):
             existing = list(STATE.get("walk_station_events") or [])
+            seen_client_uuids = {
+                str(ev.get("client_uuid"))
+                for ev in existing
+                if isinstance(ev, dict) and ev.get("client_uuid")
+            }
             for raw_ev in incoming:
                 cleaned = _walk_clean_station_event(raw_ev)
                 if cleaned is None:
                     continue
+                cu = cleaned.get("client_uuid")
+                if cu and cu in seen_client_uuids:
+                    # walk-v2 retry of an already-saved station: silently skip.
+                    continue
+                if cu:
+                    seen_client_uuids.add(cu)
                 existing.append(cleaned)
             STATE["walk_station_events"] = existing
             # Persist incrementally so the office sees stations immediately and
