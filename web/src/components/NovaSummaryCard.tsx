@@ -884,7 +884,7 @@ export default function NovaSummaryCard({ summary, onFocusIssue, onOverrideSourc
       {/* ── No-data placeholder ──────────────────────────────────────────────── */}
       {noData ? (
         <div style={{ fontSize: 13, color: "#64748b", lineHeight: 1.5 }}>
-          Upload a KMZ and structured bore logs to generate job intelligence.
+          Upload a KMZ and field data to generate job intelligence.
         </div>
       ) : (
         <>

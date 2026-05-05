@@ -81,6 +81,8 @@ export interface Job {
   id: string;
   job_code: string;
   job_name: string;
+  /** When "fiber_pull", map UI may prefer structure/business labels. */
+  project_type?: string | null;
   status: JobStatus | string;
   route_count: number;
   session_count: number;
@@ -121,6 +123,8 @@ export interface Session {
 export interface Station {
   id: string;
   station_number: string;
+  /** Business / structure label (e.g. HH-12) — shown on map for fiber_pull jobs. */
+  business_id?: string | null;
   depth_ft: number;
   boc_ft: number;
   latitude: number;

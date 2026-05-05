@@ -29,6 +29,8 @@ export type VerificationInfo = {
 
 export type StationPoint = {
   station?: string;
+  /** Fiber / structure id for fiber_pull labeling (optional; bore HDD rows omit). */
+  business_id?: string | null;
   station_ft?: number;
   mapped_station_ft?: number;
   lat?: number;
@@ -160,6 +162,12 @@ export type BackendState = {
   };
   engineering_plans?: EngineeringPlan[];
   bore_log_summary?: BoreLogSummaryEntry[];
+  /** When is_locked, mutating endpoints return 423 Closeout is locked */
+  closeout_lock?: {
+    is_locked?: boolean;
+    locked_by?: string | null;
+    locked_at?: string | null;
+  };
 };
 
 export type StationPhoto = {

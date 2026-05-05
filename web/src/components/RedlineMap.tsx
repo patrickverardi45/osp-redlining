@@ -127,9 +127,23 @@ function buildStationIdentity(routeName: string | null | undefined, point: Stati
   ].join("|");
 }
 
-function buildStationSummary(routeName: string | null | undefined, point: StationPoint | null | undefined): string {
+/** Primary map/inspector label: business_id when fiber_pull and present, else station text. */
+function fiberPullStationPrimaryLabel(isFiberPull: boolean, point: StationPoint | null | undefined): string {
   if (!point) return "--";
-  const station = cleanDisplayText(point.station);
+  if (isFiberPull) {
+    const bid = point.business_id != null ? String(point.business_id).trim() : "";
+    if (bid) return cleanDisplayText(bid);
+  }
+  return cleanDisplayText(point.station);
+}
+
+function buildStationSummary(
+  routeName: string | null | undefined,
+  point: StationPoint | null | undefined,
+  isFiberPull = false,
+): string {
+  if (!point) return "--";
+  const station = fiberPullStationPrimaryLabel(isFiberPull, point);
   const source = cleanDisplayText(point.source_file);
   const route = cleanDisplayText(routeName);
   return `${station} • ${route} • ${source}`;
@@ -694,6 +708,8 @@ type RedlineMapProps = {
   projectId?: string;
   /** When set (e.g. project route), replaces the generic operator workspace title. */
   workspaceTitle?: string;
+  /** When "fiber_pull", map and inspector prefer `business_id` labels when available. */
+  projectType?: string | null;
 };
 
 type WorkspaceTab = "workspace" | "closeout";
@@ -780,7 +796,7 @@ type GpsPhoto = {
   addedAt: number; // Date.now()
 };
 
-function OfficeRedlineMapInner({ mode = "default", projectId, workspaceTitle }: RedlineMapProps) {
+function OfficeRedlineMapInner({ mode = "default", projectId, workspaceTitle, projectType = null }: RedlineMapProps) {
   const [activeWorkspaceTab, setActiveWorkspaceTab] = useState<WorkspaceTab>("workspace");
   const [state, setState] = useState<BackendState | null>(null);
   const [busy, setBusy] = useState(false);
@@ -827,7 +843,11 @@ function OfficeRedlineMapInner({ mode = "default", projectId, workspaceTitle }: 
   const [boxZoom, setBoxZoom] = useState<{ startX: number; startY: number; endX: number; endY: number } | null>(null);
   const [selectedStationIndex, setSelectedStationIndex] = useState<number | null>(null);
   const [hoverStationIndex, setHoverStationIndex] = useState<number | null>(null);
-  const [showStations, setShowStations] = useState(true);
+  const [layerRoutes, setLayerRoutes] = useState(true);
+  const [layerStructures, setLayerStructures] = useState(true);
+  const [layerPhotos, setLayerPhotos] = useState(true);
+  const [mapBaseStyle, setMapBaseStyle] = useState<"standard" | "satellite">("satellite");
+  const [structureSequentialByKey, setStructureSequentialByKey] = useState<Record<string, string>>({});
   const [showPlannedRouteHighlight, setShowPlannedRouteHighlight] = useState(false);
   const [presentationView, setPresentationView] = useState(false);
   // Evidence-layer visibility: Set of hidden layer ids. Empty = all visible.
@@ -862,6 +882,12 @@ function OfficeRedlineMapInner({ mode = "default", projectId, workspaceTitle }: 
       null
     );
   }, [selectedFieldSessionId, selectedFieldJobDetail]);
+
+  const isFiberPullWorkspace = useMemo(() => {
+    const fromJob = String(selectedFieldJobDetail?.project_type ?? "").toLowerCase() === "fiber_pull";
+    const fromProp = String(projectType ?? "").trim().toLowerCase() === "fiber_pull";
+    return fromJob || fromProp;
+  }, [selectedFieldJobDetail?.project_type, projectType]);
 
   const clearFieldSubmissionSelection = useCallback(() => {
     setSelectedFieldSessionId(null);
@@ -898,7 +924,7 @@ function OfficeRedlineMapInner({ mode = "default", projectId, workspaceTitle }: 
         { cache: "no-store" },
       );
       if (!res.ok) {
-        throw new Error(`Bore log fetch failed: ${res.status} ${res.statusText}`);
+        throw new Error(`Field data fetch failed: ${res.status} ${res.statusText}`);
       }
       const data = (await res.json()) as BoreLogRow[];
       setBoreLogRows(Array.isArray(data) ? data : []);
@@ -1315,7 +1341,7 @@ function OfficeRedlineMapInner({ mode = "default", projectId, workspaceTitle }: 
 
   const visibleLabelIndices = useMemo(() => {
     const result = new Set<number>();
-    if (!showStations || !projectedStations.length || !projectionMetrics) return result;
+    if (!layerStructures || !projectedStations.length || !projectionMetrics) return result;
 
     const currentWorldWidth = projectionMetrics.worldWidth / viewport.zoom;
     const worldThreshold =
@@ -1355,7 +1381,7 @@ function OfficeRedlineMapInner({ mode = "default", projectId, workspaceTitle }: 
 
     return result;
   }, [
-    showStations,
+    layerStructures,
     projectedStations,
     projectionMetrics,
     viewport.zoom,
@@ -1371,7 +1397,7 @@ function OfficeRedlineMapInner({ mode = "default", projectId, workspaceTitle }: 
   const hoverStation =
     hoverStationIndex !== null ? stationPoints[hoverStationIndex] || null : null;
 
-  const activeTooltipIndex = showStations ? hoverStationIndex : null;
+  const activeTooltipIndex = layerStructures ? hoverStationIndex : null;
 
   const tooltipStation = useMemo(() => {
     if (activeTooltipIndex === null) return null;
@@ -1381,7 +1407,7 @@ function OfficeRedlineMapInner({ mode = "default", projectId, workspaceTitle }: 
   const tooltipStationMode = hoverStationIndex !== null ? "Hover" : "";
 
   const tooltipWorldGeometry = useMemo(() => {
-    if (!projectionMetrics || activeTooltipIndex === null || !showStations) {
+    if (!projectionMetrics || activeTooltipIndex === null || !layerStructures) {
       return null;
     }
 
@@ -1467,7 +1493,7 @@ function OfficeRedlineMapInner({ mode = "default", projectId, workspaceTitle }: 
       labelRadius,
       labelPaddingX,
     };
-  }, [activeTooltipIndex, projectedStations, projectionMetrics, viewport, showStations]);
+  }, [activeTooltipIndex, projectedStations, projectionMetrics, viewport, layerStructures]);
 
 
   const labelWorldGeometry = useMemo(() => {
@@ -1495,9 +1521,34 @@ function OfficeRedlineMapInner({ mode = "default", projectId, workspaceTitle }: 
   );
 
   const selectedStationSummary = useMemo(
-    () => buildStationSummary(state?.selected_route_name || state?.route_name, selectedStation),
-    [state?.selected_route_name, state?.route_name, selectedStation]
+    () => buildStationSummary(state?.selected_route_name || state?.route_name, selectedStation, isFiberPullWorkspace),
+    [state?.selected_route_name, state?.route_name, selectedStation, isFiberPullWorkspace],
   );
+
+  const fiberSequentialSegmentLines = useMemo(() => {
+    if (!isFiberPullWorkspace) return [] as string[];
+    const routeName = state?.selected_route_name || state?.route_name;
+    const entries: { label: string; seq: number }[] = [];
+    for (const pt of stationPoints) {
+      const id = buildStationIdentity(routeName, pt);
+      const raw = structureSequentialByKey[id]?.trim() ?? "";
+      if (raw === "") continue;
+      const seq = Number.parseFloat(raw);
+      if (!Number.isFinite(seq)) continue;
+      entries.push({
+        label: fiberPullStationPrimaryLabel(true, pt),
+        seq,
+      });
+    }
+    if (entries.length < 2) return [] as string[];
+    entries.sort((a, b) => a.seq - b.seq);
+    const lines: string[] = [];
+    for (let i = 1; i < entries.length; i++) {
+      const d = Math.abs(entries[i].seq - entries[i - 1].seq);
+      lines.push(`${entries[i - 1].label} → ${entries[i].label}: ${formatNumber(d, 0)} ft`);
+    }
+    return lines;
+  }, [isFiberPullWorkspace, stationPoints, structureSequentialByKey, state?.selected_route_name, state?.route_name]);
 
   const calculatedCoveredFootage = useMemo(() => {
     const fromSegments = redlineSegments.reduce((sum, segment) => {
@@ -1961,7 +2012,7 @@ ${buildFolder("Stations", stationPlacemarks)}
     }
 
     if (matchingStationEntries.length > 0) {
-      setShowStations(true);
+      setLayerStructures(true);
       setSelectedStationIndex(matchingStationEntries[0].idx);
     } else {
       setSelectedStationIndex(null);
@@ -2031,7 +2082,7 @@ ${buildFolder("Stations", stationPlacemarks)}
         setStatusText("Local backend connected. KMZ, redlines, and stations loaded.");
         setStatusTone("success");
       } else if ((data.kmz_reference?.line_features || []).length > 0) {
-        setStatusText("Local backend connected. KMZ loaded. Waiting for bore logs.");
+        setStatusText("Local backend connected. KMZ loaded. Waiting for field data.");
         setStatusTone("success");
       } else {
         setStatusText("Local backend connected. Workspace is empty and ready.");
@@ -2105,6 +2156,62 @@ ${buildFolder("Stations", stationPlacemarks)}
     }
   }
 
+  async function handleLockCloseout() {
+    const sid = getStoredSessionId(projectId);
+    if (!sid || !API_BASE) {
+      setStatusText("Session or API not available for lock.");
+      setStatusTone("error");
+      return;
+    }
+    setBusy(true);
+    try {
+      const res = await fetch(appendSessionId(`${API_BASE}/api/closeout/lock`, projectId), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          session_id: sid,
+          user: (process.env.NEXT_PUBLIC_CLOSEOUT_USER_NAME || "").trim() || "Operator",
+        }),
+      });
+      const data = (await res.json().catch(() => ({}))) as { error?: string };
+      if (!res.ok) throw new Error(data.error || `Lock failed (${res.status}).`);
+      await fetchState("Closeout locked.");
+    } catch (e) {
+      setStatusText(e instanceof Error ? e.message : "Lock failed.");
+      setStatusTone("error");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleUnlockCloseout() {
+    const sid = getStoredSessionId(projectId);
+    if (!sid || !API_BASE) {
+      setStatusText("Session or API not available for unlock.");
+      setStatusTone("error");
+      return;
+    }
+    setBusy(true);
+    try {
+      const res = await fetch(appendSessionId(`${API_BASE}/api/closeout/unlock`, projectId), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          session_id: sid,
+          role: (process.env.NEXT_PUBLIC_USER_ROLE || "pm").toLowerCase(),
+        }),
+      });
+      const data = (await res.json().catch(() => ({}))) as { error?: string };
+      if (!res.ok) throw new Error(data.error || `Unlock failed (${res.status}).`);
+      await fetchState("Closeout unlocked.");
+    } catch (e) {
+      setStatusText(e instanceof Error ? e.message : "Unlock failed.");
+      setStatusTone("error");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function handleDesignUpload(file: File) {
     setBusy(true);
     setStatusText(`Uploading design: ${file.name}`);
@@ -2144,7 +2251,7 @@ ${buildFolder("Stations", stationPlacemarks)}
   async function handleBoreUpload(files: FileList | null) {
     if (!files || !files.length) return;
     setBusy(true);
-    setStatusText(`Uploading ${files.length} structured bore file${files.length > 1 ? "s" : ""}...`);
+    setStatusText(`Uploading ${files.length} field data file${files.length > 1 ? "s" : ""}...`);
     setStatusTone("neutral");
     try {
       const form = new FormData();
@@ -2153,9 +2260,9 @@ ${buildFolder("Stations", stationPlacemarks)}
       const response = await fetch(`${API_BASE}/api/upload-structured-bore-files`, { method: "POST", body: form });
       const data: BackendState = await response.json();
       rememberSessionFromResponse(data, projectId);
-      if (!response.ok || data.success === false) throw new Error(data.error || "Structured bore upload failed.");
+      if (!response.ok || data.success === false) throw new Error(data.error || "Field data upload failed.");
       setState(data);
-      fetchPipelineDiag(); // Nova Phase 1 — refresh diagnostics after bore log upload
+      fetchPipelineDiag(); // Nova Phase 1 — refresh diagnostics after field data upload
       setDidInitialFit(false);
       userHasAdjustedViewportRef.current = false;
       lastAutoFitSignatureRef.current = "";
@@ -2167,10 +2274,10 @@ ${buildFolder("Stations", stationPlacemarks)}
         clearTimeout(initialFitTimeoutRef.current);
         initialFitTimeoutRef.current = null;
       }
-      setStatusText(String(data.warning || data.message || "Structured bore files uploaded successfully."));
+      setStatusText(String(data.warning || data.message || "Field data uploaded successfully."));
       setStatusTone(data.warning ? "warning" : "success");
     } catch (error) {
-      setStatusText(error instanceof Error ? error.message : "Structured bore upload failed.");
+      setStatusText(error instanceof Error ? error.message : "Field data upload failed.");
       setStatusTone("error");
     } finally {
       setBusy(false);
@@ -2248,11 +2355,11 @@ ${buildFolder("Stations", stationPlacemarks)}
   }, []);
 
   useEffect(() => {
-    if (!showStations) {
+    if (!layerStructures) {
       setHoverStationIndex(null);
       setSelectedStationIndex(null);
     }
-  }, [showStations]);
+  }, [layerStructures]);
 
 
   async function fetchStationPhotos(stationIdentity: string) {
@@ -2637,6 +2744,11 @@ ${buildFolder("Stations", stationPlacemarks)}
   const billingChecklistComplete =
     hasDesign && hasBoreFiles && (stationPhotos.length > 0 || gpsPhotos.length > 0);
   const billingApproved = billingApprovalStatus === "approved";
+  const closeoutLocked = Boolean(state?.closeout_lock?.is_locked);
+  const workspaceReadOnly = billingApproved || closeoutLocked;
+  const closeoutUnlockRole = (process.env.NEXT_PUBLIC_USER_ROLE || "pm").toLowerCase();
+  const canUnlockCloseout =
+    closeoutUnlockRole === "admin" || closeoutUnlockRole === "manager";
   const desktopMapHeight = Math.max(MAP_HEIGHT, 900);
   const mapScrollGutterWidth = 34;
   const isProjectWorkspace = Boolean(workspaceTitle?.trim());
@@ -2814,7 +2926,7 @@ ${buildFolder("Stations", stationPlacemarks)}
               />
               <div style={{ display: "flex", flexWrap: "wrap", gap: 8, flex: "0 0 auto" }}>
                 <button onClick={() => fetchState("Refreshing backend state...")} disabled={busy} style={buttonStyle("#ffffff", "#0f172a", "#cfd8e3", busy)}>Refresh State</button>
-                <button onClick={handleReset} disabled={busy} style={buttonStyle("#0f172a", "#ffffff", "#0f172a", busy)}>Clear Workspace</button>
+                <button onClick={handleReset} disabled={busy || closeoutLocked} style={buttonStyle("#0f172a", "#ffffff", "#0f172a", busy || closeoutLocked)}>Clear Workspace</button>
               </div>
             </div>
           ) : (
@@ -2833,7 +2945,7 @@ ${buildFolder("Stations", stationPlacemarks)}
                     OSP Redlining Operator Workspace
                   </div>
                   <div style={{ marginTop: 6, fontSize: 14, color: "#526173", lineHeight: 1.5 }}>
-                    Upload design and bore logs, review the map on the Workspace tab, then use Closeout for reports and billing.
+                    Upload design and field data, review the map on the Workspace tab, then use Closeout for reports and billing.
                   </div>
                 </div>
 
@@ -2846,7 +2958,7 @@ ${buildFolder("Stations", stationPlacemarks)}
                   />
                   <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 10 }}>
                     <button onClick={() => fetchState("Refreshing backend state...")} disabled={busy} style={buttonStyle("#ffffff", "#0f172a", "#cfd8e3", busy)}>Refresh State</button>
-                    <button onClick={handleReset} disabled={busy} style={buttonStyle("#0f172a", "#ffffff", "#0f172a", busy)}>Clear Workspace</button>
+                    <button onClick={handleReset} disabled={busy || closeoutLocked} style={buttonStyle("#0f172a", "#ffffff", "#0f172a", busy || closeoutLocked)}>Clear Workspace</button>
                   </div>
                 </div>
               </div>
@@ -2857,7 +2969,7 @@ ${buildFolder("Stations", stationPlacemarks)}
 
           <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 16, alignItems: "stretch" }}>
             <SummaryCard title="Active Job" value={String(activeJob)} subtitle="Local label or backend-selected route" />
-            <SummaryCard title="Files Loaded" value={String((hasDesign ? 1 : 0) + (state?.loaded_field_data_files || 0))} subtitle="Design + structured bore files" />
+            <SummaryCard title="Files Loaded" value={String((hasDesign ? 1 : 0) + (state?.loaded_field_data_files || 0))} subtitle="Design + field data files" />
             <SummaryCard title="QA Status" value={String(verification?.status || "waiting")} subtitle="Real backend verification summary" />
             <SummaryCard title="Output Counts" value={`${stationPoints.length} pts / ${redlineSegments.length} segs`} subtitle="Station points and generated redline segments" />
           </div>
@@ -2906,7 +3018,7 @@ ${buildFolder("Stations", stationPlacemarks)}
 
           <Section
             title="1. Upload"
-            subtitle="KMZ design, structured bore logs, and optional engineering plan PDFs/images. Same upload behavior as before."
+            subtitle="KMZ design, field data, and optional engineering plan PDFs/images. Same upload behavior as before."
             style={{ display: activeWorkspaceTab === "workspace" ? "block" : "none" }}
           >
             <div
@@ -2922,15 +3034,15 @@ ${buildFolder("Stations", stationPlacemarks)}
               }}
             >
               <span style={{ fontWeight: 800, color: "#0f172a" }}>Workflow: </span>
-                    Upload KMZ and bore logs (optional plans) → review on the Workspace tab, then open Closeout for reports, billing, and export.
+                    Upload KMZ and field data (optional plans) → review on the Workspace tab, then open Closeout for reports, billing, and export.
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 16, alignItems: "start" }}>
-              <label style={uploadCardStyle(busy)}>
+              <label style={uploadCardStyle(busy || closeoutLocked)}>
                 <input
                   type="file"
                   accept=".kmz,.kml"
                   style={{ display: "none" }}
-                  disabled={busy}
+                  disabled={busy || closeoutLocked}
                   onChange={(e) => {
                     const file = e.target.files?.[0];
                     if (file) handleDesignUpload(file);
@@ -2944,22 +3056,22 @@ ${buildFolder("Stations", stationPlacemarks)}
                 </div>
               </label>
 
-              <label style={uploadCardStyle(busy)}>
+              <label style={uploadCardStyle(busy || closeoutLocked)}>
                 <input
                   type="file"
                   accept=".xlsx,.xls,.csv"
                   multiple
                   style={{ display: "none" }}
-                  disabled={busy}
+                  disabled={busy || closeoutLocked}
                   onChange={(e) => {
                     handleBoreUpload(e.target.files);
                     e.currentTarget.value = "";
                   }}
                 />
-                <div style={{ fontWeight: 800, fontSize: 16 }}>Upload Structured Bore Logs</div>
+                <div style={{ fontWeight: 800, fontSize: 16 }}>Upload Field Data</div>
                 <div style={{ marginTop: 6, fontSize: 13, color: "#64748b", lineHeight: 1.55 }}>Triggers the existing backend upload flow for route matching, station mapping, and generated redlines.</div>
                 <div style={{ marginTop: 14, fontSize: 12, color: hasBoreFiles ? "#166534" : "#64748b", fontWeight: 700 }}>
-                  {hasBoreFiles ? `${state?.loaded_field_data_files || 0} bore file(s) loaded.` : "No bore files currently loaded."}
+                  {hasBoreFiles ? `${state?.loaded_field_data_files || 0} field data file(s) loaded.` : "No field data files currently loaded."}
                 </div>
               </label>
 
@@ -2968,16 +3080,16 @@ ${buildFolder("Stations", stationPlacemarks)}
                 border: "2px solid #000000",
                 borderRadius: 16,
                 padding: 16,
-                background: engPlansBusy ? "#f3f4f6" : "#ffffff",
-                cursor: engPlansBusy ? "not-allowed" : "pointer",
-                opacity: engPlansBusy ? 0.7 : 1,
+                background: engPlansBusy || closeoutLocked ? "#f3f4f6" : "#ffffff",
+                cursor: engPlansBusy || closeoutLocked ? "not-allowed" : "pointer",
+                opacity: engPlansBusy || closeoutLocked ? 0.7 : 1,
               }}>
                 <input
                   type="file"
                   accept=".pdf,.png,.jpg,.jpeg"
                   multiple
                   style={{ display: "none" }}
-                  disabled={engPlansBusy}
+                  disabled={engPlansBusy || closeoutLocked}
                   onChange={(e) => {
                     handleEngineeringPlansUpload(e.target.files);
                     e.currentTarget.value = "";
@@ -3000,7 +3112,7 @@ ${buildFolder("Stations", stationPlacemarks)}
                 <div style={{ fontWeight: 800, fontSize: 15 }}>File status</div>
                 <div style={{ marginTop: 12, display: "grid", gap: 10 }}>
                   <Pill label="Design" value={hasDesign ? "Loaded" : "Waiting"} />
-                  <Pill label="Bore files" value={String(state?.loaded_field_data_files || 0)} />
+                  <Pill label="Field data files" value={String(state?.loaded_field_data_files || 0)} />
                   <Pill label="Latest file" value={state?.latest_structured_file || "--"} />
                   <Pill label="Output ready" value={hasGeneratedOutput ? "Yes" : "No"} />
                 </div>
@@ -3066,7 +3178,7 @@ ${buildFolder("Stations", stationPlacemarks)}
           >
             <div style={{ display: "grid", gap: 6 }}>
 
-              {/* ─── Bore Log Layers panel ───────────────────────────── */}
+              {/* ─── Field Data Layers panel ───────────────────────────── */}
               {activeWorkspaceTab === "workspace" && (state?.bore_log_summary?.length ?? 0) > 0 && (() => {
                 const layers = state!.bore_log_summary!;
                 const allVisible = layers.every((e) => !e.evidence_layer_id || !hiddenLayers.has(e.evidence_layer_id));
@@ -3084,7 +3196,7 @@ ${buildFolder("Stations", stationPlacemarks)}
                     {/* Header row */}
                     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 4, marginBottom: 2 }}>
                       <div style={{ fontSize: 10, fontWeight: 800, color: "#334155" }}>
-                        Bore Log Layers
+                        Field Data Layers
                         <span style={{ marginLeft: 5, fontSize: 9, fontWeight: 600, color: "#64748b" }}>
                           ({layers.filter((e) => !e.evidence_layer_id || !hiddenLayers.has(e.evidence_layer_id)).length} / {layers.length} visible)
                         </span>
@@ -3266,7 +3378,13 @@ ${buildFolder("Stations", stationPlacemarks)}
                     userHasAdjustedViewportRef.current = true;
                     fitToBounds(stationOnlyBounds || bounds);
                   }} style={miniMapButton}>Fit Stations</button>
-                  <button onClick={() => setShowStations((current) => !current)} style={miniMapButton}>{showStations ? "Hide Stations" : "Show Stations"}</button>
+                  <button
+                    type="button"
+                    onClick={() => setLayerStructures((current) => !current)}
+                    style={miniMapButton}
+                  >
+                    {layerStructures ? "Hide Stations" : "Show Stations"}
+                  </button>
                   <button
                     type="button"
                     onClick={() => setPresentationView((v) => !v)}
@@ -3284,6 +3402,76 @@ ${buildFolder("Stations", stationPlacemarks)}
                   >
                     {presentationView ? "Normal View" : "Presentation View"}
                   </button>
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 10,
+                      flexWrap: "wrap",
+                      padding: "6px 12px",
+                      borderRadius: 999,
+                      background: "rgba(2, 6, 23, 0.72)",
+                      border: "1px solid rgba(148, 163, 184, 0.28)",
+                      color: "#e2e8f0",
+                      fontSize: 11,
+                      fontWeight: 700,
+                    }}
+                  >
+                    <span style={{ opacity: 0.88 }}>Layers</span>
+                    {([
+                      ["Routes", layerRoutes, setLayerRoutes] as const,
+                      ["Structures", layerStructures, setLayerStructures] as const,
+                      ["Photos", layerPhotos, setLayerPhotos] as const,
+                    ]).map(([label, checked, setter]) => (
+                      <label
+                        key={label}
+                        style={{ display: "inline-flex", alignItems: "center", gap: 5, cursor: "pointer", userSelect: "none" }}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={(e) => setter(e.target.checked)}
+                        />
+                        {label}
+                      </label>
+                    ))}
+                  </div>
+                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+                    <button
+                      type="button"
+                      onClick={() => setMapBaseStyle("standard")}
+                      title="Lighter cartographic-style base"
+                      style={{
+                        ...miniMapButton,
+                        ...(mapBaseStyle === "standard"
+                          ? {
+                              background: "rgba(30, 58, 95, 0.88)",
+                              borderColor: "rgba(147, 197, 253, 0.42)",
+                              color: "#e0f2fe",
+                            }
+                          : {}),
+                      }}
+                    >
+                      Standard map
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setMapBaseStyle("satellite")}
+                      title="Dark aerial-style base (default)"
+                      style={{
+                        ...miniMapButton,
+                        ...(mapBaseStyle === "satellite"
+                          ? {
+                              background: "rgba(30, 58, 95, 0.88)",
+                              borderColor: "rgba(147, 197, 253, 0.42)",
+                              color: "#e0f2fe",
+                            }
+                          : {}),
+                      }}
+                    >
+                      Satellite
+                    </button>
+                  </div>
                 </div>
                 {renderBounds && projectionMetrics && allCoords.length > 0 ? (
                   <svg
@@ -3323,6 +3511,11 @@ ${buildFolder("Stations", stationPlacemarks)}
                         <stop offset="48%" stopColor="#07111d" />
                         <stop offset="100%" stopColor="#010409" />
                       </radialGradient>
+                      <radialGradient id="standard-map-wash" cx="38%" cy="32%" r="78%">
+                        <stop offset="0%" stopColor="#f1f5f9" />
+                        <stop offset="45%" stopColor="#cbd5e1" />
+                        <stop offset="100%" stopColor="#94a3b8" />
+                      </radialGradient>
                       <pattern
                         id="terrain-speckle-pattern"
                         x="0"
@@ -3360,7 +3553,7 @@ ${buildFolder("Stations", stationPlacemarks)}
                         y={0}
                         width={projectionMetrics?.worldWidth || PROJECTION_BASE_WIDTH}
                         height={projectionMetrics?.worldHeight || PROJECTION_BASE_WIDTH}
-                        fill="url(#satellite-map-wash)"
+                        fill={mapBaseStyle === "satellite" ? "url(#satellite-map-wash)" : "url(#standard-map-wash)"}
                       />
                       <rect
                         x={0}
@@ -3368,7 +3561,7 @@ ${buildFolder("Stations", stationPlacemarks)}
                         width={projectionMetrics?.worldWidth || PROJECTION_BASE_WIDTH}
                         height={projectionMetrics?.worldHeight || PROJECTION_BASE_WIDTH}
                         fill="url(#terrain-speckle-pattern)"
-                        opacity={presentationView ? 0.42 : 1}
+                        opacity={mapBaseStyle === "satellite" ? (presentationView ? 0.42 : 1) : (presentationView ? 0.22 : 0.45)}
                         pointerEvents="none"
                       />
                       {/* Fine grid */}
@@ -3392,6 +3585,8 @@ ${buildFolder("Stations", stationPlacemarks)}
                         pointerEvents="none"
                       />
 
+                      {layerRoutes ? (
+                        <>
                       {kmzLinePaths.map((line, idx) => {
                         const feature = kmzLineFeatures[idx];
                         const presentationPaint = presentationKmzPaint(feature, presentationView);
@@ -3445,8 +3640,11 @@ ${buildFolder("Stations", stationPlacemarks)}
                           })}
                         </g>
                       ) : null}
+                        </>
+                      ) : null}
                     </g>
 
+                    {layerRoutes ? (
                     <g id="redline-layer">
                       {redlinePaths.map((line) => {
                         if (!line.path) return null;
@@ -3508,8 +3706,9 @@ ${buildFolder("Stations", stationPlacemarks)}
                         );
                       })}
                     </g>
+                    ) : null}
 
-                    {showStations ? (
+                    {layerStructures ? (
                       <g id="station-layer">
                         {projectedStations.map(({ idx, world, point }) => {
                           const isSelected = selectedStationIndex === idx;
@@ -3528,7 +3727,7 @@ ${buildFolder("Stations", stationPlacemarks)}
                           // Halo only on select/hover — no ambient white ring on idle markers.
                           const halo = isSelected ? radius + 2.2 : radius + 1.4;
                           const showLabel = visibleLabelIndices.has(idx);
-                          const stationLabel = cleanDisplayText(point.station);
+                          const stationLabel = fiberPullStationPrimaryLabel(isFiberPullWorkspace, point);
 
                           return (
                             <g
@@ -3611,7 +3810,7 @@ ${buildFolder("Stations", stationPlacemarks)}
                     {/* inbox submission. Renders above design/walk layers.  */}
                     {selectedFieldSessionId ? (
                       <g id="field-session-overlay" pointerEvents="none">
-                        {fieldTrackPath ? (
+                        {layerRoutes && fieldTrackPath ? (
                           <path
                             d={fieldTrackPath}
                             fill="none"
@@ -3623,7 +3822,7 @@ ${buildFolder("Stations", stationPlacemarks)}
                             vectorEffect="non-scaling-stroke"
                           />
                         ) : null}
-                        {fieldStationPath ? (
+                        {layerRoutes && fieldStationPath ? (
                           <path
                             d={fieldStationPath}
                             fill="none"
@@ -3636,7 +3835,15 @@ ${buildFolder("Stations", stationPlacemarks)}
                             vectorEffect="non-scaling-stroke"
                           />
                         ) : null}
-                        {projectedFieldStations.map(({ st, world }) => (
+                        {layerStructures
+                          ? projectedFieldStations.map(({ st, world }) => {
+                              const fieldLabel =
+                                isFiberPullWorkspace &&
+                                st.business_id != null &&
+                                String(st.business_id).trim() !== ""
+                                  ? cleanDisplayText(String(st.business_id))
+                                  : st.station_number;
+                              return (
                           <g key={`field-station-${st.id}`}>
                             <circle
                               cx={world.x}
@@ -3658,10 +3865,12 @@ ${buildFolder("Stations", stationPlacemarks)}
                               paintOrder="stroke"
                               style={{ userSelect: "none" }}
                             >
-                              {st.station_number}
+                              {fieldLabel}
                             </text>
                           </g>
-                        ))}
+                              );
+                            })
+                          : null}
                       </g>
                     ) : null}
 
@@ -3669,7 +3878,7 @@ ${buildFolder("Stations", stationPlacemarks)}
                     {/* Renders above stations, below the station tooltip.  */}
                     {/* Distinct amber pin shape so photos never visually    */}
                     {/* collide with the black station dots.                 */}
-                    {projectedPhotos.length > 0 ? (
+                    {layerPhotos && projectedPhotos.length > 0 ? (
                       <g id="photo-marker-layer">
                         {projectedPhotos.map(({ photo, world }) => {
                           const isSelected = selectedGpsPhotoId === photo.id;
@@ -3834,7 +4043,7 @@ ${buildFolder("Stations", stationPlacemarks)}
                   </svg>
                 ) : (
                   <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", textAlign: "center", padding: 24, color: "#cbd5e1", fontWeight: 700 }}>
-                    Upload a KMZ and structured bore logs to render real map output.
+                    Upload field data to render map output.
                   </div>
                 )}
 
@@ -4146,7 +4355,7 @@ ${buildFolder("Stations", stationPlacemarks)}
                           Field Inspection
                         </div>
                         <div style={{ fontSize: 15, fontWeight: 900, color: "#f8fafc", marginTop: 2, lineHeight: 1.2 }}>
-                          {cleanDisplayText(selectedStation.station)}
+                          {fiberPullStationPrimaryLabel(isFiberPullWorkspace, selectedStation)}
                         </div>
                       </div>
                       <button
@@ -4173,7 +4382,12 @@ ${buildFolder("Stations", stationPlacemarks)}
                     <div style={{ padding: "12px 14px", display: "grid", gap: 7, flexShrink: 0 }}>
                       {(
                         [
-                          ["Station", cleanDisplayText(selectedStation.station)],
+                          ["Station", fiberPullStationPrimaryLabel(isFiberPullWorkspace, selectedStation)],
+                          ...(isFiberPullWorkspace &&
+                          selectedStation?.business_id != null &&
+                          String(selectedStation.business_id).trim() !== ""
+                            ? ([["Source station", cleanDisplayText(selectedStation.station)]] as [string, string][])
+                            : []),
                           ["Mapped FT", formatNumber(selectedStation.mapped_station_ft, 3)],
                           ["Depth FT", formatNumber(selectedStation.depth_ft)],
                           ["BOC FT", formatNumber(selectedStation.boc_ft)],
@@ -4203,6 +4417,74 @@ ${buildFolder("Stations", stationPlacemarks)}
                         </div>
                       ))}
                     </div>
+
+                    {isFiberPullWorkspace ? (
+                      <div
+                        style={{
+                          padding: "12px 14px",
+                          flexShrink: 0,
+                          display: "grid",
+                          gap: 8,
+                          borderTop: "1px solid rgba(148, 163, 184, 0.14)",
+                        }}
+                      >
+                        <label
+                          htmlFor="fiber-sequential-reading"
+                          style={{ fontSize: 11, fontWeight: 800, color: "#94a3b8", textTransform: "uppercase", letterSpacing: 0.3 }}
+                        >
+                          Sequential reading
+                        </label>
+                        <input
+                          id="fiber-sequential-reading"
+                          type="number"
+                          step="any"
+                          value={structureSequentialByKey[selectedStationIdentity] ?? ""}
+                          onChange={(e) => {
+                            const v = e.target.value;
+                            setStructureSequentialByKey((prev) => ({ ...prev, [selectedStationIdentity]: v }));
+                          }}
+                          placeholder="Local only — not saved yet"
+                          style={{
+                            width: "100%",
+                            padding: "8px 10px",
+                            borderRadius: 8,
+                            border: "1px solid rgba(148, 163, 184, 0.35)",
+                            background: "rgba(15, 23, 42, 0.66)",
+                            color: "#e2e8f0",
+                            fontSize: 13,
+                          }}
+                        />
+                        {fiberSequentialSegmentLines.length > 0 ? (
+                          <div>
+                            <div
+                              style={{
+                                fontSize: 10,
+                                fontWeight: 800,
+                                color: "#64748b",
+                                textTransform: "uppercase",
+                                marginBottom: 6,
+                                letterSpacing: 0.04,
+                              }}
+                            >
+                              Sequential segments (local)
+                            </div>
+                            <ul
+                              style={{
+                                margin: 0,
+                                paddingLeft: 16,
+                                color: "#cbd5e1",
+                                fontSize: 11,
+                                lineHeight: 1.45,
+                              }}
+                            >
+                              {fiberSequentialSegmentLines.map((line, segIdx) => (
+                                <li key={`fiber-seg-${segIdx}`}>{line}</li>
+                              ))}
+                            </ul>
+                          </div>
+                        ) : null}
+                      </div>
+                    ) : null}
 
                     {/* Photos */}
                     {stationPhotos.length > 0 ? (
@@ -4538,7 +4820,7 @@ ${buildFolder("Stations", stationPlacemarks)}
                                 {fieldReviewBoreOpen ? "▼" : "▶"}
                               </span>
                               <span>
-                                Bore Log
+                                Field Data
                                 {boreLogRows !== null ? (
                                   <span
                                     style={{
@@ -4580,8 +4862,8 @@ ${buildFolder("Stations", stationPlacemarks)}
                                 {boreLogLoading
                                   ? "Loading…"
                                   : boreLogRows
-                                    ? "Refresh Bore Log"
-                                    : "View Bore Log"}
+                                    ? "Refresh Field Data"
+                                    : "View Field Data"}
                               </button>
                               <button
                                 type="button"
@@ -4593,8 +4875,8 @@ ${buildFolder("Stations", stationPlacemarks)}
                                 }
                                 title={
                                   boreLogRows && boreLogRows.length > 0
-                                    ? "Download loaded bore log as CSV"
-                                    : "Load bore log first to enable export"
+                                    ? "Download loaded field data as CSV"
+                                    : "Load field data first to enable export"
                                 }
                                 style={{
                                   padding: "6px 12px",
@@ -4647,7 +4929,7 @@ ${buildFolder("Stations", stationPlacemarks)}
                                     color: "#94a3b8",
                                   }}
                                 >
-                                  No bore log data
+                                  No field data loaded
                                 </div>
                               ) : null}
                               {boreLogRows && boreLogRows.length > 0 ? (
@@ -4803,11 +5085,11 @@ ${buildFolder("Stations", stationPlacemarks)}
                           padding: "10px 14px",
                           borderRadius: 12,
                           border: "1px solid #0f172a",
-                          background: stationPhotoBusy ? "#e5e7eb" : "#0f172a",
+                          background: stationPhotoBusy || closeoutLocked ? "#e5e7eb" : "#0f172a",
                           color: "#ffffff",
                           fontWeight: 800,
-                          cursor: stationPhotoBusy ? "not-allowed" : "pointer",
-                          opacity: stationPhotoBusy ? 0.7 : 1,
+                          cursor: stationPhotoBusy || closeoutLocked ? "not-allowed" : "pointer",
+                          opacity: stationPhotoBusy || closeoutLocked ? 0.7 : 1,
                         }}
                       >
                         <input
@@ -4815,7 +5097,7 @@ ${buildFolder("Stations", stationPlacemarks)}
                           accept="image/*"
                           multiple
                           style={{ display: "none" }}
-                          disabled={stationPhotoBusy}
+                          disabled={stationPhotoBusy || closeoutLocked}
                           onChange={(e) => {
                             handleStationPhotoUpload(e.target.files);
                             e.currentTarget.value = "";
@@ -4926,11 +5208,11 @@ ${buildFolder("Stations", stationPlacemarks)}
                       padding: "10px 14px",
                       borderRadius: 12,
                       border: "1px solid #0f172a",
-                      background: gpsPhotoBusy ? "#e5e7eb" : "#0f172a",
+                      background: gpsPhotoBusy || closeoutLocked ? "#e5e7eb" : "#0f172a",
                       color: "#ffffff",
                       fontWeight: 800,
-                      cursor: gpsPhotoBusy ? "not-allowed" : "pointer",
-                      opacity: gpsPhotoBusy ? 0.7 : 1,
+                      cursor: gpsPhotoBusy || closeoutLocked ? "not-allowed" : "pointer",
+                      opacity: gpsPhotoBusy || closeoutLocked ? 0.7 : 1,
                     }}
                   >
                     <input
@@ -4938,7 +5220,7 @@ ${buildFolder("Stations", stationPlacemarks)}
                       accept="image/*,.heic,.heif"
                       multiple
                       style={{ display: "none" }}
-                      disabled={gpsPhotoBusy}
+                      disabled={gpsPhotoBusy || closeoutLocked}
                       onChange={(e) => {
                         handleGpsPhotoUpload(e.target.files);
                         e.currentTarget.value = "";
@@ -4951,7 +5233,7 @@ ${buildFolder("Stations", stationPlacemarks)}
                     <button
                       type="button"
                       onClick={clearGpsPhotos}
-                      disabled={gpsPhotoBusy}
+                      disabled={gpsPhotoBusy || closeoutLocked}
                       style={{
                         padding: "10px 14px",
                         borderRadius: 12,
@@ -4960,7 +5242,7 @@ ${buildFolder("Stations", stationPlacemarks)}
                         color: "#475569",
                         fontWeight: 700,
                         fontSize: 13,
-                        cursor: gpsPhotoBusy ? "not-allowed" : "pointer",
+                        cursor: gpsPhotoBusy || closeoutLocked ? "not-allowed" : "pointer",
                       }}
                     >
                       Clear all
@@ -5227,13 +5509,13 @@ ${buildFolder("Stations", stationPlacemarks)}
                           }
                           onChange={(e) => setManualFootage(e.target.value)}
                           placeholder={calculatedCoveredFootage > 0 ? undefined : "Enter footage (ft)"}
-                          disabled={billingApproved}
-                          style={{ borderRadius: 12, border: "1px solid #cfd8e3", padding: "10px 12px", background: billingApproved ? "#f1f5f9" : "#ffffff", fontSize: 14 }}
+                          disabled={workspaceReadOnly}
+                          style={{ borderRadius: 12, border: "1px solid #cfd8e3", padding: "10px 12px", background: workspaceReadOnly ? "#f1f5f9" : "#ffffff", fontSize: 14 }}
                         />
                       </label>
                       <label style={{ display: "grid", gap: 6, fontSize: 13, color: "#475569" }}>
                         <span>Cost per foot ($)</span>
-                        <input value={costPerFoot} onChange={(e) => setCostPerFoot(e.target.value)} disabled={billingApproved} style={{ borderRadius: 12, border: "1px solid #cfd8e3", padding: "10px 12px", background: billingApproved ? "#f1f5f9" : "#ffffff", fontSize: 14 }} />
+                        <input value={costPerFoot} onChange={(e) => setCostPerFoot(e.target.value)} disabled={workspaceReadOnly} style={{ borderRadius: 12, border: "1px solid #cfd8e3", padding: "10px 12px", background: workspaceReadOnly ? "#f1f5f9" : "#ffffff", fontSize: 14 }} />
                       </label>
                       <div style={{ display: "grid", gap: 6, fontSize: 13, color: "#475569", gridColumn: "1 / -1" }}>
                         <span>Base total</span>
@@ -5250,31 +5532,31 @@ ${buildFolder("Stations", stationPlacemarks)}
                       {exceptions.map((item) => (
                         <div key={item.id} style={{ display: "grid", gap: 6 }}>
                           <div style={{ display: "grid", gridTemplateColumns: "1.4fr 0.8fr auto", gap: 10, alignItems: "center" }}>
-                            <input value={item.label} onChange={(e) => handleExceptionChange(item.id, "label", e.target.value)} disabled={billingApproved} style={{ borderRadius: 12, border: "1px solid #cfd8e3", padding: "10px 12px", background: billingApproved ? "#f1f5f9" : "#ffffff", fontSize: 14 }} />
-                            <input value={item.amount} onChange={(e) => handleExceptionChange(item.id, "amount", e.target.value)} placeholder="0.00" disabled={billingApproved} style={{ borderRadius: 12, border: "1px solid #cfd8e3", padding: "10px 12px", background: billingApproved ? "#f1f5f9" : "#ffffff", fontSize: 14 }} />
-                            <button type="button" onClick={() => handleRemoveException(item.id)} disabled={billingApproved} style={buttonStyle("#ffffff", "#0f172a", "#000000", billingApproved)}>Remove</button>
+                            <input value={item.label} onChange={(e) => handleExceptionChange(item.id, "label", e.target.value)} disabled={workspaceReadOnly} style={{ borderRadius: 12, border: "1px solid #cfd8e3", padding: "10px 12px", background: workspaceReadOnly ? "#f1f5f9" : "#ffffff", fontSize: 14 }} />
+                            <input value={item.amount} onChange={(e) => handleExceptionChange(item.id, "amount", e.target.value)} placeholder="0.00" disabled={workspaceReadOnly} style={{ borderRadius: 12, border: "1px solid #cfd8e3", padding: "10px 12px", background: workspaceReadOnly ? "#f1f5f9" : "#ffffff", fontSize: 14 }} />
+                            <button type="button" onClick={() => handleRemoveException(item.id)} disabled={workspaceReadOnly} style={buttonStyle("#ffffff", "#0f172a", "#000000", workspaceReadOnly)}>Remove</button>
                           </div>
                           <input
                             value={item.note || ""}
                             onChange={(e) => handleExceptionChange(item.id, "note", e.target.value)}
                             placeholder="Note / context (optional)"
-                            disabled={billingApproved}
-                            style={{ borderRadius: 8, border: "1px solid #e2e8f0", padding: "6px 10px", background: billingApproved ? "#f1f5f9" : "#f8fafc", fontSize: 12, color: "#475569" }}
+                            disabled={workspaceReadOnly}
+                            style={{ borderRadius: 8, border: "1px solid #e2e8f0", padding: "6px 10px", background: workspaceReadOnly ? "#f1f5f9" : "#f8fafc", fontSize: 12, color: "#475569" }}
                           />
                         </div>
                       ))}
                       <div style={{ display: "grid", gap: 6 }}>
                         <div style={{ display: "grid", gridTemplateColumns: "1.4fr 0.8fr auto", gap: 10, alignItems: "center" }}>
-                          <input value={extraExceptionLabel} onChange={(e) => setExtraExceptionLabel(e.target.value)} placeholder="Add exception label" disabled={billingApproved} style={{ borderRadius: 12, border: "1px solid #cfd8e3", padding: "10px 12px", background: billingApproved ? "#f1f5f9" : "#ffffff", fontSize: 14 }} />
-                          <input value={extraExceptionAmount} onChange={(e) => setExtraExceptionAmount(e.target.value)} placeholder="0.00" disabled={billingApproved} style={{ borderRadius: 12, border: "1px solid #cfd8e3", padding: "10px 12px", background: billingApproved ? "#f1f5f9" : "#ffffff", fontSize: 14 }} />
-                          <button type="button" onClick={handleAddException} disabled={billingApproved} style={buttonStyle("#0f172a", "#ffffff", "#000000", billingApproved)}>Add</button>
+                          <input value={extraExceptionLabel} onChange={(e) => setExtraExceptionLabel(e.target.value)} placeholder="Add exception label" disabled={workspaceReadOnly} style={{ borderRadius: 12, border: "1px solid #cfd8e3", padding: "10px 12px", background: workspaceReadOnly ? "#f1f5f9" : "#ffffff", fontSize: 14 }} />
+                          <input value={extraExceptionAmount} onChange={(e) => setExtraExceptionAmount(e.target.value)} placeholder="0.00" disabled={workspaceReadOnly} style={{ borderRadius: 12, border: "1px solid #cfd8e3", padding: "10px 12px", background: workspaceReadOnly ? "#f1f5f9" : "#ffffff", fontSize: 14 }} />
+                          <button type="button" onClick={handleAddException} disabled={workspaceReadOnly} style={buttonStyle("#0f172a", "#ffffff", "#000000", workspaceReadOnly)}>Add</button>
                         </div>
                         <input
                           value={extraExceptionNote}
                           onChange={(e) => setExtraExceptionNote(e.target.value)}
                           placeholder="Note / context (optional)"
-                          disabled={billingApproved}
-                          style={{ borderRadius: 8, border: "1px solid #e2e8f0", padding: "6px 10px", background: billingApproved ? "#f1f5f9" : "#f8fafc", fontSize: 12, color: "#475569" }}
+                          disabled={workspaceReadOnly}
+                          style={{ borderRadius: 8, border: "1px solid #e2e8f0", padding: "6px 10px", background: workspaceReadOnly ? "#f1f5f9" : "#f8fafc", fontSize: 12, color: "#475569" }}
                         />
                       </div>
                     </div>
@@ -5293,7 +5575,7 @@ ${buildFolder("Stations", stationPlacemarks)}
 
                   <ShellCard
                     title="Evidence checklist"
-                    description="Design, bore files, and at least one field photo (station-attached or geotagged) before submit."
+                    description="Design, field data, and at least one field photo (station-attached or geotagged) before submit."
                   >
                     <div style={{ display: "grid", gap: 10, fontSize: 13, color: "#334155" }}>
                       <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
@@ -5302,7 +5584,7 @@ ${buildFolder("Stations", stationPlacemarks)}
                       </div>
                       <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                         <span style={{ fontWeight: 800, color: hasBoreFiles ? "#166534" : "#94a3b8", minWidth: 18 }}>{hasBoreFiles ? "✓" : "○"}</span>
-                        <span>Structured bore logs loaded</span>
+                        <span>Field data loaded</span>
                       </div>
                       <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                         <span style={{ fontWeight: 800, color: stationPhotos.length > 0 || gpsPhotos.length > 0 ? "#166534" : "#94a3b8", minWidth: 18 }}>
@@ -5320,9 +5602,9 @@ ${buildFolder("Stations", stationPlacemarks)}
                           <button
                             type="button"
                             onClick={() => setBillingApprovalStatus("pending")}
-                            disabled={busy || !billingChecklistComplete}
+                            disabled={busy || !billingChecklistComplete || closeoutLocked}
                             style={{
-                              ...buttonStyle("#0f172a", "#ffffff", "#000000", busy || !billingChecklistComplete),
+                              ...buttonStyle("#0f172a", "#ffffff", "#000000", busy || !billingChecklistComplete || closeoutLocked),
                               justifySelf: "start",
                             }}
                           >
@@ -5341,8 +5623,8 @@ ${buildFolder("Stations", stationPlacemarks)}
                           <button
                             type="button"
                             onClick={() => setBillingApprovalStatus("approved")}
-                            disabled={busy}
-                            style={{ ...buttonStyle("#0f172a", "#ffffff", "#000000", busy), justifySelf: "start" }}
+                            disabled={busy || closeoutLocked}
+                            style={{ ...buttonStyle("#0f172a", "#ffffff", "#000000", busy || closeoutLocked), justifySelf: "start" }}
                           >
                             Mark Approved
                           </button>
@@ -5358,9 +5640,50 @@ ${buildFolder("Stations", stationPlacemarks)}
 
               <Section title="6. Export / Print" subtitle="Opens a clean print-only report — use browser Save as PDF for a file.">
                 <div style={{ display: "grid", gap: 14 }}>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center" }}>
+                    {closeoutLocked && state?.closeout_lock ? (
+                      <div
+                        style={{
+                          flex: "1 1 280px",
+                          padding: "10px 14px",
+                          borderRadius: 12,
+                          background: "#fef3c7",
+                          border: "1px solid #fcd34d",
+                          fontSize: 13,
+                          color: "#92400e",
+                          fontWeight: 600,
+                        }}
+                      >
+                        🔒 Locked by {String(state.closeout_lock.locked_by ?? "—")} at{" "}
+                        {state.closeout_lock.locked_at
+                          ? new Date(String(state.closeout_lock.locked_at)).toLocaleString()
+                          : "—"}
+                      </div>
+                    ) : null}
+                    {!closeoutLocked ? (
+                      <button
+                        type="button"
+                        onClick={() => void handleLockCloseout()}
+                        disabled={busy}
+                        style={buttonStyle("#0f172a", "#ffffff", "#000000", busy)}
+                      >
+                        Lock Closeout
+                      </button>
+                    ) : null}
+                    {closeoutLocked && canUnlockCloseout ? (
+                      <button
+                        type="button"
+                        onClick={() => void handleUnlockCloseout()}
+                        disabled={busy}
+                        style={buttonStyle("#ffffff", "#0f172a", "#cbd5e1", busy)}
+                      >
+                        Unlock Closeout
+                      </button>
+                    ) : null}
+                  </div>
                   <ShellCard
                     title="Closeout Packet V1"
-                    description="Generate a structured closeout packet from existing job data — bore logs, QA flags, overrides, billing, and plan evidence. Preview in-browser, then Print / Save as PDF."
+                    description="Generate a structured closeout packet from existing job data — field data, QA flags, overrides, billing, and plan evidence. Preview in-browser, then Print / Save as PDF."
                   >
                     <CloseoutPacket
                       activeJob={activeJob}
@@ -5382,6 +5705,8 @@ ${buildFolder("Stations", stationPlacemarks)}
                       hasGeneratedOutput={hasGeneratedOutput}
                       notes={notes}
                       operatorNotesNotRequired={operatorNotesNotRequired}
+                      closeoutLocked={closeoutLocked}
+                      billingApproved={billingApproved}
                       stationPhotos={stationPhotos}
                       geoTaggedPhotos={gpsPhotos.map((p) => ({
                         id: p.id,
@@ -5415,7 +5740,8 @@ ${buildFolder("Stations", stationPlacemarks)}
                       value={notes}
                       onChange={(e) => setNotes(e.target.value)}
                       placeholder="Example: Route looked right but station spacing seemed compressed near sheet 14..."
-                      style={{ width: "100%", minHeight: 140, borderRadius: 14, border: "1px solid #cfd8e3", padding: 12, outline: "none", resize: "vertical", fontSize: 14, background: "#ffffff" }}
+                      disabled={workspaceReadOnly}
+                      style={{ width: "100%", minHeight: 140, borderRadius: 14, border: "1px solid #cfd8e3", padding: 12, outline: "none", resize: "vertical", fontSize: 14, background: workspaceReadOnly ? "#f1f5f9" : "#ffffff" }}
                     />
                     <label
                       style={{
@@ -5433,14 +5759,15 @@ ${buildFolder("Stations", stationPlacemarks)}
                         type="checkbox"
                         checked={operatorNotesNotRequired}
                         onChange={(e) => setOperatorNotesNotRequired(e.target.checked)}
+                        disabled={workspaceReadOnly}
                         style={{ width: 16, height: 16, flexShrink: 0 }}
                       />
                       No operator notes required
                     </label>
                     <button
                       onClick={submitBugNote}
-                      disabled={busy || !notes.trim()}
-                      style={{ ...buttonStyle("#0f172a", "#ffffff", "#0f172a", busy || !notes.trim()), marginTop: 12, width: "100%" }}
+                      disabled={busy || !notes.trim() || workspaceReadOnly}
+                      style={{ ...buttonStyle("#0f172a", "#ffffff", "#0f172a", busy || !notes.trim() || workspaceReadOnly), marginTop: 12, width: "100%" }}
                     >
                       Submit Operator Note
                     </button>
@@ -5544,10 +5871,10 @@ ${buildFolder("Stations", stationPlacemarks)}
           </>
         )}
 
-        {/* Bore log reference line */}
+        {/* Field data reference line */}
         {(state?.bore_log_summary?.length ?? 0) > 0 && (
           <p style={{ margin: "0 0 12px 0", fontSize: 13, color: "#475569" }}>
-            Source bore logs reviewed: <strong>{state!.bore_log_summary!.length} {state!.bore_log_summary!.length === 1 ? "file" : "files"}</strong>
+            Source field data reviewed: <strong>{state!.bore_log_summary!.length} {state!.bore_log_summary!.length === 1 ? "file" : "files"}</strong>
           </p>
         )}
 
@@ -5624,9 +5951,16 @@ ${buildFolder("Stations", stationPlacemarks)}
   );
 }
 
-export default function RedlineMap({ mode = "default", projectId, workspaceTitle }: RedlineMapProps) {
+export default function RedlineMap({ mode = "default", projectId, workspaceTitle, projectType = null }: RedlineMapProps) {
   if (mode === "mobileWalk") {
     return <MobileWalkContainer />;
   }
-  return <OfficeRedlineMapInner mode={mode} projectId={projectId} workspaceTitle={workspaceTitle} />;
+  return (
+    <OfficeRedlineMapInner
+      mode={mode}
+      projectId={projectId}
+      workspaceTitle={workspaceTitle}
+      projectType={projectType}
+    />
+  );
 }

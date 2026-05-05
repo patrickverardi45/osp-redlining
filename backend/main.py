@@ -156,6 +156,11 @@ def _reset_workspace_state() -> None:
             "walk_meta": {},
             "walk_breadcrumbs": [],
             "walk_station_events": [],
+            "closeout_lock": {
+                "is_locked": False,
+                "locked_by": None,
+                "locked_at": None,
+            },
         }
     )
 
@@ -199,6 +204,11 @@ def _default_session_state() -> Dict[str, Any]:
         "walk_meta": {},
         "walk_breadcrumbs": [],
         "walk_station_events": [],
+        "closeout_lock": {
+            "is_locked": False,
+            "locked_by": None,
+            "locked_at": None,
+        },
     }
 
 
@@ -239,6 +249,35 @@ class _session_scope:
             _SESSIONS[self.session_id] = dict(STATE)
         finally:
             _SESSION_LOCK.release()
+
+
+CLOSEOUT_LOCKED_MESSAGE = "Closeout is locked"
+
+
+def _normalize_closeout_lock(raw: Any) -> Dict[str, Any]:
+    if not isinstance(raw, dict):
+        return {"is_locked": False, "locked_by": None, "locked_at": None}
+    return {
+        "is_locked": bool(raw.get("is_locked")),
+        "locked_by": raw.get("locked_by"),
+        "locked_at": raw.get("locked_at"),
+    }
+
+
+def _is_closeout_locked() -> bool:
+    return bool(_normalize_closeout_lock(STATE.get("closeout_lock")).get("is_locked"))
+
+
+def _json_closeout_locked_response() -> JSONResponse:
+    return JSONResponse(
+        status_code=423,
+        content={
+            "success": False,
+            "error": CLOSEOUT_LOCKED_MESSAGE,
+            "closeout_lock": _normalize_closeout_lock(STATE.get("closeout_lock")),
+            "session_id": str(STATE.get("_session_id_hint") or ""),
+        },
+    )
 
 
 CURRENT_PACKET_PRINT_SHEET_INDEX: Dict[str, Dict[str, Any]] = {
@@ -6693,6 +6732,7 @@ def _summary_payload(include_debug: bool = False) -> Dict[str, Any]:
             "kmz_reference_full": STATE.get("kmz_reference", {}) or {},
             "engineering_plans": _load_engineering_plan_index_for_session(STATE.get("_session_id_hint", "")),
             "bore_log_summary": _bore_log_summary_from_rows(committed_rows),
+            "closeout_lock": _normalize_closeout_lock(STATE.get("closeout_lock")),
         }
         return payload
 
@@ -6764,6 +6804,7 @@ def _summary_payload(include_debug: bool = False) -> Dict[str, Any]:
         "active_route_runtime_verification": active_route_runtime_verification,
         "engineering_plans": _load_engineering_plan_index_for_session(STATE.get("_session_id_hint", "")),
         "bore_log_summary": _bore_log_summary_from_rows(committed_rows),
+        "closeout_lock": _normalize_closeout_lock(STATE.get("closeout_lock")),
     }
 
 
@@ -6777,6 +6818,8 @@ async def upload_design(
     try:
         file_bytes = await file.read()
         with _session_scope(resolved_session_id):
+            if _is_closeout_locked():
+                return _json_closeout_locked_response()
             route_catalog = _build_route_catalog(file_bytes, file.filename or "design.kmz")
             STATE["route_catalog"] = route_catalog
             STATE["kmz_reference"] = _build_kmz_reference(file_bytes, file.filename or "design.kmz")
@@ -6848,6 +6891,8 @@ async def select_active_route(
     resolved_session_id = _resolve_session_id(session_id)
     try:
         with _session_scope(resolved_session_id):
+            if _is_closeout_locked():
+                return _json_closeout_locked_response()
             matched_route = _find_route_by_id(route_id)
             if not matched_route:
                 return _err("Route not found.", status_code=404, session_id=resolved_session_id)
@@ -6873,6 +6918,8 @@ async def upload_structured_bore_files(
             prepared_files.append((latest_name, file_bytes))
 
         with _session_scope(resolved_session_id):
+            if _is_closeout_locked():
+                return _json_closeout_locked_response()
             existing_rows = list(STATE.get("committed_rows", []) or [])
             existing_by_file: Dict[str, List[Dict[str, Any]]] = {}
             for row in existing_rows:
@@ -6903,6 +6950,8 @@ async def upload_structured_bore_files(
 def reset_state(session_id: Optional[str] = None) -> JSONResponse:
     resolved_session_id = _resolve_session_id(session_id)
     with _session_scope(resolved_session_id):
+        if _is_closeout_locked():
+            return _json_closeout_locked_response()
         _reset_workspace_state()
         return _ok(session_id=resolved_session_id, message="Workspace reset successfully", **_summary_payload())
 
@@ -6978,6 +7027,8 @@ def report_bug(payload: Dict[str, Any] = Body(...), session_id: Optional[str] = 
     body_session_id = payload.get("session_id") if isinstance(payload, dict) else None
     resolved_session_id = _resolve_session_id(session_id or body_session_id)
     with _session_scope(resolved_session_id):
+        if _is_closeout_locked():
+            return _json_closeout_locked_response()
         bug_reports = list(STATE.get("bug_reports", []) or [])
         entry = {
             "id": str(payload.get("id") or ""),
@@ -7214,6 +7265,10 @@ async def upload_station_photos(
         return _err("At least one image file is required.", session_id=resolved_session_id)
     if len(upload_files) > STATION_PHOTO_MAX_FILES_PER_UPLOAD:
         return _err(f"Upload up to {STATION_PHOTO_MAX_FILES_PER_UPLOAD} files at a time.", session_id=resolved_session_id)
+
+    with _session_scope(resolved_session_id):
+        if _is_closeout_locked():
+            return _json_closeout_locked_response()
 
     _ensure_station_photo_storage()
     station_folder = _station_photo_folder(station_identity_hash)
@@ -7456,6 +7511,10 @@ async def upload_engineering_plans(
             session_id=resolved_session_id,
         )
 
+    with _session_scope(resolved_session_id):
+        if _is_closeout_locked():
+            return _json_closeout_locked_response()
+
     _ensure_engineering_plan_storage()
     session_folder = ENGINEERING_PLAN_ROOT / _safe_filename(resolved_session_id)
     session_folder.mkdir(parents=True, exist_ok=True)
@@ -7572,6 +7631,10 @@ def save_nova_override(
     body_session_id = payload.get("session_id") if isinstance(payload, dict) else None
     resolved_session_id = _resolve_session_id(session_id or body_session_id)
 
+    with _session_scope(resolved_session_id):
+        if _is_closeout_locked():
+            return _json_closeout_locked_response()
+
     issue_key = str(payload.get("issue_key") or "").strip()
     decision  = str(payload.get("decision") or "").strip()
     reason    = str(payload.get("reason") or "").strip()
@@ -7631,6 +7694,9 @@ def delete_nova_override(
 ) -> JSONResponse:
     """Remove one Nova override by id, scoped to the caller's session."""
     resolved_session_id = _resolve_session_id(session_id)
+    with _session_scope(resolved_session_id):
+        if _is_closeout_locked():
+            return _json_closeout_locked_response()
     try:
         data = _load_nova_overrides_index()
         before = len(data.get("overrides", []))
@@ -7650,6 +7716,87 @@ def delete_nova_override(
         "session_id": resolved_session_id,
         "removed": removed,
     })
+
+
+def _closeout_lock_user_from_payload(payload: Any) -> str:
+    if not isinstance(payload, dict):
+        return "unknown"
+    u = str(payload.get("user") or payload.get("locked_by") or "").strip()
+    return u or "unknown"
+
+
+def _closeout_unlock_role_from_payload(payload: Any) -> str:
+    if not isinstance(payload, dict):
+        return ""
+    return str(payload.get("role") or "").strip()
+
+
+@app.post("/api/closeout/lock")
+@app.post("/closeout/lock")
+def api_closeout_lock(
+    payload: Dict[str, Any] = Body(default_factory=dict),
+    session_id: Optional[str] = None,
+) -> JSONResponse:
+    body_sid = payload.get("session_id") if isinstance(payload, dict) else None
+    resolved = _resolve_session_id(session_id or body_sid)
+    user = _closeout_lock_user_from_payload(payload)
+    with _session_scope(resolved):
+        cur = _normalize_closeout_lock(STATE.get("closeout_lock"))
+        if cur.get("is_locked"):
+            return JSONResponse(
+                content={
+                    "success": True,
+                    "message": "Already locked",
+                    "session_id": resolved,
+                    "closeout_lock": cur,
+                }
+            )
+        nxt = {
+            "is_locked": True,
+            "locked_by": user,
+            "locked_at": datetime.now(timezone.utc).isoformat(),
+        }
+        STATE["closeout_lock"] = nxt
+        return JSONResponse(
+            content={
+                "success": True,
+                "session_id": resolved,
+                "closeout_lock": nxt,
+            }
+        )
+
+
+@app.post("/api/closeout/unlock")
+@app.post("/closeout/unlock")
+def api_closeout_unlock(
+    payload: Dict[str, Any] = Body(default_factory=dict),
+    session_id: Optional[str] = None,
+) -> JSONResponse:
+    body_sid = payload.get("session_id") if isinstance(payload, dict) else None
+    resolved = _resolve_session_id(session_id or body_sid)
+    role = _closeout_unlock_role_from_payload(payload).lower()
+    if role not in ("admin", "manager"):
+        return JSONResponse(
+            status_code=403,
+            content={
+                "success": False,
+                "error": "Only admin or manager can unlock closeout.",
+                "session_id": resolved,
+            },
+        )
+    with _session_scope(resolved):
+        STATE["closeout_lock"] = {
+            "is_locked": False,
+            "locked_by": None,
+            "locked_at": None,
+        }
+        return JSONResponse(
+            content={
+                "success": True,
+                "session_id": resolved,
+                "closeout_lock": STATE["closeout_lock"],
+            }
+        )
 
 
 # ── Nova Chat — deterministic read-only copilot ───────────────────────────────
@@ -9825,6 +9972,11 @@ def create_job_exception(job_id: str, payload: Dict[str, Any] = Body(...)) -> JS
         return _err("description is required.", status_code=400)
     if severity not in REVIEWER_EXCEPTION_SEVERITIES:
         return _err("severity must be low, medium, high, or critical.", status_code=400)
+
+    resolved_scope = _resolve_session_id(session_id)
+    with _session_scope(resolved_scope):
+        if _is_closeout_locked():
+            return _json_closeout_locked_response()
 
     record = {
         "id": f"{safe_job_id}-reviewer-exception-{uuid.uuid4().hex[:12]}",

@@ -416,7 +416,7 @@ function ProjectCard({ project }: { project: Project }) {
           value={!summary.hasLiveState ? "—" : summary.completion ?? "—"}
           accent={summary.completion ? "info" : undefined}
         />
-        <Metric label="Bore logs" value={!summary.hasLiveState ? "—" : String(summary.boreLogs ?? 0)} />
+        <Metric label="Field data" value={!summary.hasLiveState ? "—" : String(summary.boreLogs ?? 0)} />
         <Metric label="Photos" value={!summary.hasLiveState ? "—" : String(summary.photos ?? 0)} />
         {summary.lastUpdated ? <Metric label="Last updated" value={summary.lastUpdated} /> : null}
       </div>

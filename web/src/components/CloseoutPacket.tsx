@@ -76,6 +76,10 @@ export type CloseoutPacketProps = {
   projectCompletionPercent: number | null;
   /** When true, the closeout checklist treats operator notes as satisfied without text */
   operatorNotesNotRequired?: boolean;
+  /** When true, review decision actions are disabled (closeout locked server-side). */
+  closeoutLocked?: boolean;
+  /** Billing / closeout approval panel — when approved and checklist gates pass, status shows "Approved for Billing". */
+  billingApproved?: boolean;
 };
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -135,6 +139,71 @@ function translateStatus(raw: string): string {
   }
 }
 
+/** Same gates as Final Review Checklist rows except the status line itself (avoids circular logic). */
+function allChecklistGatesComplete(
+  hasDesign: boolean,
+  hasBoreFiles: boolean,
+  hasEngineeringPlans: boolean,
+  allReviewResolved: boolean,
+  hasPhotoEvidence: boolean,
+  notesSatisfied: boolean,
+): boolean {
+  return (
+    hasDesign &&
+    hasBoreFiles &&
+    hasEngineeringPlans &&
+    allReviewResolved &&
+    hasPhotoEvidence &&
+    notesSatisfied
+  );
+}
+
+type CloseoutReviewResolved = {
+  label: string;
+  color: string;
+  checklistRowComplete: boolean;
+};
+
+/** Billing approval + checklist gates override Nova readiness when both are satisfied. */
+function resolveCloseoutReviewDisplay(
+  rawStatus: string,
+  billingApproved: boolean,
+  gatesComplete: boolean,
+): CloseoutReviewResolved {
+  if (billingApproved && gatesComplete) {
+    return {
+      label: "Approved for Billing",
+      color: "#16a34a",
+      checklistRowComplete: true,
+    };
+  }
+  if (rawStatus === "Blocked") {
+    return {
+      label: "Requires Review Before Closeout",
+      color: "#dc2626",
+      checklistRowComplete: false,
+    };
+  }
+  if (rawStatus === "Needs Review") {
+    return {
+      label: "Review Required Before Billing",
+      color: "#d97706",
+      checklistRowComplete: false,
+    };
+  }
+  if (rawStatus === "Ready") {
+    return {
+      label: "Ready for Closeout Review",
+      color: "#16a34a",
+      checklistRowComplete: true,
+    };
+  }
+  const label = translateStatus(rawStatus);
+  const color = STATUS_COLOR[rawStatus] ?? "#64748b";
+  const checklistRowComplete = rawStatus !== "Blocked" && rawStatus !== "Needs Review";
+  return { label, color, checklistRowComplete };
+}
+
 function translateDecision(raw: string): string {
   return DECISION_LABEL[raw] ?? raw;
 }
@@ -148,6 +217,19 @@ function buildIssueId(item: QaFlagItem, index: number): string {
     item.rawReasons?.join("|") || "",
     index,
   ].join("::");
+}
+
+/** Every actionable (non-info) review item has decision Reviewed or Accepted Override. */
+function allReviewItemsResolved(qaItems: QaFlagItem[], overrides: ReviewOverride[]): boolean {
+  return qaItems.every((q, i) => {
+    if (q.severity === "info") return true;
+    const issueId = buildIssueId(q, i);
+    const ov = overrides.find((o) => o.issue_key === issueId);
+    return (
+      ov != null &&
+      (ov.decision === "Reviewed" || ov.decision === "Accepted Override")
+    );
+  });
 }
 
 function decisionColumnStyle(override: ReviewOverride | undefined): { label: string; color: string } {
@@ -214,12 +296,11 @@ function buildPrintHtml(
     geoTaggedPhotos,
     projectCompletionPercent,
     operatorNotesNotRequired = false,
+    billingApproved = false,
   } = props;
 
   const routeName = state?.selected_route_name || state?.route_name || "—";
   const rawStatus = novaSummary.billingReadiness.status;
-  const statusLabel = translateStatus(rawStatus);
-  const statusColor = STATUS_COLOR[rawStatus] ?? "#64748b";
   const boreLogs = state?.bore_log_summary ?? [];
   const plans = state?.engineering_plans ?? [];
   const qaItems = novaSummary.qaFlags.items;
@@ -340,20 +421,44 @@ function buildPrintHtml(
     </div>`;
 
   const hasEngineeringPlans = plans.length > 0;
-  const hasNoActionableIssues = qaItems.every((q) => q.severity === "info");
+  const actionableReviewCount = qaItems.filter((q) => q.severity !== "info").length;
+  const allReviewResolved = allReviewItemsResolved(qaItems, overrides);
+
+  const notesSatisfied =
+    notes.trim().length > 0 || operatorNotesNotRequired === true;
+  const notesCheckLabel =
+    notes.trim().length > 0
+      ? "Operator notes provided"
+      : operatorNotesNotRequired
+        ? "No operator notes required"
+        : "Operator notes required";
+
+  const checklistGatesComplete = allChecklistGatesComplete(
+    hasDesign,
+    hasBoreFiles,
+    hasEngineeringPlans,
+    allReviewResolved,
+    hasPhotoEvidence,
+    notesSatisfied,
+  );
+  const resolvedStatus = resolveCloseoutReviewDisplay(rawStatus, billingApproved, checklistGatesComplete);
+  const statusLabel = resolvedStatus.label;
+  const statusColor = resolvedStatus.color;
 
   const checklist = [
     checkItem(hasDesign, "Design file loaded"),
-    checkItem(hasBoreFiles, "Bore log files loaded"),
+    checkItem(hasBoreFiles, "Field data files loaded"),
     checkItem(hasEngineeringPlans, `Engineering plans attached (${plans.length} plan${plans.length !== 1 ? "s" : ""})`),
-    checkItem(hasNoActionableIssues, qaItems.length === 0 ? "Review notes — none found" : `Review notes addressed (${qaItems.filter((q) => q.severity !== "info").length} item${qaItems.filter((q) => q.severity !== "info").length !== 1 ? "s" : ""} requiring attention)`),
+    checkItem(
+      allReviewResolved,
+      actionableReviewCount === 0
+        ? "Review notes — none found"
+        : `Review notes addressed (${actionableReviewCount} item${actionableReviewCount !== 1 ? "s" : ""} requiring attention)`,
+    ),
     checkItem(overrides.length >= 0, overrides.length > 0 ? `Review decisions documented (${overrides.length} recorded)` : "No review decisions recorded"),
     checkItem(hasPhotoEvidence, hasPhotoEvidence ? `Field photo evidence attached (${stationPhotos.length + geoTaggedPhotos.length} photo${stationPhotos.length + geoTaggedPhotos.length !== 1 ? "s" : ""})` : "Field photo evidence not attached"),
-    checkItem(rawStatus !== "Blocked", `Closeout review status: ${statusLabel}`),
-    checkItem(
-      notes.trim().length > 0 || operatorNotesNotRequired === true,
-      "Operator notes provided",
-    ),
+    checkItem(resolvedStatus.checklistRowComplete, `Closeout review status: ${statusLabel}`),
+    checkItem(notesSatisfied, notesCheckLabel),
   ].join("");
 
   return `<!DOCTYPE html>
@@ -397,7 +502,7 @@ ${h2("Job Summary", "1")}
   ${row("Job / Route", activeJob)}
   ${row("Selected Route", routeName)}
   ${row("Design File", hasDesign ? "Loaded" : "Not loaded")}
-  ${row("Bore Log Files", hasBoreFiles ? `${state?.loaded_field_data_files ?? 0} file(s) loaded` : "Not loaded")}
+  ${row("Field Data Files", hasBoreFiles ? `${state?.loaded_field_data_files ?? 0} file(s) loaded` : "Not loaded")}
   ${row("Engineering Plans", plans.length > 0 ? `${plans.length} plan(s)` : "None attached")}
   ${row("Date Generated", dateStr)}
   ${row("Closeout Review Status", `<span style="color:${statusColor};font-weight:700">${statusLabel}</span>`)}
@@ -414,7 +519,7 @@ ${h2("Route / Production Summary", "2")}
   ${row("Drill Paths", String(drillPathRows.length))}
   ${row("Processed Groups", String(novaSummary.jobOverview.renderedGroups))}
   ${row("Groups Requiring Review", String(novaSummary.jobOverview.blockedGroups))}
-  ${row("Total Bore Log Groups", String(novaSummary.jobOverview.totalGroups))}
+  ${row("Total Field Data Groups", String(novaSummary.jobOverview.totalGroups))}
 </tbody></table>
 
 ${drillPathRows.length > 0 ? `${h2("Drill Path Detail", "2a")}
@@ -428,9 +533,9 @@ ${drillPathRows.length > 0 ? `${h2("Drill Path Detail", "2a")}
   </tr></tfoot>
 </table>` : ""}
 
-${h2("Bore Log Summary", "3")}
+${h2("Field Data Summary", "3")}
 ${boreLogs.length === 0
-  ? `<p style="font-size:13px;color:#64748b">No bore log files loaded.</p>`
+  ? `<p style="font-size:13px;color:#64748b">No field data files loaded.</p>`
   : `<table>
   <thead><tr><th>Source File</th><th>Rows</th><th>Span</th><th>Dates</th><th>Print Tokens</th><th>Evidence Layer</th><th>Processing Status</th></tr></thead>
   <tbody>${boreLogRows}</tbody>
@@ -460,7 +565,7 @@ ${plans.length === 0 && engineeringPlanSignals.length === 0
   : `<table><tbody>
   ${row("Plans Attached", String(plans.length))}
   ${plans.length > 0 ? row("Plan Files", plans.map((p) => p.original_filename).join(", ")) : ""}
-  ${novaSummary.planIntelligence.planSupportedBoreLogs.length > 0 ? row("Plan-Referenced Bore Logs", novaSummary.planIntelligence.planSupportedBoreLogs.map(shortFile).join(", ")) : ""}
+  ${novaSummary.planIntelligence.planSupportedBoreLogs.length > 0 ? row("Plan-Referenced Field Data", novaSummary.planIntelligence.planSupportedBoreLogs.map(shortFile).join(", ")) : ""}
 </tbody></table>
 ${engineeringPlanSignals.length > 0 ? `<table style="margin-top:8px">
   <thead><tr><th>Plan File</th><th>Sheet / Print Tokens</th><th>Route References</th><th>Date</th></tr></thead>
@@ -508,12 +613,15 @@ ${h2("Billing Summary", "9")}
 ${h2("Operator Notes", "10")}
 ${notes.trim()
   ? `<div style="background:#fafbfc;border:1px solid #e2e8f0;border-radius:8px;padding:12px 16px;font-size:13px;line-height:1.6;white-space:pre-wrap;color:#334155">${notes.trim()}</div>`
-  : `<p style="font-size:13px;color:#64748b;font-style:italic">No operator notes provided.</p>`}
+  : operatorNotesNotRequired
+    ? `<p style="font-size:13px;color:#64748b;font-style:italic">No operator notes required.</p>`
+    : `<p style="font-size:13px;color:#64748b;font-style:italic">No operator notes provided.</p>`}
 
 ${h2("Final Review Checklist", "11")}
 <div style="max-width:600px">${checklist}</div>
 <div class="disc" style="margin-top:16px">
   Status key:&nbsp;
+  <span style="color:#16a34a;font-weight:700">Approved for Billing</span> ·
   <span style="color:#16a34a;font-weight:700">Ready for Closeout Review</span> ·
   <span style="color:#d97706;font-weight:700">Review Required Before Billing</span> ·
   <span style="color:#dc2626;font-weight:700">Requires Review Before Closeout</span>
@@ -550,10 +658,18 @@ export default function CloseoutPacket(props: CloseoutPacketProps) {
     geoTaggedPhotos,
     projectCompletionPercent,
     operatorNotesNotRequired = false,
+    closeoutLocked = false,
+    billingApproved = false,
   } = props;
 
-  const operatorNotesChecklistOk =
+  const notesSatisfied =
     notes.trim().length > 0 || operatorNotesNotRequired === true;
+  const notesCheckLabel =
+    notes.trim().length > 0
+      ? "Operator notes provided"
+      : operatorNotesNotRequired
+        ? "No operator notes required"
+        : "Operator notes required";
 
   const [open, setOpen] = useState(false);
   const [overrides, setOverrides] = useState<ReviewOverride[]>([]);
@@ -563,8 +679,6 @@ export default function CloseoutPacket(props: CloseoutPacketProps) {
   const [rowSaveErrors, setRowSaveErrors] = useState<Record<string, string>>({});
 
   const rawStatus = novaSummary.billingReadiness.status;
-  const statusColor = STATUS_COLOR[rawStatus] ?? "#64748b";
-  const statusDisplay = translateStatus(rawStatus);
   const qaItems = novaSummary.qaFlags.items;
   const overrideByIssueKey = useMemo(() => {
     const m = new Map<string, ReviewOverride>();
@@ -573,14 +687,39 @@ export default function CloseoutPacket(props: CloseoutPacketProps) {
     }
     return m;
   }, [overrides]);
+  const allReviewResolved = useMemo(
+    () => allReviewItemsResolved(qaItems, overrides),
+    [qaItems, overrides],
+  );
   const plans = state?.engineering_plans ?? [];
   const boreLogs = state?.bore_log_summary ?? [];
   const hasPhotoEvidence = stationPhotos.length > 0 || geoTaggedPhotos.length > 0;
   const mappedGpsPhotos = geoTaggedPhotos.filter((p) => p.reason === "mapped");
 
+  const checklistGatesComplete = useMemo(
+    () =>
+      allChecklistGatesComplete(
+        hasDesign,
+        hasBoreFiles,
+        plans.length > 0,
+        allReviewResolved,
+        hasPhotoEvidence,
+        notesSatisfied,
+      ),
+    [hasDesign, hasBoreFiles, plans.length, allReviewResolved, hasPhotoEvidence, notesSatisfied],
+  );
+
+  const closeoutReviewResolved = useMemo(
+    () => resolveCloseoutReviewDisplay(rawStatus, billingApproved, checklistGatesComplete),
+    [rawStatus, billingApproved, checklistGatesComplete],
+  );
+
+  const statusColor = closeoutReviewResolved.color;
+  const statusDisplay = closeoutReviewResolved.label;
+
   // Fetch review decisions on open (read-only — same endpoint as NovaSummaryCard)
   useEffect(() => {
-    if (!open || overridesLoaded) return;
+    if ((!open && !billingApproved) || overridesLoaded) return;
     async function load() {
       const sessionId = getStoredSessionId();
       if (!sessionId || !API_BASE) { setOverridesLoaded(true); return; }
@@ -593,7 +732,7 @@ export default function CloseoutPacket(props: CloseoutPacketProps) {
       finally { setOverridesLoaded(true); }
     }
     load();
-  }, [open, overridesLoaded]);
+  }, [open, billingApproved, overridesLoaded]);
 
   const saveCloseoutIssueDecision = useCallback(
     async (
@@ -602,6 +741,7 @@ export default function CloseoutPacket(props: CloseoutPacketProps) {
       decision: OverrideDecision,
       previousOverride: ReviewOverride | undefined,
     ) => {
+      if (closeoutLocked) return;
       const issueId = buildIssueId(item, index);
       const record: ReviewOverride = {
         id: issueId,
@@ -660,7 +800,7 @@ export default function CloseoutPacket(props: CloseoutPacketProps) {
         setSavingIssueId(null);
       }
     },
-    [],
+    [closeoutLocked],
   );
 
   // Close on Escape
@@ -788,7 +928,13 @@ export default function CloseoutPacket(props: CloseoutPacketProps) {
             </div>
 
             {/* Body */}
-            <div style={{ flex: 1, overflowY: "auto", padding: "24px 28px", background: "#fff", color: "#0f172a", fontSize: 13, lineHeight: 1.6 }}>
+              <div style={{ flex: 1, overflowY: "auto", padding: "24px 28px", background: "#fff", color: "#0f172a", fontSize: 13, lineHeight: 1.6 }}>
+
+              {closeoutLocked ? (
+                <div style={{ background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 8, padding: "10px 14px", marginBottom: 16, fontSize: 12, color: "#991b1b", fontWeight: 600 }}>
+                  Closeout is locked — review decisions cannot be changed until an admin or manager unlocks the workspace.
+                </div>
+              ) : null}
 
               {/* Disclaimer */}
               <div style={{ background: "#fefce8", border: "1px solid #fde68a", borderRadius: 8, padding: "10px 14px", marginBottom: 20, fontSize: 12, color: "#78350f", lineHeight: 1.5 }}>
@@ -804,7 +950,7 @@ export default function CloseoutPacket(props: CloseoutPacketProps) {
                   ["Job / Route", activeJob],
                   ["Selected Route", state?.selected_route_name || state?.route_name || "—"],
                   ["Design File", hasDesign ? "Loaded" : "Not loaded"],
-                  ["Bore Log Files", hasBoreFiles ? `${state?.loaded_field_data_files ?? 0} file(s) loaded` : "Not loaded"],
+                  ["Field Data Files", hasBoreFiles ? `${state?.loaded_field_data_files ?? 0} file(s) loaded` : "Not loaded"],
                   ["Engineering Plans", plans.length > 0 ? `${plans.length} plan(s)` : "None attached"],
                   ["Date Generated", new Date().toLocaleString("en-US", { year: "numeric", month: "long", day: "numeric", hour: "2-digit", minute: "2-digit" })],
                   ["Closeout Review Status", statusDisplay],
@@ -825,7 +971,7 @@ export default function CloseoutPacket(props: CloseoutPacketProps) {
                   ["Drill Paths", String(drillPathRows.length)],
                   ["Processed Groups", String(novaSummary.jobOverview.renderedGroups)],
                   ["Groups Requiring Review", String(novaSummary.jobOverview.blockedGroups)],
-                  ["Total Bore Log Groups", String(novaSummary.jobOverview.totalGroups)],
+                  ["Total Field Data Groups", String(novaSummary.jobOverview.totalGroups)],
                 ]} />
                 {drillPathRows.length > 0 && (
                   <div style={{ marginTop: 12 }}>
@@ -858,10 +1004,10 @@ export default function CloseoutPacket(props: CloseoutPacketProps) {
                 )}
               </PS>
 
-              {/* ── 3. Bore Log Summary ──────────────────────────────────── */}
-              <PS num="3" title="Bore Log Summary">
+              {/* ── 3. Field Data Summary ──────────────────────────────────── */}
+              <PS num="3" title="Field Data Summary">
                 {boreLogs.length === 0 ? (
-                  <Empty>No bore log files loaded.</Empty>
+                  <Empty>No field data files loaded.</Empty>
                 ) : (
                   <>
                     <div style={{ overflowX: "auto" }}>
@@ -917,7 +1063,7 @@ export default function CloseoutPacket(props: CloseoutPacketProps) {
                           const dec = decisionColumnStyle(ov);
                           const rowBusy = savingIssueId === issueId;
                           const rowErr = rowSaveErrors[issueId];
-                          const actionsDisabled = !overridesLoaded || rowBusy;
+                          const actionsDisabled = !overridesLoaded || rowBusy || closeoutLocked;
                           const btnBase: React.CSSProperties = {
                             fontSize: 10,
                             fontWeight: 700,
@@ -1013,7 +1159,7 @@ export default function CloseoutPacket(props: CloseoutPacketProps) {
                       ["Plans Attached", String(plans.length)],
                       ...(plans.length > 0 ? [["Plan Files", plans.map((p) => p.original_filename).join(", ")]] as [string, string][] : []),
                       ...(novaSummary.planIntelligence.planSupportedBoreLogs.length > 0
-                        ? [["Plan-Referenced Bore Logs", novaSummary.planIntelligence.planSupportedBoreLogs.map(shortFile).join(", ")]] as [string, string][]
+                        ? [["Plan-Referenced Field Data", novaSummary.planIntelligence.planSupportedBoreLogs.map(shortFile).join(", ")]] as [string, string][]
                         : []),
                     ]} />
                     {engineeringPlanSignals.length > 0 && (
@@ -1185,6 +1331,8 @@ export default function CloseoutPacket(props: CloseoutPacketProps) {
                   <div style={{ background: "#fafbfc", border: "1px solid #e2e8f0", borderRadius: 8, padding: "12px 16px", fontSize: 13, lineHeight: 1.6, whiteSpace: "pre-wrap", color: "#334155" }}>
                     {notes.trim()}
                   </div>
+                ) : operatorNotesNotRequired ? (
+                  <Empty>No operator notes required.</Empty>
                 ) : (
                   <Empty>No operator notes provided.</Empty>
                 )}
@@ -1194,16 +1342,24 @@ export default function CloseoutPacket(props: CloseoutPacketProps) {
               <PS num="11" title="Final Review Checklist">
                 <div style={{ maxWidth: 580 }}>
                   <CI ok={hasDesign} label="Design file loaded" />
-                  <CI ok={hasBoreFiles} label={`Bore log files loaded (${state?.loaded_field_data_files ?? 0} file${(state?.loaded_field_data_files ?? 0) !== 1 ? "s" : ""})`} />
+                  <CI ok={hasBoreFiles} label={`Field data files loaded (${state?.loaded_field_data_files ?? 0} file${(state?.loaded_field_data_files ?? 0) !== 1 ? "s" : ""})`} />
                   <CI ok={plans.length > 0} label={`Engineering plans attached (${plans.length} plan${plans.length !== 1 ? "s" : ""})`} />
-                  <CI ok={qaItems.every((q) => q.severity === "info")} label={qaItems.length === 0 ? "Review notes — none found" : `Review notes addressed (${qaItems.filter((q) => q.severity !== "info").length} item${qaItems.filter((q) => q.severity !== "info").length !== 1 ? "s" : ""} requiring attention)`} />
+                  <CI
+                    ok={allReviewResolved}
+                    label={
+                      qaItems.filter((q) => q.severity !== "info").length === 0
+                        ? "Review notes — none found"
+                        : `Review notes addressed (${qaItems.filter((q) => q.severity !== "info").length} item${qaItems.filter((q) => q.severity !== "info").length !== 1 ? "s" : ""} requiring attention)`
+                    }
+                  />
                   <CI ok={overrides.length >= 0} label={overrides.length > 0 ? `Review decisions documented (${overrides.length} recorded)` : "No review decisions recorded"} />
                   <CI ok={hasPhotoEvidence} label={hasPhotoEvidence ? `Field photo evidence attached (${stationPhotos.length + geoTaggedPhotos.length} photo${stationPhotos.length + geoTaggedPhotos.length !== 1 ? "s" : ""})` : "Field photo evidence not attached"} />
-                  <CI ok={rawStatus !== "Blocked"} label={`Closeout review status: ${statusDisplay}`} />
-                  <CI ok={operatorNotesChecklistOk} label="Operator notes provided" />
+                  <CI ok={closeoutReviewResolved.checklistRowComplete} label={`Closeout review status: ${statusDisplay}`} />
+                  <CI ok={notesSatisfied} label={notesCheckLabel} />
                 </div>
                 <div style={{ marginTop: 14, background: "#f1f5f9", border: "1px solid #e2e8f0", borderRadius: 8, padding: "10px 14px", fontSize: 12, color: "#475569", lineHeight: 1.6 }}>
                   <strong>Status key:</strong>{" "}
+                  <span style={{ color: "#16a34a", fontWeight: 700 }}>Approved for Billing</span> ·{" "}
                   <span style={{ color: "#16a34a", fontWeight: 700 }}>Ready for Closeout Review</span> ·{" "}
                   <span style={{ color: "#d97706", fontWeight: 700 }}>Review Required Before Billing</span> ·{" "}
                   <span style={{ color: "#dc2626", fontWeight: 700 }}>Requires Review Before Closeout</span>

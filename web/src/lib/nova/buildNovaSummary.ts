@@ -20,19 +20,19 @@ function explainBlockReason(reason: string, sourceFile: string, hasSiblingRender
   if (reason === "no_geometry_output") {
     return {
       meaning: "No route geometry was generated for this group.",
-      resolution: "Check that the bore log rows contain valid lat/lon coordinates and form a continuous path.",
+      resolution: "Check that the field data rows contain valid lat/lon coordinates and form a continuous path.",
     };
   }
   if (reason === "no_matched_route") {
     return {
-      meaning: "The system could not find a route on the KMZ design that matches this group's bore path.",
-      resolution: "Confirm the bore log rows align with a route segment on the uploaded KMZ, or check for coordinate offset issues.",
+      meaning: "The system could not find a route on the KMZ design that matches this group's recorded field path.",
+      resolution: "Confirm the field data rows align with a route segment on the uploaded KMZ, or check for coordinate offset issues.",
     };
   }
   if (reason === "batch_level_conflict_resolution") {
     return {
       meaning: "This group was excluded because it conflicts with another group during batch-level deduplication.",
-      resolution: "Review overlapping bore log groups for this file and confirm which group represents the correct bore run.",
+      resolution: "Review overlapping field data groups for this file and confirm which group represents the correct run.",
     };
   }
 
@@ -43,7 +43,7 @@ function explainBlockReason(reason: string, sourceFile: string, hasSiblingRender
   if (prefix === "validation_status") {
     return {
       meaning: "This group failed field-data validation — one or more required columns are missing or have invalid values.",
-      resolution: "Open the bore log source file and check for missing station IDs, blank footage values, or unrecognised route codes.",
+      resolution: "Open the field data source file and check for missing station IDs, blank footage values, or unrecognised route codes.",
     };
   }
 
@@ -51,40 +51,40 @@ function explainBlockReason(reason: string, sourceFile: string, hasSiblingRender
     if (detail === "multiple_candidates") {
       const siblingNote = hasSiblingRendered ? ` Other groups from ${sourceFile} rendered successfully.` : "";
       return {
-        meaning: `Multiple routes on the KMZ matched this group's bore path and the system could not determine the correct one.${siblingNote}`,
+        meaning: `Multiple routes on the KMZ matched this group's field path and the system could not determine the correct one.${siblingNote}`,
         resolution: "Upload an engineering plan that clearly identifies the intended route, or manually select the correct route in the review panel.",
       };
     }
     if (detail === "no_candidates") {
       return {
-        meaning: "No routes on the KMZ matched this group's bore path coordinates.",
-        resolution: "Verify the KMZ design file covers this area, and confirm the bore log coordinates are correct.",
+        meaning: "No routes on the KMZ matched this group's field path coordinates.",
+        resolution: "Verify the KMZ design file covers this area, and confirm the field data coordinates are correct.",
       };
     }
     return {
       meaning: `Route selection failed: ${detail || "unknown route uniqueness issue"}.`,
-      resolution: "Review the bore log route codes and confirm they match a route on the uploaded KMZ.",
+      resolution: "Review the route codes in your field data and confirm they match a route on the uploaded KMZ.",
     };
   }
 
   if (prefix === "geometry_lock_gate") {
     return {
       meaning: "The route geometry for this group could not be locked to a confirmed path segment.",
-      resolution: "Check that the bore log has enough station points and that they fall within the expected route corridor on the KMZ.",
+      resolution: "Check that the field data has enough station points and that they fall within the expected route corridor on the KMZ.",
     };
   }
 
   if (prefix === "chain_gate") {
     return {
-      meaning: `Bore log station chain failed validation: ${detail || "chain integrity check failed"}.`,
-      resolution: "Review the station sequence in the bore log for gaps, duplicates, or out-of-order entries.",
+      meaning: `Field data station chain failed validation: ${detail || "chain integrity check failed"}.`,
+      resolution: "Review the station sequence in your field data for gaps, duplicates, or out-of-order entries.",
     };
   }
 
   if (prefix === "node_resolution_gate") {
     return {
       meaning: `Start or end node for this group could not be resolved on the route network: ${detail || "node resolution failed"}.`,
-      resolution: "Confirm the first and last bore log rows have coordinates that fall at or near a valid network node on the KMZ.",
+      resolution: "Confirm the first and last field data rows have coordinates that fall at or near a valid network node on the KMZ.",
     };
   }
 
@@ -103,7 +103,7 @@ function buildStoppedItem(sourceFile: string, stoppedAt: string): QaFlagItem {
       sourceFile,
       issue: `${sourceFile} — no route rankings produced.`,
       meaning: "The matching pipeline ran all scoring passes but could not produce any ranked route candidates for this group.",
-      resolution: "Check that the bore log has sufficient valid rows and that the KMZ contains a route within range of the bore path.",
+      resolution: "Check that the field data has sufficient valid rows and that the KMZ contains a route within range of the recorded path.",
       rawReasons: [stoppedAt],
     };
   }
@@ -112,8 +112,8 @@ function buildStoppedItem(sourceFile: string, stoppedAt: string): QaFlagItem {
       severity: "error",
       sourceFile,
       issue: `${sourceFile} — no anchored route hypotheses.`,
-      meaning: "The pipeline could not anchor any route hypothesis to the bore log data — typically because no route candidates passed the minimum evidence threshold.",
-      resolution: "Review the bore log rows for this group and confirm that station points overlap with at least one route on the KMZ.",
+      meaning: "The pipeline could not anchor any route hypothesis to the field data — typically because no route candidates passed the minimum evidence threshold.",
+      resolution: "Review the field data rows for this group and confirm that station points overlap with at least one route on the KMZ.",
       rawReasons: [stoppedAt],
     };
   }
@@ -123,7 +123,7 @@ function buildStoppedItem(sourceFile: string, stoppedAt: string): QaFlagItem {
       sourceFile,
       issue: `${sourceFile} — stopped at render gate.`,
       meaning: "The system did not generate geometry for this group because required route and point checks failed.",
-      resolution: "Review the bore log rows for this group and confirm it has enough valid station points to form a route segment.",
+      resolution: "Review the field data rows for this group and confirm it has enough valid station points to form a route segment.",
       rawReasons: [stoppedAt],
     };
   }
@@ -197,7 +197,7 @@ function buildAmbiguityItem(
         sourceFile,
         issue: `${sourceFile} — route ambiguity: no plan evidence.`,
         meaning: `This group's route could not be uniquely determined and no engineering plans have been uploaded to help resolve it.${siblingNote}`,
-        resolution: "Upload an engineering plan that identifies the intended route for this bore run.",
+        resolution: "Upload an engineering plan that identifies the intended route for this run.",
         rawReasons: [status],
       };
     }
@@ -388,7 +388,7 @@ export function buildNovaSummary(
   }
   if (!hasBoreLogs) {
     if (billingStatus !== "Blocked") billingStatus = "Blocked";
-    reasons.push("No bore log files uploaded.");
+    reasons.push("No field data files uploaded.");
   }
 
   // Error-severity QA items → Blocked (stopped_at and render_allowed === false)
@@ -454,7 +454,7 @@ export function buildNovaSummary(
 
   // ── READY confirmation reasons ─────────────────────────────────────────────
   if (billingStatus === "Ready" && totalGroups > 0 && reasons.length === 0) {
-    reasons.push("All bore log groups rendered successfully.");
+    reasons.push("All field data groups rendered successfully.");
     if (!qaItems.some((q) => q.severity === "warning")) {
       reasons.push("No unresolved ambiguity detected.");
     }
@@ -475,7 +475,7 @@ export function buildNovaSummary(
   if (!hasKmz) {
     actions.push("Upload a KMZ design file to begin.");
   } else if (!hasBoreLogs) {
-    actions.push("Upload bore log files to generate route matches.");
+    actions.push("Upload field data files to generate route matches.");
   }
 
   for (const severity of ["error", "warning", "info"] as const) {
@@ -493,7 +493,7 @@ export function buildNovaSummary(
   if (actions.length === 0 && billingStatus === "Ready" && totalGroups > 0) {
     actions.push("All checks passed. Billing totals are ready for closeout.");
   } else if (actions.length === 0 && totalGroups === 0 && hasKmz && hasBoreLogs) {
-    actions.push("Pipeline produced no groups. Check that bore log files contain valid rows.");
+    actions.push("Pipeline produced no groups. Check that field data files contain valid rows.");
   }
 
   // ── Assemble ───────────────────────────────────────────────────────────────

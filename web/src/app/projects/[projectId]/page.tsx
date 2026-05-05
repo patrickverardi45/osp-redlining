@@ -57,7 +57,7 @@ export default async function ProjectPage({ params }: ProjectPageProps) {
               {projectDisplayName}
             </h1>
             <p className="tl-subtle" style={{ margin: "6px 0 0", fontSize: 14 }}>
-              Project workspace — design, bore logs, reports, and billing are
+              Project workspace — design, field data, reports, and billing are
               scoped to this job.
             </p>
           </div>
