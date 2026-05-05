@@ -321,6 +321,74 @@ function latLonAlongPolylinesByDistanceFt(
   return { lat: end[0], lon: end[1] };
 }
 
+/** [lat, lon] points along concatenated KMZ polylines from startFt to endFt (haversine ft), inclusive. */
+function kmzSubpathCoordsByDistanceRangeFt(
+  polylines: number[][][],
+  startFt: number,
+  endFt: number,
+): number[][] {
+  const out: number[][] = [];
+  if (!polylines.length || !Number.isFinite(startFt) || !Number.isFinite(endFt)) {
+    return [];
+  }
+  const totalFt = totalKmzPolylinesLengthFt(polylines);
+  if (totalFt <= 0) {
+    return [];
+  }
+  let s = Math.max(0, Math.min(startFt, totalFt));
+  let e = Math.max(0, Math.min(endFt, totalFt));
+  if (s > e) {
+    const tmp = s;
+    s = e;
+    e = tmp;
+  }
+  if (e - s < 1e-9) {
+    return [];
+  }
+  const addPt = (lat: number, lon: number) => {
+    const last = out[out.length - 1];
+    if (last && Math.abs(last[0] - lat) < 1e-14 && Math.abs(last[1] - lon) < 1e-14) {
+      return;
+    }
+    out.push([lat, lon]);
+  };
+  let cum = 0;
+  for (const line of polylines) {
+    for (let i = 0; i < line.length - 1; i++) {
+      const Va = line[i];
+      const Vb = line[i + 1];
+      const L = segmentLengthFtHaversine(Va, Vb);
+      if (L < 1e-9) continue;
+      const segStart = cum;
+      const segEnd = cum + L;
+      if (e <= segStart) {
+        return out;
+      }
+      if (s >= segEnd) {
+        cum = segEnd;
+        continue;
+      }
+      const d0 = Math.max(s - segStart, 0);
+      const d1 = Math.min(e - segStart, L);
+      const t0 = Math.max(0, Math.min(1, d0 / L));
+      const t1 = Math.max(0, Math.min(1, d1 / L));
+      const lat0 = Va[0] + t0 * (Vb[0] - Va[0]);
+      const lon0 = Va[1] + t0 * (Vb[1] - Va[1]);
+      const lat1 = Va[0] + t1 * (Vb[0] - Va[0]);
+      const lon1 = Va[1] + t1 * (Vb[1] - Va[1]);
+      addPt(lat0, lon0);
+      if (t1 - t0 > 1e-12) {
+        addPt(lat1, lon1);
+      }
+      cum = segEnd;
+      if (cum >= e - 1e-9) {
+        return out;
+      }
+    }
+  }
+  return out;
+}
+
 function normalizeSourceFileKey(value: unknown): string {
   return String(value ?? "")
     .trim()
@@ -1352,12 +1420,23 @@ function OfficeRedlineMapInner({ mode = "default", projectId, workspaceTitle, pr
 
   const fieldStationPath = useMemo(() => {
     if (projectedFieldStations.length < 2 || !renderBounds || !projectionMetrics) return "";
+    const finiteFts = projectedFieldStations
+      .map(({ st }) => fieldStationFtFromRow(st))
+      .filter((ft): ft is number => Number.isFinite(ft));
+    if (finiteFts.length >= 2 && kmzSnapPolylines.length > 0) {
+      const startFt = Math.min(...finiteFts);
+      const endFt = Math.max(...finiteFts);
+      const coords = kmzSubpathCoordsByDistanceRangeFt(kmzSnapPolylines, startFt, endFt);
+      if (coords.length >= 2) {
+        return buildWorldPath(coords, renderBounds, projectionMetrics);
+      }
+    }
     return buildWorldPath(
       projectedFieldStations.map(({ displayLat, displayLon }) => [displayLat, displayLon]),
       renderBounds,
       projectionMetrics,
     );
-  }, [projectedFieldStations, renderBounds, projectionMetrics]);
+  }, [projectedFieldStations, renderBounds, projectionMetrics, kmzSnapPolylines]);
 
   const fieldTrackPath = useMemo(() => {
     const geo = selectedFieldSession?.track_geometry;
