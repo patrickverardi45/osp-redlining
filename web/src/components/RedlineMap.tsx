@@ -1913,6 +1913,70 @@ ${folderPlacemarks.join("\n")}
       </Placemark>`);
     });
 
+    const fieldSubmissionPlacemarks: string[] = [];
+    if (
+      selectedFieldSessionId?.trim() &&
+      layerRoutes &&
+      projectedFieldStations.length >= 2
+    ) {
+      const finiteFts = projectedFieldStations
+        .map(({ st }) => fieldStationFtFromRow(st))
+        .filter((ft): ft is number => Number.isFinite(ft));
+      let pathCoords: number[][] = [];
+      if (finiteFts.length >= 2 && kmzSnapPolylines.length > 0) {
+        const startFt = Math.min(...finiteFts);
+        const endFt = Math.max(...finiteFts);
+        pathCoords = kmzSubpathCoordsByDistanceRangeFt(kmzSnapPolylines, startFt, endFt);
+      }
+      if (pathCoords.length < 2) {
+        pathCoords = projectedFieldStations.map(({ displayLat, displayLon }) => [displayLat, displayLon]);
+      }
+      const coordinates = pathCoords
+        .map((pt) => kmlCoordinateFromLatLon(pt[0], pt[1]))
+        .filter((coord): coord is string => Boolean(coord));
+      if (coordinates.length >= 2) {
+        const sessionId = selectedFieldSessionId.trim();
+        const crew = selectedFieldSession?.crew_name ? cleanDisplayText(selectedFieldSession.crew_name) : "";
+        const rawStarted = selectedFieldSession?.started_at;
+        const rawEnded = selectedFieldSession?.ended_at;
+        const dateStr = rawStarted
+          ? formatDisplayDate(rawStarted)
+          : rawEnded
+            ? formatDisplayDate(rawEnded)
+            : "";
+        const sortedByFt = projectedFieldStations
+          .map((row) => ({ st: row.st, ft: fieldStationFtFromRow(row.st) }))
+          .filter((x) => Number.isFinite(x.ft))
+          .sort((a, b) => a.ft - b.ft);
+        const startStationLabel =
+          sortedByFt.length > 0 ? cleanDisplayText(sortedByFt[0].st.station_number) : "";
+        const endStationLabel =
+          sortedByFt.length > 0
+            ? cleanDisplayText(sortedByFt[sortedByFt.length - 1].st.station_number)
+            : "";
+        const description = [
+          `Session ID: ${sessionId}`,
+          crew ? `Crew: ${crew}` : "",
+          dateStr ? `Date: ${dateStr}` : "",
+          startStationLabel ? `Start station: ${startStationLabel}` : "",
+          endStationLabel ? `End station: ${endStationLabel}` : "",
+        ]
+          .filter((line) => line.length > 0)
+          .join("\n");
+        fieldSubmissionPlacemarks.push(`      <Placemark>
+        <name>${escapeXml(`Field Submission ${sessionId}`)}</name>
+        <description>${escapeXml(description)}</description>
+        <styleUrl>#fieldSubmissionStyle</styleUrl>
+        <LineString>
+          <tessellate>1</tessellate>
+          <coordinates>
+            ${coordinates.join("\n            ")}
+          </coordinates>
+        </LineString>
+      </Placemark>`);
+      }
+    }
+
     const kml = `<?xml version="1.0" encoding="UTF-8"?>
 <kml xmlns="http://www.opengis.net/kml/2.2">
   <Document>
@@ -1950,11 +2014,18 @@ ${folderPlacemarks.join("\n")}
         <scale>0.7</scale>
       </IconStyle>
     </Style>
+    <Style id="fieldSubmissionStyle">
+      <LineStyle>
+        <color>ff0000ff</color>
+        <width>5</width>
+      </LineStyle>
+    </Style>
 ${buildFolder("Design / Coverage", designCoveragePlacemarks)}
 ${buildFolder("Design Routes", designRoutePlacemarks)}
 ${buildFolder("As-Built Redlines", redlinePlacemarks)}
 ${buildFolder("Photos", photoPlacemarks)}
 ${buildFolder("Stations", stationPlacemarks)}
+${fieldSubmissionPlacemarks.length > 0 ? buildFolder("Selected Field Submission", fieldSubmissionPlacemarks) : ""}
   </Document>
 </kml>
 `;
@@ -1968,7 +2039,19 @@ ${buildFolder("Stations", stationPlacemarks)}
     link.click();
     link.remove();
     URL.revokeObjectURL(url);
-  }, [activeJob, gpsPhotos, kmzLineFeatures, kmzPolygonFeatures, redlineSegments, stationPoints]);
+  }, [
+    activeJob,
+    gpsPhotos,
+    kmzLineFeatures,
+    kmzPolygonFeatures,
+    kmzSnapPolylines,
+    layerRoutes,
+    projectedFieldStations,
+    redlineSegments,
+    selectedFieldSession,
+    selectedFieldSessionId,
+    stationPoints,
+  ]);
 
   const fitToBounds = useCallback((targetBounds: Bounds | null) => {
     const container = mapContainerRef.current;
