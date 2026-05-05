@@ -260,6 +260,67 @@ function distanceAlongPolylinesFromSnappedPoint(
   return { polyIdx: bestPoly, distAlong: bestAlong };
 }
 
+const EARTH_RADIUS_FT = 6371000 * 3.28084;
+
+function segmentLengthFtHaversine(a: number[], b: number[]): number {
+  const lat1 = (a[0] * Math.PI) / 180;
+  const lat2 = (b[0] * Math.PI) / 180;
+  const dLat = ((b[0] - a[0]) * Math.PI) / 180;
+  const dLon = ((b[1] - a[1]) * Math.PI) / 180;
+  const h =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLon / 2) * Math.sin(dLon / 2);
+  return 2 * EARTH_RADIUS_FT * Math.asin(Math.min(1, Math.sqrt(Math.max(0, h))));
+}
+
+function totalKmzPolylinesLengthFt(polylines: number[][][]): number {
+  let total = 0;
+  for (const line of polylines) {
+    for (let i = 0; i < line.length - 1; i++) {
+      total += segmentLengthFtHaversine(line[i], line[i + 1]);
+    }
+  }
+  return total;
+}
+
+/** Prefer API `mapped_station_ft` when numeric; else chainage from `station_number` (e.g. 00+46 → 46). */
+function fieldStationFtFromRow(st: { station_number: string; mapped_station_ft?: unknown }): number {
+  const m = (st as { mapped_station_ft?: number }).mapped_station_ft;
+  if (typeof m === "number" && Number.isFinite(m)) {
+    return m;
+  }
+  const [major, minor] = String(st.station_number).split("+");
+  const v = (parseInt(major ?? "0", 10) * 100) + parseInt(minor ?? "0", 10);
+  return Number.isFinite(v) ? v : NaN;
+}
+
+/** Point at `distanceFt` along concatenated polylines (0 = start of first polyline). */
+function latLonAlongPolylinesByDistanceFt(
+  polylines: number[][][],
+  distanceFt: number,
+  totalFt: number,
+): { lat: number; lon: number } | null {
+  if (polylines.length === 0 || totalFt <= 0 || !Number.isFinite(distanceFt)) return null;
+  const target = Math.max(0, Math.min(distanceFt, totalFt));
+  let remaining = target;
+  for (const line of polylines) {
+    for (let i = 0; i < line.length - 1; i++) {
+      const a = line[i];
+      const b = line[i + 1];
+      const segFt = segmentLengthFtHaversine(a, b);
+      if (segFt < 1e-9) continue;
+      if (remaining <= segFt + 1e-9) {
+        const t = Math.max(0, Math.min(1, remaining / segFt));
+        return { lat: a[0] + t * (b[0] - a[0]), lon: a[1] + t * (b[1] - a[1]) };
+      }
+      remaining -= segFt;
+    }
+  }
+  const lastLine = polylines[polylines.length - 1];
+  const end = lastLine[lastLine.length - 1];
+  return { lat: end[0], lon: end[1] };
+}
+
 function normalizeSourceFileKey(value: unknown): string {
   return String(value ?? "")
     .trim()
@@ -1239,10 +1300,6 @@ function OfficeRedlineMapInner({ mode = "default", projectId, workspaceTitle, pr
     if (!selectedFieldJobDetail || !renderBounds || !projectionMetrics || !selectedFieldSessionId) {
       return [];
     }
-    const toNum = (s: string) => {
-      const [major, minor] = s.split("+");
-      return (parseInt(major ?? "0", 10) * 100) + parseInt(minor ?? "0", 10);
-    };
     const sessionFilter = selectedFieldSessionId.trim();
     const fieldStationsFiltered = (selectedFieldJobDetail.stations ?? []).filter((st) => {
       const lat = Number(st.latitude);
@@ -1254,56 +1311,42 @@ function OfficeRedlineMapInner({ mode = "default", projectId, workspaceTitle, pr
       if (!sid || sid !== sessionFilter) return false;
       return true;
     });
-    const originalLog = fieldStationsFiltered.map((st) => ({
-      station_number: st.station_number,
-      parsed: toNum(st.station_number),
-    }));
-    if (process.env.NODE_ENV === "development") {
-      console.log(
-        "[field-overlay] original station order (API / after lat-lon filter):",
-        originalLog,
-      );
-      console.log(
-        "[field-overlay] parsed numeric (same order):",
-        fieldStationsFiltered.map((st) => toNum(st.station_number)),
-      );
-    }
-    const nanKeys = originalLog.filter((o) => !Number.isFinite(o.parsed));
-    if (nanKeys.length > 0 && process.env.NODE_ENV === "development") {
-      console.warn("[field-overlay] NaN / non-finite sort keys:", nanKeys);
-    }
-    const withSnap = fieldStationsFiltered.map((st) => {
+    const totalKmzFt = totalKmzPolylinesLengthFt(kmzSnapPolylines);
+    const rows = fieldStationsFiltered.map((st) => {
+      const stationFt = fieldStationFtFromRow(st);
       const rawLat = Number(st.latitude);
       const rawLon = Number(st.longitude);
-      const snapped = snapLatLonToKmzPolylines(rawLat, rawLon, kmzSnapPolylines);
-      const along =
-        kmzSnapPolylines.length > 0
-          ? distanceAlongPolylinesFromSnappedPoint(snapped.lat, snapped.lon, kmzSnapPolylines)
-          : { polyIdx: 0, distAlong: 0 };
-      return { st, snapped, along };
+      let displayLat = rawLat;
+      let displayLon = rawLon;
+      if (kmzSnapPolylines.length > 0 && totalKmzFt > 0 && Number.isFinite(stationFt)) {
+        const alongFt = Math.max(0, Math.min(stationFt, totalKmzFt));
+        const onLine = latLonAlongPolylinesByDistanceFt(kmzSnapPolylines, alongFt, totalKmzFt);
+        if (onLine) {
+          displayLat = onLine.lat;
+          displayLon = onLine.lon;
+        }
+      }
+      return { st, stationFt, displayLat, displayLon };
     });
-    const ordered =
-      kmzSnapPolylines.length > 0
-        ? withSnap.slice().sort((a, b) => {
-            if (a.along.polyIdx !== b.along.polyIdx) return a.along.polyIdx - b.along.polyIdx;
-            if (a.along.distAlong !== b.along.distAlong) return a.along.distAlong - b.along.distAlong;
-            return toNum(a.st.station_number) - toNum(b.st.station_number);
-          })
-        : withSnap.slice().sort((a, b) => toNum(a.st.station_number) - toNum(b.st.station_number));
+    const ordered = rows.slice().sort((a, b) => {
+      const fa = Number.isFinite(a.stationFt) ? a.stationFt : Number.POSITIVE_INFINITY;
+      const fb = Number.isFinite(b.stationFt) ? b.stationFt : Number.POSITIVE_INFINITY;
+      return fa - fb;
+    });
     if (process.env.NODE_ENV === "development") {
-      console.log("[field-overlay] order for path + markers (KMZ chainage):", {
-        polylineOrder: ordered.map((row) => ({
+      console.log("[field-overlay] order for path + markers (station_ft along KMZ):", {
+        totalKmzFt,
+        ordered: ordered.map((row) => ({
           station_number: row.st.station_number,
-          polyIdx: row.along.polyIdx,
-          distAlong: row.along.distAlong,
+          station_ft: row.stationFt,
         })),
       });
     }
-    return ordered.map(({ st, snapped }) => ({
+    return ordered.map(({ st, displayLat, displayLon }) => ({
       st,
-      displayLat: snapped.lat,
-      displayLon: snapped.lon,
-      world: projectWorldPoint(snapped.lat, snapped.lon, renderBounds, projectionMetrics),
+      displayLat,
+      displayLon,
+      world: projectWorldPoint(displayLat, displayLon, renderBounds, projectionMetrics),
     }));
   }, [selectedFieldJobDetail, selectedFieldSessionId, renderBounds, projectionMetrics, kmzSnapPolylines]);
 
