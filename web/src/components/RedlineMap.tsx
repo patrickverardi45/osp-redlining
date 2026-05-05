@@ -1947,17 +1947,21 @@ ${folderPlacemarks.join("\n")}
           : rawEnded
             ? formatDisplayDate(rawEnded)
             : "";
-        const sortedByFt = projectedFieldStations
-          .map((row) => ({ st: row.st, ft: fieldStationFtFromRow(row.st) }))
-          .filter((x) => Number.isFinite(x.ft))
-          .sort((a, b) => a.ft - b.ft);
+        const withFt = projectedFieldStations.map((row) => ({ row, ft: fieldStationFtFromRow(row.st) }));
+        const sortedByFt = withFt.filter((x) => Number.isFinite(x.ft)).sort((a, b) => a.ft - b.ft);
+        const sortedAllByFt = [...withFt].sort((a, b) => {
+          const fa = Number.isFinite(a.ft) ? a.ft : Number.POSITIVE_INFINITY;
+          const fb = Number.isFinite(b.ft) ? b.ft : Number.POSITIVE_INFINITY;
+          if (fa !== fb) return fa - fb;
+          return String(a.row.st.id).localeCompare(String(b.row.st.id));
+        });
         const startStationLabel =
-          sortedByFt.length > 0 ? cleanDisplayText(sortedByFt[0].st.station_number) : "";
+          sortedByFt.length > 0 ? cleanDisplayText(sortedByFt[0].row.st.station_number) : "";
         const endStationLabel =
           sortedByFt.length > 0
-            ? cleanDisplayText(sortedByFt[sortedByFt.length - 1].st.station_number)
+            ? cleanDisplayText(sortedByFt[sortedByFt.length - 1].row.st.station_number)
             : "";
-        const description = [
+        const lineDescription = [
           `Session ID: ${sessionId}`,
           crew ? `Crew: ${crew}` : "",
           dateStr ? `Date: ${dateStr}` : "",
@@ -1968,7 +1972,7 @@ ${folderPlacemarks.join("\n")}
           .join("\n");
         fieldSubmissionPlacemarks.push(`      <Placemark>
         <name>${escapeXml(`Field Submission ${sessionId}`)}</name>
-        <description>${escapeXml(description)}</description>
+        <description>${escapeXml(lineDescription)}</description>
         <styleUrl>#fieldSubmissionStyle</styleUrl>
         <LineString>
           <tessellate>1</tessellate>
@@ -1977,6 +1981,85 @@ ${folderPlacemarks.join("\n")}
           </coordinates>
         </LineString>
       </Placemark>`);
+
+        if (sortedByFt.length > 0) {
+          const firstEntry = sortedByFt[0];
+          const lastEntry = sortedByFt[sortedByFt.length - 1];
+          const startCoord = kmlCoordinateFromLatLon(firstEntry.row.displayLat, firstEntry.row.displayLon);
+          if (startCoord) {
+            const startNum = cleanDisplayText(firstEntry.row.st.station_number);
+            const startDesc = [
+              `Station number: ${startNum}`,
+              `Station FT: ${formatNumber(firstEntry.ft, 3)}`,
+              Number.isFinite(firstEntry.row.st.depth_ft)
+                ? `Depth FT: ${formatNumber(firstEntry.row.st.depth_ft, 3)}`
+                : "",
+              Number.isFinite(firstEntry.row.st.boc_ft)
+                ? `BOC FT: ${formatNumber(firstEntry.row.st.boc_ft, 3)}`
+                : "",
+              `Session ID: ${sessionId}`,
+            ]
+              .filter((line) => line.length > 0)
+              .join("\n");
+            fieldSubmissionPlacemarks.push(`      <Placemark>
+        <name>${escapeXml(`Start ${startNum}`)}</name>
+        <description>${escapeXml(startDesc)}</description>
+        <styleUrl>#stationStyle</styleUrl>
+        <Point>
+          <coordinates>${startCoord}</coordinates>
+        </Point>
+      </Placemark>`);
+          }
+          const endCoord = kmlCoordinateFromLatLon(lastEntry.row.displayLat, lastEntry.row.displayLon);
+          if (endCoord) {
+            const endNum = cleanDisplayText(lastEntry.row.st.station_number);
+            const endDesc = [
+              `Station number: ${endNum}`,
+              `Station FT: ${formatNumber(lastEntry.ft, 3)}`,
+              Number.isFinite(lastEntry.row.st.depth_ft)
+                ? `Depth FT: ${formatNumber(lastEntry.row.st.depth_ft, 3)}`
+                : "",
+              Number.isFinite(lastEntry.row.st.boc_ft)
+                ? `BOC FT: ${formatNumber(lastEntry.row.st.boc_ft, 3)}`
+                : "",
+              `Session ID: ${sessionId}`,
+            ]
+              .filter((line) => line.length > 0)
+              .join("\n");
+            fieldSubmissionPlacemarks.push(`      <Placemark>
+        <name>${escapeXml(`End ${endNum}`)}</name>
+        <description>${escapeXml(endDesc)}</description>
+        <styleUrl>#stationStyle</styleUrl>
+        <Point>
+          <coordinates>${endCoord}</coordinates>
+        </Point>
+      </Placemark>`);
+          }
+        }
+
+        for (const { row, ft } of sortedAllByFt) {
+          const coord = kmlCoordinateFromLatLon(row.displayLat, row.displayLon);
+          if (!coord) continue;
+          const st = row.st;
+          const sn = cleanDisplayText(st.station_number);
+          const stDesc = [
+            `Station number: ${sn}`,
+            Number.isFinite(ft) ? `Station FT: ${formatNumber(ft, 3)}` : "Station FT: --",
+            Number.isFinite(st.depth_ft) ? `Depth FT: ${formatNumber(st.depth_ft, 3)}` : "",
+            Number.isFinite(st.boc_ft) ? `BOC FT: ${formatNumber(st.boc_ft, 3)}` : "",
+            `Session ID: ${sessionId}`,
+          ]
+            .filter((line) => line.length > 0)
+            .join("\n");
+          fieldSubmissionPlacemarks.push(`      <Placemark>
+        <name>${escapeXml(`Station ${sn}`)}</name>
+        <description>${escapeXml(stDesc)}</description>
+        <styleUrl>#stationStyle</styleUrl>
+        <Point>
+          <coordinates>${coord}</coordinates>
+        </Point>
+      </Placemark>`);
+        }
       }
     }
 
@@ -2020,7 +2103,7 @@ ${folderPlacemarks.join("\n")}
     <Style id="fieldSubmissionStyle">
       <LineStyle>
         <color>ff0000ff</color>
-        <width>5</width>
+        <width>7</width>
       </LineStyle>
     </Style>
 ${buildFolder("Design / Coverage", designCoveragePlacemarks)}
