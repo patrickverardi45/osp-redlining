@@ -988,6 +988,7 @@ function OfficeRedlineMapInner({ mode = "default", projectId, workspaceTitle, pr
   const [boreLogError, setBoreLogError] = useState<string | null>(null);
   const [fieldReviewPhotosOpen, setFieldReviewPhotosOpen] = useState(false);
   const [fieldReviewBoreOpen, setFieldReviewBoreOpen] = useState(false);
+  const [showFieldGpsEvidenceTrail, setShowFieldGpsEvidenceTrail] = useState(false);
 
   const selectedFieldSession = useMemo(() => {
     if (!selectedFieldSessionId || !selectedFieldJobDetail) return null;
@@ -1013,6 +1014,7 @@ function OfficeRedlineMapInner({ mode = "default", projectId, workspaceTitle, pr
     setBoreLogRows(null);
     setBoreLogError(null);
     setBoreLogLoading(false);
+    setShowFieldGpsEvidenceTrail(false);
   }, []);
 
   // Close any open gallery and discard cached bore-log rows when the user
@@ -1025,6 +1027,7 @@ function OfficeRedlineMapInner({ mode = "default", projectId, workspaceTitle, pr
     setBoreLogLoading(false);
     setFieldReviewPhotosOpen(false);
     setFieldReviewBoreOpen(false);
+    setShowFieldGpsEvidenceTrail(false);
   }, [selectedFieldSessionId]);
 
   const handleLoadBoreLog = useCallback(async () => {
@@ -3975,15 +3978,16 @@ ${fieldSubmissionPlacemarks.length > 0 ? buildFolder("Selected Field Submission"
                     {/* inbox submission. Renders above design/walk layers.  */}
                     {selectedFieldSessionId ? (
                       <g id="field-session-overlay" pointerEvents="none">
-                        {layerRoutes && fieldTrackPath ? (
+                        {layerRoutes && showFieldGpsEvidenceTrail && fieldTrackPath ? (
                           <path
                             d={fieldTrackPath}
                             fill="none"
-                            stroke="#f97316"
-                            strokeWidth={4}
+                            stroke="#94a3b8"
+                            strokeWidth={2}
                             strokeLinecap="round"
                             strokeLinejoin="round"
-                            strokeOpacity={0.9}
+                            strokeDasharray="4 6"
+                            strokeOpacity={0.45}
                             vectorEffect="non-scaling-stroke"
                           />
                         ) : null}
@@ -4670,6 +4674,25 @@ ${fieldSubmissionPlacemarks.length > 0 ? buildFolder("Selected Field Submission"
                         Clear selection
                       </button>
                     </div>
+                    <label
+                      style={{
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: 8,
+                        marginBottom: 10,
+                        fontSize: 12,
+                        color: "#475569",
+                        cursor: "pointer",
+                        userSelect: "none",
+                      }}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={showFieldGpsEvidenceTrail}
+                        onChange={(e) => setShowFieldGpsEvidenceTrail(e.target.checked)}
+                      />
+                      Show GPS evidence trail
+                    </label>
                     {selectedFieldJobLoading ? (
                       <div style={{ fontSize: 13, color: "#64748b" }}>Loading job…</div>
                     ) : null}
