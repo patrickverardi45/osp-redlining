@@ -127,23 +127,9 @@ function buildStationIdentity(routeName: string | null | undefined, point: Stati
   ].join("|");
 }
 
-/** Primary map/inspector label: business_id when fiber_pull and present, else station text. */
-function fiberPullStationPrimaryLabel(isFiberPull: boolean, point: StationPoint | null | undefined): string {
+function buildStationSummary(routeName: string | null | undefined, point: StationPoint | null | undefined): string {
   if (!point) return "--";
-  if (isFiberPull) {
-    const bid = point.business_id != null ? String(point.business_id).trim() : "";
-    if (bid) return cleanDisplayText(bid);
-  }
-  return cleanDisplayText(point.station);
-}
-
-function buildStationSummary(
-  routeName: string | null | undefined,
-  point: StationPoint | null | undefined,
-  isFiberPull = false,
-): string {
-  if (!point) return "--";
-  const station = fiberPullStationPrimaryLabel(isFiberPull, point);
+  const station = cleanDisplayText(point.station);
   const source = cleanDisplayText(point.source_file);
   const route = cleanDisplayText(routeName);
   return `${station} • ${route} • ${source}`;
@@ -708,7 +694,7 @@ type RedlineMapProps = {
   projectId?: string;
   /** When set (e.g. project route), replaces the generic operator workspace title. */
   workspaceTitle?: string;
-  /** When "fiber_pull", map and inspector prefer `business_id` labels when available. */
+  /** Optional project flavor; `fiber_pull` shows a non-interactive placeholder in the inspector until data is wired. */
   projectType?: string | null;
 };
 
@@ -847,7 +833,6 @@ function OfficeRedlineMapInner({ mode = "default", projectId, workspaceTitle, pr
   const [layerStructures, setLayerStructures] = useState(true);
   const [layerPhotos, setLayerPhotos] = useState(true);
   const [mapBaseStyle, setMapBaseStyle] = useState<"standard" | "satellite">("satellite");
-  const [structureSequentialByKey, setStructureSequentialByKey] = useState<Record<string, string>>({});
   const [showPlannedRouteHighlight, setShowPlannedRouteHighlight] = useState(false);
   const [presentationView, setPresentationView] = useState(false);
   // Evidence-layer visibility: Set of hidden layer ids. Empty = all visible.
@@ -1521,34 +1506,9 @@ function OfficeRedlineMapInner({ mode = "default", projectId, workspaceTitle, pr
   );
 
   const selectedStationSummary = useMemo(
-    () => buildStationSummary(state?.selected_route_name || state?.route_name, selectedStation, isFiberPullWorkspace),
-    [state?.selected_route_name, state?.route_name, selectedStation, isFiberPullWorkspace],
+    () => buildStationSummary(state?.selected_route_name || state?.route_name, selectedStation),
+    [state?.selected_route_name, state?.route_name, selectedStation],
   );
-
-  const fiberSequentialSegmentLines = useMemo(() => {
-    if (!isFiberPullWorkspace) return [] as string[];
-    const routeName = state?.selected_route_name || state?.route_name;
-    const entries: { label: string; seq: number }[] = [];
-    for (const pt of stationPoints) {
-      const id = buildStationIdentity(routeName, pt);
-      const raw = structureSequentialByKey[id]?.trim() ?? "";
-      if (raw === "") continue;
-      const seq = Number.parseFloat(raw);
-      if (!Number.isFinite(seq)) continue;
-      entries.push({
-        label: fiberPullStationPrimaryLabel(true, pt),
-        seq,
-      });
-    }
-    if (entries.length < 2) return [] as string[];
-    entries.sort((a, b) => a.seq - b.seq);
-    const lines: string[] = [];
-    for (let i = 1; i < entries.length; i++) {
-      const d = Math.abs(entries[i].seq - entries[i - 1].seq);
-      lines.push(`${entries[i - 1].label} → ${entries[i].label}: ${formatNumber(d, 0)} ft`);
-    }
-    return lines;
-  }, [isFiberPullWorkspace, stationPoints, structureSequentialByKey, state?.selected_route_name, state?.route_name]);
 
   const calculatedCoveredFootage = useMemo(() => {
     const fromSegments = redlineSegments.reduce((sum, segment) => {
@@ -3727,7 +3687,7 @@ ${buildFolder("Stations", stationPlacemarks)}
                           // Halo only on select/hover — no ambient white ring on idle markers.
                           const halo = isSelected ? radius + 2.2 : radius + 1.4;
                           const showLabel = visibleLabelIndices.has(idx);
-                          const stationLabel = fiberPullStationPrimaryLabel(isFiberPullWorkspace, point);
+                          const stationLabel = cleanDisplayText(point.station);
 
                           return (
                             <g
@@ -3836,14 +3796,7 @@ ${buildFolder("Stations", stationPlacemarks)}
                           />
                         ) : null}
                         {layerStructures
-                          ? projectedFieldStations.map(({ st, world }) => {
-                              const fieldLabel =
-                                isFiberPullWorkspace &&
-                                st.business_id != null &&
-                                String(st.business_id).trim() !== ""
-                                  ? cleanDisplayText(String(st.business_id))
-                                  : st.station_number;
-                              return (
+                          ? projectedFieldStations.map(({ st, world }) => (
                           <g key={`field-station-${st.id}`}>
                             <circle
                               cx={world.x}
@@ -3865,11 +3818,10 @@ ${buildFolder("Stations", stationPlacemarks)}
                               paintOrder="stroke"
                               style={{ userSelect: "none" }}
                             >
-                              {fieldLabel}
+                              {st.station_number}
                             </text>
                           </g>
-                              );
-                            })
+                            ))
                           : null}
                       </g>
                     ) : null}
@@ -4355,7 +4307,7 @@ ${buildFolder("Stations", stationPlacemarks)}
                           Field Inspection
                         </div>
                         <div style={{ fontSize: 15, fontWeight: 900, color: "#f8fafc", marginTop: 2, lineHeight: 1.2 }}>
-                          {fiberPullStationPrimaryLabel(isFiberPullWorkspace, selectedStation)}
+                          {cleanDisplayText(selectedStation.station)}
                         </div>
                       </div>
                       <button
@@ -4382,11 +4334,10 @@ ${buildFolder("Stations", stationPlacemarks)}
                     <div style={{ padding: "12px 14px", display: "grid", gap: 7, flexShrink: 0 }}>
                       {(
                         [
-                          ["Station", fiberPullStationPrimaryLabel(isFiberPullWorkspace, selectedStation)],
-                          ...(isFiberPullWorkspace &&
-                          selectedStation?.business_id != null &&
+                          ["Station", cleanDisplayText(selectedStation.station)],
+                          ...(selectedStation?.business_id != null &&
                           String(selectedStation.business_id).trim() !== ""
-                            ? ([["Source station", cleanDisplayText(selectedStation.station)]] as [string, string][])
+                            ? ([["Business ID", cleanDisplayText(String(selectedStation.business_id))]] as [string, string][])
                             : []),
                           ["Mapped FT", formatNumber(selectedStation.mapped_station_ft, 3)],
                           ["Depth FT", formatNumber(selectedStation.depth_ft)],
@@ -4423,66 +4374,14 @@ ${buildFolder("Stations", stationPlacemarks)}
                         style={{
                           padding: "12px 14px",
                           flexShrink: 0,
-                          display: "grid",
-                          gap: 8,
                           borderTop: "1px solid rgba(148, 163, 184, 0.14)",
+                          fontSize: 12,
+                          lineHeight: 1.5,
+                          color: "#94a3b8",
+                          fontStyle: "italic",
                         }}
                       >
-                        <label
-                          htmlFor="fiber-sequential-reading"
-                          style={{ fontSize: 11, fontWeight: 800, color: "#94a3b8", textTransform: "uppercase", letterSpacing: 0.3 }}
-                        >
-                          Sequential reading
-                        </label>
-                        <input
-                          id="fiber-sequential-reading"
-                          type="number"
-                          step="any"
-                          value={structureSequentialByKey[selectedStationIdentity] ?? ""}
-                          onChange={(e) => {
-                            const v = e.target.value;
-                            setStructureSequentialByKey((prev) => ({ ...prev, [selectedStationIdentity]: v }));
-                          }}
-                          placeholder="Local only — not saved yet"
-                          style={{
-                            width: "100%",
-                            padding: "8px 10px",
-                            borderRadius: 8,
-                            border: "1px solid rgba(148, 163, 184, 0.35)",
-                            background: "rgba(15, 23, 42, 0.66)",
-                            color: "#e2e8f0",
-                            fontSize: 13,
-                          }}
-                        />
-                        {fiberSequentialSegmentLines.length > 0 ? (
-                          <div>
-                            <div
-                              style={{
-                                fontSize: 10,
-                                fontWeight: 800,
-                                color: "#64748b",
-                                textTransform: "uppercase",
-                                marginBottom: 6,
-                                letterSpacing: 0.04,
-                              }}
-                            >
-                              Sequential segments (local)
-                            </div>
-                            <ul
-                              style={{
-                                margin: 0,
-                                paddingLeft: 16,
-                                color: "#cbd5e1",
-                                fontSize: 11,
-                                lineHeight: 1.45,
-                              }}
-                            >
-                              {fiberSequentialSegmentLines.map((line, segIdx) => (
-                                <li key={`fiber-seg-${segIdx}`}>{line}</li>
-                              ))}
-                            </ul>
-                          </div>
-                        ) : null}
+                        Fiber workflow data will appear here once project data is loaded.
                       </div>
                     ) : null}
 
