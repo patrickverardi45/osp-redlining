@@ -1058,6 +1058,8 @@ function OfficeRedlineMapInner({ projectId, workspaceTitle, projectType = null }
   const [fieldReviewPhotosOpen, setFieldReviewPhotosOpen] = useState(false);
   const [fieldReviewBoreOpen, setFieldReviewBoreOpen] = useState(false);
   const [showFieldGpsEvidenceTrail, setShowFieldGpsEvidenceTrail] = useState(false);
+  const [selectedFieldStationIdx, setSelectedFieldStationIdx] = useState<number | null>(null);
+  const [hoverFieldStationIdx, setHoverFieldStationIdx] = useState<number | null>(null);
 
   const selectedFieldSession = useMemo(() => {
     if (!selectedFieldSessionId || !selectedFieldJobDetail) return null;
@@ -1100,6 +1102,8 @@ function OfficeRedlineMapInner({ projectId, workspaceTitle, projectType = null }
     setFieldReviewPhotosOpen(false);
     setFieldReviewBoreOpen(false);
     setShowFieldGpsEvidenceTrail(false);
+    setSelectedFieldStationIdx(null);
+    setHoverFieldStationIdx(null);
   }, [selectedFieldSessionId]);
 
   const handlePrintSessionPacket = useCallback(() => {
@@ -1344,9 +1348,20 @@ function OfficeRedlineMapInner({ projectId, workspaceTitle, projectType = null }
         coords.push([point.lat, point.lon]);
       }
     });
+    if (selectedFieldSessionId) {
+      const sid = selectedFieldSessionId.trim();
+      (selectedFieldJobDetail?.stations ?? []).forEach((st) => {
+        if (String(st.session_id ?? "").trim() !== sid) return;
+        const lat = Number(st.latitude);
+        const lon = Number(st.longitude);
+        if (Number.isFinite(lat) && Number.isFinite(lon) && !(lat === 0 && lon === 0)) {
+          coords.push([lat, lon]);
+        }
+      });
+    }
     const raw = getBoundsFromCoords(coords);
     return raw ? expandBounds(raw, 0.12) : null;
-  }, [stationPoints]);
+  }, [stationPoints, selectedFieldSessionId, selectedFieldJobDetail]);
 
   const renderBounds = useMemo(() => designBounds || bounds || stationOnlyBounds || null, [designBounds, bounds, stationOnlyBounds]);
 
@@ -4347,7 +4362,7 @@ ${fieldSubmissionPlacemarks.length > 0 ? buildFolder("Selected Field Submission"
                     {/* GPS track + station path + markers for the selected */}
                     {/* inbox submission. Renders above design/walk layers.  */}
                     {selectedFieldSessionId ? (
-                      <g id="field-session-overlay" pointerEvents="none">
+                      <g id="field-session-overlay">
                         {layerRoutes && showFieldGpsEvidenceTrail && fieldTrackPath ? (
                           <path
                             d={fieldTrackPath}
@@ -4359,6 +4374,7 @@ ${fieldSubmissionPlacemarks.length > 0 ? buildFolder("Selected Field Submission"
                             strokeDasharray="4 6"
                             strokeOpacity={0.45}
                             vectorEffect="non-scaling-stroke"
+                            pointerEvents="none"
                           />
                         ) : null}
                         {layerRoutes && fieldStationPath ? (
@@ -4372,35 +4388,64 @@ ${fieldSubmissionPlacemarks.length > 0 ? buildFolder("Selected Field Submission"
                             strokeDasharray="5 4"
                             strokeOpacity={0.85}
                             vectorEffect="non-scaling-stroke"
+                            pointerEvents="none"
                           />
                         ) : null}
                         {layerStructures
-                          ? projectedFieldStations.map(({ st, world }) => (
-                          <g key={`field-station-${st.id}`}>
-                            <circle
-                              cx={world.x}
-                              cy={world.y}
-                              r={4}
-                              fill="#facc15"
-                              stroke="rgba(14,24,34,0.85)"
-                              strokeWidth={0.8}
-                              vectorEffect="non-scaling-stroke"
-                            />
-                            <text
-                              x={world.x + 4.5}
-                              y={world.y - 3.5}
-                              fill="#facc15"
-                              fontSize={5}
-                              fontWeight="700"
-                              stroke="rgba(14,24,34,0.85)"
-                              strokeWidth={2.5}
-                              paintOrder="stroke"
-                              style={{ userSelect: "none" }}
-                            >
-                              {st.station_number}
-                            </text>
-                          </g>
-                            ))
+                          ? projectedFieldStations.map(({ st, world }, fsi) => {
+                              const isFSSelected = selectedFieldStationIdx === fsi;
+                              const isFSHovered = hoverFieldStationIdx === fsi;
+                              const baseR = 4;
+                              const r = isFSSelected ? baseR + 1.2 : isFSHovered ? baseR + 0.6 : baseR;
+                              return (
+                                <g
+                                  key={`field-station-${st.id}`}
+                                  style={{ cursor: "pointer" }}
+                                  onPointerDown={(e) => e.stopPropagation()}
+                                  onPointerEnter={() => setHoverFieldStationIdx(fsi)}
+                                  onPointerLeave={() =>
+                                    setHoverFieldStationIdx((cur) => (cur === fsi ? null : cur))
+                                  }
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setSelectedFieldStationIdx((cur) => (cur === fsi ? null : fsi));
+                                  }}
+                                >
+                                  {(isFSSelected || isFSHovered) ? (
+                                    <circle
+                                      cx={world.x}
+                                      cy={world.y}
+                                      r={r + 2.2}
+                                      fill={isFSSelected ? "rgba(250,204,21,0.18)" : "rgba(255,255,255,0.10)"}
+                                      pointerEvents="none"
+                                    />
+                                  ) : null}
+                                  <circle
+                                    cx={world.x}
+                                    cy={world.y}
+                                    r={r}
+                                    fill="#facc15"
+                                    stroke={isFSSelected ? "rgba(255,255,255,0.9)" : "rgba(14,24,34,0.85)"}
+                                    strokeWidth={isFSSelected ? 0.9 : 0.8}
+                                    vectorEffect="non-scaling-stroke"
+                                  />
+                                  <text
+                                    x={world.x + 4.5}
+                                    y={world.y - 3.5}
+                                    fill="#facc15"
+                                    fontSize={5}
+                                    fontWeight="700"
+                                    stroke="rgba(14,24,34,0.85)"
+                                    strokeWidth={2.5}
+                                    paintOrder="stroke"
+                                    pointerEvents="none"
+                                    style={{ userSelect: "none" }}
+                                  >
+                                    {st.station_number}
+                                  </text>
+                                </g>
+                              );
+                            })
                           : null}
                       </g>
                     ) : null}
@@ -4812,6 +4857,129 @@ ${fieldSubmissionPlacemarks.length > 0 ? buildFolder("Selected Field Submission"
                         >
                           Download original
                         </a>
+                      </div>
+                    </div>
+                  );
+                })()}
+
+                {/* ─── Field station info card ──────────────────────── */}
+                {(() => {
+                  if (selectedFieldStationIdx === null) return null;
+                  if (!projectionMetrics) return null;
+                  const hit = projectedFieldStations[selectedFieldStationIdx];
+                  if (!hit) return null;
+                  const { st, world } = hit;
+
+                  const vbWidth = projectionMetrics.worldWidth / viewport.zoom;
+                  const vbHeight = projectionMetrics.worldHeight / viewport.zoom;
+                  const vbX = -viewport.panX / viewport.zoom;
+                  const vbY = -viewport.panY / viewport.zoom;
+                  const screenX = ((world.x - vbX) / vbWidth) * containerSize.width;
+                  const screenY = ((world.y - vbY) / vbHeight) * containerSize.height;
+
+                  const cardWidth = 240;
+                  const cardHeightEst = 230;
+                  const margin = 12;
+                  const placeRight = screenX + margin + cardWidth < containerSize.width;
+                  const cardLeft = placeRight
+                    ? Math.min(screenX + margin, containerSize.width - cardWidth - 4)
+                    : Math.max(screenX - cardWidth - margin, 4);
+                  const cardTop = Math.max(
+                    4,
+                    Math.min(screenY - cardHeightEst / 2, containerSize.height - cardHeightEst - 4),
+                  );
+
+                  const stFt = fieldStationFtFromRow(st);
+                  const crew = selectedFieldSession?.crew_name?.trim() || "—";
+                  const dateStr = selectedFieldSession?.started_at
+                    ? new Date(selectedFieldSession.started_at).toLocaleString()
+                    : "—";
+                  const photoCount = selectedFieldSession?.photo_count ?? null;
+
+                  const rows: [string, string][] = [
+                    ["Station FT", Number.isFinite(stFt) ? String(stFt) : "—"],
+                    ["Depth FT", st.depth_ft != null ? String(st.depth_ft) : "—"],
+                    ["BOC FT", st.boc_ft != null ? String(st.boc_ft) : "—"],
+                    ["Crew", crew],
+                    ["Date", dateStr],
+                    ...(photoCount != null ? [["Photos", String(photoCount)] as [string, string]] : []),
+                    ["Session", st.session_id ?? "—"],
+                  ];
+
+                  return (
+                    <div
+                      style={{
+                        position: "absolute",
+                        left: cardLeft,
+                        top: cardTop,
+                        width: cardWidth,
+                        background: "rgba(2, 6, 23, 0.76)",
+                        backdropFilter: "blur(18px) saturate(150%)",
+                        WebkitBackdropFilter: "blur(18px) saturate(150%)",
+                        border: "1px solid rgba(148, 163, 184, 0.22)",
+                        borderRadius: 12,
+                        boxShadow: "0 20px 45px rgba(0,0,0,0.58), 0 0 0 1px rgba(250,204,21,0.08) inset",
+                        overflow: "hidden",
+                        zIndex: 900,
+                        fontSize: 12,
+                        color: "#f8fafc",
+                      }}
+                      onPointerDown={(e) => e.stopPropagation()}
+                      onWheel={(e) => e.stopPropagation()}
+                    >
+                      <div
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "space-between",
+                          padding: "7px 10px 6px 12px",
+                          borderBottom: "1px solid rgba(148,163,184,0.16)",
+                          background: "rgba(15,23,42,0.46)",
+                        }}
+                      >
+                        <div style={{ fontSize: 11, fontWeight: 800, color: "#facc15", letterSpacing: 0.4 }}>
+                          FIELD STATION
+                        </div>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setSelectedFieldStationIdx(null);
+                          }}
+                          aria-label="Close field station info"
+                          style={{
+                            border: "none",
+                            background: "transparent",
+                            cursor: "pointer",
+                            color: "#cbd5e1",
+                            fontSize: 18,
+                            lineHeight: 1,
+                            padding: "2px 6px",
+                            borderRadius: 6,
+                          }}
+                        >
+                          ×
+                        </button>
+                      </div>
+                      <div style={{ padding: "10px 12px", display: "flex", flexDirection: "column", gap: 5 }}>
+                        <div style={{ fontSize: 20, fontWeight: 800, color: "#facc15", letterSpacing: -0.3, marginBottom: 4 }}>
+                          {st.station_number}
+                        </div>
+                        {rows.map(([label, value]) => (
+                          <div
+                            key={label}
+                            style={{
+                              display: "flex",
+                              justifyContent: "space-between",
+                              gap: 8,
+                              borderBottom: "1px solid rgba(148,163,184,0.08)",
+                              paddingBottom: 4,
+                            }}
+                          >
+                            <span style={{ color: "#94a3b8", fontWeight: 600, whiteSpace: "nowrap" }}>{label}</span>
+                            <span style={{ color: "#f1f5f9", textAlign: "right", wordBreak: "break-all" }}>{value}</span>
+                          </div>
+                        ))}
                       </div>
                     </div>
                   );
