@@ -2720,7 +2720,7 @@ ${fieldSubmissionPlacemarks.length > 0 ? buildFolder("Selected Field Submission"
       setStatusTone("error");
       return;
     }
-    const confirmed = window.confirm("Unlock closeout for this job?");
+    const confirmed = window.confirm("Unlock this closeout for revisions?");
     if (!confirmed) return;
     const expectedPasscode = String(process.env.NEXT_PUBLIC_CLOSEOUT_UNLOCK_CODE || "").trim();
     if (expectedPasscode) {
@@ -3287,9 +3287,6 @@ ${fieldSubmissionPlacemarks.length > 0 ? buildFolder("Selected Field Submission"
   const billingApproved = billingApprovalStatus === "approved";
   const closeoutLocked = Boolean(state?.closeout_lock?.is_locked || state?.closeout_locked);
   const workspaceReadOnly = billingApproved || closeoutLocked;
-  const closeoutUnlockRole = (process.env.NEXT_PUBLIC_USER_ROLE || "pm").toLowerCase();
-  const canUnlockCloseout =
-    closeoutUnlockRole === "admin" || closeoutUnlockRole === "manager";
   const desktopMapHeight = Math.max(MAP_HEIGHT, 900);
   const mapScrollGutterWidth = 34;
   const isProjectWorkspace = Boolean(workspaceTitle?.trim());
@@ -6201,7 +6198,7 @@ ${fieldSubmissionPlacemarks.length > 0 ? buildFolder("Selected Field Submission"
                         Lock Closeout
                       </button>
                     ) : null}
-                    {closeoutLocked && canUnlockCloseout ? (
+                    {closeoutLocked ? (
                       <button
                         type="button"
                         onClick={() => void handleUnlockCloseout()}
