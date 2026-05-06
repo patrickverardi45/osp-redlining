@@ -32,7 +32,6 @@ import {
   LOW_ZOOM_LABEL_THRESHOLD,
   MID_ZOOM_LABEL_THRESHOLD,
 } from "@/lib/map/constants";
-import MobileWalkContainer from "@/components/MobileWalkContainer";
 import FieldSubmissionsInboxPanel from "@/components/office/FieldSubmissionsInboxPanel";
 import SelectedSubmissionReviewPanel from "@/components/office/SelectedSubmissionReviewPanel";
 import SessionPhotoGalleryModal, {
@@ -819,7 +818,6 @@ function deriveDesignProjectName(
 }
 
 type RedlineMapProps = {
-  mode?: "mobileWalk" | "default";
   projectId?: string;
   /** When set (e.g. project route), replaces the generic operator workspace title. */
   workspaceTitle?: string;
@@ -911,7 +909,7 @@ type GpsPhoto = {
   addedAt: number; // Date.now()
 };
 
-function OfficeRedlineMapInner({ mode = "default", projectId, workspaceTitle, projectType = null }: RedlineMapProps) {
+function OfficeRedlineMapInner({ projectId, workspaceTitle, projectType = null }: RedlineMapProps) {
   const [activeWorkspaceTab, setActiveWorkspaceTab] = useState<WorkspaceTab>("workspace");
   const [state, setState] = useState<BackendState | null>(null);
   const [busy, setBusy] = useState(false);
@@ -6161,13 +6159,9 @@ ${fieldSubmissionPlacemarks.length > 0 ? buildFolder("Selected Field Submission"
   );
 }
 
-export default function RedlineMap({ mode = "default", projectId, workspaceTitle, projectType = null }: RedlineMapProps) {
-  if (mode === "mobileWalk") {
-    return <MobileWalkContainer />;
-  }
+export default function RedlineMap({ projectId, workspaceTitle, projectType = null }: RedlineMapProps) {
   return (
     <OfficeRedlineMapInner
-      mode={mode}
       projectId={projectId}
       workspaceTitle={workspaceTitle}
       projectType={projectType}
