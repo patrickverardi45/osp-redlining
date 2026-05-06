@@ -1914,7 +1914,7 @@ function OfficeRedlineMapInner({ projectId, workspaceTitle, projectType = null }
     }
   }, []);
 
-  const handleExportKml = useCallback(() => {
+  const handleExportKml = useCallback(async () => {
     const designCoveragePlacemarks: string[] = [];
     const designRoutePlacemarks: string[] = [];
     const redlinePlacemarks: string[] = [];
@@ -1925,6 +1925,23 @@ function OfficeRedlineMapInner({ projectId, workspaceTitle, projectType = null }
       <name>${escapeXml(name)}</name>
 ${folderPlacemarks.join("\n")}
     </Folder>`;
+
+    const photoDataUrlMap = new Map<string, string>();
+    await Promise.all(
+      gpsPhotos
+        .filter((p) => p.reason === "mapped" && p.file)
+        .map((p) => {
+          return new Promise<void>((resolve) => {
+            const reader = new FileReader();
+            reader.onload = () => {
+              photoDataUrlMap.set(p.id, reader.result as string);
+              resolve();
+            };
+            reader.onerror = () => resolve();
+            reader.readAsDataURL(p.file);
+          });
+        }),
+    );
 
     kmzPolygonFeatures.forEach((feature, idx) => {
       const ringCoords = cleanCoords(feature.coords);
@@ -2001,20 +2018,32 @@ ${folderPlacemarks.join("\n")}
       </Placemark>`);
     });
 
-    gpsPhotos.forEach((photo) => {
-      if (photo.reason !== "mapped") return;
-      const markerLat = typeof photo.displayLat === "number" ? photo.displayLat : photo.lat;
-      const markerLon = typeof photo.displayLon === "number" ? photo.displayLon : photo.lon;
+    gpsPhotos.forEach((p) => {
+      if (p.reason !== "mapped") return;
+      const markerLat = typeof p.displayLat === "number" ? p.displayLat : p.lat;
+      const markerLon = typeof p.displayLon === "number" ? p.displayLon : p.lon;
       const coordinate = kmlCoordinateFromLatLon(markerLat, markerLon);
       if (!coordinate) return;
-      const hasAdjusted = typeof photo.displayLat === "number" && typeof photo.displayLon === "number";
-      const description = [
-        `Original GPS: ${typeof photo.lat === "number" ? photo.lat.toFixed(6) : "--"}, ${typeof photo.lon === "number" ? photo.lon.toFixed(6) : "--"}`,
-        hasAdjusted ? `Adjusted: ${photo.displayLat!.toFixed(6)}, ${photo.displayLon!.toFixed(6)}` : "Adjusted: none",
-      ].join("\n");
+      const dataUrl = photoDataUrlMap.get(p.id);
+      const descriptionHtml = `
+  <div style="font-family: Arial; font-size: 12px;">
+    <strong>${p.filename || "Photo"}</strong><br/><br/>
+    ${
+      dataUrl
+        ? `<img src="${dataUrl}" style="max-width:300px; border:1px solid #ccc;" /><br/><br/>`
+        : `<i>No preview available</i><br/><br/>`
+    }
+    <b>Original GPS:</b> ${typeof p.lat === "number" ? p.lat.toFixed(6) : "--"}, ${typeof p.lon === "number" ? p.lon.toFixed(6) : "--"}<br/>
+    <b>Adjusted:</b> ${
+      typeof p.displayLat === "number" && typeof p.displayLon === "number"
+        ? `${p.displayLat.toFixed(6)}, ${p.displayLon.toFixed(6)}`
+        : "none"
+    }
+  </div>
+`;
       photoPlacemarks.push(`      <Placemark>
-        <name>${escapeXml(photo.filename)}</name>
-        <description>${escapeXml(description)}</description>
+        <name>${escapeXml(p.filename)}</name>
+        <description><![CDATA[${descriptionHtml.replaceAll("]]>", "]]]]><![CDATA[>")}]]></description>
         <styleUrl>#photoStyle</styleUrl>
         <Point>
           <coordinates>${coordinate}</coordinates>
