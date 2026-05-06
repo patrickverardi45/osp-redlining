@@ -7,7 +7,7 @@
 
 import { useEffect, useState } from "react";
 
-import type { Session } from "@/lib/api";
+import { archiveWalkSession, type Session } from "@/lib/api";
 import {
   SESSION_REVIEW_LABELS,
   useSessionReview,
@@ -17,6 +17,10 @@ import {
 type SelectedSubmissionReviewPanelProps = {
   selectedSessionId: string;
   session: Session | null;
+  /** Office browser session scope (optional). */
+  projectId?: string;
+  /** After a successful archive: clear UI selection + refresh inbox (parent handles). */
+  onArchived?: () => void;
 };
 
 function shortenId(rawId: string): string {
@@ -55,6 +59,8 @@ function safeCount(n: unknown): number {
 export default function SelectedSubmissionReviewPanel({
   selectedSessionId,
   session,
+  projectId,
+  onArchived,
 }: SelectedSubmissionReviewPanelProps) {
   const { status: reviewStatus, toggleReviewed } = useSessionReview(
     selectedSessionId,
@@ -62,11 +68,14 @@ export default function SelectedSubmissionReviewPanel({
   const { note: savedNote, setNote } = useSessionReviewNote(selectedSessionId);
   const [noteDraft, setNoteDraft] = useState("");
   const [noteJustSaved, setNoteJustSaved] = useState(false);
+  const [archiveBusy, setArchiveBusy] = useState(false);
+  const [archiveErr, setArchiveErr] = useState<string | null>(null);
   const isReviewed = reviewStatus === "reviewed";
 
   useEffect(() => {
     setNoteDraft(savedNote);
     setNoteJustSaved(false);
+    setArchiveErr(null);
   }, [savedNote, selectedSessionId]);
 
   const saveReviewerNote = () => {
@@ -78,6 +87,20 @@ export default function SelectedSubmissionReviewPanel({
     setNoteDraft("");
     setNote("");
     setNoteJustSaved(true);
+  };
+
+  const handleArchive = async () => {
+    if (!session) return;
+    setArchiveErr(null);
+    setArchiveBusy(true);
+    try {
+      await archiveWalkSession(session.id, projectId);
+      onArchived?.();
+    } catch (e) {
+      setArchiveErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setArchiveBusy(false);
+    }
   };
 
   if (!session) {
@@ -130,21 +153,36 @@ export default function SelectedSubmissionReviewPanel({
             on this device only.
           </p>
         </div>
-        <div className="flex items-center gap-2">
-          <span
-            className={badgeClass}
-            aria-label={`Status: ${SESSION_REVIEW_LABELS[reviewStatus]}`}
-          >
-            {SESSION_REVIEW_LABELS[reviewStatus]}
-          </span>
-          <button
-            type="button"
-            onClick={toggleReviewed}
-            className={actionButtonClass}
-            aria-pressed={isReviewed}
-          >
-            {isReviewed ? "Undo Review" : "Mark as Reviewed"}
-          </button>
+        <div className="flex flex-col items-end gap-2 shrink-0">
+          <div className="flex items-center gap-2 flex-wrap justify-end">
+            <span
+              className={badgeClass}
+              aria-label={`Status: ${SESSION_REVIEW_LABELS[reviewStatus]}`}
+            >
+              {SESSION_REVIEW_LABELS[reviewStatus]}
+            </span>
+            <button
+              type="button"
+              onClick={toggleReviewed}
+              className={actionButtonClass}
+              aria-pressed={isReviewed}
+            >
+              {isReviewed ? "Undo Review" : "Mark as Reviewed"}
+            </button>
+            <button
+              type="button"
+              onClick={() => void handleArchive()}
+              disabled={archiveBusy}
+              className="inline-flex items-center rounded-md border border-slate-500 bg-white px-3 py-1.5 text-xs font-semibold text-slate-800 hover:bg-slate-50 transition-colors disabled:opacity-60"
+            >
+              {archiveBusy ? "Archiving…" : "Archive"}
+            </button>
+          </div>
+          {archiveErr ? (
+            <p className="text-xs text-red-600 font-medium max-w-[min(520px,100%)] text-right">
+              {archiveErr}
+            </p>
+          ) : null}
         </div>
       </div>
 

@@ -193,6 +193,31 @@ export async function getJobById(jobId: string, projectId?: string): Promise<Job
   return res.json();
 }
 
+export async function archiveWalkSession(
+  sessionId: string,
+  projectId?: string,
+): Promise<{ ok: boolean; session_id?: string; archived_at?: string }> {
+  const url = appendSessionId(
+    `${BASE_URL}/api/walk-sessions/${encodeURIComponent(sessionId)}/archive`,
+    projectId,
+  );
+  const res = await fetch(url, { method: "POST" });
+  let data: Record<string, unknown> = {};
+  try {
+    data = (await res.json()) as Record<string, unknown>;
+  } catch {
+    data = {};
+  }
+  if (!res.ok) {
+    const msg =
+      typeof data.error === "string" && data.error.trim()
+        ? data.error
+        : `Archive failed: ${res.status} ${res.statusText}`;
+    throw new Error(msg);
+  }
+  return data as { ok: boolean; session_id?: string; archived_at?: string };
+}
+
 export interface WalkRouteContextResponse {
   routes: Route[];
   route_count: number;

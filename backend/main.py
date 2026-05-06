@@ -9267,7 +9267,39 @@ def _load_walk_submissions_for_job(job_id: str) -> List[Dict[str, Any]]:
     subs = idx.get("submissions") or []
     if safe_jid and safe_jid != "test-job":
         subs = [s for s in subs if str(s.get("job_id") or "") == safe_jid]
+    # Hide archived submissions from office inbox / aggregates (index only; JSON files untouched).
+    subs = [s for s in subs if isinstance(s, dict) and not str(s.get("archived_at") or "").strip()]
     return list(subs)
+
+
+@app.post("/api/walk-sessions/{session_id}/archive")
+def archive_walk_session(session_id: str) -> JSONResponse:
+    """Mark a walk submission as archived (index-only). Does not delete JSON or photos."""
+    sid = str(session_id or "").strip()
+    if not sid:
+        return JSONResponse({"ok": False, "error": "session_id is required"}, status_code=400)
+    archived_at = datetime.now(timezone.utc).isoformat()
+    idx = _load_walk_submissions_index()
+    subs_raw = idx.get("submissions")
+    if not isinstance(subs_raw, list):
+        subs_raw = []
+    found = False
+    for entry in subs_raw:
+        if not isinstance(entry, dict):
+            continue
+        if str(entry.get("session_id") or "").strip() != sid:
+            continue
+        entry["archived_at"] = archived_at
+        found = True
+        break
+    if not found:
+        return JSONResponse(
+            {"ok": False, "error": "session not found in walk submissions index"},
+            status_code=404,
+        )
+    idx["submissions"] = subs_raw
+    _save_walk_submissions_index(idx)
+    return JSONResponse({"ok": True, "session_id": sid, "archived_at": archived_at}, status_code=200)
 
 
 @app.get("/api/debug/walk-submissions")

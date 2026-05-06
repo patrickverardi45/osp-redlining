@@ -973,6 +973,7 @@ function OfficeRedlineMapInner({ projectId, workspaceTitle, projectType = null }
   const initialFitTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const focusedNovaIssueTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const focusStatusTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const fieldInboxRefreshRef = useRef<(() => void) | null>(null);
 
   const [selectedFieldSessionId, setSelectedFieldSessionId] = useState<string | null>(null);
   const [selectedFieldJobId, setSelectedFieldJobId] = useState<string | null>(null);
@@ -4723,6 +4724,7 @@ ${fieldSubmissionPlacemarks.length > 0 ? buildFolder("Selected Field Submission"
               <div style={{ display: activeWorkspaceTab === "workspace" ? "block" : "none", order: 30 }}>
                 <FieldSubmissionsInboxPanel
                   collapsible
+                  inboxRefreshRef={fieldInboxRefreshRef}
                   onSelectSession={(sessionId, jobId) => {
                     setSelectedFieldSessionId(sessionId);
                     setSelectedFieldJobId(jobId);
@@ -4796,6 +4798,11 @@ ${fieldSubmissionPlacemarks.length > 0 ? buildFolder("Selected Field Submission"
                         <SelectedSubmissionReviewPanel
                           selectedSessionId={selectedFieldSessionId}
                           session={selectedFieldSession}
+                          projectId={projectId}
+                          onArchived={() => {
+                            clearFieldSubmissionSelection();
+                            fieldInboxRefreshRef.current?.();
+                          }}
                         />
                         {(() => {
                           const sessionPhotos = (selectedFieldJobDetail.photos ?? []).filter(

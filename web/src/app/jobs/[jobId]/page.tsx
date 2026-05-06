@@ -3,7 +3,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useMemo } from "react";
-import { useParams, useSearchParams } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import dynamic from "next/dynamic";
 
@@ -62,6 +62,7 @@ const OfficeMapReviewPanel = dynamic(
 export default function JobDetailPage() {
   const params = useParams();
   const jobId = params.jobId as string;
+  const router = useRouter();
 
   const searchParams = useSearchParams();
   const rawSelectedSessionId = searchParams?.get("session") ?? "";
@@ -194,6 +195,10 @@ export default function JobDetailPage() {
           <SelectedSubmissionReviewPanel
             selectedSessionId={selectedSessionId}
             session={selectedSession}
+            onArchived={() => {
+              void fetchJob();
+              router.replace(`/jobs/${encodeURIComponent(jobId)}`);
+            }}
           />
         )}
 

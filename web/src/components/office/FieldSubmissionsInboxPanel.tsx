@@ -14,7 +14,7 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useState, type MutableRefObject } from "react";
 
 import {
   FIELD_SUBMISSIONS_FILTER_LABELS,
@@ -41,12 +41,15 @@ type FieldSubmissionsInboxPanelProps = {
   showViewAllLink?: boolean;
   /** When true, filter chips + table start collapsed; header + refresh stay visible. */
   collapsible?: boolean;
+  /** Wired by parent after archiving a submission so `refresh()` is reachable outside this panel. */
+  inboxRefreshRef?: MutableRefObject<(() => void) | null>;
 };
 
 export default function FieldSubmissionsInboxPanel({
   onSelectSession,
   showViewAllLink = true,
   collapsible = false,
+  inboxRefreshRef,
 }: FieldSubmissionsInboxPanelProps) {
   const [inboxExpanded, setInboxExpanded] = useState(false);
   const {
@@ -59,6 +62,14 @@ export default function FieldSubmissionsInboxPanel({
     setFilter,
     refresh,
   } = useFieldSubmissions("needs_review");
+
+  useEffect(() => {
+    if (!inboxRefreshRef) return;
+    inboxRefreshRef.current = refresh;
+    return () => {
+      inboxRefreshRef.current = null;
+    };
+  }, [inboxRefreshRef, refresh]);
 
   const visibleRows = filteredRows.slice(0, COMPACT_ROW_LIMIT);
   const overflow = Math.max(0, filteredRows.length - visibleRows.length);
