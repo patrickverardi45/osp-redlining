@@ -4397,6 +4397,15 @@ ${fieldSubmissionPlacemarks.length > 0 ? buildFolder("Selected Field Submission"
                               const isFSHovered = hoverFieldStationIdx === fsi;
                               const baseR = 4;
                               const r = isFSSelected ? baseR + 1.2 : isFSHovered ? baseR + 0.6 : baseR;
+                              const viewWidth = projectionMetrics.worldWidth / viewport.zoom;
+                              const viewHeight = projectionMetrics.worldHeight / viewport.zoom;
+                              const viewX = -viewport.panX / viewport.zoom;
+                              const viewY = -viewport.panY / viewport.zoom;
+                              const isFSMarkerVisible =
+                                world.x >= viewX &&
+                                world.x <= viewX + viewWidth &&
+                                world.y >= viewY &&
+                                world.y <= viewY + viewHeight;
                               return (
                                 <g
                                   key={`field-station-${st.id}`}
@@ -4429,20 +4438,22 @@ ${fieldSubmissionPlacemarks.length > 0 ? buildFolder("Selected Field Submission"
                                     strokeWidth={isFSSelected ? 0.9 : 0.8}
                                     vectorEffect="non-scaling-stroke"
                                   />
-                                  <text
-                                    x={world.x + 4.5}
-                                    y={world.y - 3.5}
-                                    fill="#facc15"
-                                    fontSize={5}
-                                    fontWeight="700"
-                                    stroke="rgba(14,24,34,0.85)"
-                                    strokeWidth={2.5}
-                                    paintOrder="stroke"
-                                    pointerEvents="none"
-                                    style={{ userSelect: "none" }}
-                                  >
-                                    {st.station_number}
-                                  </text>
+                                  {isFSMarkerVisible ? (
+                                    <text
+                                      x={world.x + 4.5}
+                                      y={world.y - 3.5}
+                                      fill="#facc15"
+                                      fontSize={5}
+                                      fontWeight="700"
+                                      stroke="rgba(14,24,34,0.85)"
+                                      strokeWidth={2.5}
+                                      paintOrder="stroke"
+                                      pointerEvents="none"
+                                      style={{ userSelect: "none" }}
+                                    >
+                                      {st.station_number}
+                                    </text>
+                                  ) : null}
                                 </g>
                               );
                             })
