@@ -162,7 +162,10 @@ export type BackendState = {
   };
   engineering_plans?: EngineeringPlan[];
   bore_log_summary?: BoreLogSummaryEntry[];
-  /** When is_locked, mutating endpoints return 423 Closeout is locked */
+  closeout_locked?: boolean;
+  closeout_locked_by?: string | null;
+  closeout_locked_at?: string | null;
+  /** When is_locked, mutating endpoints return 403 Closeout is locked */
   closeout_lock?: {
     is_locked?: boolean;
     locked_by?: string | null;

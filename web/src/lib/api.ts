@@ -88,6 +88,9 @@ export interface Job {
   session_count: number;
   exception_count: number;
   last_sync_at: string | null;
+  closeout_locked?: boolean;
+  closeout_locked_by?: string | null;
+  closeout_locked_at?: string | null;
 }
 
 // ─── Geometry ─────────────────────────────────────────────────────────────────

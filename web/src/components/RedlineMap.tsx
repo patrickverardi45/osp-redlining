@@ -2686,9 +2686,15 @@ ${fieldSubmissionPlacemarks.length > 0 ? buildFolder("Selected Field Submission"
       setStatusTone("error");
       return;
     }
+    if (!billingApproved) {
+      setStatusText("Closeout can only be locked after billing is approved.");
+      setStatusTone("warning");
+      return;
+    }
+    const lockJobId = String(selectedFieldJobDetail?.id || "test-job");
     setBusy(true);
     try {
-      const res = await fetch(appendSessionId(`${API_BASE}/api/closeout/lock`, projectId), {
+      const res = await fetch(appendSessionId(`${API_BASE}/api/jobs/${encodeURIComponent(lockJobId)}/lock-closeout`, projectId), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -2714,9 +2720,21 @@ ${fieldSubmissionPlacemarks.length > 0 ? buildFolder("Selected Field Submission"
       setStatusTone("error");
       return;
     }
+    const confirmed = window.confirm("Unlock closeout for this job?");
+    if (!confirmed) return;
+    const expectedPasscode = String(process.env.NEXT_PUBLIC_CLOSEOUT_UNLOCK_CODE || "").trim();
+    if (expectedPasscode) {
+      const enteredPasscode = window.prompt("Enter unlock passcode") ?? "";
+      if (enteredPasscode !== expectedPasscode) {
+        setStatusText("Unlock passcode invalid.");
+        setStatusTone("error");
+        return;
+      }
+    }
+    const unlockJobId = String(selectedFieldJobDetail?.id || "test-job");
     setBusy(true);
     try {
-      const res = await fetch(appendSessionId(`${API_BASE}/api/closeout/unlock`, projectId), {
+      const res = await fetch(appendSessionId(`${API_BASE}/api/jobs/${encodeURIComponent(unlockJobId)}/unlock-closeout`, projectId), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -3267,7 +3285,7 @@ ${fieldSubmissionPlacemarks.length > 0 ? buildFolder("Selected Field Submission"
   const billingChecklistComplete =
     hasDesign && hasBoreFiles && (stationPhotos.length > 0 || gpsPhotos.length > 0);
   const billingApproved = billingApprovalStatus === "approved";
-  const closeoutLocked = Boolean(state?.closeout_lock?.is_locked);
+  const closeoutLocked = Boolean(state?.closeout_lock?.is_locked || state?.closeout_locked);
   const workspaceReadOnly = billingApproved || closeoutLocked;
   const closeoutUnlockRole = (process.env.NEXT_PUBLIC_USER_ROLE || "pm").toLowerCase();
   const canUnlockCloseout =
@@ -6152,7 +6170,7 @@ ${fieldSubmissionPlacemarks.length > 0 ? buildFolder("Selected Field Submission"
               <Section title="6. Export / Print" subtitle="Opens a clean print-only report — use browser Save as PDF for a file.">
                 <div style={{ display: "grid", gap: 14 }}>
                   <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center" }}>
-                    {closeoutLocked && state?.closeout_lock ? (
+                    {closeoutLocked ? (
                       <div
                         style={{
                           flex: "1 1 280px",
@@ -6165,13 +6183,15 @@ ${fieldSubmissionPlacemarks.length > 0 ? buildFolder("Selected Field Submission"
                           fontWeight: 600,
                         }}
                       >
-                        🔒 Locked by {String(state.closeout_lock.locked_by ?? "—")} at{" "}
-                        {state.closeout_lock.locked_at
+                        🔒 Closeout Locked — Approved for Billing. Locked by {String(state?.closeout_lock?.locked_by ?? state?.closeout_locked_by ?? "—")} at{" "}
+                        {state?.closeout_lock?.locked_at
                           ? new Date(String(state.closeout_lock.locked_at)).toLocaleString()
-                          : "—"}
+                          : state?.closeout_locked_at
+                            ? new Date(String(state.closeout_locked_at)).toLocaleString()
+                            : "—"}
                       </div>
                     ) : null}
-                    {!closeoutLocked ? (
+                    {!closeoutLocked && billingApproved ? (
                       <button
                         type="button"
                         onClick={() => void handleLockCloseout()}

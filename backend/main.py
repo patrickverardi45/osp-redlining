@@ -161,6 +161,9 @@ def _reset_workspace_state() -> None:
                 "locked_by": None,
                 "locked_at": None,
             },
+            "closeout_locked": False,
+            "closeout_locked_by": None,
+            "closeout_locked_at": None,
         }
     )
 
@@ -209,6 +212,9 @@ def _default_session_state() -> Dict[str, Any]:
             "locked_by": None,
             "locked_at": None,
         },
+        "closeout_locked": False,
+        "closeout_locked_by": None,
+        "closeout_locked_at": None,
     }
 
 
@@ -265,17 +271,47 @@ def _normalize_closeout_lock(raw: Any) -> Dict[str, Any]:
 
 
 def _is_closeout_locked() -> bool:
-    return bool(_normalize_closeout_lock(STATE.get("closeout_lock")).get("is_locked"))
+    return bool(_closeout_flat_fields().get("closeout_locked"))
+
+
+def _closeout_flat_fields() -> Dict[str, Any]:
+    lock = _normalize_closeout_lock(STATE.get("closeout_lock"))
+    if any(k in STATE for k in ("closeout_locked", "closeout_locked_by", "closeout_locked_at")):
+        if "closeout_locked" in STATE:
+            lock["is_locked"] = bool(STATE.get("closeout_locked"))
+        if "closeout_locked_by" in STATE and STATE.get("closeout_locked_by") is not None:
+            lock["locked_by"] = STATE.get("closeout_locked_by")
+        if "closeout_locked_at" in STATE and STATE.get("closeout_locked_at") is not None:
+            lock["locked_at"] = STATE.get("closeout_locked_at")
+    return {
+        "closeout_locked": bool(lock.get("is_locked")),
+        "closeout_locked_by": lock.get("locked_by"),
+        "closeout_locked_at": lock.get("locked_at"),
+    }
+
+
+def _set_closeout_lock_state(is_locked: bool, locked_by: Optional[str], locked_at: Optional[str]) -> Dict[str, Any]:
+    lock = {
+        "is_locked": bool(is_locked),
+        "locked_by": locked_by,
+        "locked_at": locked_at,
+    }
+    STATE["closeout_lock"] = lock
+    STATE["closeout_locked"] = bool(is_locked)
+    STATE["closeout_locked_by"] = locked_by
+    STATE["closeout_locked_at"] = locked_at
+    return lock
 
 
 def _json_closeout_locked_response() -> JSONResponse:
     return JSONResponse(
-        status_code=423,
+        status_code=403,
         content={
             "success": False,
             "error": CLOSEOUT_LOCKED_MESSAGE,
             "closeout_lock": _normalize_closeout_lock(STATE.get("closeout_lock")),
             "session_id": str(STATE.get("_session_id_hint") or ""),
+            **_closeout_flat_fields(),
         },
     )
 
@@ -6733,6 +6769,7 @@ def _summary_payload(include_debug: bool = False) -> Dict[str, Any]:
             "engineering_plans": _load_engineering_plan_index_for_session(STATE.get("_session_id_hint", "")),
             "bore_log_summary": _bore_log_summary_from_rows(committed_rows),
             "closeout_lock": _normalize_closeout_lock(STATE.get("closeout_lock")),
+            **_closeout_flat_fields(),
         }
         return payload
 
@@ -6805,6 +6842,7 @@ def _summary_payload(include_debug: bool = False) -> Dict[str, Any]:
         "engineering_plans": _load_engineering_plan_index_for_session(STATE.get("_session_id_hint", "")),
         "bore_log_summary": _bore_log_summary_from_rows(committed_rows),
         "closeout_lock": _normalize_closeout_lock(STATE.get("closeout_lock")),
+        **_closeout_flat_fields(),
     }
 
 
@@ -7733,7 +7771,9 @@ def _closeout_unlock_role_from_payload(payload: Any) -> str:
 
 @app.post("/api/closeout/lock")
 @app.post("/closeout/lock")
+@app.post("/api/jobs/{job_id}/lock-closeout")
 def api_closeout_lock(
+    job_id: Optional[str] = None,
     payload: Dict[str, Any] = Body(default_factory=dict),
     session_id: Optional[str] = None,
 ) -> JSONResponse:
@@ -7743,32 +7783,40 @@ def api_closeout_lock(
     with _session_scope(resolved):
         cur = _normalize_closeout_lock(STATE.get("closeout_lock"))
         if cur.get("is_locked"):
+            _set_closeout_lock_state(
+                True,
+                cur.get("locked_by"),
+                cur.get("locked_at"),
+            )
             return JSONResponse(
                 content={
                     "success": True,
                     "message": "Already locked",
                     "session_id": resolved,
                     "closeout_lock": cur,
+                    **_closeout_flat_fields(),
                 }
             )
-        nxt = {
-            "is_locked": True,
-            "locked_by": user,
-            "locked_at": datetime.now(timezone.utc).isoformat(),
-        }
-        STATE["closeout_lock"] = nxt
+        nxt = _set_closeout_lock_state(
+            True,
+            user,
+            datetime.now(timezone.utc).isoformat(),
+        )
         return JSONResponse(
             content={
                 "success": True,
                 "session_id": resolved,
                 "closeout_lock": nxt,
+                **_closeout_flat_fields(),
             }
         )
 
 
 @app.post("/api/closeout/unlock")
 @app.post("/closeout/unlock")
+@app.post("/api/jobs/{job_id}/unlock-closeout")
 def api_closeout_unlock(
+    job_id: Optional[str] = None,
     payload: Dict[str, Any] = Body(default_factory=dict),
     session_id: Optional[str] = None,
 ) -> JSONResponse:
@@ -7785,16 +7833,13 @@ def api_closeout_unlock(
             },
         )
     with _session_scope(resolved):
-        STATE["closeout_lock"] = {
-            "is_locked": False,
-            "locked_by": None,
-            "locked_at": None,
-        }
+        unlocked = _set_closeout_lock_state(False, None, None)
         return JSONResponse(
             content={
                 "success": True,
                 "session_id": resolved,
-                "closeout_lock": STATE["closeout_lock"],
+                "closeout_lock": unlocked,
+                **_closeout_flat_fields(),
             }
         )
 
@@ -8883,6 +8928,8 @@ def walk_start(payload: Dict[str, Any] = Body(default={})) -> JSONResponse:
     resolved_session_id = _resolve_session_id(body_session_id)
     try:
         with _session_scope(resolved_session_id):
+            if _is_closeout_locked():
+                return _json_closeout_locked_response()
             meta = {
                 "job_id": str(payload.get("job_id") or "").strip(),
                 "job_label": str(payload.get("job_label") or "").strip(),
@@ -8914,6 +8961,8 @@ def walk_breadcrumbs(payload: Dict[str, Any] = Body(default={})) -> JSONResponse
         raw_points = payload.get("points") if isinstance(payload, dict) else None
         incoming = list(raw_points) if isinstance(raw_points, list) else []
         with _session_scope(resolved_session_id):
+            if _is_closeout_locked():
+                return _json_closeout_locked_response()
             if not bool(STATE.get("walk_active")):
                 # Walk not active — accept but discard. Returning an error
                 # would force the client into an awkward retry loop on race
@@ -8958,6 +9007,8 @@ def walk_station_events(payload: Dict[str, Any] = Body(default={})) -> JSONRespo
         raw_events = payload.get("events") if isinstance(payload, dict) else None
         incoming = list(raw_events) if isinstance(raw_events, list) else []
         with _session_scope(resolved_session_id):
+            if _is_closeout_locked():
+                return _json_closeout_locked_response()
             existing = list(STATE.get("walk_station_events") or [])
             seen_client_uuids = {
                 str(ev.get("client_uuid"))
@@ -8999,6 +9050,8 @@ def walk_end(payload: Dict[str, Any] = Body(default={})) -> JSONResponse:
     resolved_session_id = _resolve_session_id(body_session_id)
     try:
         with _session_scope(resolved_session_id):
+            if _is_closeout_locked():
+                return _json_closeout_locked_response()
             STATE["walk_active"] = False
             meta = dict(STATE.get("walk_meta") or {})
             meta["ended_at"] = _walk_iso_now()
@@ -10058,6 +10111,7 @@ def get_job_by_id(job_id: str, session_id: Optional[str] = None) -> Dict[str, An
             "photos": photos,
             "exceptions": exceptions,
             "artifacts": artifacts,
+            **_closeout_flat_fields(),
         }
 
 
