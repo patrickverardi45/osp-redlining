@@ -219,16 +219,52 @@ function buildIssueId(item: QaFlagItem, index: number): string {
   ].join("::");
 }
 
-/** Every actionable (non-info) review item has decision Reviewed or Accepted Override. */
+/** Decision counts as addressed for checklist / Sec. 4 (persisted or client-facing labels). */
+function isResolvedReviewDecision(decision: string | undefined | null): boolean {
+  const raw = decision == null ? "" : String(decision).trim();
+  if (!raw) return false;
+  if (raw === "Reviewed" || raw === "Accepted Override") return true;
+  if (raw === "Reviewed and Accepted") return true;
+  const lower = raw.toLowerCase();
+  return (
+    lower === "reviewed" ||
+    lower === "accepted override" ||
+    lower === "reviewed and accepted"
+  );
+}
+
+function countUnresolvedActionableIssues(qaItems: QaFlagItem[], overrides: ReviewOverride[]): number {
+  let n = 0;
+  qaItems.forEach((q, i) => {
+    if (q.severity === "info") return;
+    const issueId = buildIssueId(q, i);
+    const ov = overrides.find((o) => o.issue_key === issueId);
+    if (!isResolvedReviewDecision(ov?.decision)) n += 1;
+  });
+  return n;
+}
+
+/** Copy for Sec. 11 checklist row + print checklist (must stay in sync with ok=allReviewResolved). */
+function formatReviewNotesChecklistLabel(
+  qaItems: QaFlagItem[],
+  overrides: ReviewOverride[],
+  allResolved: boolean,
+): string {
+  const actionableCount = qaItems.filter((q) => q.severity !== "info").length;
+  if (actionableCount === 0) return "Review notes — none found";
+  if (allResolved) return "Review notes addressed";
+  const pending = countUnresolvedActionableIssues(qaItems, overrides);
+  const n = pending > 0 ? pending : actionableCount;
+  return `Review notes pending (${n} item${n !== 1 ? "s" : ""} requiring attention)`;
+}
+
+/** Every actionable (non-info) review item has an accepted / reviewed decision recorded. */
 function allReviewItemsResolved(qaItems: QaFlagItem[], overrides: ReviewOverride[]): boolean {
   return qaItems.every((q, i) => {
     if (q.severity === "info") return true;
     const issueId = buildIssueId(q, i);
     const ov = overrides.find((o) => o.issue_key === issueId);
-    return (
-      ov != null &&
-      (ov.decision === "Reviewed" || ov.decision === "Accepted Override")
-    );
+    return isResolvedReviewDecision(ov?.decision);
   });
 }
 
@@ -237,9 +273,16 @@ function decisionColumnStyle(override: ReviewOverride | undefined): { label: str
     return { label: "Needs Review", color: "#d97706" };
   }
   const d = override.decision;
-  if (d === "Reviewed") return { label: d, color: "#2563eb" };
-  if (d === "Accepted Override") return { label: d, color: "#16a34a" };
   if (d === "Needs Rework") return { label: d, color: "#dc2626" };
+  if (isResolvedReviewDecision(d)) {
+    const canon = String(d).trim();
+    const isReviewedOnly =
+      canon === "Reviewed" || canon.toLowerCase() === "reviewed";
+    return {
+      label: translateDecision(canon) ?? canon,
+      color: isReviewedOnly ? "#2563eb" : "#16a34a",
+    };
+  }
   return { label: d, color: "#64748b" };
 }
 
@@ -421,7 +464,6 @@ function buildPrintHtml(
     </div>`;
 
   const hasEngineeringPlans = plans.length > 0;
-  const actionableReviewCount = qaItems.filter((q) => q.severity !== "info").length;
   const allReviewResolved = allReviewItemsResolved(qaItems, overrides);
 
   const notesSatisfied =
@@ -451,9 +493,7 @@ function buildPrintHtml(
     checkItem(hasEngineeringPlans, `Engineering plans attached (${plans.length} plan${plans.length !== 1 ? "s" : ""})`),
     checkItem(
       allReviewResolved,
-      actionableReviewCount === 0
-        ? "Review notes — none found"
-        : `Review notes addressed (${actionableReviewCount} item${actionableReviewCount !== 1 ? "s" : ""} requiring attention)`,
+      formatReviewNotesChecklistLabel(qaItems, overrides, allReviewResolved),
     ),
     checkItem(overrides.length >= 0, overrides.length > 0 ? `Review decisions documented (${overrides.length} recorded)` : "No review decisions recorded"),
     checkItem(hasPhotoEvidence, hasPhotoEvidence ? `Field photo evidence attached (${stationPhotos.length + geoTaggedPhotos.length} photo${stationPhotos.length + geoTaggedPhotos.length !== 1 ? "s" : ""})` : "Field photo evidence not attached"),
@@ -829,7 +869,31 @@ export default function CloseoutPacket(props: CloseoutPacketProps) {
       w.document.write(html);
       w.document.close();
       w.focus();
-      setTimeout(() => { try { w.print(); } catch { /* ignore */ } }, 400);
+      let fallbackCloseId: number | undefined;
+      const closePrintWindow = () => {
+        if (fallbackCloseId != null) {
+          window.clearTimeout(fallbackCloseId);
+          fallbackCloseId = undefined;
+        }
+        try {
+          if (!w.closed) w.close();
+        } catch {
+          /* ignore */
+        }
+      };
+      w.onafterprint = () => {
+        closePrintWindow();
+      };
+      setTimeout(() => {
+        try {
+          w.print();
+          fallbackCloseId = window.setTimeout(() => {
+            closePrintWindow();
+          }, 2500);
+        } catch {
+          closePrintWindow();
+        }
+      }, 400);
     } finally {
       setGenerating(false);
     }
@@ -1346,11 +1410,7 @@ export default function CloseoutPacket(props: CloseoutPacketProps) {
                   <CI ok={plans.length > 0} label={`Engineering plans attached (${plans.length} plan${plans.length !== 1 ? "s" : ""})`} />
                   <CI
                     ok={allReviewResolved}
-                    label={
-                      qaItems.filter((q) => q.severity !== "info").length === 0
-                        ? "Review notes — none found"
-                        : `Review notes addressed (${qaItems.filter((q) => q.severity !== "info").length} item${qaItems.filter((q) => q.severity !== "info").length !== 1 ? "s" : ""} requiring attention)`
-                    }
+                    label={formatReviewNotesChecklistLabel(qaItems, overrides, allReviewResolved)}
                   />
                   <CI ok={overrides.length >= 0} label={overrides.length > 0 ? `Review decisions documented (${overrides.length} recorded)` : "No review decisions recorded"} />
                   <CI ok={hasPhotoEvidence} label={hasPhotoEvidence ? `Field photo evidence attached (${stationPhotos.length + geoTaggedPhotos.length} photo${stationPhotos.length + geoTaggedPhotos.length !== 1 ? "s" : ""})` : "Field photo evidence not attached"} />
