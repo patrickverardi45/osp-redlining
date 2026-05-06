@@ -41,7 +41,7 @@ import SessionPhotoGalleryModal, {
   type SessionPhotoGallery,
 } from "@/components/office/SessionPhotoGalleryModal";
 import { getJobById } from "@/lib/api";
-import type { JobDetail } from "@/lib/api";
+import type { JobDetail, Photo } from "@/lib/api";
 import { clamp, formatNumber, cleanDisplayText, formatDisplayDate } from "@/lib/format/text";
 import { toMoney } from "@/lib/format/money";
 import { extractGps } from "@/lib/photos/exif";
@@ -499,6 +499,74 @@ function escapeXml(value: unknown): string {
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&apos;");
+}
+
+/** Google Earth: HTML description table; labels and cell text are entity-escaped. */
+function kmlDescriptionTable(rows: Array<{ label: string; value: string }>): string {
+  const body = rows
+    .map(
+      (r) =>
+        `<tr><td><strong>${escapeXml(r.label)}</strong></td><td>${escapeXml(r.value)}</td></tr>`,
+    )
+    .join("");
+  const html = `<table border="1" cellspacing="0" cellpadding="4"><tbody>${body}</tbody></table>`;
+  const safe = html.replace(/\]\]>/g, "]]]]><![CDATA[>");
+  return `<![CDATA[${safe}]]>`;
+}
+
+function kmlStationFtSlashMapped(stationFt: string, mappedFt: string): string {
+  if (stationFt === "--" && mappedFt === "--") return "--";
+  return `${stationFt} / ${mappedFt}`;
+}
+
+function kmlLatLonCells(lat: unknown, lon: unknown): { lat: string; lon: string } {
+  const lt = typeof lat === "number" ? lat : NaN;
+  const ln = typeof lon === "number" ? lon : NaN;
+  return {
+    lat: Number.isFinite(lt) ? lt.toFixed(8) : "--",
+    lon: Number.isFinite(ln) ? ln.toFixed(8) : "--",
+  };
+}
+
+function kmlFieldJobRouteJob(detail: JobDetail | null): string {
+  if (!detail) return "--";
+  const code = cleanDisplayText(detail.job_code);
+  const name = cleanDisplayText(detail.job_name);
+  if (code !== "--" && name !== "--") return `${code} — ${name}`;
+  if (code !== "--") return code;
+  if (name !== "--") return name;
+  return cleanDisplayText(detail.id);
+}
+
+function kmlSessionPhotoCountForStation(
+  photos: readonly Photo[],
+  sessionId: string,
+  stationLabelNorm: string,
+): string {
+  if (!photos.length || !stationLabelNorm) return "--";
+  const n = photos.filter(
+    (p) =>
+      String(p.session_id ?? "") === sessionId &&
+      String(p.station_label ?? "").trim() === stationLabelNorm,
+  ).length;
+  return String(n);
+}
+
+function kmlSessionPhotoNotesForStation(
+  photos: readonly Photo[],
+  sessionId: string,
+  stationLabelNorm: string,
+): string {
+  if (!photos.length || !stationLabelNorm) return "--";
+  const parts = photos
+    .filter(
+      (p) =>
+        String(p.session_id ?? "") === sessionId &&
+        String(p.station_label ?? "").trim() === stationLabelNorm,
+    )
+    .map((p) => (p.note ?? "").trim())
+    .filter(Boolean);
+  return parts.length ? parts.join("; ") : "--";
 }
 
 function kmlCoordinateFromLatLon(lat: unknown, lon: unknown): string | null {
@@ -1954,13 +2022,39 @@ ${folderPlacemarks.join("\n")}
       </Placemark>`);
     });
 
+    const officeRouteJob = cleanDisplayText(
+      (state?.selected_route_name && state.selected_route_name.trim()) ||
+        (state?.route_name && state.route_name.trim()) ||
+        (activeJob !== "--" ? String(activeJob) : ""),
+    );
+
     stationPoints.forEach((point, idx) => {
       const coordinate = kmlCoordinateFromLatLon(point.lat, point.lon);
       if (!coordinate) return;
       const stationLabel = cleanDisplayText(point.station);
+      const ll = kmlLatLonCells(point.lat, point.lon);
+      const stationFtCell = formatNumber(point.station_ft, 3);
+      const mappedFtCell = formatNumber(point.mapped_station_ft, 3);
       stationPlacemarks.push(`      <Placemark>
         <name>${escapeXml(`Station ${stationLabel !== "--" ? stationLabel : idx + 1}`)}</name>
-        <description>${escapeXml(`Source: ${cleanDisplayText(point.source_file)}\nMapped FT: ${formatNumber(point.mapped_station_ft, 3)}`)}</description>
+        <description>${kmlDescriptionTable([
+          { label: "Station", value: stationLabel },
+          {
+            label: "Station FT / mapped footage",
+            value: kmlStationFtSlashMapped(stationFtCell, mappedFtCell),
+          },
+          { label: "Source file", value: cleanDisplayText(point.source_file) },
+          { label: "Route / job", value: officeRouteJob },
+          { label: "Session ID", value: "--" },
+          { label: "Crew", value: cleanDisplayText(point.crew) },
+          { label: "Date / timestamp", value: cleanDisplayText(point.date) },
+          { label: "Depth FT", value: formatNumber(point.depth_ft, 3) },
+          { label: "BOC FT", value: formatNumber(point.boc_ft, 3) },
+          { label: "Notes", value: cleanDisplayText(point.notes) },
+          { label: "Photo count", value: "--" },
+          { label: "Latitude", value: ll.lat },
+          { label: "Longitude", value: ll.lon },
+        ])}</description>
         <styleUrl>#stationStyle</styleUrl>
         <Point>
           <coordinates>${coordinate}</coordinates>
@@ -1994,11 +2088,14 @@ ${folderPlacemarks.join("\n")}
         const crew = selectedFieldSession?.crew_name ? cleanDisplayText(selectedFieldSession.crew_name) : "";
         const rawStarted = selectedFieldSession?.started_at;
         const rawEnded = selectedFieldSession?.ended_at;
-        const dateStr = rawStarted
-          ? formatDisplayDate(rawStarted)
-          : rawEnded
-            ? formatDisplayDate(rawEnded)
-            : "";
+        const sessionPhotos = selectedFieldJobDetail?.photos ?? [];
+        const fieldRouteJob = kmlFieldJobRouteJob(selectedFieldJobDetail ?? null);
+        const sessionTsRaw = rawStarted || rawEnded || "";
+        const sessionDateCell = sessionTsRaw
+          ? `${formatDisplayDate(sessionTsRaw)} (${sessionTsRaw})`
+          : "--";
+        const sessionPhotoTotal = sessionPhotos.filter((p) => String(p.session_id ?? "") === sessionId).length;
+        const crewCell = crew && crew !== "--" ? crew : "--";
         const withFt = projectedFieldStations.map((row) => ({ row, ft: fieldStationFtFromRow(row.st) }));
         const sortedByFt = withFt.filter((x) => Number.isFinite(x.ft)).sort((a, b) => a.ft - b.ft);
         const sortedAllByFt = [...withFt].sort((a, b) => {
@@ -2008,23 +2105,36 @@ ${folderPlacemarks.join("\n")}
           return String(a.row.st.id).localeCompare(String(b.row.st.id));
         });
         const startStationLabel =
-          sortedByFt.length > 0 ? cleanDisplayText(sortedByFt[0].row.st.station_number) : "";
+          sortedByFt.length > 0 ? cleanDisplayText(sortedByFt[0].row.st.station_number) : "--";
         const endStationLabel =
           sortedByFt.length > 0
             ? cleanDisplayText(sortedByFt[sortedByFt.length - 1].row.st.station_number)
-            : "";
-        const lineDescription = [
-          `Session ID: ${sessionId}`,
-          crew ? `Crew: ${crew}` : "",
-          dateStr ? `Date: ${dateStr}` : "",
-          startStationLabel ? `Start station: ${startStationLabel}` : "",
-          endStationLabel ? `End station: ${endStationLabel}` : "",
-        ]
-          .filter((line) => line.length > 0)
-          .join("\n");
+            : "--";
+        const lineOverviewNote =
+          startStationLabel !== "--" && endStationLabel !== "--"
+            ? `Path from ${startStationLabel} through ${endStationLabel}`
+            : startStationLabel !== "--"
+              ? `Path from ${startStationLabel}`
+              : endStationLabel !== "--"
+                ? `Path through ${endStationLabel}`
+                : "--";
         fieldSubmissionPlacemarks.push(`      <Placemark>
         <name>${escapeXml(`Field Submission ${sessionId}`)}</name>
-        <description>${escapeXml(lineDescription)}</description>
+        <description>${kmlDescriptionTable([
+          { label: "Station", value: "Field submission path" },
+          { label: "Station FT / mapped footage", value: "--" },
+          { label: "Source file", value: "--" },
+          { label: "Route / job", value: fieldRouteJob },
+          { label: "Session ID", value: sessionId },
+          { label: "Crew", value: crewCell },
+          { label: "Date / timestamp", value: sessionDateCell },
+          { label: "Depth FT", value: "--" },
+          { label: "BOC FT", value: "--" },
+          { label: "Notes", value: lineOverviewNote },
+          { label: "Photo count", value: String(sessionPhotoTotal) },
+          { label: "Latitude", value: "--" },
+          { label: "Longitude", value: "--" },
+        ])}</description>
         <styleUrl>#fieldSubmissionStyle</styleUrl>
         <LineString>
           <tessellate>1</tessellate>
@@ -2040,22 +2150,48 @@ ${folderPlacemarks.join("\n")}
           const startCoord = kmlCoordinateFromLatLon(firstEntry.row.displayLat, firstEntry.row.displayLon);
           if (startCoord) {
             const startNum = cleanDisplayText(firstEntry.row.st.station_number);
-            const startDesc = [
-              `Station number: ${startNum}`,
-              `Station FT: ${formatNumber(firstEntry.ft, 3)}`,
-              Number.isFinite(firstEntry.row.st.depth_ft)
-                ? `Depth FT: ${formatNumber(firstEntry.row.st.depth_ft, 3)}`
-                : "",
-              Number.isFinite(firstEntry.row.st.boc_ft)
-                ? `BOC FT: ${formatNumber(firstEntry.row.st.boc_ft, 3)}`
-                : "",
-              `Session ID: ${sessionId}`,
-            ]
-              .filter((line) => line.length > 0)
-              .join("\n");
+            const stationKeyStart = String(firstEntry.row.st.station_number ?? "").trim();
+            const mapStartRaw = (firstEntry.row.st as { mapped_station_ft?: number }).mapped_station_ft;
+            const mappedStart =
+              typeof mapStartRaw === "number" && Number.isFinite(mapStartRaw)
+                ? formatNumber(mapStartRaw, 3)
+                : "--";
+            const ftStart = Number.isFinite(firstEntry.ft)
+              ? formatNumber(firstEntry.ft, 3)
+              : "--";
+            const llS = kmlLatLonCells(firstEntry.row.displayLat, firstEntry.row.displayLon);
             fieldSubmissionPlacemarks.push(`      <Placemark>
         <name>${escapeXml(`Start ${startNum}`)}</name>
-        <description>${escapeXml(startDesc)}</description>
+        <description>${kmlDescriptionTable([
+          { label: "Station", value: `${startNum} (start)` },
+          {
+            label: "Station FT / mapped footage",
+            value: kmlStationFtSlashMapped(ftStart, mappedStart),
+          },
+          { label: "Source file", value: "--" },
+          { label: "Route / job", value: fieldRouteJob },
+          { label: "Session ID", value: sessionId },
+          { label: "Crew", value: crewCell },
+          { label: "Date / timestamp", value: sessionDateCell },
+          {
+            label: "Depth FT",
+            value: formatNumber(firstEntry.row.st.depth_ft, 3),
+          },
+          {
+            label: "BOC FT",
+            value: formatNumber(firstEntry.row.st.boc_ft, 3),
+          },
+          {
+            label: "Notes",
+            value: kmlSessionPhotoNotesForStation(sessionPhotos, sessionId, stationKeyStart),
+          },
+          {
+            label: "Photo count",
+            value: kmlSessionPhotoCountForStation(sessionPhotos, sessionId, stationKeyStart),
+          },
+          { label: "Latitude", value: llS.lat },
+          { label: "Longitude", value: llS.lon },
+        ])}</description>
         <styleUrl>#stationStyle</styleUrl>
         <Point>
           <coordinates>${startCoord}</coordinates>
@@ -2065,22 +2201,46 @@ ${folderPlacemarks.join("\n")}
           const endCoord = kmlCoordinateFromLatLon(lastEntry.row.displayLat, lastEntry.row.displayLon);
           if (endCoord) {
             const endNum = cleanDisplayText(lastEntry.row.st.station_number);
-            const endDesc = [
-              `Station number: ${endNum}`,
-              `Station FT: ${formatNumber(lastEntry.ft, 3)}`,
-              Number.isFinite(lastEntry.row.st.depth_ft)
-                ? `Depth FT: ${formatNumber(lastEntry.row.st.depth_ft, 3)}`
-                : "",
-              Number.isFinite(lastEntry.row.st.boc_ft)
-                ? `BOC FT: ${formatNumber(lastEntry.row.st.boc_ft, 3)}`
-                : "",
-              `Session ID: ${sessionId}`,
-            ]
-              .filter((line) => line.length > 0)
-              .join("\n");
+            const stationKeyEnd = String(lastEntry.row.st.station_number ?? "").trim();
+            const mapEndRaw = (lastEntry.row.st as { mapped_station_ft?: number }).mapped_station_ft;
+            const mappedEnd =
+              typeof mapEndRaw === "number" && Number.isFinite(mapEndRaw)
+                ? formatNumber(mapEndRaw, 3)
+                : "--";
+            const ftEnd = Number.isFinite(lastEntry.ft) ? formatNumber(lastEntry.ft, 3) : "--";
+            const llE = kmlLatLonCells(lastEntry.row.displayLat, lastEntry.row.displayLon);
             fieldSubmissionPlacemarks.push(`      <Placemark>
         <name>${escapeXml(`End ${endNum}`)}</name>
-        <description>${escapeXml(endDesc)}</description>
+        <description>${kmlDescriptionTable([
+          { label: "Station", value: `${endNum} (end)` },
+          {
+            label: "Station FT / mapped footage",
+            value: kmlStationFtSlashMapped(ftEnd, mappedEnd),
+          },
+          { label: "Source file", value: "--" },
+          { label: "Route / job", value: fieldRouteJob },
+          { label: "Session ID", value: sessionId },
+          { label: "Crew", value: crewCell },
+          { label: "Date / timestamp", value: sessionDateCell },
+          {
+            label: "Depth FT",
+            value: formatNumber(lastEntry.row.st.depth_ft, 3),
+          },
+          {
+            label: "BOC FT",
+            value: formatNumber(lastEntry.row.st.boc_ft, 3),
+          },
+          {
+            label: "Notes",
+            value: kmlSessionPhotoNotesForStation(sessionPhotos, sessionId, stationKeyEnd),
+          },
+          {
+            label: "Photo count",
+            value: kmlSessionPhotoCountForStation(sessionPhotos, sessionId, stationKeyEnd),
+          },
+          { label: "Latitude", value: llE.lat },
+          { label: "Longitude", value: llE.lon },
+        ])}</description>
         <styleUrl>#stationStyle</styleUrl>
         <Point>
           <coordinates>${endCoord}</coordinates>
@@ -2094,18 +2254,46 @@ ${folderPlacemarks.join("\n")}
           if (!coord) continue;
           const st = row.st;
           const sn = cleanDisplayText(st.station_number);
-          const stDesc = [
-            `Station number: ${sn}`,
-            Number.isFinite(ft) ? `Station FT: ${formatNumber(ft, 3)}` : "Station FT: --",
-            Number.isFinite(st.depth_ft) ? `Depth FT: ${formatNumber(st.depth_ft, 3)}` : "",
-            Number.isFinite(st.boc_ft) ? `BOC FT: ${formatNumber(st.boc_ft, 3)}` : "",
-            `Session ID: ${sessionId}`,
-          ]
-            .filter((line) => line.length > 0)
-            .join("\n");
+          const stationKey = String(st.station_number ?? "").trim();
+          const mapRowRaw = (st as { mapped_station_ft?: number }).mapped_station_ft;
+          const mappedSt =
+            typeof mapRowRaw === "number" && Number.isFinite(mapRowRaw)
+              ? formatNumber(mapRowRaw, 3)
+              : "--";
+          const ftCell = Number.isFinite(ft) ? formatNumber(ft, 3) : "--";
+          const ll = kmlLatLonCells(row.displayLat, row.displayLon);
           fieldSubmissionPlacemarks.push(`      <Placemark>
         <name>${escapeXml(`Station ${sn}`)}</name>
-        <description>${escapeXml(stDesc)}</description>
+        <description>${kmlDescriptionTable([
+          { label: "Station", value: sn },
+          {
+            label: "Station FT / mapped footage",
+            value: kmlStationFtSlashMapped(ftCell, mappedSt),
+          },
+          { label: "Source file", value: "--" },
+          { label: "Route / job", value: fieldRouteJob },
+          { label: "Session ID", value: sessionId },
+          { label: "Crew", value: crewCell },
+          { label: "Date / timestamp", value: sessionDateCell },
+          {
+            label: "Depth FT",
+            value: formatNumber(st.depth_ft, 3),
+          },
+          {
+            label: "BOC FT",
+            value: formatNumber(st.boc_ft, 3),
+          },
+          {
+            label: "Notes",
+            value: kmlSessionPhotoNotesForStation(sessionPhotos, sessionId, stationKey),
+          },
+          {
+            label: "Photo count",
+            value: kmlSessionPhotoCountForStation(sessionPhotos, sessionId, stationKey),
+          },
+          { label: "Latitude", value: ll.lat },
+          { label: "Longitude", value: ll.lon },
+        ])}</description>
         <styleUrl>#stationStyle</styleUrl>
         <Point>
           <coordinates>${coord}</coordinates>
@@ -2186,8 +2374,11 @@ ${fieldSubmissionPlacemarks.length > 0 ? buildFolder("Selected Field Submission"
     layerRoutes,
     projectedFieldStations,
     redlineSegments,
+    selectedFieldJobDetail,
     selectedFieldSession,
     selectedFieldSessionId,
+    state?.route_name,
+    state?.selected_route_name,
     stationPoints,
   ]);
 
