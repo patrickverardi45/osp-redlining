@@ -34,6 +34,8 @@ import {
 } from "@/lib/map/constants";
 import FieldSubmissionsInboxPanel from "@/components/office/FieldSubmissionsInboxPanel";
 import SelectedSubmissionReviewPanel from "@/components/office/SelectedSubmissionReviewPanel";
+import { buildSessionPacketHtml } from "@/lib/office/sessionPacketHtml";
+import { useSessionReview, useSessionReviewNote } from "@/lib/office/sessionReview";
 import SessionPhotoGalleryModal, {
   sortPhotosByUploadedDesc,
   type SessionPhotoGallery,
@@ -997,6 +999,9 @@ function OfficeRedlineMapInner({ projectId, workspaceTitle, projectType = null }
     );
   }, [selectedFieldSessionId, selectedFieldJobDetail]);
 
+  const { status: fieldSubmissionReviewStatus } = useSessionReview(selectedFieldSessionId);
+  const { note: fieldSubmissionReviewNote } = useSessionReviewNote(selectedFieldSessionId);
+
   const isFiberPullWorkspace = useMemo(() => {
     const fromJob = String(selectedFieldJobDetail?.project_type ?? "").toLowerCase() === "fiber_pull";
     const fromProp = String(projectType ?? "").trim().toLowerCase() === "fiber_pull";
@@ -1028,6 +1033,54 @@ function OfficeRedlineMapInner({ projectId, workspaceTitle, projectType = null }
     setFieldReviewBoreOpen(false);
     setShowFieldGpsEvidenceTrail(false);
   }, [selectedFieldSessionId]);
+
+  const handlePrintSessionPacket = useCallback(() => {
+    const session = selectedFieldSession;
+    const job = selectedFieldJobDetail;
+    const sid = selectedFieldSessionId?.trim();
+    if (!session || !job || !sid) return;
+
+    const jobLabel =
+      job.job_code && job.job_name
+        ? `${job.job_code} — ${job.job_name}`
+        : job.job_name || job.job_code || job.id;
+
+    const sessionPhotos = (job.photos ?? []).filter(
+      (p) => String(p.session_id ?? "") === sid,
+    );
+
+    const html = buildSessionPacketHtml({
+      jobLabel,
+      session,
+      boreLogRows: boreLogRows ?? [],
+      photos: sessionPhotos,
+      reviewerNote: fieldSubmissionReviewNote,
+      reviewStatus: fieldSubmissionReviewStatus,
+      apiBase: API_BASE,
+    });
+
+    const printWin = window.open("", "_blank");
+    if (!printWin) return;
+    printWin.document.open();
+    printWin.document.write(html);
+    printWin.document.close();
+    setTimeout(() => {
+      try {
+        printWin.focus();
+        printWin.print();
+      } catch {
+        /* ignore */
+      }
+    }, 400);
+  }, [
+    API_BASE,
+    boreLogRows,
+    fieldSubmissionReviewNote,
+    fieldSubmissionReviewStatus,
+    selectedFieldJobDetail,
+    selectedFieldSession,
+    selectedFieldSessionId,
+  ]);
 
   const handleLoadBoreLog = useCallback(async () => {
     const sid = selectedFieldSessionId;
@@ -4737,9 +4790,32 @@ ${fieldSubmissionPlacemarks.length > 0 ? buildFolder("Selected Field Submission"
                       style={{
                         display: "flex",
                         justifyContent: "flex-end",
+                        flexWrap: "wrap",
+                        gap: 8,
                         marginBottom: 10,
                       }}
                     >
+                      <button
+                        type="button"
+                        onClick={handlePrintSessionPacket}
+                        disabled={!selectedFieldSession || !selectedFieldJobDetail}
+                        style={{
+                          padding: "6px 12px",
+                          fontSize: 12,
+                          fontWeight: 700,
+                          borderRadius: 10,
+                          border: "1px solid #cfd8e3",
+                          background: "#ffffff",
+                          color: "#0f172a",
+                          cursor:
+                            selectedFieldSession && selectedFieldJobDetail
+                              ? "pointer"
+                              : "not-allowed",
+                          opacity: selectedFieldSession && selectedFieldJobDetail ? 1 : 0.55,
+                        }}
+                      >
+                        Generate Closeout Packet
+                      </button>
                       <button
                         type="button"
                         onClick={clearFieldSubmissionSelection}
