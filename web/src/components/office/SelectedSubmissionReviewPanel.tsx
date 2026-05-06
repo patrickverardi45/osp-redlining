@@ -56,6 +56,12 @@ function safeCount(n: unknown): number {
   return typeof n === "number" && Number.isFinite(n) ? n : 0;
 }
 
+/** Mock / office-fallback sessions cannot be archived — they are absent from walk_submissions index. */
+function isSessionArchivable(session: Session): boolean {
+  const id = String(session.id ?? "");
+  return !id.includes("-session-") && !id.includes("-disk-session");
+}
+
 export default function SelectedSubmissionReviewPanel({
   selectedSessionId,
   session,
@@ -90,7 +96,7 @@ export default function SelectedSubmissionReviewPanel({
   };
 
   const handleArchive = async () => {
-    if (!session) return;
+    if (!session || !isSessionArchivable(session)) return;
     setArchiveErr(null);
     setArchiveBusy(true);
     try {
@@ -129,6 +135,7 @@ export default function SelectedSubmissionReviewPanel({
   const photos = safeCount(session.photo_count);
   const breadcrumbs = safeCount(session.track_point_count);
   const crew = session.crew_name?.trim() || "-";
+  const archivable = isSessionArchivable(session);
 
   const badgeClass = isReviewed
     ? "inline-flex items-center rounded-full border border-green-200 bg-green-50 px-2 py-0.5 text-xs font-medium text-green-800 whitespace-nowrap"
@@ -172,13 +179,22 @@ export default function SelectedSubmissionReviewPanel({
             <button
               type="button"
               onClick={() => void handleArchive()}
-              disabled={archiveBusy}
-              className="inline-flex items-center rounded-md border border-slate-500 bg-white px-3 py-1.5 text-xs font-semibold text-slate-800 hover:bg-slate-50 transition-colors disabled:opacity-60"
+              disabled={archiveBusy || !archivable}
+              title={
+                archivable
+                  ? undefined
+                  : "Only completed field submissions can be archived"
+              }
+              className="inline-flex items-center rounded-md border border-slate-500 bg-white px-3 py-1.5 text-xs font-semibold text-slate-800 hover:bg-slate-50 transition-colors disabled:opacity-60 disabled:pointer-events-none"
             >
               {archiveBusy ? "Archiving…" : "Archive"}
             </button>
           </div>
-          {archiveErr ? (
+          {!archivable ? (
+            <p className="text-xs text-gray-500 max-w-[min(520px,100%)] text-right">
+              Only completed field submissions can be archived
+            </p>
+          ) : archiveErr ? (
             <p className="text-xs text-red-600 font-medium max-w-[min(520px,100%)] text-right">
               {archiveErr}
             </p>
