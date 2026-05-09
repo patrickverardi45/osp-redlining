@@ -145,9 +145,7 @@ export default function ProjectPage({ params }: ProjectPageProps) {
         </div>
       </div>
 
-      {/* Map workspace — RedlineMap framed inside a dark dashboard surface.
-          The component itself is mounted exactly as before; only the chrome
-          around it is themed. */}
+      {/* Operational map first (Leaflet), then workflow/legacy RedlineMap below. */}
       <div
         style={{
           flex: 1,
@@ -158,6 +156,14 @@ export default function ProjectPage({ params }: ProjectPageProps) {
           boxSizing: "border-box",
         }}
       >
+        <ModernHeroMap
+          key={`modern-map-${projectId}`}
+          projectId={projectId}
+          selectedFieldSessionId={selectedFieldSessionId}
+          selectedFieldJobId={selectedFieldJobId}
+          refreshVersion={modernMapRefreshVersion}
+          bridgedGpsPhotos={bridgedGpsPhotos}
+        />
         <div
           className="tl-card"
           style={{ overflow: "hidden", padding: 0, background: "var(--tl-surface)" }}
@@ -173,8 +179,8 @@ export default function ProjectPage({ params }: ProjectPageProps) {
               Workflow Controls
             </div>
             <div style={{ fontSize: 12, color: "var(--tl-text-muted)", marginTop: 2 }}>
-              Upload design files, field data, photos, and manage closeout actions
-              here while the Project Map remains the primary map view.
+              Upload design files, field data, photos, and manage closeout below. The
+              legacy SVG map stays optional under Map and field tools (Show Legacy Map).
             </div>
           </div>
           <RedlineMap
@@ -183,16 +189,6 @@ export default function ProjectPage({ params }: ProjectPageProps) {
             onFieldSelectionChange={handleFieldSelectionChange}
             onWorkspaceStateChanged={handleWorkspaceStateChanged}
             onGpsPhotosChange={handleGpsPhotosChange}
-          />
-        </div>
-        <div style={{ marginTop: 14 }}>
-          <ModernHeroMap
-            key={`modern-map-${projectId}`}
-            projectId={projectId}
-            selectedFieldSessionId={selectedFieldSessionId}
-            selectedFieldJobId={selectedFieldJobId}
-            refreshVersion={modernMapRefreshVersion}
-            bridgedGpsPhotos={bridgedGpsPhotos}
           />
         </div>
       </div>
