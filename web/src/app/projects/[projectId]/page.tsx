@@ -145,7 +145,6 @@ export default function ProjectPage({ params }: ProjectPageProps) {
         </div>
       </div>
 
-      {/* Operational map first (Leaflet), then workflow/legacy RedlineMap below. */}
       <div
         style={{
           flex: 1,
@@ -156,14 +155,6 @@ export default function ProjectPage({ params }: ProjectPageProps) {
           boxSizing: "border-box",
         }}
       >
-        <ModernHeroMap
-          key={`modern-map-${projectId}`}
-          projectId={projectId}
-          selectedFieldSessionId={selectedFieldSessionId}
-          selectedFieldJobId={selectedFieldJobId}
-          refreshVersion={modernMapRefreshVersion}
-          bridgedGpsPhotos={bridgedGpsPhotos}
-        />
         <div
           className="tl-card"
           style={{ overflow: "hidden", padding: 0, background: "var(--tl-surface)" }}
@@ -179,8 +170,8 @@ export default function ProjectPage({ params }: ProjectPageProps) {
               Workflow Controls
             </div>
             <div style={{ fontSize: 12, color: "var(--tl-text-muted)", marginTop: 2 }}>
-              Upload design files, field data, photos, and manage closeout below. The
-              legacy SVG map stays optional under Map and field tools (collapsed details panel).
+              Uploads and tooling first; Project Map (Leaflet) follows geotagged photo
+              controls; legacy SVG stays optional under Map and field tools.
             </div>
           </div>
           <RedlineMap
@@ -189,6 +180,16 @@ export default function ProjectPage({ params }: ProjectPageProps) {
             onFieldSelectionChange={handleFieldSelectionChange}
             onWorkspaceStateChanged={handleWorkspaceStateChanged}
             onGpsPhotosChange={handleGpsPhotosChange}
+            operationalMap={
+              <ModernHeroMap
+                key={`modern-map-${projectId}`}
+                projectId={projectId}
+                selectedFieldSessionId={selectedFieldSessionId}
+                selectedFieldJobId={selectedFieldJobId}
+                refreshVersion={modernMapRefreshVersion}
+                bridgedGpsPhotos={bridgedGpsPhotos}
+              />
+            }
           />
         </div>
       </div>

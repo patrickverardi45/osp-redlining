@@ -922,6 +922,9 @@ type RedlineMapProps = {
    *  sanitized array (no File objects) for passing to sibling components like
    *  ModernHeroMap. Optional — omit to ignore. */
   onGpsPhotosChange?: (photos: BridgedGpsPhoto[]) => void;
+  /** Primary operational map (e.g. ModernHeroMap) rendered after uploads / geotagged
+   *  tooling and before the legacy SVG surface. Optional — omit for legacy-only layout. */
+  operationalMap?: React.ReactNode;
 };
 
 type WorkspaceTab = "workspace" | "closeout";
@@ -1015,6 +1018,7 @@ function OfficeRedlineMapInner({
   onFieldSelectionChange,
   onWorkspaceStateChanged,
   onGpsPhotosChange,
+  operationalMap,
 }: RedlineMapProps) {
   const [activeWorkspaceTab, setActiveWorkspaceTab] = useState<WorkspaceTab>("workspace");
   const [state, setState] = useState<BackendState | null>(null);
@@ -3856,6 +3860,16 @@ ${fieldSubmissionPlacemarks.length > 0 ? buildFolder("Selected Field Submission"
             }}
           >
             <div style={{ display: "grid", gap: 6 }}>
+              {operationalMap ? (
+                <div
+                  style={{
+                    display: activeWorkspaceTab === "workspace" ? "block" : "none",
+                    order: 18,
+                  }}
+                >
+                  {operationalMap}
+                </div>
+              ) : null}
 
               <details
                 style={{
@@ -6562,6 +6576,7 @@ export default function RedlineMap({
   onFieldSelectionChange,
   onWorkspaceStateChanged,
   onGpsPhotosChange,
+  operationalMap,
 }: RedlineMapProps) {
   return (
     <OfficeRedlineMapInner
@@ -6571,6 +6586,7 @@ export default function RedlineMap({
       onFieldSelectionChange={onFieldSelectionChange}
       onWorkspaceStateChanged={onWorkspaceStateChanged}
       onGpsPhotosChange={onGpsPhotosChange}
+      operationalMap={operationalMap}
     />
   );
 }
