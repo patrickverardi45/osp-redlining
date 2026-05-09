@@ -162,6 +162,7 @@ export type BackendState = {
   };
   engineering_plans?: EngineeringPlan[];
   bore_log_summary?: BoreLogSummaryEntry[];
+  photo_points?: GlobalPhotoPoint[];
   closeout_locked?: boolean;
   closeout_locked_by?: string | null;
   closeout_locked_at?: string | null;
@@ -173,8 +174,29 @@ export type BackendState = {
   };
 };
 
+export type GlobalPhotoPoint = {
+  id: string;
+  source_type: string;
+  lat: number;
+  lon: number;
+  original_lat?: number;
+  original_lon?: number;
+  adjusted_lat?: number | null;
+  adjusted_lon?: number | null;
+  adjusted_at?: string | null;
+  is_adjusted?: boolean;
+  thumbnail_url: string | null;
+  original_url: string | null;
+  filename: string;
+  station_label: string;
+  session_id: string;
+  uploaded_at: string;
+  note?: string | null;
+};
+
 export type StationPhoto = {
   photo_id: string;
+  session_id?: string;
   station_identity: string;
   station_summary: string;
   original_filename: string;
@@ -182,6 +204,13 @@ export type StationPhoto = {
   content_type?: string;
   uploaded_at: string;
   relative_url: string;
+  public_url?: string;
+  original_lat?: number | null;
+  original_lon?: number | null;
+  adjusted_lat?: number | null;
+  adjusted_lon?: number | null;
+  adjusted_at?: string | null;
+  is_adjusted?: boolean;
 };
 
 export type ExceptionCost = {

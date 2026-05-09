@@ -887,12 +887,41 @@ function deriveDesignProjectName(
   return "--";
 }
 
+export type BridgedGpsPhoto = {
+  id: string;
+  filename: string;
+  previewUrl: string;
+  lat: number | null;
+  lon: number | null;
+  displayLat?: number;
+  displayLon?: number;
+  contentType?: string;
+  reason?: "mapped" | "no_gps" | "unreadable";
+  addedAt?: number;
+};
+
 type RedlineMapProps = {
   projectId?: string;
   /** When set (e.g. project route), replaces the generic operator workspace title. */
   workspaceTitle?: string;
   /** Optional project flavor; `fiber_pull` shows a non-interactive placeholder in the inspector until data is wired. */
   projectType?: string | null;
+  /** Bridge for sibling components (e.g. ModernHeroMap) that need to mirror the
+   *  inbox's selected field submission. Fires whenever the internal
+   *  selectedFieldSessionId / selectedFieldJobId pair changes. Optional — when
+   *  omitted, behavior is unchanged. */
+  onFieldSelectionChange?: (selection: {
+    sessionId: string | null;
+    jobId: string | null;
+  }) => void;
+  /** Fires after a successful KMZ/design upload (and any other workspace state
+   *  mutation we route through here) so a sibling component like ModernHeroMap
+   *  can refetch /api/current-state without the user pressing Refresh State. */
+  onWorkspaceStateChanged?: () => void;
+  /** Fires whenever the client-side geotagged photos change. Payload is a
+   *  sanitized array (no File objects) for passing to sibling components like
+   *  ModernHeroMap. Optional — omit to ignore. */
+  onGpsPhotosChange?: (photos: BridgedGpsPhoto[]) => void;
 };
 
 type WorkspaceTab = "workspace" | "closeout";
@@ -979,7 +1008,14 @@ type GpsPhoto = {
   addedAt: number; // Date.now()
 };
 
-function OfficeRedlineMapInner({ projectId, workspaceTitle, projectType = null }: RedlineMapProps) {
+function OfficeRedlineMapInner({
+  projectId,
+  workspaceTitle,
+  projectType = null,
+  onFieldSelectionChange,
+  onWorkspaceStateChanged,
+  onGpsPhotosChange,
+}: RedlineMapProps) {
   const [activeWorkspaceTab, setActiveWorkspaceTab] = useState<WorkspaceTab>("workspace");
   const [state, setState] = useState<BackendState | null>(null);
   const [busy, setBusy] = useState(false);
@@ -1007,6 +1043,7 @@ function OfficeRedlineMapInner({ projectId, workspaceTitle, projectType = null }
   const [stationPhotosLoading, setStationPhotosLoading] = useState(false);
   const [stationPhotoBusy, setStationPhotoBusy] = useState(false);
   const [engPlansBusy, setEngPlansBusy] = useState(false);
+  const [engineeringPlansExpanded, setEngineeringPlansExpanded] = useState(false);
   // V1 Photo GPS Mapping — client-only, resets on refresh.
   const [gpsPhotos, setGpsPhotos] = useState<GpsPhoto[]>([]);
   const [gpsPhotoBusy, setGpsPhotoBusy] = useState(false);
@@ -1032,6 +1069,7 @@ function OfficeRedlineMapInner({ projectId, workspaceTitle, projectType = null }
   const [mapBaseStyle, setMapBaseStyle] = useState<"standard" | "satellite">("satellite");
   const [showPlannedRouteHighlight, setShowPlannedRouteHighlight] = useState(false);
   const [presentationView, setPresentationView] = useState(false);
+  const [showLegacyMap, setShowLegacyMap] = useState(false);
   // Evidence-layer visibility: Set of hidden layer ids. Empty = all visible.
   const [hiddenLayers, setHiddenLayers] = useState<Set<string>>(new Set());
   const [focusedNovaIssue, setFocusedNovaIssue] = useState<FocusedNovaIssue | null>(null);
@@ -1291,6 +1329,20 @@ function OfficeRedlineMapInner({ projectId, workspaceTitle, projectType = null }
     };
   }, [selectedFieldJobId, projectId]);
 
+  // Bridge: notify parent when the inbox-driven field submission selection
+  // changes. Ref-stored handler so identity changes from the parent do not
+  // re-trigger this effect; we only fire on real ID changes.
+  const onFieldSelectionChangeRef = useRef(onFieldSelectionChange);
+  useEffect(() => {
+    onFieldSelectionChangeRef.current = onFieldSelectionChange;
+  }, [onFieldSelectionChange]);
+  useEffect(() => {
+    onFieldSelectionChangeRef.current?.({
+      sessionId: selectedFieldSessionId,
+      jobId: selectedFieldJobId,
+    });
+  }, [selectedFieldSessionId, selectedFieldJobId]);
+
   const kmzLineFeatures = useMemo(
     () =>
       (state?.kmz_reference?.line_features || [])
@@ -1303,6 +1355,24 @@ function OfficeRedlineMapInner({ projectId, workspaceTitle, projectType = null }
     () => kmzLineFeaturesToPolylines(kmzLineFeatures),
     [kmzLineFeatures],
   );
+
+  // Snap target for normal station placement. Combines the operational
+  // redline polylines with the KMZ design polylines so stations land on the
+  // nearest visible operational path — preferring redlines when they're
+  // nearer (operational truth) and falling back to KMZ when no redline
+  // exists nearby. KMZ design lines remain the snap target for everything
+  // else (field-station footage interpolation, connector subpath, etc.).
+  const stationSnapPolylines = useMemo<number[][][]>(() => {
+    const out: number[][][] = [];
+    for (const seg of redlineSegments) {
+      const c = cleanCoords(seg.coords);
+      if (c.length >= 2) out.push(c);
+    }
+    for (const poly of kmzSnapPolylines) {
+      if (Array.isArray(poly) && poly.length >= 2) out.push(poly);
+    }
+    return out;
+  }, [redlineSegments, kmzSnapPolylines]);
 
   const kmzPolygonFeatures = useMemo(
     () =>
@@ -1457,7 +1527,12 @@ function OfficeRedlineMapInner({ projectId, workspaceTitle, projectType = null }
         // Hide station when its evidence layer is toggled off.
         const layerId = sourceFileToLayerId.get(String(point.source_file ?? "").trim());
         if (layerId && hiddenLayers.has(layerId)) return null;
-        const snapped = snapLatLonToKmzPolylines(point.lat, point.lon, kmzSnapPolylines);
+        // Snap to redlines + KMZ union so markers sit on the operational
+        // path. snapLatLonToKmzPolylines is generic — it picks the nearest
+        // point across every polyline in the pool.
+        const snapPool =
+          stationSnapPolylines.length > 0 ? stationSnapPolylines : kmzSnapPolylines;
+        const snapped = snapLatLonToKmzPolylines(point.lat, point.lon, snapPool);
         return {
           idx,
           point,
@@ -1465,7 +1540,7 @@ function OfficeRedlineMapInner({ projectId, workspaceTitle, projectType = null }
         };
       })
       .filter((item): item is { idx: number; point: StationPoint; world: ScreenPoint } => Boolean(item));
-  }, [stationPoints, renderBounds, projectionMetrics, sourceFileToLayerId, hiddenLayers, kmzSnapPolylines]);
+  }, [stationPoints, renderBounds, projectionMetrics, sourceFileToLayerId, hiddenLayers, stationSnapPolylines, kmzSnapPolylines]);
 
   // V1 Photo GPS Mapping — render-time projection.
   // Only photos with valid GPS AND lat/lon falling inside the current
@@ -2609,6 +2684,7 @@ ${fieldSubmissionPlacemarks.length > 0 ? buildFolder("Selected Field Submission"
       const sessionId = rememberSessionFromResponse(data, projectId);
       if (!response.ok || data.success === false) throw new Error(data.error || "Unable to load current state.");
       setState(withoutClearedEngineeringPlans(data, projectId, sessionId));
+      onWorkspaceStateChanged?.();
       fetchPipelineDiag(); // Nova Phase 1 — non-blocking refresh
       if (data.warning) {
         setStatusText(String(data.warning));
@@ -2678,6 +2754,7 @@ ${fieldSubmissionPlacemarks.length > 0 ? buildFolder("Selected Field Submission"
       setHoverStationIndex(null);
       setFocusedNovaIssue(null);
       setNovaOverrideSourceKeys(new Set());
+      onWorkspaceStateChanged?.();
       setStatusText(String(data.message || "Workspace reset successfully."));
       setStatusTone("success");
     } catch (error) {
@@ -2747,6 +2824,8 @@ ${fieldSubmissionPlacemarks.length > 0 ? buildFolder("Selected Field Submission"
       }
     }
     const unlockJobId = String(selectedFieldJobDetail?.id || "test-job");
+    const requestedRole = (process.env.NEXT_PUBLIC_USER_ROLE || "").toLowerCase();
+    const unlockRole = requestedRole === "admin" || requestedRole === "manager" ? requestedRole : "manager";
     setBusy(true);
     try {
       const res = await fetch(appendSessionId(`${API_BASE}/api/jobs/${encodeURIComponent(unlockJobId)}/unlock-closeout`, projectId), {
@@ -2754,7 +2833,7 @@ ${fieldSubmissionPlacemarks.length > 0 ? buildFolder("Selected Field Submission"
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           session_id: sid,
-          role: (process.env.NEXT_PUBLIC_USER_ROLE || "pm").toLowerCase(),
+          role: unlockRole,
         }),
       });
       const data = (await res.json().catch(() => ({}))) as { error?: string };
@@ -2783,6 +2862,7 @@ ${fieldSubmissionPlacemarks.length > 0 ? buildFolder("Selected Field Submission"
       rememberSessionFromResponse(data, projectId);
       if (!response.ok || data.success === false) throw new Error(data.error || "Design upload failed.");
       setState(data);
+      onWorkspaceStateChanged?.();
       setDidInitialFit(false);
       userHasAdjustedViewportRef.current = false;
       lastAutoFitSignatureRef.current = "";
@@ -2818,6 +2898,7 @@ ${fieldSubmissionPlacemarks.length > 0 ? buildFolder("Selected Field Submission"
       rememberSessionFromResponse(data, projectId);
       if (!response.ok || data.success === false) throw new Error(data.error || "Field data upload failed.");
       setState(data);
+      onWorkspaceStateChanged?.();
       fetchPipelineDiag(); // Nova Phase 1 — refresh diagnostics after field data upload
       setDidInitialFit(false);
       userHasAdjustedViewportRef.current = false;
@@ -3061,6 +3142,23 @@ ${fieldSubmissionPlacemarks.length > 0 ? buildFolder("Selected Field Submission"
   useEffect(() => {
     gpsPhotosRef.current = gpsPhotos;
   }, [gpsPhotos]);
+  useEffect(() => {
+    if (!onGpsPhotosChange) return;
+    onGpsPhotosChange(
+      gpsPhotos.map((p) => ({
+        id: p.id,
+        filename: p.filename,
+        previewUrl: p.previewUrl,
+        lat: p.lat,
+        lon: p.lon,
+        displayLat: p.displayLat,
+        displayLon: p.displayLon,
+        contentType: p.contentType,
+        reason: p.reason,
+        addedAt: p.addedAt,
+      })),
+    );
+  }, [gpsPhotos, onGpsPhotosChange]);
   useEffect(() => {
     return () => {
       gpsPhotosRef.current.forEach((p) => {
@@ -3571,7 +3669,7 @@ ${fieldSubmissionPlacemarks.length > 0 ? buildFolder("Selected Field Submission"
 
           <Section
             title="1. Upload"
-            subtitle="KMZ design, field data, and optional engineering plan PDFs/images. Same upload behavior as before."
+            subtitle="KMZ design, field data, and optional reference plan evidence uploads."
             style={{ display: activeWorkspaceTab === "workspace" ? "block" : "none" }}
           >
             <div
@@ -3587,7 +3685,7 @@ ${fieldSubmissionPlacemarks.length > 0 ? buildFolder("Selected Field Submission"
               }}
             >
               <span style={{ fontWeight: 800, color: "#0f172a" }}>Workflow: </span>
-                    Upload KMZ and field data (optional plans) → review on the Workspace tab, then open Closeout for reports, billing, and export.
+                    Upload KMZ and field data first. Reference plans are optional closeout evidence and do not drive map generation.
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 16, alignItems: "start" }}>
               <label style={uploadCardStyle(busy || closeoutLocked)}>
@@ -3650,7 +3748,7 @@ ${fieldSubmissionPlacemarks.length > 0 ? buildFolder("Selected Field Submission"
                 />
                 <div style={{ fontWeight: 800, fontSize: 16 }}>Upload Engineering Plans</div>
                 <div style={{ marginTop: 6, fontSize: 13, color: "#64748b", lineHeight: 1.55 }}>
-                  PDF, PNG, JPG or JPEG. Multiple files allowed. Session-scoped job evidence only.
+                  PDF, PNG, JPG or JPEG. Multiple files allowed. Reference plans / closeout evidence only.
                 </div>
                 <div style={{ marginTop: 14, fontSize: 12, fontWeight: 700, color: (state?.engineering_plans?.length ?? 0) > 0 ? "#166534" : "#64748b" }}>
                   {engPlansBusy
@@ -3672,44 +3770,72 @@ ${fieldSubmissionPlacemarks.length > 0 ? buildFolder("Selected Field Submission"
               </div>
             </div>
 
-            <div style={{ border: "1px solid #dbe4ee", borderRadius: 16, background: "#fbfdff", padding: 16, minHeight: 100, marginTop: 16 }}>
-              <div style={{ fontWeight: 800, fontSize: 15, marginBottom: 10 }}>
-                Engineering Plans
-                {(state?.engineering_plans?.length ?? 0) > 0 && (
-                  <span style={{ marginLeft: 8, fontSize: 12, fontWeight: 600, color: "#64748b" }}>
-                    ({state!.engineering_plans!.length})
-                  </span>
-                )}
-              </div>
-              {(state?.engineering_plans?.length ?? 0) === 0 ? (
-                <div style={{ fontSize: 13, color: "#94a3b8" }}>No plans uploaded for this session.</div>
-              ) : (
-                <div style={{ display: "grid", gap: 8 }}>
-                  {state!.engineering_plans!.map((plan: EngineeringPlan) => {
-                    const sizeKb = (plan.size_bytes / 1024).toFixed(1);
-                    const sizeMb = (plan.size_bytes / (1024 * 1024)).toFixed(2);
-                    const sizeLabel = plan.size_bytes >= 1024 * 1024 ? `${sizeMb} MB` : `${sizeKb} KB`;
-                    const uploadedDate = plan.uploaded_at
-                      ? new Date(plan.uploaded_at).toLocaleString(undefined, { dateStyle: "short", timeStyle: "short" })
-                      : "";
-                    const typeLabel = plan.file_type === "application/pdf"
-                      ? "PDF"
-                      : plan.file_type?.startsWith("image/")
-                        ? plan.file_type.split("/")[1]?.toUpperCase() ?? "Image"
-                        : plan.file_type ?? "";
-                    return (
-                      <div key={plan.plan_id} style={{ borderRadius: 10, border: "1px solid #e2e8f0", background: "#ffffff", padding: "10px 12px" }}>
-                        <div style={{ fontWeight: 700, fontSize: 13, color: "#0f172a", wordBreak: "break-all" }}>{plan.original_filename}</div>
-                        <div style={{ marginTop: 4, display: "flex", gap: 12, flexWrap: "wrap", fontSize: 12, color: "#64748b" }}>
-                          <span>{typeLabel}</span>
-                          <span>{sizeLabel}</span>
-                          {uploadedDate && <span>{uploadedDate}</span>}
-                        </div>
-                      </div>
-                    );
-                  })}
+            <div style={{ border: "1px solid #dbe4ee", borderRadius: 16, background: "#fbfdff", marginTop: 16, overflow: "hidden" }}>
+              <button
+                type="button"
+                onClick={() => setEngineeringPlansExpanded((prev) => !prev)}
+                style={{
+                  width: "100%",
+                  border: "none",
+                  background: "transparent",
+                  cursor: "pointer",
+                  padding: "12px 14px",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  gap: 10,
+                  textAlign: "left",
+                }}
+                aria-expanded={engineeringPlansExpanded}
+              >
+                <div>
+                  <div style={{ fontWeight: 800, fontSize: 14, color: "#0f172a" }}>
+                    Reference Plans / Closeout Evidence
+                    {(state?.engineering_plans?.length ?? 0) > 0 ? (
+                      <span style={{ marginLeft: 8, fontSize: 12, fontWeight: 600, color: "#64748b" }}>
+                        ({state!.engineering_plans!.length})
+                      </span>
+                    ) : null}
+                  </div>
+                  <div style={{ marginTop: 3, fontSize: 12, color: "#64748b" }}>
+                    Optional documentation for office review and closeout packages.
+                  </div>
                 </div>
-              )}
+                <span style={{ fontSize: 12, color: "#64748b", fontWeight: 700 }}>
+                  {engineeringPlansExpanded ? "Hide" : "Show"}
+                </span>
+              </button>
+              {engineeringPlansExpanded ? (
+                <div style={{ borderTop: "1px solid #e2e8f0", padding: "12px 14px", display: "grid", gap: 8 }}>
+                  {(state?.engineering_plans?.length ?? 0) === 0 ? (
+                    <div style={{ fontSize: 13, color: "#94a3b8" }}>No plans uploaded for this session.</div>
+                  ) : (
+                    state!.engineering_plans!.map((plan: EngineeringPlan) => {
+                      const sizeKb = (plan.size_bytes / 1024).toFixed(1);
+                      const sizeMb = (plan.size_bytes / (1024 * 1024)).toFixed(2);
+                      const sizeLabel = plan.size_bytes >= 1024 * 1024 ? `${sizeMb} MB` : `${sizeKb} KB`;
+                      const uploadedDate = plan.uploaded_at
+                        ? new Date(plan.uploaded_at).toLocaleString(undefined, { dateStyle: "short", timeStyle: "short" })
+                        : "";
+                      const typeLabel = plan.file_type === "application/pdf"
+                        ? "PDF"
+                        : plan.file_type?.startsWith("image/")
+                          ? plan.file_type.split("/")[1]?.toUpperCase() ?? "Image"
+                          : plan.file_type ?? "";
+                      return (
+                        <div key={plan.plan_id} style={{ borderRadius: 10, border: "1px solid #e2e8f0", background: "#ffffff", padding: "10px 12px" }}>
+                          <div style={{ fontWeight: 700, fontSize: 13, color: "#0f172a", wordBreak: "break-all" }}>{plan.original_filename}</div>
+                          <div style={{ marginTop: 4, display: "flex", gap: 12, flexWrap: "wrap", fontSize: 12, color: "#64748b" }}>
+                            <span>{typeLabel}</span>
+                            <span>{sizeLabel}</span>
+                            {uploadedDate ? <span>{uploadedDate}</span> : null}
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              ) : null}
             </div>
           </Section>
 
@@ -3731,147 +3857,37 @@ ${fieldSubmissionPlacemarks.length > 0 ? buildFolder("Selected Field Submission"
           >
             <div style={{ display: "grid", gap: 6 }}>
 
-              {/* ─── Field Data Layers panel ───────────────────────────── */}
-              {activeWorkspaceTab === "workspace" && (state?.bore_log_summary?.length ?? 0) > 0 && (() => {
-                const layers = state!.bore_log_summary!;
-                const allVisible = layers.every((e) => !e.evidence_layer_id || !hiddenLayers.has(e.evidence_layer_id));
-                const allHidden  = layers.every((e) => e.evidence_layer_id && hiddenLayers.has(e.evidence_layer_id));
-                return (
-                  <div
-                    style={{
-                      border: "1px solid #e2e8f0",
-                      borderRadius: 10,
-                      background: "rgba(255, 255, 255, 0.7)",
-                      padding: "3px 7px",
-                      order: 20,
-                    }}
-                  >
-                    {/* Header row */}
-                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 4, marginBottom: 2 }}>
-                      <div style={{ fontSize: 10, fontWeight: 800, color: "#334155" }}>
-                        Field Data Layers
-                        <span style={{ marginLeft: 5, fontSize: 9, fontWeight: 600, color: "#64748b" }}>
-                          ({layers.filter((e) => !e.evidence_layer_id || !hiddenLayers.has(e.evidence_layer_id)).length} / {layers.length} visible)
-                        </span>
-                      </div>
-                      <div style={{ display: "flex", gap: 4 }}>
-                        <button
-                          type="button"
-                          disabled={allVisible}
-                          onClick={() => setHiddenLayers(new Set())}
-                          style={{
-                            padding: "3px 7px",
-                            fontSize: 10,
-                            fontWeight: 700,
-                            borderRadius: 8,
-                            border: "1px solid #dbe4ee",
-                            background: allVisible ? "#f8fafc" : "#ffffff",
-                            color: allVisible ? "#94a3b8" : "#0f172a",
-                            cursor: allVisible ? "default" : "pointer",
-                          }}
-                        >
-                          Show All
-                        </button>
-                        <button
-                          type="button"
-                          disabled={allHidden}
-                          onClick={() => {
-                            const ids = new Set(
-                              layers.map((e) => e.evidence_layer_id).filter(Boolean) as string[]
-                            );
-                            setHiddenLayers(ids);
-                            setSelectedStationIndex(null);
-                          }}
-                          style={{
-                            padding: "3px 7px",
-                            fontSize: 10,
-                            fontWeight: 700,
-                            borderRadius: 8,
-                            border: "1px solid #dbe4ee",
-                            background: allHidden ? "#f8fafc" : "#ffffff",
-                            color: allHidden ? "#94a3b8" : "#0f172a",
-                            cursor: allHidden ? "default" : "pointer",
-                          }}
-                        >
-                          Hide All
-                        </button>
-                      </div>
-                    </div>
-
-                    {/* Checkbox rows */}
-                    <div style={{ display: "flex", flexWrap: "wrap", gap: "3px 12px" }}>
-                      {layers.map((entry) => {
-                        const lid = entry.evidence_layer_id ?? "";
-                        const isVisible = !lid || !hiddenLayers.has(lid);
-                        const shortName = entry.source_file.split(/[/\\]/).pop() ?? entry.source_file;
-                        const color = getColorForLayer(lid || null);
-                        return (
-                          <label
-                            key={lid || entry.source_file}
-                            style={{
-                              display: "flex",
-                              alignItems: "center",
-                              gap: 5,
-                              cursor: "pointer",
-                              userSelect: "none",
-                              opacity: isVisible ? 1 : 0.45,
-                            }}
-                          >
-                            <input
-                              type="checkbox"
-                              checked={isVisible}
-                              onChange={() => {
-                                if (!lid) return;
-                                setHiddenLayers((prev) => {
-                                  const next = new Set(prev);
-                                  if (next.has(lid)) {
-                                    next.delete(lid);
-                                  } else {
-                                    next.add(lid);
-                                    // Close inspector if selected station belongs to this layer.
-                                    if (selectedStation) {
-                                      const selLid = sourceFileToLayerId.get(
-                                        String(selectedStation.source_file ?? "").trim()
-                                      );
-                                      if (selLid === lid) setSelectedStationIndex(null);
-                                    }
-                                  }
-                                  return next;
-                                });
-                              }}
-                              style={{ width: 11, height: 11, accentColor: color, cursor: "pointer", flexShrink: 0 }}
-                            />
-                            {/* Color swatch */}
-                            <span
-                              style={{
-                                display: "inline-block",
-                                width: 8,
-                                height: 8,
-                                borderRadius: "50%",
-                                background: color,
-                                flexShrink: 0,
-                              }}
-                            />
-                            <span style={{ fontSize: 11, fontWeight: 600, color: "#334155", maxWidth: 180, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                              {shortName}
-                            </span>
-                            {entry.dates?.[0] && (
-                              <span style={{ fontSize: 10, color: "#64748b" }}>
-                                {formatDisplayDate(entry.dates[0])}
-                              </span>
-                            )}
-                          </label>
-                        );
-                      })}
-                    </div>
-                  </div>
-                );
-              })()}
+              <div
+                style={{
+                  border: "1px solid #e2e8f0",
+                  borderRadius: 10,
+                  background: "rgba(255, 255, 255, 0.7)",
+                  padding: "8px 10px",
+                  order: 24,
+                  display: activeWorkspaceTab === "workspace" ? "flex" : "none",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  gap: 10,
+                  flexWrap: "wrap",
+                }}
+              >
+                <div style={{ fontSize: 11, color: "#475569", fontWeight: 600 }}>
+                  Legacy SVG map is hidden by default. Modern Project Map is the primary map surface.
+                </div>
+                <label style={{ display: "inline-flex", alignItems: "center", gap: 6, cursor: "pointer", userSelect: "none", fontSize: 11, color: "#334155", fontWeight: 700 }}>
+                  <input
+                    type="checkbox"
+                    checked={showLegacyMap}
+                    onChange={(e) => setShowLegacyMap(e.target.checked)}
+                  />
+                  Show Legacy Map
+                </label>
+              </div>
 
               {/* ─── Map + Inspector wrapper ─────────────────────────── */}
               {/* Inspector is position:absolute so map container width    */}
               {/* never changes — projection stays stable on station click. */}
-              <div style={{ position: "relative", display: activeWorkspaceTab === "workspace" ? "block" : "none", order: 25 }}>
+              <div style={{ position: "relative", display: activeWorkspaceTab === "workspace" && showLegacyMap ? "block" : "none", order: 25 }}>
                 <div
                   ref={mapContainerRef}
                   style={{
@@ -5756,119 +5772,6 @@ ${fieldSubmissionPlacemarks.length > 0 ? buildFolder("Selected Field Submission"
                 />
               </div>
 
-              <div
-                style={{
-                  border: "1px solid #dbe4ee",
-                  borderRadius: 16,
-                  background: "#ffffff",
-                  padding: 16,
-                  display: activeWorkspaceTab === "workspace" ? "grid" : "none",
-                  gap: 14,
-                  order: 10,
-                }}
-              >
-                <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start", flexWrap: "wrap" }}>
-                  <div>
-                    <div style={{ fontSize: 15, fontWeight: 800, color: "#0f172a" }}>Station photos</div>
-                    <div style={{ marginTop: 6, fontSize: 13, color: "#64748b", lineHeight: 1.55 }}>
-                      Manual attach only. Select a station first, then upload one or more photos to that exact station.
-                    </div>
-                  </div>
-                  <div style={{ fontSize: 12, color: "#475569", fontWeight: 700 }}>
-                    {selectedStation ? selectedStationSummary : "No station selected"}
-                  </div>
-                </div>
-
-                {selectedStation ? (
-                  <div style={{ display: "grid", gap: 12 }}>
-                    <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
-                      <label
-                        style={{
-                          display: "inline-flex",
-                          alignItems: "center",
-                          justifyContent: "center",
-                          padding: "10px 14px",
-                          borderRadius: 12,
-                          border: "1px solid #0f172a",
-                          background: stationPhotoBusy || closeoutLocked ? "#e5e7eb" : "#0f172a",
-                          color: "#ffffff",
-                          fontWeight: 800,
-                          cursor: stationPhotoBusy || closeoutLocked ? "not-allowed" : "pointer",
-                          opacity: stationPhotoBusy || closeoutLocked ? 0.7 : 1,
-                        }}
-                      >
-                        <input
-                          type="file"
-                          accept="image/*"
-                          multiple
-                          style={{ display: "none" }}
-                          disabled={stationPhotoBusy || closeoutLocked}
-                          onChange={(e) => {
-                            handleStationPhotoUpload(e.target.files);
-                            e.currentTarget.value = "";
-                          }}
-                        />
-                        {stationPhotoBusy ? "Uploading..." : "Upload Station Photos"}
-                      </label>
-
-                      <div style={{ fontSize: 12, color: "#64748b" }}>
-                        Stable station key: <strong>{selectedStationIdentity || "--"}</strong>
-                      </div>
-                    </div>
-
-                    {stationPhotosLoading ? (
-                      <div style={{ fontSize: 13, color: "#64748b" }}>Loading station photos...</div>
-                    ) : stationPhotos.length ? (
-                      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))", gap: 12 }}>
-                        {stationPhotos.map((photo) => (
-                          <a
-                            key={photo.photo_id}
-                            href={`${API_BASE}${photo.relative_url}`}
-                            target="_blank"
-                            rel="noreferrer"
-                            style={{
-                              textDecoration: "none",
-                              color: "inherit",
-                              border: "1px solid #dbe4ee",
-                              borderRadius: 14,
-                              overflow: "hidden",
-                              background: "#fbfdff",
-                            }}
-                          >
-                            <div
-                              style={{
-                                height: 112,
-                                backgroundImage: `url(${API_BASE}${photo.relative_url})`,
-                                backgroundSize: "cover",
-                                backgroundPosition: "center",
-                                backgroundRepeat: "no-repeat",
-                                backgroundColor: "#e5e7eb",
-                              }}
-                            />
-                            <div style={{ padding: 10 }}>
-                              <div style={{ fontSize: 12, fontWeight: 700, color: "#0f172a", wordBreak: "break-word" }}>
-                                {photo.original_filename}
-                              </div>
-                              <div style={{ marginTop: 4, fontSize: 11, color: "#64748b" }}>
-                                {formatDisplayDate(photo.uploaded_at)}
-                              </div>
-                            </div>
-                          </a>
-                        ))}
-                      </div>
-                    ) : (
-                      <div style={{ fontSize: 13, color: "#64748b" }}>
-                        No photos attached to this station yet.
-                      </div>
-                    )}
-                  </div>
-                ) : (
-                  <div style={{ fontSize: 13, color: "#64748b" }}>
-                    Select a station on the map first. Photos only attach to the currently selected station.
-                  </div>
-                )}
-              </div>
-
               {/* ─── V1 Photo GPS Mapping — Geotagged photos panel ─────────── */}
               {/* Client-only. Resets on refresh. Sibling of Station photos    */}
               {/* above; does not interact with it or with the backend.        */}
@@ -6278,28 +6181,6 @@ ${fieldSubmissionPlacemarks.length > 0 ? buildFolder("Selected Field Submission"
                     <SmallRow label="Final total" value={toMoney(finalBillingTotal)} />
                   </ShellCard>
 
-                  <ShellCard
-                    title="Evidence checklist"
-                    description="Design, field data, and at least one field photo (station-attached or geotagged) before submit."
-                  >
-                    <div style={{ display: "grid", gap: 10, fontSize: 13, color: "#334155" }}>
-                      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                        <span style={{ fontWeight: 800, color: hasDesign ? "#166534" : "#94a3b8", minWidth: 18 }}>{hasDesign ? "✓" : "○"}</span>
-                        <span>KMZ design loaded</span>
-                      </div>
-                      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                        <span style={{ fontWeight: 800, color: hasBoreFiles ? "#166534" : "#94a3b8", minWidth: 18 }}>{hasBoreFiles ? "✓" : "○"}</span>
-                        <span>Field data loaded</span>
-                      </div>
-                      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                        <span style={{ fontWeight: 800, color: stationPhotos.length > 0 || gpsPhotos.length > 0 ? "#166534" : "#94a3b8", minWidth: 18 }}>
-                          {stationPhotos.length > 0 || gpsPhotos.length > 0 ? "✓" : "○"}
-                        </span>
-                        <span>Field photos ({stationPhotos.length} station / {gpsPhotos.length} geotagged)</span>
-                      </div>
-                    </div>
-                  </ShellCard>
-
                   <ShellCard title="Approval" description="Submit billing for review, then record approval. Values above lock after approval.">
                     <div style={{ display: "grid", gap: 12 }}>
                       {billingApprovalStatus === "not_submitted" ? (
@@ -6315,11 +6196,6 @@ ${fieldSubmissionPlacemarks.length > 0 ? buildFolder("Selected Field Submission"
                           >
                             Submit for Approval
                           </button>
-                          {!billingChecklistComplete ? (
-                            <div style={{ fontSize: 12, color: "#64748b", lineHeight: 1.45 }}>
-                              Complete every checklist item before submitting.
-                            </div>
-                          ) : null}
                         </>
                       ) : null}
                       {billingApprovalStatus === "pending" ? (
@@ -6658,12 +6534,22 @@ ${fieldSubmissionPlacemarks.length > 0 ? buildFolder("Selected Field Submission"
   );
 }
 
-export default function RedlineMap({ projectId, workspaceTitle, projectType = null }: RedlineMapProps) {
+export default function RedlineMap({
+  projectId,
+  workspaceTitle,
+  projectType = null,
+  onFieldSelectionChange,
+  onWorkspaceStateChanged,
+  onGpsPhotosChange,
+}: RedlineMapProps) {
   return (
     <OfficeRedlineMapInner
       projectId={projectId}
       workspaceTitle={workspaceTitle}
       projectType={projectType}
+      onFieldSelectionChange={onFieldSelectionChange}
+      onWorkspaceStateChanged={onWorkspaceStateChanged}
+      onGpsPhotosChange={onGpsPhotosChange}
     />
   );
 }

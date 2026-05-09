@@ -1,5 +1,9 @@
+"use client";
+
+import { use, useCallback, useState } from "react";
 import Link from "next/link";
-import RedlineMap from "@/components/RedlineMap";
+import RedlineMap, { type BridgedGpsPhoto } from "@/components/RedlineMap";
+import ModernHeroMap from "@/components/ModernHeroMap";
 
 type ProjectPageProps = {
   params: Promise<{
@@ -16,9 +20,30 @@ function projectIdToDisplayName(projectId: string): string {
     .join(" ");
 }
 
-export default async function ProjectPage({ params }: ProjectPageProps) {
-  const { projectId } = await params;
+export default function ProjectPage({ params }: ProjectPageProps) {
+  const { projectId } = use(params);
   const projectDisplayName = projectIdToDisplayName(projectId);
+  const [selectedFieldSessionId, setSelectedFieldSessionId] = useState<string | null>(
+    null,
+  );
+  const [selectedFieldJobId, setSelectedFieldJobId] = useState<string | null>(null);
+  const [modernMapRefreshVersion, setModernMapRefreshVersion] = useState<number>(0);
+  const [bridgedGpsPhotos, setBridgedGpsPhotos] = useState<BridgedGpsPhoto[]>([]);
+
+  const handleFieldSelectionChange = useCallback(
+    (selection: { sessionId: string | null; jobId: string | null }) => {
+      setSelectedFieldSessionId(selection.sessionId);
+      setSelectedFieldJobId(selection.jobId);
+    },
+    [],
+  );
+
+  const handleWorkspaceStateChanged = useCallback(() => {
+    setModernMapRefreshVersion((v) => v + 1);
+  }, []);
+  const handleGpsPhotosChange = useCallback((photos: BridgedGpsPhoto[]) => {
+    setBridgedGpsPhotos(photos);
+  }, []);
 
   return (
     <main className="tl-page" style={{ display: "flex", flexDirection: "column" }}>
@@ -135,13 +160,40 @@ export default async function ProjectPage({ params }: ProjectPageProps) {
       >
         <div
           className="tl-card"
-          style={{
-            overflow: "hidden",
-            padding: 0,
-            background: "var(--tl-surface)",
-          }}
+          style={{ overflow: "hidden", padding: 0, background: "var(--tl-surface)" }}
         >
-          <RedlineMap projectId={projectId} workspaceTitle={projectDisplayName} />
+          <div
+            style={{
+              padding: "12px 14px",
+              borderBottom: "1px solid var(--tl-border)",
+              background: "var(--tl-bg-grid)",
+            }}
+          >
+            <div style={{ fontSize: 13, fontWeight: 700, color: "var(--tl-text)" }}>
+              Workflow Controls
+            </div>
+            <div style={{ fontSize: 12, color: "var(--tl-text-muted)", marginTop: 2 }}>
+              Upload design files, field data, photos, and manage closeout actions
+              here while the Project Map remains the primary map view.
+            </div>
+          </div>
+          <RedlineMap
+            projectId={projectId}
+            workspaceTitle={projectDisplayName}
+            onFieldSelectionChange={handleFieldSelectionChange}
+            onWorkspaceStateChanged={handleWorkspaceStateChanged}
+            onGpsPhotosChange={handleGpsPhotosChange}
+          />
+        </div>
+        <div style={{ marginTop: 14 }}>
+          <ModernHeroMap
+            key={`modern-map-${projectId}`}
+            projectId={projectId}
+            selectedFieldSessionId={selectedFieldSessionId}
+            selectedFieldJobId={selectedFieldJobId}
+            refreshVersion={modernMapRefreshVersion}
+            bridgedGpsPhotos={bridgedGpsPhotos}
+          />
         </div>
       </div>
     </main>

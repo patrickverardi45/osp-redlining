@@ -6702,6 +6702,46 @@ def _summary_payload(include_debug: bool = False) -> Dict[str, Any]:
     verification_summary = STATE.get("verification_summary", {}) or {}
     selected_route_match_summary = _selected_route_match_summary(STATE.get("selected_route_match"))
 
+    # Geotagged station photos scoped to the current session only.
+    # Phase 1: active session_id is the only filter — no cross-session exposure.
+    _photo_session = str(STATE.get("_session_id_hint") or "").strip()
+    photo_points: list = []
+    if _photo_session:
+        for _prec in (_load_station_photo_index().get("photos") or []):
+            if not _station_photo_record_matches_session(_prec, _photo_session):
+                continue
+            try:
+                _orig_lat = float(_prec.get("lat") or "")
+                _orig_lon = float(_prec.get("lon") or "")
+            except (ValueError, TypeError):
+                continue
+            if not (float("-inf") < _orig_lat < float("inf") and float("-inf") < _orig_lon < float("inf")):
+                continue
+            _adj_lat = _office_float_or_none(_prec.get("adjusted_lat"))
+            _adj_lon = _office_float_or_none(_prec.get("adjusted_lon"))
+            _is_adjusted = _adj_lat is not None and _adj_lon is not None
+            _display_lat = _adj_lat if _is_adjusted else _orig_lat
+            _display_lon = _adj_lon if _is_adjusted else _orig_lon
+            photo_points.append({
+                "id": str(_prec.get("photo_id") or ""),
+                "source_type": "station_photo",
+                "lat": _display_lat,
+                "lon": _display_lon,
+                "thumbnail_url": _station_photo_record_public_url(_prec),
+                "original_url": _station_photo_record_public_url(_prec),
+                "filename": str(_prec.get("original_filename") or ""),
+                "station_label": str(_prec.get("station_label") or ""),
+                "session_id": str(_prec.get("session_id") or ""),
+                "uploaded_at": str(_prec.get("uploaded_at") or ""),
+                "note": _prec.get("note"),
+                "original_lat": _orig_lat,
+                "original_lon": _orig_lon,
+                "adjusted_lat": _adj_lat,
+                "adjusted_lon": _adj_lon,
+                "adjusted_at": str(_prec.get("adjusted_at") or "") or None,
+                "is_adjusted": _is_adjusted,
+            })
+
     if include_debug:
         payload = {
             "route_name": STATE.get("route_name"),
@@ -6768,6 +6808,7 @@ def _summary_payload(include_debug: bool = False) -> Dict[str, Any]:
             "kmz_reference_full": STATE.get("kmz_reference", {}) or {},
             "engineering_plans": _load_engineering_plan_index_for_session(STATE.get("_session_id_hint", "")),
             "bore_log_summary": _bore_log_summary_from_rows(committed_rows),
+            "photo_points": photo_points,
             "closeout_lock": _normalize_closeout_lock(STATE.get("closeout_lock")),
             **_closeout_flat_fields(),
         }
@@ -6841,6 +6882,7 @@ def _summary_payload(include_debug: bool = False) -> Dict[str, Any]:
         "active_route_runtime_verification": active_route_runtime_verification,
         "engineering_plans": _load_engineering_plan_index_for_session(STATE.get("_session_id_hint", "")),
         "bore_log_summary": _bore_log_summary_from_rows(committed_rows),
+        "photo_points": photo_points,
         "closeout_lock": _normalize_closeout_lock(STATE.get("closeout_lock")),
         **_closeout_flat_fields(),
     }
@@ -7235,6 +7277,9 @@ def _station_photo_public_record(record: Dict[str, Any]) -> Dict[str, Any]:
     photo_id = str(record.get("photo_id") or "").strip()
     session_id = str(record.get("session_id") or "").strip()
     session_query = f"?session_id={quote(session_id)}" if session_id else ""
+    adjusted_lat = _office_float_or_none(record.get("adjusted_lat"))
+    adjusted_lon = _office_float_or_none(record.get("adjusted_lon"))
+    is_adjusted = adjusted_lat is not None and adjusted_lon is not None
     return {
         "photo_id": photo_id,
         "session_id": session_id,
@@ -7246,6 +7291,12 @@ def _station_photo_public_record(record: Dict[str, Any]) -> Dict[str, Any]:
         "uploaded_at": str(record.get("uploaded_at") or ""),
         "relative_url": f"/api/station-photos/file/{photo_id}{session_query}",
         "public_url": str(record.get("public_url") or ""),
+        "original_lat": _office_float_or_none(record.get("lat")),
+        "original_lon": _office_float_or_none(record.get("lon")),
+        "adjusted_lat": adjusted_lat,
+        "adjusted_lon": adjusted_lon,
+        "adjusted_at": str(record.get("adjusted_at") or "") or None,
+        "is_adjusted": is_adjusted,
     }
 
 
@@ -7408,6 +7459,79 @@ async def get_station_photo_file(photo_id: str, session_id: Optional[str] = None
             filename=str(record.get("original_filename") or os.path.basename(stored_path)),
         )
     return _err("Photo file was not found.", status_code=404, session_id=resolved_session_id)
+
+
+@app.post("/api/station-photos/{photo_id}/adjust")
+async def adjust_station_photo(
+    photo_id: str,
+    payload: Dict[str, Any] = Body(...),
+    session_id: Optional[str] = None,
+) -> JSONResponse:
+    resolved_session_id = _resolve_session_id(session_id)
+    target = str(photo_id or "").strip()
+    if not target:
+        return _err("photo_id is required.", session_id=resolved_session_id)
+
+    adjusted_lat_raw = payload.get("adjusted_lat")
+    adjusted_lon_raw = payload.get("adjusted_lon")
+
+    clear_adjustment = adjusted_lat_raw is None and adjusted_lon_raw is None
+    if not clear_adjustment:
+        if adjusted_lat_raw is None or adjusted_lon_raw is None:
+            return _err(
+                "adjusted_lat and adjusted_lon must both be numbers or both be null.",
+                session_id=resolved_session_id,
+            )
+        try:
+            adjusted_lat = float(adjusted_lat_raw)
+            adjusted_lon = float(adjusted_lon_raw)
+        except (TypeError, ValueError):
+            return _err(
+                "adjusted_lat and adjusted_lon must be valid numbers.",
+                session_id=resolved_session_id,
+            )
+        if not (-90.0 <= adjusted_lat <= 90.0):
+            return _err("adjusted_lat must be between -90 and 90.", session_id=resolved_session_id)
+        if not (-180.0 <= adjusted_lon <= 180.0):
+            return _err("adjusted_lon must be between -180 and 180.", session_id=resolved_session_id)
+
+    with _session_scope(resolved_session_id):
+        if _is_closeout_locked():
+            return _json_closeout_locked_response()
+
+    index_data = _load_station_photo_index()
+    records = index_data.get("photos")
+    if not isinstance(records, list):
+        return _err("Photo index is malformed.", status_code=500, session_id=resolved_session_id)
+
+    updated_record: Optional[Dict[str, Any]] = None
+    for record in records:
+        if not isinstance(record, dict):
+            continue
+        if str(record.get("photo_id") or "").strip() != target:
+            continue
+        if not _station_photo_record_matches_session(record, resolved_session_id):
+            continue
+        if clear_adjustment:
+            record.pop("adjusted_lat", None)
+            record.pop("adjusted_lon", None)
+            record.pop("adjusted_at", None)
+        else:
+            record["adjusted_lat"] = adjusted_lat
+            record["adjusted_lon"] = adjusted_lon
+            record["adjusted_at"] = datetime.now(timezone.utc).isoformat()
+        updated_record = record
+        break
+
+    if not updated_record:
+        return _err("Photo was not found.", status_code=404, session_id=resolved_session_id)
+
+    _save_station_photo_index(index_data)
+    return _ok(
+        session_id=resolved_session_id,
+        message="Photo adjustment updated.",
+        photo=_station_photo_public_record(updated_record),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -9874,10 +9998,15 @@ def _office_photos_payload(
         if not photo_id:
             continue
         try:
-            lat_val = float(str(record.get("lat") or "").strip() or 0)
-            lon_val = float(str(record.get("lon") or "").strip() or 0)
+            original_lat = float(str(record.get("lat") or "").strip() or 0)
+            original_lon = float(str(record.get("lon") or "").strip() or 0)
         except (TypeError, ValueError):
-            lat_val, lon_val = 0.0, 0.0
+            original_lat, original_lon = 0.0, 0.0
+        adjusted_lat = _office_float_or_none(record.get("adjusted_lat"))
+        adjusted_lon = _office_float_or_none(record.get("adjusted_lon"))
+        is_adjusted = adjusted_lat is not None and adjusted_lon is not None
+        lat_val = adjusted_lat if is_adjusted else original_lat
+        lon_val = adjusted_lon if is_adjusted else original_lon
         thumb = _station_photo_record_public_url(record)
         station_id_match: Optional[str] = None
         slabel = str(record.get("station_label") or "").strip()
@@ -9892,6 +10021,12 @@ def _office_photos_payload(
             "station_id": station_id_match,
             "latitude": lat_val,
             "longitude": lon_val,
+            "original_lat": original_lat,
+            "original_lon": original_lon,
+            "adjusted_lat": adjusted_lat,
+            "adjusted_lon": adjusted_lon,
+            "adjusted_at": str(record.get("adjusted_at") or "") or None,
+            "is_adjusted": is_adjusted,
             "thumbnail_url": thumb,
             "session_id": rid,
             "uploaded_at": str(record.get("uploaded_at") or ""),

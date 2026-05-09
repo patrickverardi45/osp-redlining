@@ -170,9 +170,12 @@ function resolveCloseoutReviewDisplay(
   billingApproved: boolean,
   gatesComplete: boolean,
 ): CloseoutReviewResolved {
-  if (billingApproved && gatesComplete) {
+  // Keep packet status aligned with the shell's approval source:
+  // once billing is approved, show approved client-facing status regardless
+  // of internal checklist gate state.
+  if (billingApproved) {
     return {
-      label: "Approved for Billing",
+      label: "Ready for Billing",
       color: "#16a34a",
       checklistRowComplete: true,
     };
@@ -292,26 +295,6 @@ function shortFile(path: string): string {
   return path.split(/[/\\]/).pop() || path;
 }
 
-function diagForFile(diag: PipelineDiagEntry[], sourceFile: string): PipelineDiagEntry[] {
-  const base = shortFile(sourceFile).toLowerCase();
-  return diag.filter((d) => shortFile(d.source_file ?? "").toLowerCase() === base);
-}
-
-function renderLabel(diag: PipelineDiagEntry[]): string {
-  if (diag.length === 0) return "No pipeline data";
-  const blocked = diag.filter((d) => d.render_allowed === false);
-  const rendered = diag.filter((d) => d.render_allowed === true && (d.segments_returned ?? 0) > 0);
-  const needsReview = diag.filter(
-    (d) => d.stopped_at && d.stopped_at !== "render_allowed" && d.render_allowed !== false,
-  );
-  if (blocked.length === 0 && needsReview.length === 0) return "Processed";
-  if (blocked.length > 0 && rendered.length > 0)
-    return `Partially processed — ${blocked.length} group${blocked.length > 1 ? "s" : ""} require${blocked.length === 1 ? "s" : ""} review`;
-  if (blocked.length === diag.length) return "Requires review — processing incomplete";
-  if (needsReview.length > 0 && blocked.length === 0) return "Review required";
-  return "Partially processed";
-}
-
 // ── Print HTML builder ────────────────────────────────────────────────────────
 
 function buildPrintHtml(
@@ -330,7 +313,6 @@ function buildPrintHtml(
     exceptions,
     drillPathRows,
     novaSummary,
-    pipelineDiag,
     engineeringPlanSignals,
     hasDesign,
     hasBoreFiles,
@@ -344,7 +326,6 @@ function buildPrintHtml(
 
   const routeName = state?.selected_route_name || state?.route_name || "—";
   const rawStatus = novaSummary.billingReadiness.status;
-  const boreLogs = state?.bore_log_summary ?? [];
   const plans = state?.engineering_plans ?? [];
   const qaItems = novaSummary.qaFlags.items;
 
@@ -358,20 +339,6 @@ function buildPrintHtml(
   function h2(title: string, num: string): string {
     return `<h2 style="font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:0.06em;color:#475569;margin:24px 0 8px;padding-bottom:4px;border-bottom:2px solid #e2e8f0">${num}. ${title}</h2>`;
   }
-
-  const boreLogRows = boreLogs.map((entry) => {
-    const diag = diagForFile(pipelineDiag, entry.source_file);
-    const label = renderLabel(diag);
-    return `<tr>
-      <td style="padding:5px 8px;border:1px solid #e2e8f0;font-size:11px;word-break:break-all">${shortFile(entry.source_file)}</td>
-      <td style="padding:5px 8px;border:1px solid #e2e8f0;font-size:11px">${entry.row_count}</td>
-      <td style="padding:5px 8px;border:1px solid #e2e8f0;font-size:11px">${entry.span_ft != null ? `${formatNumber(entry.span_ft, 0)} ft` : "—"}</td>
-      <td style="padding:5px 8px;border:1px solid #e2e8f0;font-size:11px">${entry.dates?.join(", ") || "—"}</td>
-      <td style="padding:5px 8px;border:1px solid #e2e8f0;font-size:11px">${entry.print_tokens?.join(", ") || "—"}</td>
-      <td style="padding:5px 8px;border:1px solid #e2e8f0;font-size:11px">${entry.evidence_layer_id || "—"}</td>
-      <td style="padding:5px 8px;border:1px solid #e2e8f0;font-size:11px">${label}</td>
-    </tr>`;
-  }).join("");
 
   const qaRows = qaItems
     .map((item, itemIndex) => {
@@ -438,7 +405,6 @@ function buildPrintHtml(
     const thumb = `<img src="${imgSrc}" alt="${p.original_filename}" style="width:56px;height:56px;object-fit:cover;border-radius:4px;border:1px solid #e2e8f0" onerror="this.style.display='none'"/>`;
     return `<tr>
       <td style="padding:6px 8px;border:1px solid #e2e8f0;font-size:11px">${p.station_identity || "—"}</td>
-      <td style="padding:6px 8px;border:1px solid #e2e8f0;font-size:11px;word-break:break-all">${p.original_filename}</td>
       <td style="padding:6px 8px;border:1px solid #e2e8f0;font-size:11px">${p.uploaded_at ? new Date(p.uploaded_at).toLocaleString() : "—"}</td>
       <td style="padding:6px 8px;border:1px solid #e2e8f0">${thumb}</td>
     </tr>`;
@@ -450,7 +416,6 @@ function buildPrintHtml(
     const ts = new Date(p.addedAt).toLocaleString();
     const statusLabel2 = p.reason === "mapped" ? "Located" : p.reason === "no_gps" ? "No GPS data" : "Unreadable";
     return `<tr>
-      <td style="padding:6px 8px;border:1px solid #e2e8f0;font-size:11px;word-break:break-all">${p.filename}</td>
       <td style="padding:6px 8px;border:1px solid #e2e8f0;font-size:11px">${latLon}</td>
       <td style="padding:6px 8px;border:1px solid #e2e8f0;font-size:11px">${ts}</td>
       <td style="padding:6px 8px;border:1px solid #e2e8f0;font-size:11px">${statusLabel2}</td>
@@ -573,38 +538,11 @@ ${drillPathRows.length > 0 ? `${h2("Drill Path Detail", "2a")}
   </tr></tfoot>
 </table>` : ""}
 
-${h2("Field Data Summary", "3")}
-${boreLogs.length === 0
-  ? `<p style="font-size:13px;color:#64748b">No field data files loaded.</p>`
-  : `<table>
-  <thead><tr><th>Source File</th><th>Rows</th><th>Span</th><th>Dates</th><th>Print Tokens</th><th>Evidence Layer</th><th>Processing Status</th></tr></thead>
-  <tbody>${boreLogRows}</tbody>
-</table>
-<p style="font-size:11px;color:#64748b;margin:4px 0">"Partially processed" means at least one group within the file requires additional review while other groups were processed successfully.</p>`}
-
-${h2("Review Notes / Field Issues", "4")}
-${qaItems.length === 0
-  ? `<p style="font-size:13px;color:#16a34a;font-weight:600">✓ No review issues. All field records processed successfully.</p>`
-  : `<table>
-  <thead><tr><th>Priority</th><th>Source File</th><th>Issue &amp; Detail</th><th>Recommended Action</th><th>Decision</th></tr></thead>
-  <tbody>${qaRows}</tbody>
-</table>`}
-
-${h2("Review Decisions", "5")}
-<div class="disc">Review decisions record human assessments. They do not replace or override original field findings — both remain visible in the project record.</div>
-${overrides.length === 0
-  ? `<p style="font-size:13px;color:#64748b">No review decisions recorded for this session.</p>`
-  : `<table>
-  <thead><tr><th>Source File</th><th>Group</th><th>Decision</th><th>Reason</th><th>Recorded By</th><th>Date</th></tr></thead>
-  <tbody>${overrideRows}</tbody>
-</table>`}
-
-${h2("Engineering Plan Evidence", "6")}
+${h2("Engineering Plan Evidence", "3")}
 ${plans.length === 0 && engineeringPlanSignals.length === 0
   ? `<p style="font-size:13px;color:#64748b">No engineering plans attached.</p>`
   : `<table><tbody>
   ${row("Plans Attached", String(plans.length))}
-  ${plans.length > 0 ? row("Plan Files", plans.map((p) => p.original_filename).join(", ")) : ""}
   ${novaSummary.planIntelligence.planSupportedBoreLogs.length > 0 ? row("Plan-Referenced Field Data", novaSummary.planIntelligence.planSupportedBoreLogs.map(shortFile).join(", ")) : ""}
 </tbody></table>
 ${engineeringPlanSignals.length > 0 ? `<table style="margin-top:8px">
@@ -612,22 +550,22 @@ ${engineeringPlanSignals.length > 0 ? `<table style="margin-top:8px">
   <tbody>${planSignalRows}</tbody>
 </table>` : ""}`}
 
-${h2("Field Photo Evidence", "7")}
+${h2("Field Photo Evidence", "4")}
 ${!hasPhotoEvidence
   ? `<p style="font-size:13px;color:#64748b;font-style:italic">Photo evidence not attached in this packet.</p>`
   : `${stationPhotos.length > 0 ? `<p style="font-size:11px;font-weight:700;color:#475569;text-transform:uppercase;letter-spacing:0.04em;margin:0 0 6px">Station Photos (${stationPhotos.length})</p>
 <table>
-  <thead><tr><th>Station</th><th>File</th><th>Uploaded</th><th>Preview</th></tr></thead>
+  <thead><tr><th>Station</th><th>Uploaded</th><th>Preview</th></tr></thead>
   <tbody>${stationPhotoRows}</tbody>
 </table>` : ""}
 ${geoTaggedPhotos.length > 0 ? `<p style="font-size:11px;font-weight:700;color:#475569;text-transform:uppercase;letter-spacing:0.04em;margin:12px 0 6px">Geotagged Field Photos (${geoTaggedPhotos.length} — ${mappedGpsPhotos.length} with GPS location)</p>
 <p style="font-size:11px;color:#94a3b8;margin:0 0 6px">Photo previews are not available in PDF export. Metadata is recorded below.</p>
 <table>
-  <thead><tr><th>File</th><th>Coordinates (Lat, Lon)</th><th>Captured</th><th>Location Status</th></tr></thead>
+  <thead><tr><th>Coordinates (Lat, Lon)</th><th>Captured</th><th>Location Status</th></tr></thead>
   <tbody>${gpsPhotoRows}</tbody>
 </table>` : ""}`}
 
-${h2("Exceptions / Additional Costs", "8")}
+${h2("Exceptions / Additional Costs", "5")}
 ${exceptions.filter((e) => e.label || e.amount).length === 0
   ? `<p style="font-size:13px;color:#64748b">No exceptions recorded.</p>`
   : `<table>
@@ -640,7 +578,7 @@ ${exceptions.filter((e) => e.label || e.amount).length === 0
   </tr></tfoot>
 </table>`}
 
-${h2("Billing Summary", "9")}
+${h2("Billing Summary", "6")}
 <table style="max-width:400px"><tbody>
   ${row("Effective Footage", `${formatNumber(effectiveFootage)} ft`)}
   ${row("Cost per Foot", toMoney(numericCostPerFoot))}
@@ -650,22 +588,12 @@ ${h2("Billing Summary", "9")}
 </tbody></table>
 <div class="disc">Billing values are entered by the operator and have not been independently verified or approved by this system.</div>
 
-${h2("Operator Notes", "10")}
+${h2("Operator Notes", "7")}
 ${notes.trim()
   ? `<div style="background:#fafbfc;border:1px solid #e2e8f0;border-radius:8px;padding:12px 16px;font-size:13px;line-height:1.6;white-space:pre-wrap;color:#334155">${notes.trim()}</div>`
   : operatorNotesNotRequired
     ? `<p style="font-size:13px;color:#64748b;font-style:italic">No operator notes required.</p>`
     : `<p style="font-size:13px;color:#64748b;font-style:italic">No operator notes provided.</p>`}
-
-${h2("Final Review Checklist", "11")}
-<div style="max-width:600px">${checklist}</div>
-<div class="disc" style="margin-top:16px">
-  Status key:&nbsp;
-  <span style="color:#16a34a;font-weight:700">Approved for Billing</span> ·
-  <span style="color:#16a34a;font-weight:700">Ready for Closeout Review</span> ·
-  <span style="color:#d97706;font-weight:700">Review Required Before Billing</span> ·
-  <span style="color:#dc2626;font-weight:700">Requires Review Before Closeout</span>
-</div>
 
 <div class="footer">
   <span>OSP Redlining — Closeout Packet V1.1</span>
@@ -689,7 +617,6 @@ export default function CloseoutPacket(props: CloseoutPacketProps) {
     exceptions,
     drillPathRows,
     novaSummary,
-    pipelineDiag,
     engineeringPlanSignals,
     hasDesign,
     hasBoreFiles,
@@ -732,7 +659,6 @@ export default function CloseoutPacket(props: CloseoutPacketProps) {
     [qaItems, overrides],
   );
   const plans = state?.engineering_plans ?? [];
-  const boreLogs = state?.bore_log_summary ?? [];
   const hasPhotoEvidence = stationPhotos.length > 0 || geoTaggedPhotos.length > 0;
   const mappedGpsPhotos = geoTaggedPhotos.filter((p) => p.reason === "mapped");
 
@@ -1068,160 +994,14 @@ export default function CloseoutPacket(props: CloseoutPacketProps) {
                 )}
               </PS>
 
-              {/* ── 3. Field Data Summary ──────────────────────────────────── */}
-              <PS num="3" title="Field Data Summary">
-                {boreLogs.length === 0 ? (
-                  <Empty>No field data files loaded.</Empty>
-                ) : (
-                  <>
-                    <div style={{ overflowX: "auto" }}>
-                      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-                        <thead>
-                          <tr>{["Source File", "Rows", "Span", "Dates", "Print Tokens", "Evidence Layer", "Processing Status"].map((h) => <th key={h} style={thS}>{h}</th>)}</tr>
-                        </thead>
-                        <tbody>
-                          {boreLogs.map((entry) => {
-                            const diag = diagForFile(pipelineDiag, entry.source_file);
-                            const label = renderLabel(diag);
-                            const isPartial = label.startsWith("Partially");
-                            const isBlocked = label.includes("incomplete") || label.includes("Requires review");
-                            const labelColor = isBlocked ? "#dc2626" : isPartial ? "#d97706" : label === "Processed" ? "#16a34a" : "#64748b";
-                            return (
-                              <tr key={entry.source_file}>
-                                <td style={tdS}>{shortFile(entry.source_file)}</td>
-                                <td style={tdS}>{entry.row_count}</td>
-                                <td style={tdS}>{entry.span_ft != null ? `${formatNumber(entry.span_ft, 0)} ft` : "—"}</td>
-                                <td style={tdS}>{entry.dates?.join(", ") || "—"}</td>
-                                <td style={tdS}>{entry.print_tokens?.join(", ") || "—"}</td>
-                                <td style={tdS}>{entry.evidence_layer_id || "—"}</td>
-                                <td style={{ ...tdS, color: labelColor, fontWeight: 600 }}>{label}</td>
-                              </tr>
-                            );
-                          })}
-                        </tbody>
-                      </table>
-                    </div>
-                    <div style={{ marginTop: 6, fontSize: 11, color: "#64748b" }}>
-                      "Partially processed" means at least one group within the file requires additional review while other groups were processed successfully.
-                    </div>
-                  </>
-                )}
-              </PS>
-
-              {/* ── 4. Review Notes / Field Issues ──────────────────────── */}
-              <PS num="4" title="Review Notes / Field Issues">
-                {qaItems.length === 0 ? (
-                  <div style={{ color: "#16a34a", fontWeight: 600, fontSize: 13 }}>✓ No review issues. All field records processed successfully.</div>
-                ) : (
-                  <div style={{ overflowX: "auto" }}>
-                    <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-                      <thead>
-                        <tr>{["Priority", "Source File", "Issue", "Detail", "Recommended Action", "Decision", "Actions"].map((h) => <th key={h} style={thS}>{h}</th>)}</tr>
-                      </thead>
-                      <tbody>
-                        {qaItems.map((item, i) => {
-                          const sevColor = SEV_COLOR[item.severity] ?? "#64748b";
-                          const sevLabel = item.severity === "error" ? "ACTION REQUIRED" : item.severity === "warning" ? "REVIEW RECOMMENDED" : "INFO";
-                          const issueId = buildIssueId(item, i);
-                          const ov = overrideByIssueKey.get(issueId);
-                          const dec = decisionColumnStyle(ov);
-                          const rowBusy = savingIssueId === issueId;
-                          const rowErr = rowSaveErrors[issueId];
-                          const actionsDisabled = !overridesLoaded || rowBusy || closeoutLocked;
-                          const btnBase: React.CSSProperties = {
-                            fontSize: 10,
-                            fontWeight: 700,
-                            padding: "4px 8px",
-                            borderRadius: 6,
-                            border: "1px solid #cbd5e1",
-                            cursor: actionsDisabled ? "not-allowed" : "pointer",
-                            background: "#fff",
-                            color: "#334155",
-                            fontFamily: "inherit",
-                            opacity: actionsDisabled ? 0.55 : 1,
-                          };
-                          return (
-                            <tr key={i}>
-                              <td style={{ ...tdS, color: sevColor, fontWeight: 700 }}>{sevLabel}</td>
-                              <td style={tdS}>{shortFile(item.sourceFile)}</td>
-                              <td style={{ ...tdS, fontWeight: 600 }}>{item.issue}</td>
-                              <td style={tdS}>{item.meaning}</td>
-                              <td style={tdS}>{item.resolution}</td>
-                              <td style={{ ...tdS, color: dec.color, fontWeight: 700 }}>
-                                {rowBusy ? "Saving…" : dec.label}
-                              </td>
-                              <td style={tdS}>
-                                <div style={{ display: "flex", flexWrap: "wrap", gap: 6, maxWidth: 280 }}>
-                                  {CLOSEOUT_DECISION_OPTIONS.map((opt) => (
-                                    <button
-                                      key={opt}
-                                      type="button"
-                                      disabled={actionsDisabled}
-                                      onClick={() => saveCloseoutIssueDecision(item, i, opt, ov)}
-                                      style={btnBase}
-                                    >
-                                      {opt === "Accepted Override" ? "Accept override" : opt === "Needs Rework" ? "Needs rework" : opt}
-                                    </button>
-                                  ))}
-                                </div>
-                                {rowErr ? (
-                                  <div style={{ marginTop: 6, fontSize: 10, color: "#dc2626", fontWeight: 600 }}>{rowErr}</div>
-                                ) : null}
-                              </td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-              </PS>
-
-              {/* ── 5. Review Decisions ──────────────────────────────────── */}
-              <PS num="5" title="Review Decisions">
-                <div style={{ background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 6, padding: "8px 12px", fontSize: 12, color: "#475569", marginBottom: 10 }}>
-                  Review decisions record human assessments. They do not replace or override original field findings — both remain visible in the project record.
-                </div>
-                {!overridesLoaded ? (
-                  <div style={{ color: "#94a3b8", fontSize: 13 }}>Loading review decisions…</div>
-                ) : overrides.length === 0 ? (
-                  <Empty>No review decisions recorded for this session.</Empty>
-                ) : (
-                  <div style={{ overflowX: "auto" }}>
-                    <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-                      <thead>
-                        <tr>{["Source File", "Group", "Decision", "Reason", "Recorded By", "Date"].map((h) => <th key={h} style={thS}>{h}</th>)}</tr>
-                      </thead>
-                      <tbody>
-                        {overrides.map((ov) => {
-                          const clientDecision = translateDecision(ov.decision);
-                          const decColor = ov.decision === "Reviewed" ? "#7c3aed" : ov.decision === "Accepted Override" ? "#16a34a" : "#dc2626";
-                          return (
-                            <tr key={ov.id}>
-                              <td style={tdS}>{shortFile(ov.source_file)}</td>
-                              <td style={tdS}>{ov.group_idx ?? "—"}</td>
-                              <td style={{ ...tdS, color: decColor, fontWeight: 700 }}>{clientDecision}</td>
-                              <td style={tdS}>{ov.reason || "—"}</td>
-                              <td style={tdS}>{ov.created_by} ({ov.role})</td>
-                              <td style={tdS}>{ov.created_at ? new Date(ov.created_at).toLocaleString() : "—"}</td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-              </PS>
-
-              {/* ── 6. Engineering Plan Evidence ─────────────────────────── */}
-              <PS num="6" title="Engineering Plan Evidence">
+              {/* ── 3. Engineering Plan Evidence ─────────────────────────── */}
+              <PS num="3" title="Engineering Plan Evidence">
                 {plans.length === 0 && engineeringPlanSignals.length === 0 ? (
                   <Empty>No engineering plans attached.</Empty>
                 ) : (
                   <>
                     <KVTable rows={[
                       ["Plans Attached", String(plans.length)],
-                      ...(plans.length > 0 ? [["Plan Files", plans.map((p) => p.original_filename).join(", ")]] as [string, string][] : []),
                       ...(novaSummary.planIntelligence.planSupportedBoreLogs.length > 0
                         ? [["Plan-Referenced Field Data", novaSummary.planIntelligence.planSupportedBoreLogs.map(shortFile).join(", ")]] as [string, string][]
                         : []),
@@ -1248,8 +1028,8 @@ export default function CloseoutPacket(props: CloseoutPacketProps) {
                 )}
               </PS>
 
-              {/* ── 7. Field Photo Evidence ──────────────────────────────── */}
-              <PS num="7" title="Field Photo Evidence">
+              {/* ── 4. Field Photo Evidence ──────────────────────────────── */}
+              <PS num="4" title="Field Photo Evidence">
                 {!hasPhotoEvidence ? (
                   <Empty>Photo evidence not attached in this packet.</Empty>
                 ) : (
@@ -1328,30 +1108,14 @@ export default function CloseoutPacket(props: CloseoutPacketProps) {
                             </div>
                           ))}
                         </div>
-                        {/* Metadata table for reference */}
-                        <div style={{ overflowX: "auto" }}>
-                          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-                            <thead><tr>{["File", "Coordinates (Lat, Lon)", "Captured", "Location Status"].map((h) => <th key={h} style={thS}>{h}</th>)}</tr></thead>
-                            <tbody>
-                              {geoTaggedPhotos.map((photo) => (
-                                <tr key={photo.id}>
-                                  <td style={tdS}>{photo.filename}</td>
-                                  <td style={tdS}>{(photo.lat != null && photo.lon != null) ? `${photo.lat.toFixed(6)}, ${photo.lon.toFixed(6)}` : "No GPS"}</td>
-                                  <td style={tdS}>{new Date(photo.addedAt).toLocaleString()}</td>
-                                  <td style={tdS}>{photo.reason === "mapped" ? "Located" : photo.reason === "no_gps" ? "No GPS data" : "Unreadable"}</td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        </div>
                       </>
                     )}
                   </>
                 )}
               </PS>
 
-              {/* ── 8. Exceptions / Additional Costs ─────────────────────── */}
-              <PS num="8" title="Exceptions / Additional Costs">
+              {/* ── 5. Exceptions / Additional Costs ─────────────────────── */}
+              <PS num="5" title="Exceptions / Additional Costs">
                 {exceptions.filter((e) => e.label || e.amount).length === 0 ? (
                   <Empty>No exceptions recorded.</Empty>
                 ) : (
@@ -1375,8 +1139,8 @@ export default function CloseoutPacket(props: CloseoutPacketProps) {
                 )}
               </PS>
 
-              {/* ── 9. Billing Summary ────────────────────────────────────── */}
-              <PS num="9" title="Billing Summary">
+              {/* ── 6. Billing Summary ────────────────────────────────────── */}
+              <PS num="6" title="Billing Summary">
                 <KVTable rows={[
                   ["Effective Footage", `${formatNumber(effectiveFootage)} ft`],
                   ["Cost per Foot", toMoney(numericCostPerFoot)],
@@ -1389,8 +1153,8 @@ export default function CloseoutPacket(props: CloseoutPacketProps) {
                 </div>
               </PS>
 
-              {/* ── 10. Operator Notes ────────────────────────────────────── */}
-              <PS num="10" title="Operator Notes">
+              {/* ── 7. Operator Notes ────────────────────────────────────── */}
+              <PS num="7" title="Operator Notes">
                 {notes.trim() ? (
                   <div style={{ background: "#fafbfc", border: "1px solid #e2e8f0", borderRadius: 8, padding: "12px 16px", fontSize: 13, lineHeight: 1.6, whiteSpace: "pre-wrap", color: "#334155" }}>
                     {notes.trim()}
@@ -1400,30 +1164,6 @@ export default function CloseoutPacket(props: CloseoutPacketProps) {
                 ) : (
                   <Empty>No operator notes provided.</Empty>
                 )}
-              </PS>
-
-              {/* ── 11. Final Review Checklist ────────────────────────────── */}
-              <PS num="11" title="Final Review Checklist">
-                <div style={{ maxWidth: 580 }}>
-                  <CI ok={hasDesign} label="Design file loaded" />
-                  <CI ok={hasBoreFiles} label={`Field data files loaded (${state?.loaded_field_data_files ?? 0} file${(state?.loaded_field_data_files ?? 0) !== 1 ? "s" : ""})`} />
-                  <CI ok={plans.length > 0} label={`Engineering plans attached (${plans.length} plan${plans.length !== 1 ? "s" : ""})`} />
-                  <CI
-                    ok={allReviewResolved}
-                    label={formatReviewNotesChecklistLabel(qaItems, overrides, allReviewResolved)}
-                  />
-                  <CI ok={overrides.length >= 0} label={overrides.length > 0 ? `Review decisions documented (${overrides.length} recorded)` : "No review decisions recorded"} />
-                  <CI ok={hasPhotoEvidence} label={hasPhotoEvidence ? `Field photo evidence attached (${stationPhotos.length + geoTaggedPhotos.length} photo${stationPhotos.length + geoTaggedPhotos.length !== 1 ? "s" : ""})` : "Field photo evidence not attached"} />
-                  <CI ok={closeoutReviewResolved.checklistRowComplete} label={`Closeout review status: ${statusDisplay}`} />
-                  <CI ok={notesSatisfied} label={notesCheckLabel} />
-                </div>
-                <div style={{ marginTop: 14, background: "#f1f5f9", border: "1px solid #e2e8f0", borderRadius: 8, padding: "10px 14px", fontSize: 12, color: "#475569", lineHeight: 1.6 }}>
-                  <strong>Status key:</strong>{" "}
-                  <span style={{ color: "#16a34a", fontWeight: 700 }}>Approved for Billing</span> ·{" "}
-                  <span style={{ color: "#16a34a", fontWeight: 700 }}>Ready for Closeout Review</span> ·{" "}
-                  <span style={{ color: "#d97706", fontWeight: 700 }}>Review Required Before Billing</span> ·{" "}
-                  <span style={{ color: "#dc2626", fontWeight: 700 }}>Requires Review Before Closeout</span>
-                </div>
               </PS>
 
               {/* Footer */}
