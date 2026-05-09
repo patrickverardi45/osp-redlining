@@ -3857,37 +3857,57 @@ ${fieldSubmissionPlacemarks.length > 0 ? buildFolder("Selected Field Submission"
           >
             <div style={{ display: "grid", gap: 6 }}>
 
-              <div
+              <details
                 style={{
                   border: "1px solid #e2e8f0",
                   borderRadius: 10,
                   background: "rgba(255, 255, 255, 0.7)",
-                  padding: "8px 10px",
                   order: 24,
-                  display: activeWorkspaceTab === "workspace" ? "flex" : "none",
-                  alignItems: "center",
-                  justifyContent: "space-between",
-                  gap: 10,
-                  flexWrap: "wrap",
+                  display: activeWorkspaceTab === "workspace" ? "block" : "none",
                 }}
               >
-                <div style={{ fontSize: 11, color: "#475569", fontWeight: 600 }}>
-                  Legacy SVG map is hidden by default. Modern Project Map is the primary map surface.
+                <summary
+                  style={{
+                    padding: "10px 12px",
+                    cursor: "pointer",
+                    fontSize: 12,
+                    color: "#0f172a",
+                    fontWeight: 800,
+                    listStyle: "none",
+                  }}
+                >
+                  Legacy SVG map (debug / fallback — Project Map above is primary)
+                </summary>
+                <div style={{ padding: "4px 12px 10px", display: "grid", gap: 8 }}>
+                  <div style={{ fontSize: 11, color: "#475569", lineHeight: 1.45 }}>
+                    Open this panel only when you need the pre-Leaflet workspace map. Normal ops use{" "}
+                    <strong>Project Map</strong>.
+                  </div>
+                  <label
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 6,
+                      cursor: "pointer",
+                      userSelect: "none",
+                      fontSize: 11,
+                      color: "#334155",
+                      fontWeight: 700,
+                    }}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={showLegacyMap}
+                      onChange={(e) => setShowLegacyMap(e.target.checked)}
+                    />
+                    Render legacy SVG surface
+                  </label>
                 </div>
-                <label style={{ display: "inline-flex", alignItems: "center", gap: 6, cursor: "pointer", userSelect: "none", fontSize: 11, color: "#334155", fontWeight: 700 }}>
-                  <input
-                    type="checkbox"
-                    checked={showLegacyMap}
-                    onChange={(e) => setShowLegacyMap(e.target.checked)}
-                  />
-                  Show Legacy Map
-                </label>
-              </div>
 
-              {/* ─── Map + Inspector wrapper ─────────────────────────── */}
-              {/* Inspector is position:absolute so map container width    */}
-              {/* never changes — projection stays stable on station click. */}
-              <div style={{ position: "relative", display: activeWorkspaceTab === "workspace" && showLegacyMap ? "block" : "none", order: 25 }}>
+                {/* ─── Map + Inspector wrapper ─────────────────────────── */}
+                {/* Inspector is position:absolute so map container width    */}
+                {/* never changes — projection stays stable on station click. */}
+                <div style={{ position: "relative", display: showLegacyMap ? "block" : "none" }}>
                 <div
                   ref={mapContainerRef}
                   style={{
@@ -5201,6 +5221,7 @@ ${fieldSubmissionPlacemarks.length > 0 ? buildFolder("Selected Field Submission"
                 ) : null}
               </div>
               {/* ─── End Map + Inspector wrapper ─────────────────────── */}
+              </details>
 
               {/* ─── Phase 4D: Field Submissions Inbox ───────────────────── */}
               {/* Secondary in Map tab: keep the map as the first workspace surface. */}

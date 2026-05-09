@@ -180,7 +180,7 @@ export default function ProjectPage({ params }: ProjectPageProps) {
             </div>
             <div style={{ fontSize: 12, color: "var(--tl-text-muted)", marginTop: 2 }}>
               Upload design files, field data, photos, and manage closeout below. The
-              legacy SVG map stays optional under Map and field tools (Show Legacy Map).
+              legacy SVG map stays optional under Map and field tools (collapsed details panel).
             </div>
           </div>
           <RedlineMap
