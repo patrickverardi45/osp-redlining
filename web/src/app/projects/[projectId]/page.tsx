@@ -4,6 +4,14 @@ import { use, useCallback, useState } from "react";
 import Link from "next/link";
 import RedlineMap, { type BridgedGpsPhoto } from "@/components/RedlineMap";
 import ModernHeroMap from "@/components/ModernHeroMap";
+import KmzSemanticDiagnosticsPanel from "@/components/KmzSemanticDiagnosticsPanel";
+
+// Phase 1B — KMZ semantic diagnostics panel is gated behind a build-time
+// env flag so production end-users never see it. Set
+// NEXT_PUBLIC_SHOW_SEMANTIC_DIAG=1 in .env.local to enable.
+const SHOW_SEMANTIC_DIAG =
+  process.env.NEXT_PUBLIC_SHOW_SEMANTIC_DIAG === "1" ||
+  process.env.NEXT_PUBLIC_SHOW_SEMANTIC_DIAG === "true";
 
 type ProjectPageProps = {
   params: Promise<{
@@ -191,6 +199,12 @@ export default function ProjectPage({ params }: ProjectPageProps) {
               />
             }
           />
+          {SHOW_SEMANTIC_DIAG ? (
+            <KmzSemanticDiagnosticsPanel
+              projectId={projectId}
+              refreshVersion={modernMapRefreshVersion}
+            />
+          ) : null}
         </div>
       </div>
     </main>
