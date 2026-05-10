@@ -23,6 +23,8 @@ import { useParams } from "next/navigation";
 import { appendSessionId } from "@/lib/session";
 import type {
   BackendState,
+  IngestionLedgerEntry,
+  IngestionLedgerResponse,
   SemanticKmz,
   SemanticKmzClassification,
   SemanticKmzClassificationDebug,
@@ -275,6 +277,7 @@ export default function KmzSemanticDiagnosticsPanel({
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
   const [collapsed, setCollapsed] = useState<boolean>(true);
+  const [ledgerEntries, setLedgerEntries] = useState<IngestionLedgerEntry[]>([]);
 
   useEffect(() => {
     let cancelled = false;
@@ -304,6 +307,32 @@ export default function KmzSemanticDiagnosticsPanel({
       cancelled = true;
     };
   }, [projectIdForSession, refreshVersion]);
+
+  // Phase 1D — fetch ingestion ledger once on mount; re-fetch when
+  // refreshVersion increments (same trigger as the main state fetch).
+  // No polling. Does not mutate STATE or affect matching/rendering.
+  useEffect(() => {
+    let cancelled = false;
+    async function loadLedger(): Promise<void> {
+      try {
+        const res = await fetch(
+          `${API_BASE}/api/observability/ingestion-ledger?limit=10`,
+          { cache: "no-store" },
+        );
+        if (!res.ok) return;
+        const data = (await res.json()) as IngestionLedgerResponse;
+        if (!cancelled && Array.isArray(data.entries)) {
+          setLedgerEntries(data.entries);
+        }
+      } catch {
+        // Silently ignore — ledger is diagnostic only.
+      }
+    }
+    void loadLedger();
+    return () => {
+      cancelled = true;
+    };
+  }, [refreshVersion]);
 
   const semantic: SemanticKmz | null = state?.kmz_semantic ?? null;
 
@@ -587,6 +616,8 @@ export default function KmzSemanticDiagnosticsPanel({
             warnings={semantic.warnings ?? []}
           />
 
+          <DiagIngestionLedger entries={ledgerEntries} />
+
           {state?.kmz_semantic_match_shadow ? (
             <DiagShadowMatching shadow={state.kmz_semantic_match_shadow} />
           ) : null}
@@ -605,6 +636,127 @@ export default function KmzSemanticDiagnosticsPanel({
         </div>
       ) : null}
     </section>
+  );
+}
+
+// Phase 1D — collapsed table of recent ingestion ledger rows.
+function DiagIngestionLedger({ entries }: { entries: IngestionLedgerEntry[] }) {
+  const [open, setOpen] = useState(false);
+
+  if (entries.length === 0) return null;
+
+  return (
+    <div
+      style={{
+        borderTop: "1px solid rgba(148, 163, 184, 0.18)",
+        paddingTop: 8,
+        marginTop: 8,
+      }}
+    >
+      <button
+        onClick={() => setOpen((v) => !v)}
+        style={{
+          background: "none",
+          border: "none",
+          cursor: "pointer",
+          color: "var(--tl-text-faint)",
+          fontSize: 11,
+          fontWeight: 600,
+          padding: "2px 0",
+          textAlign: "left",
+          width: "100%",
+        }}
+      >
+        {open ? "▾" : "▸"} Ingestion ledger ({entries.length} recent)
+      </button>
+      {open && (
+        <div style={{ overflowX: "auto", marginTop: 4 }}>
+          <table
+            style={{
+              width: "100%",
+              borderCollapse: "collapse",
+              fontSize: 10,
+              color: "var(--tl-text-faint)",
+            }}
+          >
+            <thead>
+              <tr>
+                {["ingested_at", "filename", "sha256[:8]", "features", "skipped", "warnings"].map(
+                  (h) => (
+                    <th
+                      key={h}
+                      style={{
+                        textAlign: "left",
+                        padding: "2px 6px",
+                        borderBottom: "1px solid rgba(148,163,184,0.2)",
+                        fontWeight: 600,
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      {h}
+                    </th>
+                  ),
+                )}
+              </tr>
+            </thead>
+            <tbody>
+              {entries.map((e, i) => {
+                const ts = (() => {
+                  try {
+                    return new Date(e.ingested_at).toLocaleTimeString([], {
+                      hour: "2-digit",
+                      minute: "2-digit",
+                      second: "2-digit",
+                    });
+                  } catch {
+                    return e.ingested_at.slice(11, 19);
+                  }
+                })();
+                const hasSkipped = e.skipped_placemark_count > 0;
+                const hasWarnings = e.warnings_count > 0;
+                return (
+                  <tr key={i} style={{ borderBottom: "1px solid rgba(148,163,184,0.1)" }}>
+                    <td style={{ padding: "2px 6px", whiteSpace: "nowrap" }}>{ts}</td>
+                    <td
+                      style={{
+                        padding: "2px 6px",
+                        maxWidth: 140,
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                      }}
+                      title={e.filename}
+                    >
+                      {e.filename}
+                    </td>
+                    <td style={{ padding: "2px 6px", fontFamily: "monospace" }}>
+                      {e.input_sha256.slice(0, 8)}
+                    </td>
+                    <td style={{ padding: "2px 6px" }}>{e.feature_count}</td>
+                    <td
+                      style={{
+                        padding: "2px 6px",
+                        color: hasSkipped ? "#f87171" : undefined,
+                      }}
+                    >
+                      {e.skipped_placemark_count}
+                    </td>
+                    <td
+                      style={{
+                        padding: "2px 6px",
+                        color: hasWarnings ? "#fbbf24" : undefined,
+                      }}
+                    >
+                      {e.warnings_count}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
   );
 }
 

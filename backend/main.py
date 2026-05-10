@@ -33,6 +33,18 @@ os.makedirs(UPLOADS_DIR, exist_ok=True)
 PROJECT_ROUTE_CONTEXT_DIR = UPLOADS_DIR / "project_route_context"
 os.makedirs(PROJECT_ROUTE_CONTEXT_DIR, exist_ok=True)
 
+# Phase 1D — append-only ingestion ledger (JSONL, read-only API).
+INGESTION_LEDGER_PATH = UPLOADS_DIR / "ingestion_ledger.jsonl"
+INGESTION_LEDGER_MAX_ROWS = 500
+
+# Phase 1F — append-only match audit (JSONL, read-only API).
+MATCH_AUDIT_PATH = UPLOADS_DIR / "match_audit.jsonl"
+MATCH_AUDIT_MAX_ROWS = 2000
+
+# Phase 1G — per-group match audit v2 (JSONL, read-only API).
+MATCH_AUDIT_GROUPS_PATH = UPLOADS_DIR / "match_audit_groups.jsonl"
+MATCH_AUDIT_GROUPS_MAX_ROWS = 5000
+
 app = FastAPI(title="OSP Redlining Mapping Layer")
 app.mount("/uploads", StaticFiles(directory=BASE_UPLOAD_DIR), name="uploads")
 
@@ -2176,6 +2188,313 @@ def _build_kmz_semantic(file_bytes: bytes, filename: str) -> Optional[Dict[str, 
     }
 
 
+def _append_ingestion_ledger_entry(
+    file_bytes: bytes,
+    filename: str,
+    semantic_payload: Optional[Dict[str, Any]],
+) -> None:
+    """Phase 1D — append one JSONL row per KMZ semantic ingestion.
+
+    Never raises; a warning is logged on I/O failure. Does not mutate STATE.
+    If ``semantic_payload`` is None (parse failed), all semantic-derived
+    fields are written as their zero/False defaults so a row is always
+    persisted.
+    """
+    import hashlib as _hashlib
+    from datetime import timezone as _tz
+
+    try:
+        input_sha256 = _hashlib.sha256(file_bytes).hexdigest()
+
+        _idx: Dict[str, Any] = {}
+        _anchors: list = []
+        _warnings: list = []
+        _features: list = []
+        _parser_version: Optional[str] = None
+
+        if isinstance(semantic_payload, dict):
+            _parser_version = semantic_payload.get("parser_version")
+            _idx = semantic_payload.get("index") or {}
+            _features = semantic_payload.get("features") or []
+            _warnings = semantic_payload.get("warnings") or []
+            _anchors = _idx.get("anchor_catalog") or []
+
+        _sr: Dict[str, Any] = _idx.get("style_resolution") or {}
+
+        row: Dict[str, Any] = {
+            "ingested_at": datetime.now(_tz.utc).isoformat(),
+            "filename": Path(filename).name[:200],
+            "input_sha256": input_sha256,
+            "parser_version": _parser_version,
+            "feature_count": len(_features),
+            "anchor_count": len(_anchors),
+            "skipped_placemark_count": int(_idx.get("skipped_placemark_count") or 0),
+            "warnings_count": len(_warnings),
+            "truncated": bool(_idx.get("truncated", False)),
+            "anchor_catalog_truncated": bool(_idx.get("anchor_catalog_truncated", False)),
+            "styles_resolved_count": int(_idx.get("styles_resolved_count") or 0),
+            "ids_referenced_unresolved": int(_sr.get("ids_referenced_unresolved") or 0),
+            "stylemap_unresolved_count": int(_sr.get("stylemap_unresolved_count") or 0),
+        }
+
+        # Append row to JSONL file.
+        with open(INGESTION_LEDGER_PATH, "a", encoding="utf-8") as _fh:
+            _fh.write(json.dumps(row, separators=(",", ":")) + "\n")
+
+        # Trim to most recent INGESTION_LEDGER_MAX_ROWS rows if exceeded.
+        with open(INGESTION_LEDGER_PATH, "r", encoding="utf-8") as _fh:
+            _lines = _fh.readlines()
+
+        if len(_lines) > INGESTION_LEDGER_MAX_ROWS:
+            _lines = _lines[-INGESTION_LEDGER_MAX_ROWS:]
+            with open(INGESTION_LEDGER_PATH, "w", encoding="utf-8") as _fh:
+                _fh.writelines(_lines)
+
+    except Exception as _led_exc:  # pragma: no cover
+        print(
+            f"[INGESTION_LEDGER] WARNING: failed to append ledger entry: "
+            f"{type(_led_exc).__name__}: {_led_exc}",
+            flush=True,
+        )
+
+
+def _append_match_audit_entry(
+    event: str,
+    route: Optional[Dict[str, Any]],
+    previous_route_id: Optional[Any],
+) -> None:
+    """Phase 1F — append one JSONL row per active-route transition.
+
+    Never raises; a warning is logged on I/O failure. Pure read of STATE
+    (no mutations). Mirrors ``_append_ingestion_ledger_entry`` structure.
+    """
+    from datetime import timezone as _tz
+
+    try:
+        _route_id: Optional[str] = None
+        _route_name: Optional[str] = None
+        _route_length_ft: Optional[float] = None
+
+        if isinstance(route, dict):
+            _rid = route.get("route_id")
+            _route_id = str(_rid) if _rid is not None else None
+            _rname = route.get("route_name") or route.get("name")
+            _route_name = str(_rname) if _rname is not None else None
+            try:
+                _route_length_ft = float(route.get("length_ft") or 0.0) or None
+            except (TypeError, ValueError):
+                _route_length_ft = None
+
+        _prev = str(previous_route_id) if previous_route_id is not None else None
+        _session = STATE.get("_session_id_hint")
+        _sha = STATE.get("last_kmz_input_sha256")
+        _catalog_size = len(STATE.get("route_catalog") or [])
+
+        row: Dict[str, Any] = {
+            "decided_at": datetime.now(_tz.utc).isoformat(),
+            "event": event,
+            "session_id_hint": str(_session) if _session is not None else None,
+            "route_id": _route_id,
+            "route_name": _route_name,
+            "route_length_ft": _route_length_ft,
+            "previous_route_id": _prev,
+            "route_catalog_size": _catalog_size,
+            "input_sha256": str(_sha) if _sha is not None else None,
+        }
+
+        with open(MATCH_AUDIT_PATH, "a", encoding="utf-8") as _fh:
+            _fh.write(json.dumps(row, separators=(",", ":")) + "\n")
+
+        with open(MATCH_AUDIT_PATH, "r", encoding="utf-8") as _fh:
+            _lines = _fh.readlines()
+
+        if len(_lines) > MATCH_AUDIT_MAX_ROWS:
+            _lines = _lines[-MATCH_AUDIT_MAX_ROWS:]
+            with open(MATCH_AUDIT_PATH, "w", encoding="utf-8") as _fh:
+                _fh.writelines(_lines)
+
+    except Exception as _aud_exc:  # pragma: no cover
+        print(
+            f"[MATCH_AUDIT] WARNING: failed to append audit entry: "
+            f"{type(_aud_exc).__name__}: {_aud_exc}",
+            flush=True,
+        )
+
+
+def _append_match_audit_v2_entries(
+    group_matches: List[Dict[str, Any]],
+) -> None:
+    """Phase 1G — append one JSONL row per group_match per matching pass.
+
+    Schema version: "match-audit-2".  Never raises; logs a warning on any
+    I/O failure.  Pure read of STATE — no mutations.
+
+    One ``match_pass_id`` (uuid4) is generated per call and stamped on every
+    row so consumers can reconstruct all groups from a single matching pass.
+    ``_build_semantic_match_shadow()`` is called once per call (not per group)
+    to derive the presence-only ``semantic_shadow_available`` bool; if it
+    raises for any reason the value defaults to False.
+    """
+    import uuid as _uuid
+    from datetime import timezone as _tz
+
+    try:
+        _pass_id = str(_uuid.uuid4())
+        _decided_at = datetime.now(_tz.utc).isoformat()
+        _session = STATE.get("_session_id_hint")
+        _sha = STATE.get("last_kmz_input_sha256")
+
+        # Shadow presence check — once per pass, never propagates exceptions.
+        try:
+            _shadow = _build_semantic_match_shadow()
+            _shadow_available = _shadow is not None
+        except Exception:
+            _shadow_available = False
+
+        rows: List[str] = []
+
+        for _match in (group_matches or []):
+            if not isinstance(_match, dict):
+                continue
+
+            _validation: Dict[str, Any] = _match.get("validation") or {}
+            _render_gate: Dict[str, Any] = _validation.get("render_gate") or {}
+            _selected_hyp: Dict[str, Any] = _match.get("selected_hypothesis") or {}
+            _all_rankings: List[Any] = _match.get("candidate_rankings") or []
+
+            # anchor_reasons: first 5, each capped at 200 chars.
+            _raw_anchor_reasons: List[Any] = _selected_hyp.get("anchor_reasons") or []
+            _anchor_reasons: List[str] = [
+                str(r)[:200]
+                for r in _raw_anchor_reasons[:5]
+                if r is not None
+            ]
+
+            # candidate_rankings_top3: first 3, narrow projection.
+            _top3: List[Dict[str, Any]] = []
+            for _r in _all_rankings[:3]:
+                if not isinstance(_r, dict):
+                    continue
+                try:
+                    _r_len = float(_r.get("route_length_ft") or 0.0) or None
+                except (TypeError, ValueError):
+                    _r_len = None
+                try:
+                    _r_exp = float(_r.get("expected_span_ft") or 0.0) or None
+                except (TypeError, ValueError):
+                    _r_exp = None
+                try:
+                    _r_gap = float(_r.get("length_gap_ft") or 0.0)
+                except (TypeError, ValueError):
+                    _r_gap = None
+                try:
+                    _r_score = float(_r.get("score") or 0.0) or None
+                except (TypeError, ValueError):
+                    _r_score = None
+                _r_rid = _r.get("route_id")
+                _r_rname = _r.get("route_name")
+                _r_rrole = _r.get("route_role")
+                _top3.append(
+                    {
+                        "route_id": str(_r_rid) if _r_rid is not None else None,
+                        "route_name": str(_r_rname) if _r_rname is not None else None,
+                        "route_role": str(_r_rrole) if _r_rrole is not None else None,
+                        "route_length_ft": _r_len,
+                        "expected_span_ft": _r_exp,
+                        "length_gap_ft": _r_gap,
+                        "score": _r_score,
+                    }
+                )
+
+            # Numeric fields — safe conversion.
+            try:
+                _conf: Optional[float] = float(_match.get("confidence") or 0.0) or None
+            except (TypeError, ValueError):
+                _conf = None
+            try:
+                _exp_span: Optional[float] = float(_match.get("expected_span_ft") or 0.0) or None
+            except (TypeError, ValueError):
+                _exp_span = None
+            try:
+                _len_gap: Optional[float] = float(_match.get("length_gap_ft") or 0.0)
+            except (TypeError, ValueError):
+                _len_gap = None
+
+            # final_decision: already a string in group_match, truncated for safety.
+            _fd = _match.get("final_decision")
+            _final_decision: Optional[str] = str(_fd)[:500] if _fd is not None else None
+
+            _rid = _match.get("route_id")
+            _rname = _match.get("route_name")
+            _rrole = _match.get("route_role")
+            _clabel = _match.get("confidence_label")
+            _vs = _validation.get("validation_status")
+            _rm = _render_gate.get("mode")
+            _gid = _match.get("group_id")
+            _sf = _match.get("source_file")
+            _pt = _match.get("print")
+
+            row: Dict[str, Any] = {
+                "schema_version": "match-audit-2",
+                "decided_at": _decided_at,
+                "match_pass_id": _pass_id,
+                "session_id_hint": str(_session) if _session is not None else None,
+                "input_sha256": str(_sha) if _sha is not None else None,
+                "group_id": str(_gid) if _gid is not None else None,
+                "source_file": str(_sf) if _sf is not None else None,
+                "print": str(_pt) if _pt is not None else None,
+                "winning_route_id": str(_rid) if _rid is not None else None,
+                "winning_route_name": str(_rname) if _rname is not None else None,
+                "winning_route_role": str(_rrole) if _rrole is not None else None,
+                "confidence": _conf,
+                "confidence_label": str(_clabel) if _clabel is not None else None,
+                "final_decision": _final_decision,
+                "expected_span_ft": _exp_span,
+                "length_gap_ft": _len_gap,
+                "validation_status": str(_vs) if _vs is not None else None,
+                "render_allowed": bool(_match.get("render_allowed")),
+                "render_mode": str(_rm) if _rm is not None else None,
+                "render_block_reasons": [
+                    str(r) for r in (list(_match.get("render_block_reasons") or [])[:10])
+                ],
+                "rendered_station_point_count": int(
+                    _match.get("rendered_station_point_count") or 0
+                ),
+                "rendered_redline_segment_count": int(
+                    _match.get("rendered_redline_segment_count") or 0
+                ),
+                "anchor_reasons": _anchor_reasons,
+                "candidate_rankings_top3": _top3,
+                "candidate_rankings_total_count": len(_all_rankings),
+                "semantic_shadow_available": bool(_shadow_available),
+            }
+
+            rows.append(json.dumps(row, separators=(",", ":")) + "\n")
+
+        if not rows:
+            return
+
+        # Append all rows from this pass atomically (one open per pass).
+        with open(MATCH_AUDIT_GROUPS_PATH, "a", encoding="utf-8") as _fh:
+            _fh.writelines(rows)
+
+        # Tail-truncate to cap.
+        with open(MATCH_AUDIT_GROUPS_PATH, "r", encoding="utf-8") as _fh:
+            _all_lines = _fh.readlines()
+
+        if len(_all_lines) > MATCH_AUDIT_GROUPS_MAX_ROWS:
+            _all_lines = _all_lines[-MATCH_AUDIT_GROUPS_MAX_ROWS:]
+            with open(MATCH_AUDIT_GROUPS_PATH, "w", encoding="utf-8") as _fh:
+                _fh.writelines(_all_lines)
+
+    except Exception as _v2_exc:  # pragma: no cover
+        print(
+            f"[MATCH_AUDIT_V2] WARNING: failed to append v2 audit entries: "
+            f"{type(_v2_exc).__name__}: {_v2_exc}",
+            flush=True,
+        )
+
+
 def _build_route_catalog(file_bytes: bytes, filename: str) -> List[Dict[str, Any]]:
     kml_bytes = _extract_kml_bytes(file_bytes, filename)
     root = ET.fromstring(kml_bytes)
@@ -2235,12 +2554,14 @@ def _find_route_by_id(route_id: Any) -> Optional[Dict[str, Any]]:
 
 
 def _set_active_route(route: Optional[Dict[str, Any]]) -> None:
+    _prev_id = STATE.get("route_id")  # Phase 1F: capture before any STATE write
     if not route:
         STATE["route_id"] = None
         STATE["route_name"] = None
         STATE["route_coords"] = []
         STATE["route_length_ft"] = 0.0
         STATE["map_points"] = []
+        _append_match_audit_entry(event="active_route_cleared", route=None, previous_route_id=_prev_id)
         return
 
     STATE["route_id"] = route.get("route_id")
@@ -2248,6 +2569,7 @@ def _set_active_route(route: Optional[Dict[str, Any]]) -> None:
     STATE["route_coords"] = route.get("coords", []) or []
     STATE["route_length_ft"] = float(route.get("length_ft", 0.0) or 0.0)
     STATE["map_points"] = route.get("coords", []) or []
+    _append_match_audit_entry(event="active_route_set", route=route, previous_route_id=_prev_id)
 
 
 def _route_chainage(coords: Sequence[Sequence[float]]) -> List[float]:
@@ -7252,6 +7574,8 @@ def _rebuild_field_data_outputs() -> None:
         STATE["selected_route_match"] = None
 
     STATE["route_match_candidates"] = group_matches
+    # Phase 1G — per-group match audit (additive, never raises).
+    _append_match_audit_v2_entries(group_matches)
     warn_count = sum(1 for record in matching_debug if str(record.get("validation", {}).get("validation_status") or "") == "warn")
     fail_count = sum(1 for record in matching_debug if str(record.get("validation", {}).get("validation_status") or "") == "fail")
     blocked_count = sum(1 for match in group_matches if not bool(match.get("render_allowed")))
@@ -8414,6 +8738,17 @@ async def upload_design(
                 _kmz_sem_tb.print_exc()
                 STATE["kmz_semantic"] = None
 
+            # Phase 1D — ledger entry. Runs regardless of parse success/failure.
+            # Uses STATE.get("kmz_semantic") so the None path is also recorded.
+            _append_ingestion_ledger_entry(
+                file_bytes,
+                file.filename or "design.kmz",
+                STATE.get("kmz_semantic"),
+            )
+            # Phase 1F — stash SHA so _append_match_audit_entry can link the
+            # subsequent active_route_set row to this ingestion ledger entry.
+            STATE["last_kmz_input_sha256"] = hashlib.sha256(file_bytes).hexdigest()
+
             default_route = _choose_default_route(route_catalog)
             _set_active_route(default_route)
 
@@ -8657,6 +8992,112 @@ def get_bug_reports(session_id: Optional[str] = None) -> JSONResponse:
     resolved_session_id = _resolve_session_id(session_id)
     with _session_scope(resolved_session_id):
         return _ok(session_id=resolved_session_id, bug_reports=STATE.get("bug_reports", []) or [])
+
+
+@app.get("/api/observability/ingestion-ledger")
+def get_ingestion_ledger(limit: int = 25) -> JSONResponse:
+    """Phase 1D — read-only view of the most recent ingestion ledger rows.
+
+    Query param: ``limit`` (default 25, max 100). Returns rows in reverse
+    chronological order (most recent first). A missing or corrupt ledger file
+    returns ``{"entries": []}``.
+    """
+    limit = max(1, min(limit, 100))
+    try:
+        if not INGESTION_LEDGER_PATH.exists():
+            return JSONResponse({"entries": []})
+        with open(INGESTION_LEDGER_PATH, "r", encoding="utf-8") as _fh:
+            raw_lines = _fh.readlines()
+        entries: List[Dict[str, Any]] = []
+        for line in reversed(raw_lines):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                entries.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+            if len(entries) >= limit:
+                break
+        return JSONResponse({"entries": entries})
+    except Exception as _led_read_exc:
+        print(
+            f"[INGESTION_LEDGER] WARNING: failed to read ledger: "
+            f"{type(_led_read_exc).__name__}: {_led_read_exc}",
+            flush=True,
+        )
+        return JSONResponse({"entries": []})
+
+
+@app.get("/api/observability/match-audit")
+def get_match_audit(limit: int = 25) -> JSONResponse:
+    """Phase 1F — read-only view of the most recent match audit rows.
+
+    Query param: ``limit`` (default 25, max 200). Returns rows in reverse
+    chronological order (most recent first). A missing or corrupt audit file
+    returns ``{"entries": []}``.
+    """
+    limit = max(1, min(limit, 200))
+    try:
+        if not MATCH_AUDIT_PATH.exists():
+            return JSONResponse({"entries": []})
+        with open(MATCH_AUDIT_PATH, "r", encoding="utf-8") as _fh:
+            raw_lines = _fh.readlines()
+        entries: List[Dict[str, Any]] = []
+        for line in reversed(raw_lines):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                entries.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+            if len(entries) >= limit:
+                break
+        return JSONResponse({"entries": entries})
+    except Exception as _aud_read_exc:
+        print(
+            f"[MATCH_AUDIT] WARNING: failed to read audit: "
+            f"{type(_aud_read_exc).__name__}: {_aud_read_exc}",
+            flush=True,
+        )
+        return JSONResponse({"entries": []})
+
+
+@app.get("/api/observability/match-audit-groups")
+def get_match_audit_groups(limit: int = 50) -> JSONResponse:
+    """Phase 1G — read-only view of the most recent per-group match audit rows.
+
+    Schema version: "match-audit-2".  Query param: ``limit`` (default 50,
+    max 500). Returns rows in reverse chronological order (most recent first).
+    A missing or corrupt file returns ``{"entries": []}``.
+    """
+    limit = max(1, min(limit, 500))
+    try:
+        if not MATCH_AUDIT_GROUPS_PATH.exists():
+            return JSONResponse({"entries": []})
+        with open(MATCH_AUDIT_GROUPS_PATH, "r", encoding="utf-8") as _fh:
+            raw_lines = _fh.readlines()
+        entries: List[Dict[str, Any]] = []
+        for line in reversed(raw_lines):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                entries.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+            if len(entries) >= limit:
+                break
+        return JSONResponse({"entries": entries})
+    except Exception as _v2_read_exc:
+        print(
+            f"[MATCH_AUDIT_V2] WARNING: failed to read audit groups: "
+            f"{type(_v2_read_exc).__name__}: {_v2_read_exc}",
+            flush=True,
+        )
+        return JSONResponse({"entries": []})
+
 
 STATION_PHOTO_ROOT = UPLOADS_DIR / "station_photos"
 STATION_PHOTO_INDEX_PATH = STATION_PHOTO_ROOT / "index.json"

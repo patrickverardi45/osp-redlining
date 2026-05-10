@@ -348,6 +348,33 @@ export type SemanticKmz = {
 };
 
 /**
+ * Phase 1D — IngestionLedger.
+ *
+ * One row per KMZ semantic ingestion, persisted to ingestion_ledger.jsonl.
+ * Exposed read-only via GET /api/observability/ingestion-ledger.
+ * Never affects matching, scoring, or rendering.
+ */
+export type IngestionLedgerEntry = {
+  ingested_at: string;
+  filename: string;
+  input_sha256: string;
+  parser_version: string | null;
+  feature_count: number;
+  anchor_count: number;
+  skipped_placemark_count: number;
+  warnings_count: number;
+  truncated: boolean;
+  anchor_catalog_truncated: boolean;
+  styles_resolved_count: number;
+  ids_referenced_unresolved: number;
+  stylemap_unresolved_count: number;
+};
+
+export type IngestionLedgerResponse = {
+  entries: IngestionLedgerEntry[];
+};
+
+/**
  * Phase 1C — SHADOW MODE matching diagnostics.
  *
  * Purely informational. The matching engine continues to ignore this; the

@@ -1,15 +1,21 @@
 # TrueLine — KMZ Semantic Ingestion Regression Tests
 
-Phase 1E · Lock-down suite for `_build_kmz_semantic`.
+Phase 1E/1F-B/1G-B · Lock-down suites for semantic ingestion and MatchAudit.
 
 ---
 
 ## What these tests do
 
-14 `unittest` tests that lock down the current behaviour of the KMZ
-semantic parser (`_build_kmz_semantic` in `backend/main.py`).  
+33 `unittest` tests across three suites:
+
+| Suite | File | Tests | Covers |
+|---|---|---|---|
+| Phase 1E | `test_semantic_ingestion.py` | 14 | `_build_kmz_semantic` parser lock-down |
+| Phase 1F-B | `test_match_audit.py` | 7 | `_append_match_audit_entry` + `get_match_audit` |
+| Phase 1G-B | `test_match_audit_v2.py` | 12 | `_append_match_audit_v2_entries` + `get_match_audit_groups` |
+
 No production files are modified. No external services are required.  
-Zero new dependencies — stdlib `unittest`, `zipfile`, and `io` only.
+Zero new dependencies — stdlib `unittest`, `tempfile`, `zipfile`, and `io` only.
 
 ---
 
@@ -23,12 +29,17 @@ python -m unittest discover -s tests -t . -v
 Expected output (abridged):
 
 ```
+test_01_append_creates_row_with_correct_schema ... ok
+...
+test_07_helper_never_raises ... ok
+test_01_append_match_audit_v2_creates_rows ... ok
+...
+test_12_match_audit_v2_helper_never_raises ... ok
 test_01_parser_runs_without_exception ... ok
-test_02_parser_version_present ... ok
 ...
 test_14_no_unexpected_top_level_keys ... ok
 ----------------------------------------------------------------------
-Ran 14 tests in X.XXXs
+Ran 33 tests in X.XXXs
 
 OK
 ```
@@ -51,7 +62,9 @@ python -m unittest tests.test_semantic_ingestion.TestSemanticIngestion.test_13_r
 | `tests/__init__.py` | Makes `tests/` a package (empty) |
 | `tests/fixtures/__init__.py` | Makes `fixtures/` a package (empty) |
 | `tests/fixtures/synthetic_kmz.py` | Builds a deterministic in-memory KMZ from inline KML |
-| `tests/test_semantic_ingestion.py` | 14 lock-down assertions |
+| `tests/test_semantic_ingestion.py` | 14 lock-down assertions (Phase 1E) |
+| `tests/test_match_audit.py` | 7 lock-down assertions (Phase 1F-B) |
+| `tests/test_match_audit_v2.py` | 12 lock-down assertions (Phase 1G-B) |
 
 ---
 
