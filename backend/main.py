@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import logging
 import math
 import os
 import re
@@ -1102,6 +1103,1078 @@ def _build_kmz_reference(file_bytes: bytes, filename: str) -> Dict[str, Any]:
         "polygon_features": polygon_features,
         "point_features": point_features,
     }
+
+# ---------------------------------------------------------------------------
+# Phase 1A — KMZ semantic feature layer (ADDITIVE)
+#
+# This module is a parallel pass over the KML/KMZ. It does NOT modify the
+# outputs produced by _build_kmz_reference or _build_route_catalog. Its sole
+# purpose is to preserve the engineering intelligence that Google Earth/KML
+# files carry and that the existing route-extraction path discards: raw
+# placemark names, descriptions, folder hierarchy, geometry kind, styleUrl,
+# and ExtendedData. A lightweight heuristic classifier emits a soft label
+# ("classification" + "confidence" + "classification_reason") so downstream
+# UIs can prefer or filter without the parser ever claiming absolute truth.
+#
+# Architectural rule observed: rendering is NOT the source of truth. The
+# parser produces semantic features; consumers may use them or ignore them.
+# Failure of this module never breaks upload, route extraction, or rendering
+# — _build_kmz_semantic returns None on any error and the caller no-ops.
+# ---------------------------------------------------------------------------
+
+# Hard cap to defend against pathological KMLs. Files larger than this are
+# parsed up to the cap; the index records the truncation.
+_KMZ_SEMANTIC_FEATURE_CAP = 50000
+# Bounded anchor catalog (Phase 1B+). Same defence-in-depth pattern as the
+# feature cap; the full features[] is the source of truth.
+_KMZ_SEMANTIC_ANCHOR_CAP = 5000
+# Per-classification sample cap (Phase 1B diagnostics). Bounded so the index
+# stays small regardless of the underlying feature count.
+_KMZ_SEMANTIC_SAMPLE_CAP = 5
+# Top-N cap for folder + styleUrl popularity lists in the index.
+_KMZ_SEMANTIC_TOP_N = 10
+
+_KMZ_SEMANTIC_HTML_RE = re.compile(r"<[^>]+>")
+_KMZ_SEMANTIC_WS_RE = re.compile(r"\s+")
+_KMZ_SEMANTIC_STATION_RE = re.compile(r"\b\d{1,5}\+\d{1,3}\b")
+_KMZ_SEMANTIC_HANDHOLE_RE = re.compile(r"(?<![A-Za-z])(HH|MH)\s*[-_#:]?\s*\d", re.IGNORECASE)
+_KMZ_SEMANTIC_REEL_RE = re.compile(r"\b(reel|R\d{2,})\b", re.IGNORECASE)
+
+
+def _kmz_semantic_clean_text(value: Any) -> str:
+    """Strip HTML tags from a KML description and collapse whitespace.
+
+    KML descriptions frequently embed HTML (Google Earth balloons). We keep
+    the text content for downstream display but never try to faithfully
+    render the HTML — UI layers may decide to render the raw description
+    instead by reading description_raw if needed.
+    """
+    if value is None:
+        return ""
+    text = str(value)
+    if not text:
+        return ""
+    text = _KMZ_SEMANTIC_HTML_RE.sub(" ", text)
+    text = _KMZ_SEMANTIC_WS_RE.sub(" ", text).strip()
+    return text
+
+
+def _kmz_semantic_extended_data(placemark: ET.Element) -> Dict[str, str]:
+    """Read <ExtendedData><Data name="X"><value>Y</value></Data></ExtendedData>
+    plus <SchemaData><SimpleData name="X">Y</SimpleData></SchemaData>.
+
+    Returns a flat dict of string keys to string values. Duplicate keys are
+    overwritten by the last occurrence (KML rarely repeats Data names within
+    a Placemark, and consumers should treat this as a best-effort map).
+    """
+    out: Dict[str, str] = {}
+    ext = placemark.find("kml:ExtendedData", KML_NS)
+    if ext is None:
+        return out
+    for data in ext.findall("kml:Data", KML_NS):
+        name = (data.get("name") or "").strip()
+        if not name:
+            continue
+        value_node = data.find("kml:value", KML_NS)
+        value = (value_node.text or "").strip() if value_node is not None else ""
+        out[name] = value
+    for schema in ext.findall("kml:SchemaData", KML_NS):
+        for simple in schema.findall("kml:SimpleData", KML_NS):
+            name = (simple.get("name") or "").strip()
+            if not name:
+                continue
+            out[name] = (simple.text or "").strip()
+    return out
+
+
+def _kmz_semantic_geometry_type(placemark: ET.Element) -> str:
+    """Classify a placemark's geometry by inspecting its child geometry tags.
+
+    Returns one of: 'Point', 'LineString', 'Polygon', 'MultiGeometry',
+    'Other'. MultiGeometry takes precedence when multiple geometry kinds
+    coexist inside a single Placemark.
+    """
+    if placemark.find("kml:MultiGeometry", KML_NS) is not None:
+        return "MultiGeometry"
+    if placemark.find(".//kml:LineString", KML_NS) is not None:
+        return "LineString"
+    if placemark.find(".//kml:Polygon", KML_NS) is not None:
+        return "Polygon"
+    if placemark.find(".//kml:Point", KML_NS) is not None:
+        return "Point"
+    return "Other"
+
+
+def _kmz_semantic_first_coord(placemark: ET.Element) -> Optional[List[float]]:
+    """Best-effort representative [lat, lon] for indexing without duplicating
+    the full geometry. Prefers Point coords, then the first vertex of any
+    LineString or Polygon outer ring."""
+    point_node = placemark.find(".//kml:Point/kml:coordinates", KML_NS)
+    if point_node is not None and point_node.text:
+        coord = _extract_point_coords(point_node.text)
+        if coord:
+            return coord
+    line_node = placemark.find(".//kml:LineString/kml:coordinates", KML_NS)
+    if line_node is not None and line_node.text:
+        coords = _parse_coordinate_text(line_node.text)
+        if coords:
+            return coords[0]
+    poly_node = placemark.find(
+        ".//kml:Polygon/kml:outerBoundaryIs/kml:LinearRing/kml:coordinates",
+        KML_NS,
+    )
+    if poly_node is not None and poly_node.text:
+        coords = _parse_coordinate_text(poly_node.text)
+        if coords:
+            return coords[0]
+    return None
+
+
+def _kmz_semantic_classify(
+    name: str,
+    description_clean: str,
+    folder_path_str: str,
+    geometry_type: str,
+    style_url: str,
+    extended_data: Dict[str, str],
+) -> Tuple[str, str, str, Dict[str, Any]]:
+    """Heuristic classifier. Returns (classification, confidence, reason, classification_debug).
+
+    Confidence levels:
+      - "high"   regex match on a structured token (HH-12, station 17+50, R204)
+      - "medium" folder name or ExtendedData key signal
+      - "low"    loose substring word fragment
+
+    The classifier never overrides the upstream `role` field; both layers
+    coexist on different feature populations.
+
+    classification_debug is additive read-only metadata exposing which signals
+    fired. It never influences the classification result.
+    """
+    name_l = (name or "").lower()
+    folder_l = (folder_path_str or "").lower()
+    style_l = (style_url or "").lower()
+    desc_l = (description_clean or "").lower()
+    ext_keys_l = {k.lower(): v for k, v in (extended_data or {}).items()}
+
+    # Highest-confidence: regex hits on structured engineering tokens.
+    _mn = _KMZ_SEMANTIC_HANDHOLE_RE.search(name)
+    _md = _KMZ_SEMANTIC_HANDHOLE_RE.search(description_clean)
+    if _mn or _md:
+        _by, _toks, _srcs = [], [], []
+        if _mn:
+            _by.append("name_regex"); _toks.append(_mn.group(0)); _srcs.append("placemark_name")
+        if _md:
+            _by.append("description_regex"); _toks.append(_md.group(0)); _srcs.append("placemark_description")
+        return ("handhole", "high", "name/description matches HH/MH structured token",
+                {"matched_by": _by, "matched_tokens": _toks, "heuristic_sources": _srcs})
+    _mn = _KMZ_SEMANTIC_STATION_RE.search(name)
+    _md = _KMZ_SEMANTIC_STATION_RE.search(description_clean)
+    if _mn or _md:
+        _by, _toks, _srcs = [], [], []
+        if _mn:
+            _by.append("name_regex"); _toks.append(_mn.group(0)); _srcs.append("placemark_name")
+        if _md:
+            _by.append("description_regex"); _toks.append(_md.group(0)); _srcs.append("placemark_description")
+        return ("station_label", "high", "name/description matches NN+NN chainage token",
+                {"matched_by": _by, "matched_tokens": _toks, "heuristic_sources": _srcs})
+    _mn = _KMZ_SEMANTIC_REEL_RE.search(name)
+    _md = _KMZ_SEMANTIC_REEL_RE.search(description_clean)
+    if _mn or _md:
+        _by, _toks, _srcs = [], [], []
+        if _mn:
+            _by.append("name_regex"); _toks.append(_mn.group(0)); _srcs.append("placemark_name")
+        if _md:
+            _by.append("description_regex"); _toks.append(_md.group(0)); _srcs.append("placemark_description")
+        return ("reel", "high", "name/description matches reel/Rxxx token",
+                {"matched_by": _by, "matched_tokens": _toks, "heuristic_sources": _srcs})
+
+    # ExtendedData key signal (medium confidence — schemas vary by vendor).
+    for key in ext_keys_l:
+        _dbg: Dict[str, Any] = {"matched_by": ["extended_data_key"], "matched_tokens": [key], "heuristic_sources": ["extended_data"]}
+        if "handhole" in key or key == "hh":
+            return ("handhole", "medium", f"ExtendedData key '{key}'", _dbg)
+        if "station" in key:
+            return ("station_label", "medium", f"ExtendedData key '{key}'", _dbg)
+        if "reel" in key:
+            return ("reel", "medium", f"ExtendedData key '{key}'", _dbg)
+        if "splice" in key or "vault" in key or "pole" in key or "pedestal" in key or "cabinet" in key:
+            return ("structure_marker", "medium", f"ExtendedData key '{key}'", _dbg)
+
+    # Structure markers via name/folder substring on point features.
+    structure_tokens = ("splice", "vault", "pedestal", "cabinet", "node", "pole", "tower")
+    if geometry_type == "Point":
+        for tok in structure_tokens:
+            _by, _srcs = ["geometry_type"], ["geometry_type"]
+            if tok in name_l:
+                _by.append("name_contains"); _srcs.append("placemark_name")
+            if tok in folder_l:
+                _by.append("folder_hint"); _srcs.append("folder_path")
+            if tok in style_l:
+                _by.append("style_url_hint"); _srcs.append("style_url")
+            if len(_by) > 1:  # at least one non-geometry signal matched
+                return ("structure_marker", "medium", f"name/folder/style mentions '{tok}'",
+                        {"matched_by": _by, "matched_tokens": [tok], "heuristic_sources": _srcs})
+
+    # Geometry-type defaults.
+    if geometry_type == "LineString":
+        for tok in ("backbone", "feeder", "cable", "route", "lateral", "trunk"):
+            _by, _srcs = ["geometry_type"], ["geometry_type"]
+            if tok in folder_l:
+                _by.append("folder_hint"); _srcs.append("folder_path")
+            if tok in name_l:
+                _by.append("name_contains"); _srcs.append("placemark_name")
+            if len(_by) > 1:
+                return ("route_segment", "medium", f"line in folder/name mentions '{tok}'",
+                        {"matched_by": _by, "matched_tokens": [tok], "heuristic_sources": _srcs})
+        return ("route_segment", "low", "LineString without role keyword",
+                {"matched_by": ["geometry_type"], "matched_tokens": ["LineString"], "heuristic_sources": ["geometry_type"]})
+    if geometry_type == "Polygon":
+        for tok in ("boundary", "service", "easement", "rofw", "rou"):
+            _by, _srcs = ["geometry_type"], ["geometry_type"]
+            if tok in folder_l:
+                _by.append("folder_hint"); _srcs.append("folder_path")
+            if tok in name_l:
+                _by.append("name_contains"); _srcs.append("placemark_name")
+            if len(_by) > 1:
+                return ("boundary_polygon", "medium", f"polygon in folder/name mentions '{tok}'",
+                        {"matched_by": _by, "matched_tokens": [tok], "heuristic_sources": _srcs})
+        return ("boundary_polygon", "low", "Polygon without semantic keyword",
+                {"matched_by": ["geometry_type"], "matched_tokens": ["Polygon"], "heuristic_sources": ["geometry_type"]})
+    if geometry_type == "Point":
+        _srcs = ["geometry_type"]
+        if name_l:
+            _srcs.append("placemark_name")
+        if desc_l:
+            _srcs.append("placemark_description")
+        if name_l or desc_l:
+            return ("annotation", "low", "Point with descriptive text",
+                    {"matched_by": ["geometry_type"], "matched_tokens": ["Point"], "heuristic_sources": _srcs})
+        return ("unknown", "low", "Point without descriptive text",
+                {"matched_by": ["geometry_type"], "matched_tokens": ["Point"], "heuristic_sources": ["geometry_type"]})
+
+    return ("unknown", "low", "no signal matched",
+            {"matched_by": [], "matched_tokens": [], "heuristic_sources": []})
+
+
+# ---------------------------------------------------------------------------
+# Phase A — deterministic numeric extraction from placemark text.
+# All inputs are placemark name + description; outputs are (value, source).
+# Source is one of "name" | "description" | None so the consumer (the future
+# redline engine) can audit which field a number came from.
+# ---------------------------------------------------------------------------
+
+# Chainage like "STA 17+50", "00+45", "123+25.5". Major chainage in stations,
+# minor in feet within the station. Result is feet: 17+50 = 1750.0 ft.
+_KMZ_SEMANTIC_CHAINAGE_VALUE_RE = re.compile(
+    r"\b(\d{1,5})\s*\+\s*(\d{1,3}(?:\.\d+)?)\b"
+)
+
+# Sequence-number patterns. Each regex is tied to a specific classification so
+# we never claim a sequence on a placemark that wasn't classified that way.
+_KMZ_SEMANTIC_SEQ_RES: Dict[str, List[Tuple[Any, str]]] = {
+    "handhole": [
+        (re.compile(r"(?<![A-Za-z])HH\s*[-_#:]?\s*(\d{1,5})\b", re.IGNORECASE), "handhole"),
+        (re.compile(r"(?<![A-Za-z])MH\s*[-_#:]?\s*(\d{1,5})\b", re.IGNORECASE), "manhole"),
+    ],
+    "reel": [
+        (re.compile(r"\bREEL\s*[-_#:]?\s*(\d{1,5})\b", re.IGNORECASE), "reel"),
+        # R<digits> with at least 2 digits to disambiguate from "R 1" (route).
+        (re.compile(r"\bR\s*[-_#:]?\s*(\d{2,5})\b"), "reel"),
+    ],
+    "structure_marker": [
+        (re.compile(r"\bSP(?:LICE)?\s*[-_#:]?\s*(\d{1,5})\b", re.IGNORECASE), "structure"),
+        (re.compile(r"\b(?:VLT|VAULT)\s*[-_#:]?\s*(\d{1,5})\b", re.IGNORECASE), "structure"),
+        (re.compile(r"\b(?:CAB|CABINET)\s*[-_#:]?\s*(\d{1,5})\b", re.IGNORECASE), "structure"),
+        (re.compile(r"\b(?:NODE|N)\s*[-_#:]?\s*(\d{2,5})\b"), "structure"),
+    ],
+}
+
+
+def _kmz_semantic_extract_chainage(
+    name: str, description: str
+) -> Tuple[Optional[float], Optional[str]]:
+    """Returns (chainage_ft, source) — source is 'name', 'description', or None.
+
+    Deterministic: prefers a hit in name over description; first match within
+    each source wins. Never throws on malformed input.
+    """
+    for source_label, source_text in (("name", name or ""), ("description", description or "")):
+        match = _KMZ_SEMANTIC_CHAINAGE_VALUE_RE.search(source_text)
+        if not match:
+            continue
+        try:
+            major = int(match.group(1))
+            minor = float(match.group(2))
+        except (TypeError, ValueError):
+            continue
+        return (float(major) * 100.0 + minor, source_label)
+    return (None, None)
+
+
+def _kmz_semantic_extract_sequence(
+    classification: str, name: str, description: str
+) -> Tuple[Optional[int], Optional[str]]:
+    """Returns (sequence_number, sequence_kind). Tied to classification: a
+    handhole classification only attempts handhole/manhole patterns; a reel
+    classification only attempts reel patterns. Prevents claiming sequences
+    from unrelated names.
+    """
+    patterns = _KMZ_SEMANTIC_SEQ_RES.get(classification or "")
+    if not patterns:
+        return (None, None)
+    for source_text in (name or "", description or ""):
+        for pattern, kind in patterns:
+            match = pattern.search(source_text)
+            if not match:
+                continue
+            try:
+                value = int(match.group(1))
+            except (TypeError, ValueError):
+                continue
+            return (value, kind)
+    return (None, None)
+
+
+# ---------------------------------------------------------------------------
+# Phase B — full geometry extraction (LineString / Polygon / Point) and
+# MultiGeometry child enumeration. Reuses existing _parse_coordinate_text and
+# _dedupe_consecutive helpers; never modifies them.
+# ---------------------------------------------------------------------------
+
+
+def _kmz_semantic_extract_full_geometry(
+    placemark: ET.Element,
+) -> Optional[Dict[str, Any]]:
+    """Extract the placemark's full geometry as a structured dict.
+
+    Returns one of:
+        {"kind": "LineString", "coords": [[lat,lon], ...]}
+        {"kind": "Polygon", "outer": [...], "inner": [[...], ...]}     # inner optional
+        {"kind": "Point", "coord": [lat, lon]}
+        None — when the placemark is a MultiGeometry or has no usable geometry.
+
+    MultiGeometry is intentionally excluded here; consumers should call
+    _kmz_semantic_extract_multigeometry_children for those.
+    """
+    if placemark.find("kml:MultiGeometry", KML_NS) is not None:
+        return None
+
+    line_node = placemark.find(".//kml:LineString/kml:coordinates", KML_NS)
+    if line_node is not None and line_node.text:
+        coords = _dedupe_consecutive(_parse_coordinate_text(line_node.text))
+        if len(coords) >= 2:
+            return {"kind": "LineString", "coords": coords}
+
+    poly = placemark.find(".//kml:Polygon", KML_NS)
+    if poly is not None:
+        outer_node = poly.find(
+            ".//kml:outerBoundaryIs/kml:LinearRing/kml:coordinates", KML_NS
+        )
+        if outer_node is not None and outer_node.text:
+            outer = _dedupe_consecutive(_parse_coordinate_text(outer_node.text))
+            if len(outer) >= 3:
+                inner_rings: List[List[List[float]]] = []
+                for inner_node in poly.findall(
+                    ".//kml:innerBoundaryIs/kml:LinearRing/kml:coordinates", KML_NS
+                ):
+                    if inner_node.text:
+                        ring = _dedupe_consecutive(_parse_coordinate_text(inner_node.text))
+                        if len(ring) >= 3:
+                            inner_rings.append(ring)
+                result: Dict[str, Any] = {"kind": "Polygon", "outer": outer}
+                if inner_rings:
+                    result["inner"] = inner_rings
+                return result
+
+    point_node = placemark.find(".//kml:Point/kml:coordinates", KML_NS)
+    if point_node is not None and point_node.text:
+        coord = _extract_point_coords(point_node.text)
+        if coord:
+            return {"kind": "Point", "coord": coord}
+
+    return None
+
+
+def _kmz_semantic_extract_multigeometry_children(
+    placemark: ET.Element,
+) -> List[Dict[str, Any]]:
+    """For MultiGeometry placemarks, enumerate direct geometry children.
+
+    Each entry: {"kind": "Point|LineString|Polygon", "coord_hint": [lat,lon]|None}.
+    A common engineering pattern is a label-Point + cable-LineString in one
+    placemark; this exposes them so future consumers can treat the line as the
+    geometry while keeping the point for label placement.
+    """
+    out: List[Dict[str, Any]] = []
+    multi = placemark.find("kml:MultiGeometry", KML_NS)
+    if multi is None:
+        return out
+
+    for child in list(multi):
+        tag = child.tag.split("}")[-1] if isinstance(child.tag, str) else ""
+        try:
+            if tag == "Point":
+                coord_node = child.find("kml:coordinates", KML_NS)
+                if coord_node is not None and coord_node.text:
+                    coord = _extract_point_coords(coord_node.text)
+                    if coord:
+                        out.append({"kind": "Point", "coord_hint": coord})
+            elif tag == "LineString":
+                coord_node = child.find("kml:coordinates", KML_NS)
+                if coord_node is not None and coord_node.text:
+                    coords = _parse_coordinate_text(coord_node.text)
+                    if coords:
+                        out.append({"kind": "LineString", "coord_hint": coords[0]})
+            elif tag == "Polygon":
+                coord_node = child.find(
+                    ".//kml:outerBoundaryIs/kml:LinearRing/kml:coordinates", KML_NS
+                )
+                if coord_node is not None and coord_node.text:
+                    coords = _parse_coordinate_text(coord_node.text)
+                    if coords:
+                        out.append({"kind": "Polygon", "coord_hint": coords[0]})
+        except Exception:
+            # Per-child robustness: malformed inner geometry never aborts.
+            continue
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Phase C — Style + StyleMap resolution at the document level (one pass per
+# upload), and lifecycle hint extraction from folder + name.
+# ---------------------------------------------------------------------------
+
+
+def _kmz_semantic_kml_color_to_hex(value: Any) -> Optional[str]:
+    """KML colors are aabbggrr (alpha-blue-green-red, 8 hex chars). Convert
+    to standard #rrggbb (alpha dropped). 6-char (rrggbb) input also accepted.
+    Returns None for malformed input.
+    """
+    if value is None:
+        return None
+    raw = str(value).strip().lower()
+    if not raw:
+        return None
+    if not all(ch in "0123456789abcdef" for ch in raw):
+        return None
+    if len(raw) == 8:
+        rr = raw[6:8]
+        gg = raw[4:6]
+        bb = raw[2:4]
+        return f"#{rr}{gg}{bb}"
+    if len(raw) == 6:
+        return f"#{raw}"
+    return None
+
+
+def _kmz_semantic_extract_style_props(style_elem: ET.Element) -> Dict[str, Any]:
+    """Extract the structured style props we care about for redline-engine
+    hints. Missing fields are simply absent in the returned dict.
+    """
+    props: Dict[str, Any] = {}
+
+    line = style_elem.find("kml:LineStyle", KML_NS)
+    if line is not None:
+        color_node = line.find("kml:color", KML_NS)
+        if color_node is not None and color_node.text:
+            color = _kmz_semantic_kml_color_to_hex(color_node.text)
+            if color:
+                props["line_color"] = color
+        width_node = line.find("kml:width", KML_NS)
+        if width_node is not None and width_node.text:
+            try:
+                props["line_width"] = float(width_node.text.strip())
+            except (TypeError, ValueError):
+                pass
+
+    poly = style_elem.find("kml:PolyStyle", KML_NS)
+    if poly is not None:
+        color_node = poly.find("kml:color", KML_NS)
+        if color_node is not None and color_node.text:
+            color = _kmz_semantic_kml_color_to_hex(color_node.text)
+            if color:
+                props["poly_fill"] = color
+
+    icon = style_elem.find("kml:IconStyle", KML_NS)
+    if icon is not None:
+        href_node = icon.find(".//kml:Icon/kml:href", KML_NS)
+        if href_node is not None and href_node.text:
+            href = href_node.text.strip()
+            if href:
+                props["icon_href"] = href
+
+    label = style_elem.find("kml:LabelStyle", KML_NS)
+    if label is not None:
+        color_node = label.find("kml:color", KML_NS)
+        if color_node is not None and color_node.text:
+            color = _kmz_semantic_kml_color_to_hex(color_node.text)
+            if color:
+                props["label_color"] = color
+
+    return props
+
+
+def _kmz_semantic_parse_styles(root: ET.Element) -> Dict[str, Dict[str, Any]]:
+    """Parse all <Style id="…"> blocks and resolve <StyleMap id="…"> aliases
+    by their "normal" key. Returns dict mapping style id (without leading '#')
+    to resolved props. Bounded recursion (StyleMap referencing another
+    StyleMap is treated as unresolved at depth > 4).
+
+    Deterministic: iterates root in document order, sorts merged keys
+    deterministically when outputs are summarized.
+    """
+    raw_styles: Dict[str, Dict[str, Any]] = {}
+    for style in root.findall(".//kml:Style", KML_NS):
+        sid = (style.get("id") or "").strip()
+        if not sid:
+            continue
+        try:
+            raw_styles[sid] = _kmz_semantic_extract_style_props(style)
+        except Exception:
+            continue
+
+    # Resolve <StyleMap> aliases by their "normal" pair, capped at depth 4.
+    stylemap_target: Dict[str, str] = {}
+    for stylemap in root.findall(".//kml:StyleMap", KML_NS):
+        sid = (stylemap.get("id") or "").strip()
+        if not sid:
+            continue
+        for pair in stylemap.findall("kml:Pair", KML_NS):
+            key_node = pair.find("kml:key", KML_NS)
+            if key_node is None or (key_node.text or "").strip() != "normal":
+                continue
+            url_node = pair.find("kml:styleUrl", KML_NS)
+            if url_node is None or not url_node.text:
+                continue
+            target = url_node.text.strip().lstrip("#")
+            if target:
+                stylemap_target[sid] = target
+            break
+
+    resolved: Dict[str, Dict[str, Any]] = dict(raw_styles)
+    for sid, target in stylemap_target.items():
+        seen: List[str] = [sid]
+        cur = target
+        depth = 0
+        while cur in stylemap_target and depth < 4:
+            if cur in seen:
+                cur = ""
+                break
+            seen.append(cur)
+            cur = stylemap_target[cur]
+            depth += 1
+        if cur and cur in raw_styles:
+            resolved[sid] = raw_styles[cur]
+    return resolved
+
+
+def _kmz_semantic_lookup_style(
+    style_url: str, resolved_styles: Dict[str, Dict[str, Any]]
+) -> Optional[Dict[str, Any]]:
+    """Resolve a placemark's <styleUrl> against the doc-level style table.
+    Returns None when no entry exists or the styleUrl is empty."""
+    if not style_url:
+        return None
+    key = style_url.strip()
+    if not key:
+        return None
+    if key.startswith("#"):
+        key = key[1:]
+    if not key:
+        return None
+    return resolved_styles.get(key)
+
+
+# Lifecycle patterns for redline-scope filtering. Order is high-precedence
+# first ("asbuilt" beats "as built"-substring of "as-built backbone").
+_KMZ_SEMANTIC_LIFECYCLE_PATTERNS: List[Tuple[str, Any]] = [
+    ("asbuilt", re.compile(r"\bas[\s\-_]?built\b", re.IGNORECASE)),
+    ("decommissioned", re.compile(r"\b(?:decommiss(?:ion(?:ed)?)?|abandoned|removed)\b", re.IGNORECASE)),
+    ("proposed", re.compile(r"\bproposed\b", re.IGNORECASE)),
+    ("survey", re.compile(r"\bsurvey(?:ed)?\b", re.IGNORECASE)),
+    ("existing", re.compile(r"\bexisting\b", re.IGNORECASE)),
+]
+
+
+def _kmz_semantic_extract_lifecycle(
+    folder_path_str: str, name: str
+) -> Tuple[Optional[str], Optional[str], Optional[str]]:
+    """Return (label, confidence, reason) or (None, None, None).
+
+    Confidence:
+      - "high"   when an entire folder segment matches the pattern (folder
+                 named exactly "As-Built" / "Proposed" / etc.).
+      - "medium" when the pattern matches anywhere in the folder path string.
+      - "low"    when the pattern only matches in the placemark name.
+
+    Deterministic: patterns iterated in fixed order; first hit wins.
+    """
+    folder = folder_path_str or ""
+    name_s = name or ""
+
+    folder_segments = [seg.strip() for seg in folder.split("/") if seg.strip()]
+    for label, pattern in _KMZ_SEMANTIC_LIFECYCLE_PATTERNS:
+        for seg in folder_segments:
+            if pattern.search(seg) and len(seg) <= len(label) + 6:
+                return (label, "high", f"folder segment matches '{label}'")
+
+    for label, pattern in _KMZ_SEMANTIC_LIFECYCLE_PATTERNS:
+        if pattern.search(folder):
+            return (label, "medium", f"folder path mentions '{label}'")
+
+    for label, pattern in _KMZ_SEMANTIC_LIFECYCLE_PATTERNS:
+        if pattern.search(name_s):
+            return (label, "low", f"placemark name mentions '{label}'")
+
+    return (None, None, None)
+
+
+def _build_kmz_semantic(file_bytes: bytes, filename: str) -> Optional[Dict[str, Any]]:
+    """Build the semantic_features list and semantic_index summary.
+
+    Never raises. Returns None on any parse error so the caller can store
+    None and proceed. Output schema:
+
+        {
+          "parser_version": "semantic-1",
+          "features": [SemanticFeature, ...],
+          "index": {
+            "feature_count": int,
+            "truncated": bool,
+            "by_classification": {label: count},
+            "by_geometry_type": {type: count},
+            "by_folder": {folder_path_str: count},
+            "by_confidence": {confidence: count},
+            "style_url_count": {style_url: count},
+            "extended_data_keys": [keys...],
+          },
+        }
+    """
+    # [KMZ_SEM_TRACE] entry — uses print() so it always reaches the uvicorn
+    # console regardless of logging configuration. Remove these prints once
+    # the kmz_semantic visibility issue is diagnosed.
+    print(
+        f"[KMZ_SEM_TRACE] _build_kmz_semantic ENTER filename={filename!r} "
+        f"bytes_len={len(file_bytes) if file_bytes else 0}",
+        flush=True,
+    )
+    try:
+        kml_bytes = _extract_kml_bytes(file_bytes, filename)
+        root = ET.fromstring(kml_bytes)
+    except Exception as exc:
+        import traceback as _kmz_sem_top_tb
+
+        print(
+            f"[KMZ_SEM_TRACE] _build_kmz_semantic EARLY_RETURN=None "
+            f"reason=kml_extract_or_parse filename={filename!r} "
+            f"exc={type(exc).__name__}: {exc}",
+            flush=True,
+        )
+        _kmz_sem_top_tb.print_exc()
+        return None
+
+    try:
+        parent_map = _parent_map(root)
+    except Exception:
+        parent_map = {}
+
+    # Phase C — resolve all <Style> / <StyleMap> blocks once at the top of
+    # the document. Bounded by KML schema; per-placemark lookup is O(1).
+    try:
+        resolved_styles = _kmz_semantic_parse_styles(root)
+    except Exception:
+        resolved_styles = {}
+
+    features: List[Dict[str, Any]] = []
+    by_classification: Dict[str, int] = {}
+    by_geometry_type: Dict[str, int] = {}
+    by_folder: Dict[str, int] = {}
+    by_confidence: Dict[str, int] = {}
+    style_url_count: Dict[str, int] = {}
+    extended_data_keys: Dict[str, int] = {}
+    by_lifecycle: Dict[str, int] = {}
+    by_resolved_line_color: Dict[str, int] = {}
+    features_with_chainage = 0
+    features_with_sequence = 0
+    features_with_full_geometry = 0
+    features_with_resolved_style = 0
+    # Phase 1B diagnostics — bounded sample lists per classification so the
+    # index stays small even on huge KMZs. Each list holds up to
+    # _KMZ_SEMANTIC_SAMPLE_CAP feature_ids; consumers join back to features[]
+    # for full detail.
+    classification_samples: Dict[str, List[str]] = {}
+    # Phase 1B traceability — emit the source filename so multi-KMZ
+    # ingestion later can identify which file each feature came from.
+    safe_source_filename = (str(filename or "").strip() or "design.kmz")
+
+    truncated = False
+    counter = 0
+    skipped_placemark_count = 0
+    skipped_placemark_samples: List[Dict[str, Any]] = []
+    warnings: List[str] = []
+    _MAX_WARNINGS = 200
+    _MAX_SKIPPED_SAMPLES = 10
+
+    for placemark in root.findall(".//kml:Placemark", KML_NS):
+        counter += 1
+        if counter > _KMZ_SEMANTIC_FEATURE_CAP:
+            truncated = True
+            break
+        try:
+            placemark_id = (placemark.get("id") or "").strip() or None
+            placemark_name = (
+                placemark.findtext("kml:name", default="", namespaces=KML_NS) or ""
+            ).strip()
+            description_raw = placemark.findtext("kml:description", default="", namespaces=KML_NS) or ""
+            description_clean = _kmz_semantic_clean_text(description_raw)
+            folder_names = _folder_path(placemark, parent_map) if parent_map else []
+            folder_path_str = " / ".join(folder_names[1:]) if len(folder_names) > 1 else (folder_names[0] if folder_names else "")
+            style_url = (placemark.findtext("kml:styleUrl", default="", namespaces=KML_NS) or "").strip()
+            extended_data = _kmz_semantic_extended_data(placemark)
+            geometry_type = _kmz_semantic_geometry_type(placemark)
+            coords_hint = _kmz_semantic_first_coord(placemark)
+            # Derive coordinate_source for classification_debug: mirrors the
+            # node-priority order in _kmz_semantic_first_coord without re-parsing.
+            _coord_source: Optional[str] = None
+            if coords_hint is not None:
+                if placemark.find(".//kml:Point/kml:coordinates", KML_NS) is not None:
+                    _coord_source = "Point"
+                elif placemark.find(".//kml:LineString/kml:coordinates", KML_NS) is not None:
+                    _coord_source = "LineString"
+                elif placemark.find(".//kml:Polygon/kml:outerBoundaryIs/kml:LinearRing/kml:coordinates", KML_NS) is not None:
+                    _coord_source = "Polygon"
+            classification, confidence, reason, classification_debug = _kmz_semantic_classify(
+                placemark_name,
+                description_clean,
+                folder_path_str,
+                geometry_type,
+                style_url,
+                extended_data,
+            )
+            classification_debug["coordinate_source"] = _coord_source
+            # Phase A — deterministic numeric extraction.
+            chainage_ft, chainage_source = _kmz_semantic_extract_chainage(
+                placemark_name, description_clean
+            )
+            sequence_number, sequence_kind = _kmz_semantic_extract_sequence(
+                classification, placemark_name, description_clean
+            )
+            # Phase B — full geometry + MultiGeometry children.
+            full_geometry = _kmz_semantic_extract_full_geometry(placemark)
+            multigeometry_children = (
+                _kmz_semantic_extract_multigeometry_children(placemark)
+                if geometry_type == "MultiGeometry"
+                else []
+            )
+            # Phase C — style resolution + lifecycle hint.
+            style_resolved = _kmz_semantic_lookup_style(style_url, resolved_styles)
+            lifecycle_label, lifecycle_conf, lifecycle_reason = (
+                _kmz_semantic_extract_lifecycle(folder_path_str, placemark_name)
+            )
+        except Exception as _sem_exc:
+            # Per-placemark robustness: skip the offender, never crash the pass.
+            skipped_placemark_count += 1
+            _error_kind = type(_sem_exc).__name__
+            _message = str(_sem_exc)[:200]
+            if len(warnings) < _MAX_WARNINGS:
+                warnings.append(
+                    f"placemark {counter} ({_error_kind}): {_message}"
+                )
+            if len(skipped_placemark_samples) < _MAX_SKIPPED_SAMPLES:
+                skipped_placemark_samples.append(
+                    {
+                        "placemark_index_in_doc": counter,
+                        "error_kind": _error_kind,
+                        "message": _message,
+                    }
+                )
+            continue
+
+        feature_id = f"semantic_{counter}"
+        feature: Dict[str, Any] = {
+            "feature_id": feature_id,
+            # Phase 1B — capture <Placemark id="..."> attribute when present.
+            # None when the source KML omits the attribute (typical for
+            # Google Earth-authored files). Combine with source_filename for
+            # cross-file joins.
+            "placemark_id": placemark_id,
+            "placemark_name": placemark_name,
+            "description": description_clean,
+            "description_raw": description_raw,
+            "folder_path": folder_names,
+            "folder_path_str": folder_path_str,
+            "geometry_type": geometry_type,
+            "style_url": style_url,
+            "extended_data": extended_data,
+            "coords_hint": coords_hint,
+            "classification": classification,
+            "confidence": confidence,
+            "classification_reason": reason,
+            # Phase 1B traceability — which KMZ/KML this feature came from.
+            "source_filename": safe_source_filename,
+            # Phase A — numeric extractions. None when no token matched.
+            "chainage_ft": chainage_ft,
+            "chainage_source": chainage_source,
+            "sequence_number": sequence_number,
+            "sequence_kind": sequence_kind,
+            # Phase B — geometry. full_geometry is None for MultiGeometry;
+            # multigeometry_children is empty list for non-Multi.
+            "full_geometry": full_geometry,
+            "multigeometry_children": multigeometry_children,
+            # Phase C — style resolution + lifecycle. style_resolved is None
+            # when no <Style id> matched. lifecycle is None when no token hit.
+            "style_resolved": style_resolved,
+            "lifecycle": (
+                {
+                    "label": lifecycle_label,
+                    "confidence": lifecycle_conf,
+                    "reason": lifecycle_reason,
+                }
+                if lifecycle_label
+                else None
+            ),
+            # Additive explainability metadata. Read-only; never affects
+            # classification result, scoring, or matching behavior.
+            "classification_debug": classification_debug,
+        }
+        features.append(feature)
+
+        by_classification[classification] = by_classification.get(classification, 0) + 1
+        by_geometry_type[geometry_type] = by_geometry_type.get(geometry_type, 0) + 1
+        bucket = folder_path_str or "(root)"
+        by_folder[bucket] = by_folder.get(bucket, 0) + 1
+        by_confidence[confidence] = by_confidence.get(confidence, 0) + 1
+        if style_url:
+            style_url_count[style_url] = style_url_count.get(style_url, 0) + 1
+        for key in extended_data.keys():
+            extended_data_keys[key] = extended_data_keys.get(key, 0) + 1
+        # Phase 1B — collect bounded per-classification samples for diagnostics.
+        sample_list = classification_samples.setdefault(classification, [])
+        if len(sample_list) < _KMZ_SEMANTIC_SAMPLE_CAP:
+            sample_list.append(feature_id)
+        # Phase A/B/C — running counters for the diagnostics panel.
+        if chainage_ft is not None:
+            features_with_chainage += 1
+        if sequence_number is not None:
+            features_with_sequence += 1
+        if full_geometry is not None:
+            features_with_full_geometry += 1
+        if style_resolved:
+            features_with_resolved_style += 1
+            line_color = style_resolved.get("line_color")
+            if isinstance(line_color, str) and line_color:
+                by_resolved_line_color[line_color] = (
+                    by_resolved_line_color.get(line_color, 0) + 1
+                )
+        if lifecycle_label:
+            by_lifecycle[lifecycle_label] = by_lifecycle.get(lifecycle_label, 0) + 1
+
+    # Phase 1B — pre-compute Top-N popularity lists so the frontend
+    # diagnostics panel doesn't have to sort big dicts on every render.
+    # Sort by count desc, then key asc for deterministic ordering.
+    def _top_n_pairs(counts: Dict[str, int], n: int) -> List[Dict[str, Any]]:
+        ranked = sorted(counts.items(), key=lambda item: (-item[1], item[0]))
+        return [{"key": key, "count": count} for key, count in ranked[:n]]
+
+    top_folders_pairs = _top_n_pairs(by_folder, _KMZ_SEMANTIC_TOP_N)
+    top_style_urls_pairs = _top_n_pairs(style_url_count, _KMZ_SEMANTIC_TOP_N)
+    # Re-shape "key" → friendly field names to match the public contract.
+    top_folders = [
+        {"folder_path_str": entry["key"], "count": entry["count"]}
+        for entry in top_folders_pairs
+    ]
+    top_style_urls = [
+        {"style_url": entry["key"], "count": entry["count"]}
+        for entry in top_style_urls_pairs
+    ]
+
+    # Phase A/B/C — additional Top-N lists for the diagnostics panel.
+    top_lifecycle = [
+        {"label": entry["key"], "count": entry["count"]}
+        for entry in _top_n_pairs(by_lifecycle, _KMZ_SEMANTIC_TOP_N)
+    ]
+    top_resolved_line_colors = [
+        {"color": entry["key"], "count": entry["count"]}
+        for entry in _top_n_pairs(by_resolved_line_color, _KMZ_SEMANTIC_TOP_N)
+    ]
+
+    # Phase A/B/C — anchor catalog. Read-only candidate set the future redline
+    # engine MAY consume. Today this is purely diagnostic. Sorted
+    # deterministically; capped at _KMZ_SEMANTIC_ANCHOR_CAP.
+    _ANCHOR_KINDS = {"handhole", "station_label", "reel", "structure_marker"}
+    _ACCEPTED_CONFIDENCE = {"high", "medium"}
+    anchor_entries: List[Dict[str, Any]] = []
+    for feature in features:
+        if feature["classification"] not in _ANCHOR_KINDS:
+            continue
+        if feature["confidence"] not in _ACCEPTED_CONFIDENCE:
+            continue
+        coord = feature.get("coords_hint")
+        if (
+            not isinstance(coord, list)
+            or len(coord) < 2
+            or not isinstance(coord[0], (int, float))
+            or not isinstance(coord[1], (int, float))
+        ):
+            continue
+        anchor_entries.append(
+            {
+                "feature_id": feature["feature_id"],
+                "classification": feature["classification"],
+                "sequence_number": feature.get("sequence_number"),
+                "sequence_kind": feature.get("sequence_kind"),
+                "chainage_ft": feature.get("chainage_ft"),
+                "coord": [float(coord[0]), float(coord[1])],
+                "confidence": feature["confidence"],
+                "folder_path_str": feature["folder_path_str"],
+                "lifecycle": (feature.get("lifecycle") or {}).get("label"),
+            }
+        )
+
+    def _anchor_sort_key(entry: Dict[str, Any]) -> Tuple[Any, ...]:
+        """Sort anchors deterministically. NaN/inf chainage or invalid sequence
+        must not crash sort() (Python raises when comparing NaN to NaN)."""
+        seq = entry.get("sequence_number")
+        chain = entry.get("chainage_ft")
+        seq_i = 10**9
+        if isinstance(seq, int) and not isinstance(seq, bool):
+            seq_i = seq
+        elif isinstance(seq, bool):
+            seq_i = int(seq)
+        elif isinstance(seq, float):
+            if math.isfinite(seq):
+                try:
+                    seq_i = int(seq)
+                except (ValueError, OverflowError):
+                    seq_i = 10**9
+        chain_sort = float("inf")
+        if isinstance(chain, (int, float)) and not isinstance(chain, bool):
+            c = float(chain)
+            if math.isfinite(c):
+                chain_sort = c
+        return (
+            entry.get("folder_path_str") or "",
+            seq_i,
+            chain_sort,
+            entry.get("feature_id") or "",
+        )
+
+    try:
+        anchor_entries.sort(key=_anchor_sort_key)
+    except (TypeError, ValueError) as exc:
+        logging.getLogger(__name__).warning(
+            "anchor catalog sort failed (%s); using feature_id fallback order",
+            exc,
+            exc_info=True,
+        )
+        anchor_entries.sort(key=lambda e: str(e.get("feature_id") or ""))
+    anchor_truncated = len(anchor_entries) > _KMZ_SEMANTIC_ANCHOR_CAP
+    if anchor_truncated:
+        anchor_entries = anchor_entries[:_KMZ_SEMANTIC_ANCHOR_CAP]
+
+    # ---------------------------------------------------------------------------
+    # Style resolution health — additive diagnostic only. Never alters resolved_styles,
+    # style_resolved on features, or any classification. Counts are derived from
+    # the already-parsed root element and the resolved_styles dict produced above.
+    # ---------------------------------------------------------------------------
+    _style_health: Dict[str, Any] = {
+        "ids_declared": 0,
+        "ids_referenced": 0,
+        "ids_referenced_unresolved": 0,
+        "stylemap_count": 0,
+        "stylemap_unresolved_count": 0,
+        # Cycle detection is not tracked per-run (the resolution loop in
+        # _kmz_semantic_parse_styles breaks out silently when a cycle is found).
+        # Returning 0 rather than guessing; a future pass can instrument it.
+        "stylemap_cycle_count": 0,
+    }
+    _missing_style_urls: List[str] = []
+    try:
+        _ids_declared = sum(
+            1 for _s in root.findall(".//kml:Style", KML_NS)
+            if (_s.get("id") or "").strip()
+        )
+        _stylemap_all = [
+            _sm for _sm in root.findall(".//kml:StyleMap", KML_NS)
+            if (_sm.get("id") or "").strip()
+        ]
+        _stylemap_count = len(_stylemap_all)
+        # A StyleMap is "unresolved" when its id is absent from resolved_styles.
+        _stylemap_unresolved = sum(
+            1 for _sm in _stylemap_all
+            if (_sm.get("id") or "").strip() not in resolved_styles
+        )
+        # Placemark-referenced style_urls: strip leading '#' for lookup.
+        _referenced_normalized = {k.lstrip("#") for k in style_url_count if k}
+        _ids_referenced = len(_referenced_normalized)
+        # Unresolved: referenced keys absent from resolved_styles.
+        _unresolved_keys = sorted(
+            k for k in _referenced_normalized if k and k not in resolved_styles
+        )
+        _ids_referenced_unresolved = len(_unresolved_keys)
+        _missing_style_urls = _unresolved_keys[:25]
+        _style_health = {
+            "ids_declared": _ids_declared,
+            "ids_referenced": _ids_referenced,
+            "ids_referenced_unresolved": _ids_referenced_unresolved,
+            "stylemap_count": _stylemap_count,
+            "stylemap_unresolved_count": _stylemap_unresolved,
+            "stylemap_cycle_count": 0,
+        }
+    except Exception:
+        pass  # non-fatal; _style_health stays at zero defaults
+
+    index = {
+        "feature_count": len(features),
+        "truncated": truncated,
+        "by_classification": by_classification,
+        "by_geometry_type": by_geometry_type,
+        "by_folder": by_folder,
+        "by_confidence": by_confidence,
+        "style_url_count": style_url_count,
+        "extended_data_keys": sorted(extended_data_keys.keys()),
+        # Phase 1B additive diagnostic fields.
+        "top_folders": top_folders,
+        "top_style_urls": top_style_urls,
+        "classification_samples": classification_samples,
+        "source_filenames": [safe_source_filename] if features else [],
+        "feature_cap": _KMZ_SEMANTIC_FEATURE_CAP,
+        "sample_cap": _KMZ_SEMANTIC_SAMPLE_CAP,
+        # Phase A/B/C additive diagnostic fields. All bounded; safe on wire.
+        "by_lifecycle": by_lifecycle,
+        "top_lifecycle": top_lifecycle,
+        "top_resolved_line_colors": top_resolved_line_colors,
+        "features_with_chainage": features_with_chainage,
+        "features_with_sequence": features_with_sequence,
+        "features_with_full_geometry": features_with_full_geometry,
+        "features_with_resolved_style": features_with_resolved_style,
+        "styles_resolved_count": len(resolved_styles),
+        "anchor_catalog": anchor_entries,
+        "anchor_catalog_truncated": anchor_truncated,
+        "anchor_cap": _KMZ_SEMANTIC_ANCHOR_CAP,
+        # Skipped-placemark observability fields (additive, never removes data).
+        "skipped_placemark_count": skipped_placemark_count,
+        "skipped_placemark_samples": skipped_placemark_samples,
+        # Style resolution health (additive, diagnostic only).
+        "style_resolution": _style_health,
+        "missing_style_urls": _missing_style_urls,
+    }
+
+    print(
+        f"[KMZ_SEM_TRACE] _build_kmz_semantic RETURN filename={filename!r} "
+        f"feature_count={len(features)} anchor_count={len(anchor_entries)} "
+        f"styles_resolved={len(resolved_styles)} truncated={truncated} "
+        f"skipped={skipped_placemark_count} warnings={len(warnings)}",
+        flush=True,
+    )
+    return {
+        "parser_version": "semantic-1",
+        "features": features,
+        "index": index,
+        "warnings": warnings,
+    }
+
 
 def _build_route_catalog(file_bytes: bytes, filename: str) -> List[Dict[str, Any]]:
     kml_bytes = _extract_kml_bytes(file_bytes, filename)
@@ -6646,6 +7719,388 @@ def _total_design_length_ft(route_catalog: Sequence[Dict[str, Any]]) -> float:
     return round(total_ft, 2)
 
 
+# ---------------------------------------------------------------------------
+# Phase 1C — SHADOW-MODE semantic-assisted matching diagnostics.
+#
+# This module is purely read-only over STATE. It runs AFTER existing route
+# matching has completed; it does NOT replace, override, or alter any of:
+#   * STATE["selected_route_match"]
+#   * STATE["route_match_candidates"]
+#   * STATE["station_points"]
+#   * STATE["redline_segments"]
+#   * any candidate_rankings score
+#   * any redline_segment coords
+#
+# It scores each candidate route against the anchor_catalog to produce a
+# parallel "semantic best" route per bore-log group, plus an agreement flag
+# and explainability strings. Output goes into kmz_semantic_match_shadow on
+# the summary payload. Frontends that ignore the field continue working.
+#
+# Computation cost: O(groups × candidate_routes × anchors × route_segments).
+# For typical projects (≤ 50 groups × 20 candidates × 200 anchors × 100
+# segments) that is ~20M tiny ops, well under 100 ms. No caching today; a
+# cache can be added later if measurements demand it.
+# ---------------------------------------------------------------------------
+
+# Shadow-mode scoring weights. Numbers are intentionally conservative; their
+# only job here is to identify a "semantic best" route deterministically.
+# When/if the matching engine ever consumes this signal, weights will be
+# re-tuned with corpus data.
+_SEMANTIC_SHADOW_CONFIDENCE_WEIGHT = {"high": 1.0, "medium": 0.4, "low": 0.0}
+_SEMANTIC_SHADOW_CLASSIFICATION_WEIGHT = {
+    "handhole": 1.0,
+    "station_label": 0.85,
+    "structure_marker": 0.70,
+    "reel": 0.30,
+}
+# Proximity envelope: anchors within 3 ft of a polyline contribute full
+# weight; weight tapers linearly to 0 at 25 ft; anchors farther than 25 ft
+# do not contribute. Matches the architecture design.
+_SEMANTIC_SHADOW_NEAR_FT = 3.0
+_SEMANTIC_SHADOW_FAR_FT = 25.0
+# Bounded contributors per route to keep the shadow payload small.
+_SEMANTIC_SHADOW_CONTRIBUTORS_PER_ROUTE = 10
+# Bounded ranked routes per group in the diagnostic output.
+_SEMANTIC_SHADOW_RANKED_ROUTES_PER_GROUP = 10
+
+
+def _semantic_proximity_weight(distance_ft: float) -> float:
+    """Linear taper from 1.0 at NEAR_FT to 0.0 at FAR_FT. Deterministic."""
+    if distance_ft <= _SEMANTIC_SHADOW_NEAR_FT:
+        return 1.0
+    if distance_ft >= _SEMANTIC_SHADOW_FAR_FT:
+        return 0.0
+    span = _SEMANTIC_SHADOW_FAR_FT - _SEMANTIC_SHADOW_NEAR_FT
+    return 1.0 - (distance_ft - _SEMANTIC_SHADOW_NEAR_FT) / span
+
+
+def _semantic_min_distance_to_polyline_ft(
+    lat: float, lon: float, polyline: Sequence[Sequence[float]]
+) -> Optional[float]:
+    """Minimum distance in feet from (lat, lon) to a [lat, lon] polyline.
+
+    Per-segment closest-point is computed in planar lat/lon (acceptable bias
+    at OSP scales — typically a few feet at most), then the actual distance
+    is computed by haversine to the closest planar point. The asymmetry
+    between lat and lon "feet" only affects the position of the closest
+    point on a segment, not the final distance value.
+
+    Returns None for malformed inputs (no segments, non-finite coords).
+    """
+    if not polyline or len(polyline) < 2:
+        return None
+    if not (math.isfinite(lat) and math.isfinite(lon)):
+        return None
+    best = float("inf")
+    for i in range(len(polyline) - 1):
+        a = polyline[i]
+        b = polyline[i + 1]
+        if not a or not b or len(a) < 2 or len(b) < 2:
+            continue
+        try:
+            alat = float(a[0])
+            alon = float(a[1])
+            blat = float(b[0])
+            blon = float(b[1])
+        except (TypeError, ValueError):
+            continue
+        dlat = blat - alat
+        dlon = blon - alon
+        seg_len2 = dlat * dlat + dlon * dlon
+        if seg_len2 < 1e-20:
+            continue
+        t = ((lat - alat) * dlat + (lon - alon) * dlon) / seg_len2
+        if t < 0.0:
+            t = 0.0
+        elif t > 1.0:
+            t = 1.0
+        clat = alat + t * dlat
+        clon = alon + t * dlon
+        d = _haversine_feet(lat, lon, clat, clon)
+        if d < best:
+            best = d
+    if not math.isfinite(best):
+        return None
+    return best
+
+
+def _build_semantic_match_shadow() -> Optional[Dict[str, Any]]:
+    """Compute the shadow-mode semantic-assisted match diagnostics payload.
+
+    Pure read of STATE. Returns None when:
+      - kmz_semantic is absent
+      - anchor_catalog is empty
+      - route_match_candidates is empty
+      - route_catalog is empty
+      - no usable anchors survive filtering
+
+    The payload is purely informational. Consumers (the diagnostics panel)
+    treat it as advisory; the matching engine continues to ignore it.
+    """
+    semantic = STATE.get("kmz_semantic") or None
+    if not isinstance(semantic, dict):
+        return None
+    index = semantic.get("index") or {}
+    if not isinstance(index, dict):
+        return None
+    anchor_catalog = index.get("anchor_catalog") or []
+    if not isinstance(anchor_catalog, list) or not anchor_catalog:
+        return None
+
+    route_match_candidates = STATE.get("route_match_candidates") or []
+    if not isinstance(route_match_candidates, list) or not route_match_candidates:
+        return None
+
+    route_catalog = STATE.get("route_catalog") or []
+    if not isinstance(route_catalog, list) or not route_catalog:
+        return None
+    routes_by_id: Dict[str, Dict[str, Any]] = {}
+    for route in route_catalog:
+        if isinstance(route, dict):
+            rid = str(route.get("route_id") or "").strip()
+            if rid:
+                routes_by_id[rid] = route
+
+    # Pre-filter anchors. Only confidence levels that carry weight; only
+    # finite coords. Catalog already excludes "low", but defend anyway.
+    accepted_anchors: List[Dict[str, Any]] = []
+    for anchor in anchor_catalog:
+        if not isinstance(anchor, dict):
+            continue
+        coord = anchor.get("coord")
+        if not isinstance(coord, list) or len(coord) < 2:
+            continue
+        try:
+            alat = float(coord[0])
+            alon = float(coord[1])
+        except (TypeError, ValueError):
+            continue
+        if not (math.isfinite(alat) and math.isfinite(alon)):
+            continue
+        confidence = anchor.get("confidence")
+        if not isinstance(confidence, str):
+            continue
+        if _SEMANTIC_SHADOW_CONFIDENCE_WEIGHT.get(confidence, 0.0) <= 0:
+            continue
+        classification = str(anchor.get("classification") or "")
+        if _SEMANTIC_SHADOW_CLASSIFICATION_WEIGHT.get(classification, 0.0) <= 0:
+            continue
+        accepted_anchors.append(
+            {
+                "feature_id": str(anchor.get("feature_id") or ""),
+                "lat": alat,
+                "lon": alon,
+                "classification": classification,
+                "confidence": confidence,
+            }
+        )
+    if not accepted_anchors:
+        return None
+
+    groups_payload: List[Dict[str, Any]] = []
+    groups_total = 0
+    groups_in_agreement = 0
+    groups_in_disagreement = 0
+    groups_with_no_anchors = 0
+
+    for group_index, match in enumerate(route_match_candidates):
+        if not isinstance(match, dict):
+            continue
+        rankings = match.get("candidate_rankings") or []
+        if not isinstance(rankings, list) or not rankings:
+            continue
+        groups_total += 1
+        existing_first = rankings[0] if isinstance(rankings[0], dict) else {}
+        existing_route_id = str(existing_first.get("route_id") or "").strip()
+        existing_route_name = str(existing_first.get("route_name") or "").strip()
+        try:
+            existing_score = float(existing_first.get("score") or 0.0)
+        except (TypeError, ValueError):
+            existing_score = 0.0
+
+        per_route_results: List[Dict[str, Any]] = []
+        for ranking in rankings:
+            if not isinstance(ranking, dict):
+                continue
+            rid = str(ranking.get("route_id") or "").strip()
+            if not rid:
+                continue
+            route = routes_by_id.get(rid)
+            if not route:
+                continue
+            polyline = route.get("coords") or []
+            if not polyline or len(polyline) < 2:
+                continue
+
+            anchor_count = 0
+            score_total = 0.0
+            contributors: List[Dict[str, Any]] = []
+            for anchor in accepted_anchors:
+                d = _semantic_min_distance_to_polyline_ft(
+                    anchor["lat"], anchor["lon"], polyline
+                )
+                if d is None:
+                    continue
+                if d >= _SEMANTIC_SHADOW_FAR_FT:
+                    continue
+                conf_w = _SEMANTIC_SHADOW_CONFIDENCE_WEIGHT.get(
+                    anchor["confidence"], 0.0
+                )
+                cls_w = _SEMANTIC_SHADOW_CLASSIFICATION_WEIGHT.get(
+                    anchor["classification"], 0.0
+                )
+                prox_w = _semantic_proximity_weight(d)
+                contribution = conf_w * cls_w * prox_w
+                if contribution <= 0:
+                    continue
+                anchor_count += 1
+                score_total += contribution
+                contributors.append(
+                    {
+                        "feature_id": anchor["feature_id"],
+                        "classification": anchor["classification"],
+                        "confidence": anchor["confidence"],
+                        "distance_ft": round(d, 2),
+                        "contribution": round(contribution, 4),
+                    }
+                )
+            contributors.sort(
+                key=lambda c: (
+                    -float(c["contribution"]),
+                    float(c["distance_ft"]),
+                    str(c["feature_id"]),
+                )
+            )
+            per_route_results.append(
+                {
+                    "route_id": rid,
+                    "route_name": str(ranking.get("route_name") or "").strip(),
+                    "anchor_count": anchor_count,
+                    "semantic_score": round(score_total, 4),
+                    "contributors": contributors[
+                        :_SEMANTIC_SHADOW_CONTRIBUTORS_PER_ROUTE
+                    ],
+                }
+            )
+
+        if not per_route_results:
+            groups_with_no_anchors += 1
+            groups_payload.append(
+                {
+                    "group_id": str(match.get("group_id") or f"group_{group_index}"),
+                    "group_index": group_index,
+                    "existing_selected_route_id": existing_route_id,
+                    "existing_selected_route_name": existing_route_name,
+                    "existing_score": round(existing_score, 4),
+                    "semantic_best_route_id": None,
+                    "semantic_best_route_name": None,
+                    "semantic_best_score": 0.0,
+                    "agreement": None,
+                    "anchors_near_selected_route": 0,
+                    "anchors_near_semantic_best_route": 0,
+                    "contributing_anchor_ids": [],
+                    "explanation": "No anchors within 25 ft of any candidate route in this group.",
+                    "ranked_routes": [],
+                }
+            )
+            continue
+
+        per_route_results.sort(
+            key=lambda r: (
+                -float(r["semantic_score"]),
+                str(r["route_id"]),
+            )
+        )
+        best = per_route_results[0]
+        existing_row = next(
+            (r for r in per_route_results if r["route_id"] == existing_route_id),
+            None,
+        )
+        anchors_near_selected = (
+            int(existing_row["anchor_count"]) if existing_row else 0
+        )
+        anchors_near_best = int(best["anchor_count"])
+
+        agreement: Optional[bool]
+        if best["semantic_score"] <= 0:
+            agreement = None
+            explanation = "No anchor contributions on any candidate route."
+            groups_with_no_anchors += 1
+        elif best["route_id"] == existing_route_id:
+            agreement = True
+            groups_in_agreement += 1
+            explanation = (
+                f"Semantic agrees: {anchors_near_best} anchor(s) within "
+                f"{int(_SEMANTIC_SHADOW_FAR_FT)} ft of selected route "
+                f"'{existing_route_name or existing_route_id}'."
+            )
+        else:
+            agreement = False
+            groups_in_disagreement += 1
+            existing_sem_score = (
+                float(existing_row["semantic_score"]) if existing_row else 0.0
+            )
+            explanation = (
+                f"Semantic prefers '{best['route_name'] or best['route_id']}' "
+                f"({anchors_near_best} anchors near, score "
+                f"{best['semantic_score']}) over current selection "
+                f"'{existing_route_name or existing_route_id}' "
+                f"({anchors_near_selected} anchors near, score "
+                f"{round(existing_sem_score, 4)})."
+            )
+
+        contributing_anchor_ids = [
+            str(c["feature_id"]) for c in best.get("contributors", [])
+        ]
+
+        groups_payload.append(
+            {
+                "group_id": str(match.get("group_id") or f"group_{group_index}"),
+                "group_index": group_index,
+                "existing_selected_route_id": existing_route_id,
+                "existing_selected_route_name": existing_route_name,
+                "existing_score": round(existing_score, 4),
+                "semantic_best_route_id": best["route_id"],
+                "semantic_best_route_name": best["route_name"],
+                "semantic_best_score": float(best["semantic_score"]),
+                "agreement": agreement,
+                "anchors_near_selected_route": anchors_near_selected,
+                "anchors_near_semantic_best_route": anchors_near_best,
+                "contributing_anchor_ids": contributing_anchor_ids,
+                "explanation": explanation,
+                "ranked_routes": [
+                    {
+                        "route_id": str(r["route_id"]),
+                        "route_name": str(r["route_name"]),
+                        "anchor_count": int(r["anchor_count"]),
+                        "semantic_score": float(r["semantic_score"]),
+                    }
+                    for r in per_route_results[
+                        :_SEMANTIC_SHADOW_RANKED_ROUTES_PER_GROUP
+                    ]
+                ],
+            }
+        )
+
+    return {
+        "version": "shadow-1",
+        "summary": {
+            "groups_total": groups_total,
+            "groups_in_agreement": groups_in_agreement,
+            "groups_in_disagreement": groups_in_disagreement,
+            "groups_with_no_anchors": groups_with_no_anchors,
+            "anchors_considered": len(accepted_anchors),
+            "weights": {
+                "confidence": _SEMANTIC_SHADOW_CONFIDENCE_WEIGHT,
+                "classification": _SEMANTIC_SHADOW_CLASSIFICATION_WEIGHT,
+                "proximity_near_ft": _SEMANTIC_SHADOW_NEAR_FT,
+                "proximity_far_ft": _SEMANTIC_SHADOW_FAR_FT,
+            },
+        },
+        "groups": groups_payload,
+    }
+
+
 def _summary_payload(include_debug: bool = False) -> Dict[str, Any]:
     route_id = STATE.get("route_id")
     route_coords = STATE.get("route_coords", []) or []
@@ -6806,6 +8261,14 @@ def _summary_payload(include_debug: bool = False) -> Dict[str, Any]:
             "group_outputs": route_match_candidates,
             "matching_debug": matching_debug,
             "kmz_reference_full": STATE.get("kmz_reference", {}) or {},
+            # Phase 1A additive semantic layer. None when no KMZ has been
+            # uploaded or when the additive parse failed; consumers must
+            # treat the absence as "no semantic data".
+            "kmz_semantic": STATE.get("kmz_semantic") or None,
+            # Phase 1C — SHADOW MODE diagnostics. Pure read of STATE; never
+            # alters matching, station_points, redline_segments, or
+            # selected_route_match. None when prerequisites missing.
+            "kmz_semantic_match_shadow": _build_semantic_match_shadow(),
             "engineering_plans": _load_engineering_plan_index_for_session(STATE.get("_session_id_hint", "")),
             "bore_log_summary": _bore_log_summary_from_rows(committed_rows),
             "photo_points": photo_points,
@@ -6883,6 +8346,12 @@ def _summary_payload(include_debug: bool = False) -> Dict[str, Any]:
         "engineering_plans": _load_engineering_plan_index_for_session(STATE.get("_session_id_hint", "")),
         "bore_log_summary": _bore_log_summary_from_rows(committed_rows),
         "photo_points": photo_points,
+        # Phase 1A additive semantic layer. None when no KMZ has been
+        # uploaded or when the additive parse failed; consumers must treat
+        # the absence as "no semantic data".
+        "kmz_semantic": STATE.get("kmz_semantic") or None,
+        # Phase 1C — SHADOW MODE diagnostics. Read-only, additive.
+        "kmz_semantic_match_shadow": _build_semantic_match_shadow(),
         "closeout_lock": _normalize_closeout_lock(STATE.get("closeout_lock")),
         **_closeout_flat_fields(),
     }
@@ -6895,6 +8364,11 @@ async def upload_design(
     project_id: Optional[str] = Form(None),
 ) -> JSONResponse:
     resolved_session_id = _resolve_session_id(session_id)
+    print(
+        f"[KMZ_SEM_TRACE] upload_design enter form_session_id={session_id!r} "
+        f"resolved_session_id={resolved_session_id}",
+        flush=True,
+    )
     try:
         file_bytes = await file.read()
         with _session_scope(resolved_session_id):
@@ -6903,6 +8377,42 @@ async def upload_design(
             route_catalog = _build_route_catalog(file_bytes, file.filename or "design.kmz")
             STATE["route_catalog"] = route_catalog
             STATE["kmz_reference"] = _build_kmz_reference(file_bytes, file.filename or "design.kmz")
+            # Phase 1A: additive semantic layer. Computed alongside the
+            # existing kmz_reference; any failure here MUST NOT break the
+            # upload, route extraction, or rendering — _build_kmz_semantic
+            # returns None on error and STATE["kmz_semantic"] simply stays
+            # None, which downstream consumers treat as "no semantic data
+            # available".
+            try:
+                print(
+                    f"[KMZ_SEM_TRACE] upload_design calling _build_kmz_semantic "
+                    f"STATE_hint={STATE.get('_session_id_hint')}",
+                    flush=True,
+                )
+                semantic = _build_kmz_semantic(file_bytes, file.filename or "design.kmz")
+                STATE["kmz_semantic"] = semantic
+                _fc = (
+                    len(semantic["features"])
+                    if semantic and isinstance(semantic.get("features"), list)
+                    else None
+                )
+                print(
+                    f"[KMZ_SEM_TRACE] upload_design assigned kmz_semantic "
+                    f"is_none={semantic is None} feature_count={_fc} "
+                    f"STATE_hint={STATE.get('_session_id_hint')} "
+                    f"matches_resolved={str(STATE.get('_session_id_hint')) == str(resolved_session_id)}",
+                    flush=True,
+                )
+            except Exception as _kmz_sem_exc:
+                import traceback as _kmz_sem_tb
+
+                print(
+                    f"[KMZ_SEM_TRACE] upload_design _build_kmz_semantic RAISED: "
+                    f"{type(_kmz_sem_exc).__name__}: {_kmz_sem_exc}",
+                    flush=True,
+                )
+                _kmz_sem_tb.print_exc()
+                STATE["kmz_semantic"] = None
 
             default_route = _choose_default_route(route_catalog)
             _set_active_route(default_route)
@@ -7039,7 +8549,26 @@ def reset_state(session_id: Optional[str] = None) -> JSONResponse:
 @app.get("/api/current-state")
 def current_state(session_id: Optional[str] = None) -> JSONResponse:
     resolved_session_id = _resolve_session_id(session_id)
+    print(
+        f"[KMZ_SEM_TRACE] current-state query session_id={session_id!r} "
+        f"resolved_session_id={resolved_session_id} "
+        f"(if query was empty/omitted, resolved is a NEW uuid each request)",
+        flush=True,
+    )
     with _session_scope(resolved_session_id):
+        _sem = STATE.get("kmz_semantic")
+        _fc = (
+            len(_sem["features"])
+            if isinstance(_sem, dict) and isinstance(_sem.get("features"), list)
+            else None
+        )
+        print(
+            f"[KMZ_SEM_TRACE] current-state inside scope "
+            f"kmz_semantic_is_none={_sem is None} feature_count={_fc} "
+            f"STATE_hint={STATE.get('_session_id_hint')} "
+            f"matches_resolved={str(STATE.get('_session_id_hint')) == str(resolved_session_id)}",
+            flush=True,
+        )
         return _ok(session_id=resolved_session_id, **_summary_payload(include_debug=False))
 
 

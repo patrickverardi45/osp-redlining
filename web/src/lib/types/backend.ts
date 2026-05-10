@@ -125,6 +125,278 @@ export type EngineeringPlan = {
   notes?: string | null;
 };
 
+/**
+ * Phase 1A — additive KMZ/KML semantic feature.
+ *
+ * Each feature corresponds to a single KML <Placemark>. The shape preserves
+ * the engineering intelligence that route extraction discards: raw name,
+ * description, folder hierarchy, geometry kind, styleUrl, and ExtendedData.
+ *
+ * Rendering is NOT the source of truth — consumers may use these fields or
+ * ignore them. The `classification` is heuristic and additive only; the
+ * upstream `role` field on line/polygon/point features is unrelated.
+ */
+export type SemanticKmzClassification =
+  | "handhole"
+  | "station_label"
+  | "reel"
+  | "structure_marker"
+  | "route_segment"
+  | "boundary_polygon"
+  | "annotation"
+  | "unknown";
+
+export type SemanticKmzConfidence = "high" | "medium" | "low";
+
+export type SemanticKmzGeometryType =
+  | "Point"
+  | "LineString"
+  | "Polygon"
+  | "MultiGeometry"
+  | "Other";
+
+/** Phase B — full geometry payloads. Excluded for MultiGeometry placemarks
+ *  (use multigeometry_children for those). */
+export type SemanticKmzFullGeometry =
+  | { kind: "Point"; coord: [number, number] }
+  | { kind: "LineString"; coords: Array<[number, number]> }
+  | {
+      kind: "Polygon";
+      outer: Array<[number, number]>;
+      inner?: Array<Array<[number, number]>>;
+    };
+
+/** Phase B — direct child geometries enumerated for MultiGeometry placemarks. */
+export type SemanticKmzMultiGeometryChild = {
+  kind: "Point" | "LineString" | "Polygon";
+  coord_hint: [number, number] | null;
+};
+
+/** Phase C — resolved <Style>/<StyleMap> properties. All fields optional. */
+export type SemanticKmzResolvedStyle = {
+  line_color?: string;       // "#3b82f6"
+  line_width?: number;
+  poly_fill?: string;
+  icon_href?: string;
+  label_color?: string;
+};
+
+/** Phase C — lifecycle hint. label is one of a known set; null when no
+ *  signal matched. */
+export type SemanticKmzLifecycle = {
+  label: "existing" | "proposed" | "asbuilt" | "decommissioned" | "survey";
+  confidence: SemanticKmzConfidence;
+  reason: string;
+};
+
+/** Additive read-only explainability metadata produced alongside each
+ *  classification. Never affects the classification result itself. */
+export type SemanticKmzClassificationDebug = {
+  /** Which kind(s) of signal triggered the classification.
+   *  Values: "name_regex" | "description_regex" | "extended_data_key"
+   *        | "name_contains" | "folder_hint" | "style_url_hint" | "geometry_type" */
+  matched_by: string[];
+  /** The actual text tokens/strings that matched (regex capture group,
+   *  ExtendedData key name, or substring keyword). */
+  matched_tokens: string[];
+  /** Which input fields were consulted.
+   *  Values: "placemark_name" | "placemark_description" | "folder_path"
+   *        | "style_url" | "extended_data" | "geometry_type" */
+  heuristic_sources: string[];
+  /** Which geometry node provided the representative coordinate hint.
+   *  "Point" | "LineString" | "Polygon" | null when coords_hint is null. */
+  coordinate_source: "Point" | "LineString" | "Polygon" | null;
+};
+
+export type SemanticKmzFeature = {
+  feature_id: string;
+  /** Phase 1B — KML <Placemark id="..."> attribute when present, null
+   *  otherwise. Combine with source_filename for cross-file joins. */
+  placemark_id?: string | null;
+  placemark_name: string;
+  /** HTML stripped + whitespace collapsed. */
+  description: string;
+  /** Verbatim KML <description> text, including any HTML the source used. */
+  description_raw: string;
+  folder_path: string[];
+  folder_path_str: string;
+  geometry_type: SemanticKmzGeometryType;
+  style_url: string;
+  /** Flat key/value map from <ExtendedData><Data> and <SchemaData><SimpleData>. */
+  extended_data: Record<string, string>;
+  /** Best-effort representative [lat, lon]; null when no geometry was found. */
+  coords_hint: [number, number] | null;
+  classification: SemanticKmzClassification;
+  confidence: SemanticKmzConfidence;
+  /** Short string describing which signal triggered the classification. */
+  classification_reason: string;
+  /** Phase 1B — name of the source KMZ/KML this feature came from. Useful
+   *  when a project ingests multiple design files. */
+  source_filename?: string;
+  /** Phase A — chainage (in feet) parsed from "STA NN+NN" tokens.
+   *  null when no chainage token was present. */
+  chainage_ft?: number | null;
+  chainage_source?: "name" | "description" | null;
+  /** Phase A — sequence number parsed from classification-specific tokens
+   *  ("HH-12" → 12 when classification === "handhole"). null otherwise. */
+  sequence_number?: number | null;
+  sequence_kind?:
+    | "handhole"
+    | "manhole"
+    | "reel"
+    | "structure"
+    | null;
+  /** Phase B — full geometry payload for non-MultiGeometry placemarks.
+   *  null for MultiGeometry; see multigeometry_children. */
+  full_geometry?: SemanticKmzFullGeometry | null;
+  multigeometry_children?: SemanticKmzMultiGeometryChild[];
+  /** Phase C — style resolved against the document-level <Style>/<StyleMap>
+   *  table. null when style_url is empty or unresolved. */
+  style_resolved?: SemanticKmzResolvedStyle | null;
+  lifecycle?: SemanticKmzLifecycle | null;
+  /** Additive read-only explainability metadata. Present from parser_version
+   *  "semantic-1" onward. Never affects classification, scoring, or rendering. */
+  classification_debug?: SemanticKmzClassificationDebug | null;
+};
+
+export type SemanticKmzIndex = {
+  feature_count: number;
+  truncated: boolean;
+  by_classification: Record<string, number>;
+  by_geometry_type: Record<string, number>;
+  by_folder: Record<string, number>;
+  by_confidence: Record<string, number>;
+  style_url_count: Record<string, number>;
+  extended_data_keys: string[];
+  /** Phase 1B — top 10 folder paths by feature count, sorted desc by count
+   *  then asc by name. */
+  top_folders?: Array<{ folder_path_str: string; count: number }>;
+  /** Phase 1B — top 10 styleUrls by feature count, same sort order. */
+  top_style_urls?: Array<{ style_url: string; count: number }>;
+  /** Phase 1B — bounded sample feature_ids per classification (max 5
+   *  per category). Look up details in `features[]` by feature_id. */
+  classification_samples?: Partial<Record<SemanticKmzClassification, string[]>>;
+  /** Phase 1B — distinct source filenames present in this semantic
+   *  ingestion (currently always one entry, but plumbed for future
+   *  multi-KMZ ingestion). */
+  source_filenames?: string[];
+  /** Phase 1B — caps used by the parser, surfaced for diagnostics UX. */
+  feature_cap?: number;
+  sample_cap?: number;
+  /** Phase A/B/C — counts of features for which deterministic extractions
+   *  produced a non-null value. Read by the diagnostics panel. */
+  features_with_chainage?: number;
+  features_with_sequence?: number;
+  features_with_full_geometry?: number;
+  features_with_resolved_style?: number;
+  /** Phase C — number of <Style id="…"> blocks (after StyleMap resolution)
+   *  parsed from the document. */
+  styles_resolved_count?: number;
+  /** Phase C — bucketed lifecycle counts. */
+  by_lifecycle?: Record<string, number>;
+  top_lifecycle?: Array<{ label: string; count: number }>;
+  /** Phase C — top resolved <LineStyle><color> values across all features.
+   *  Useful for spotting "this color = role X" conventions in real KMZs. */
+  top_resolved_line_colors?: Array<{ color: string; count: number }>;
+  /** Phase A/B/C — read-only candidate anchor catalog. The redline engine
+   *  MAY consume this in a future phase; today it is purely diagnostic. */
+  anchor_catalog?: Array<{
+    feature_id: string;
+    classification: SemanticKmzClassification;
+    sequence_number?: number | null;
+    sequence_kind?: string | null;
+    chainage_ft?: number | null;
+    coord: [number, number];
+    confidence: SemanticKmzConfidence;
+    folder_path_str: string;
+    lifecycle?: string | null;
+  }>;
+  anchor_catalog_truncated?: boolean;
+  anchor_cap?: number;
+  /** Skipped-placemark observability (additive). 0 when every placemark
+   *  parsed successfully. Present from parser_version "semantic-1" onward. */
+  skipped_placemark_count?: number;
+  skipped_placemark_samples?: Array<{
+    placemark_index_in_doc: number;
+    error_kind: string;
+    message: string;
+  }>;
+  /** Style resolution health — additive diagnostic. Never affects matching or
+   *  rendering. Counts derived from the KML document's Style/StyleMap elements
+   *  and the placemark-referenced styleUrls. */
+  style_resolution?: {
+    ids_declared: number;
+    ids_referenced: number;
+    ids_referenced_unresolved: number;
+    stylemap_count: number;
+    stylemap_unresolved_count: number;
+    /** Always 0 in semantic-1; cycle detection not yet tracked per-run. */
+    stylemap_cycle_count: number;
+  };
+  /** Unresolved styleUrl strings referenced by placemarks, capped at 25. */
+  missing_style_urls?: string[];
+};
+
+export type SemanticKmz = {
+  parser_version: string;
+  features: SemanticKmzFeature[];
+  index: SemanticKmzIndex;
+  /** Additive warning strings emitted during ingestion. Each entry corresponds
+   *  to one skipped placemark: "placemark N (ErrorKind): message". Empty array
+   *  when every placemark parsed successfully. Capped at 200. */
+  warnings?: string[];
+};
+
+/**
+ * Phase 1C — SHADOW MODE matching diagnostics.
+ *
+ * Purely informational. The matching engine continues to ignore this; the
+ * diagnostics panel surfaces it so engineers can audit whether the anchor
+ * catalog would agree with current route selection. Never affects
+ * operational behavior.
+ */
+export type SemanticMatchShadowGroup = {
+  group_id: string;
+  group_index: number;
+  existing_selected_route_id: string;
+  existing_selected_route_name: string;
+  existing_score: number;
+  semantic_best_route_id: string | null;
+  semantic_best_route_name: string | null;
+  semantic_best_score: number;
+  /** true when semantic best == existing selected; false on disagreement;
+   *  null when no anchors contributed (no signal). */
+  agreement: boolean | null;
+  anchors_near_selected_route: number;
+  anchors_near_semantic_best_route: number;
+  contributing_anchor_ids: string[];
+  explanation: string;
+  ranked_routes: Array<{
+    route_id: string;
+    route_name: string;
+    anchor_count: number;
+    semantic_score: number;
+  }>;
+};
+
+export type SemanticMatchShadow = {
+  version: string;
+  summary: {
+    groups_total: number;
+    groups_in_agreement: number;
+    groups_in_disagreement: number;
+    groups_with_no_anchors: number;
+    anchors_considered: number;
+    weights: {
+      confidence: Record<string, number>;
+      classification: Record<string, number>;
+      proximity_near_ft: number;
+      proximity_far_ft: number;
+    };
+  };
+  groups: SemanticMatchShadowGroup[];
+};
+
 export type BackendState = {
   success?: boolean;
   session_id?: string;
@@ -160,6 +432,15 @@ export type BackendState = {
     line_features?: KmzLineFeature[];
     polygon_features?: KmzPolygonFeature[];
   };
+  /** Phase 1A — additive semantic layer. null/absent until a KMZ is uploaded
+   *  or when the additive parse failed; consumers must treat absence as
+   *  "no semantic data available" and continue using kmz_reference for
+   *  rendering. */
+  kmz_semantic?: SemanticKmz | null;
+  /** Phase 1C — shadow-mode matching diagnostics. Read-only, additive.
+   *  null when prerequisites (anchor catalog, route_match_candidates) are
+   *  missing. Never affects operational behavior. */
+  kmz_semantic_match_shadow?: SemanticMatchShadow | null;
   engineering_plans?: EngineeringPlan[];
   bore_log_summary?: BoreLogSummaryEntry[];
   photo_points?: GlobalPhotoPoint[];
