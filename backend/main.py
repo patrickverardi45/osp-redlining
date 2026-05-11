@@ -21,15 +21,28 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import boto3
 import pandas as pd
-from fastapi import Body, FastAPI, File, Form, Query, UploadFile
+from fastapi import Body, FastAPI, File, Form, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.middleware.base import BaseHTTPMiddleware
 
 BASE_DIR = Path(__file__).resolve().parent
 BASE_UPLOAD_DIR = os.getenv("OSP_UPLOAD_DIR") or str(BASE_DIR / "uploads")
 UPLOADS_DIR = Path(BASE_UPLOAD_DIR)
 os.makedirs(UPLOADS_DIR, exist_ok=True)
+
+# ─── Private beta security scaffolding ─────────────────────────────────────
+# Environment variables for upcoming authentication and token validation.
+# No auth enforcement yet — these are read but not enforced.
+TRUELINE_API_TOKEN = os.getenv("TRUELINE_API_TOKEN", "").strip()
+TRUELINE_OBS_TOKEN = os.getenv("TRUELINE_OBS_TOKEN", "").strip()
+_ALLOWED_ORIGINS_RAW = os.getenv("TRUELINE_ALLOWED_ORIGINS", "").strip()
+# Parse CSV list; fallback to ["*"] if not provided or empty.
+if _ALLOWED_ORIGINS_RAW:
+    TRUELINE_ALLOWED_ORIGINS = [origin.strip() for origin in _ALLOWED_ORIGINS_RAW.split(",") if origin.strip()]
+else:
+    TRUELINE_ALLOWED_ORIGINS = ["*"]
 PROJECT_ROUTE_CONTEXT_DIR = UPLOADS_DIR / "project_route_context"
 os.makedirs(PROJECT_ROUTE_CONTEXT_DIR, exist_ok=True)
 
@@ -67,13 +80,37 @@ _SNAP_REVIEW_VALID_DECISIONS: frozenset = frozenset({"approved", "rejected", "re
 app = FastAPI(title="OSP Redlining Mapping Layer")
 app.mount("/uploads", StaticFiles(directory=BASE_UPLOAD_DIR), name="uploads")
 
+# ─── Private beta security scaffolding: CORS with env-sourced origin list ───
+# Uses TRUELINE_ALLOWED_ORIGINS if provided; defaults to ["*"] for backward compat.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=TRUELINE_ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# ─── Private beta observability protection ──────────────────────────────────
+# Lightweight middleware to protect /api/debug and /api/observability routes
+# with bearer token validation when TRUELINE_OBS_TOKEN is set. If token env var
+# is empty, all protection is bypassed (backward compat, current behavior).
+class ObservabilityTokenMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        # Only enforce token check on observability/debug routes.
+        if request.url.path.startswith(("/api/debug", "/api/observability")):
+            # Token enforcement is opt-in: if env var is empty, skip validation.
+            if TRUELINE_OBS_TOKEN:
+                auth_header = request.headers.get("Authorization", "").strip()
+                expected_token = f"Bearer {TRUELINE_OBS_TOKEN}"
+                if auth_header != expected_token:
+                    return JSONResponse(
+                        status_code=401,
+                        content={"detail": "Invalid or missing observability token"},
+                    )
+        response = await call_next(request)
+        return response
+
+app.add_middleware(ObservabilityTokenMiddleware)
 
 KML_NS = {
     "kml": "http://www.opengis.net/kml/2.2",
