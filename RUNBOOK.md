@@ -144,3 +144,100 @@ Until SQLite (or equivalent) session persistence ships:
 
 - Operators may need to **re-upload KMZ** and re-run bore/redline steps after a long restart or deploy, even when `/data/uploads` is intact.
 - This runbook **does not** change that behavior; it only protects what is already on disk under `UPLOADS_DIR`.
+
+---
+
+## Private Beta Operations
+
+Purpose: operational guidance for the private-beta security gate. Keep changes minimal and internal-only.
+
+1) Current branch
+- `security/private-beta-gate`
+
+2) Local startup commands
+- Backend (PowerShell):
+
+	```powershell
+	cd C:\Nova\projects\TrueLine\TrueLine_Beta\backend
+	.\venv\Scripts\Activate.ps1
+	python -m uvicorn main:app --reload
+	```
+
+- Frontend:
+
+	```powershell
+	cd C:\Nova\projects\TrueLine\TrueLine_Beta\web
+	npm run dev
+	```
+
+3) Required env vars
+- Backend:
+	- `TRUELINE_OBS_TOKEN` (observability token)
+	- `TRUELINE_ALLOWED_ORIGINS` (CSV list, fallback to `[*]`)
+	- `TRUELINE_API_TOKEN` (placeholder/future)
+	- `OSP_UPLOAD_DIR` (optional override for uploads)
+- Frontend:
+	- `NEXT_PUBLIC_API_BASE`
+
+4) Protected endpoints (observability)
+- `/api/debug/*` (requires observability token if `TRUELINE_OBS_TOKEN` set)
+- `/api/observability/*` (requires observability token if set)
+
+5) Session persistence
+- SQLite DB: `uploads/session_store.db`
+	- Persists `_SESSIONS` snapshots and survives backend restart
+	- Do not delete without backup
+
+6) Request audit
+- Audit file: `uploads/request_audit.jsonl`
+- Endpoint: `GET /api/observability/request-audit`
+- Token required (observability middleware)
+- Logs (one JSON object per line): timestamp, request_id, path, method, session_id (query), status_code, duration_ms
+- Does NOT log request bodies, headers, auth tokens, or uploaded contents
+
+7) Session observability endpoints (examples)
+- List recent sessions (metadata only):
+
+	```powershell
+	$hdr = @{ Authorization = "Bearer local-test-token" }
+	Invoke-RestMethod -Uri "http://localhost:8000/api/observability/sessions?limit=50" -Headers $hdr
+	```
+
+- Label a session:
+
+	```powershell
+	$body = @{ session_id = 'abc123'; company_id = 'ACME'; workspace_label = 'ACME-net' } | ConvertTo-Json
+	Invoke-RestMethod -Uri "http://localhost:8000/api/observability/session-label" -Method Post -Body $body -Headers $hdr -ContentType 'application/json'
+	```
+
+8) Backup checklist (minimal)
+- Stop backend if possible (scale to 0 or stop service)
+- Copy `uploads/` directory to dated backup folder
+- Copy `uploads/session_store.db` and `uploads/request_audit.jsonl` explicitly
+- Keep a dated backup folder: `backups/truline-<YYYYMMDDTHHMMSS>-<gitsha>/`
+
+9) Beta operating rules
+- Only internal users operate the system in private beta
+- No public signups or external onboarding
+- Label every customer session with `company_id`/`workspace_label`
+- Never share the observability token
+- Keep each company/project in separate sessions
+- Verify `session_id` before uploading real customer data
+
+10) Incident procedure (high-level)
+- Wrong customer data uploaded: stop ingestion, snapshot uploads, contact owner, restore from backup if needed
+- Backend restart: verify `session_store.db` present; check `/api/observability/sessions` for recovered sessions
+- Missing session: check `uploads/session_store.db` and `uploads/` indexes; restore backup if needed
+- Failed upload: inspect upload logs, verify disk space and permissions
+- Suspected data leakage: rotate `TRUELINE_OBS_TOKEN`, audit `request_audit.jsonl`, and escalate to security
+
+11) Pre-deploy checklist
+- `git status` clean
+- `python -m py_compile backend\main.py`
+- `npm run build` from `web`
+- Verify Vercel / deployment root is `web` and Render env vars set
+
+12) Rollback note
+- Use `git log` and redeploy previous known-good commit if needed
+
+Keep this section concise and internal; do not expose observability tokens or audit files publicly.
