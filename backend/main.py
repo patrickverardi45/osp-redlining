@@ -9676,9 +9676,12 @@ def current_state(session_id: Optional[str] = None) -> JSONResponse:
 
 @app.get("/api/debug-state")
 def debug_state(session_id: Optional[str] = None) -> JSONResponse:
-    resolved_session_id = _resolve_session_id(session_id)
-    with _session_scope(resolved_session_id):
-        return _ok(session_id=resolved_session_id, **_summary_payload(include_debug=True))
+    # Private beta isolation: require explicit session_id
+    sid = str(session_id or "").strip()
+    if not sid:
+        return JSONResponse(status_code=400, content={"error": "session_id is required"})
+    with _session_scope(sid):
+        return _ok(session_id=sid, **_summary_payload(include_debug=True))
 
 
 @app.get("/api/debug/pipeline-diag")
