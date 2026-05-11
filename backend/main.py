@@ -9914,6 +9914,57 @@ def get_sessions_observability(limit: int = 50) -> JSONResponse:
         return JSONResponse({"sessions": []})
 
 
+# ─── Private beta session labeling ─────────────────────────────────────────
+# Protected internal endpoint to label persisted sessions with metadata.
+# Updates only company_id, workspace_label, and updated_at.
+@app.post("/api/observability/session-label")
+def post_session_label(body: Dict[str, Any]) -> JSONResponse:
+    """Private beta — update session metadata labels.
+
+    Request body: {"session_id": "...", "company_id": "...", "workspace_label": "..."}
+    Updates persisted session with new labels and current timestamp.
+    If session exists in memory, updates there too. Returns updated metadata.
+    """
+    session_id = body.get("session_id")
+    if not session_id or not isinstance(session_id, str):
+        return JSONResponse(status_code=400, content={"error": "Valid session_id required"})
+    
+    company_id = body.get("company_id")
+    workspace_label = body.get("workspace_label")
+    
+    try:
+        # Load existing session from DB
+        existing = _load_persisted_session(session_id)
+        if existing is None:
+            return JSONResponse(status_code=404, content={"error": "Session not found"})
+        
+        # Update only metadata fields
+        existing["company_id"] = company_id
+        existing["workspace_label"] = workspace_label
+        existing["updated_at"] = datetime.now(timezone.utc).isoformat()
+        
+        # Save back to DB
+        _persist_session(session_id, existing)
+        
+        # If in memory, update there too
+        with _SESSION_LOCK:
+            if session_id in _SESSIONS:
+                _SESSIONS[session_id]["company_id"] = company_id
+                _SESSIONS[session_id]["workspace_label"] = workspace_label
+                _SESSIONS[session_id]["updated_at"] = existing["updated_at"]
+        
+        return JSONResponse({
+            "success": True,
+            "session_id": session_id,
+            "company_id": company_id,
+            "workspace_label": workspace_label,
+            "updated_at": existing["updated_at"]
+        })
+    except Exception as e:
+        logging.warning(f"Failed to label session {session_id}: {e}")
+        return JSONResponse(status_code=500, content={"error": "Internal error"})
+
+
 @app.get("/api/observability/match-shadow-compare")
 def get_match_shadow_compare(limit: int = 50) -> JSONResponse:
     """Phase 1H-A — read-only view of the most recent shadow-compare rows.
