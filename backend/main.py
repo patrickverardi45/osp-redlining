@@ -312,6 +312,9 @@ def _reset_workspace_state() -> None:
 
 
 def _default_session_state() -> Dict[str, Any]:
+    # ─── Private beta session metadata foundation ─────────────────────────────
+    # Lightweight metadata for session tracking. Preserves all existing behavior.
+    now = datetime.now(timezone.utc).isoformat()
     return {
         "route_name": None,
         "route_id": None,
@@ -363,6 +366,11 @@ def _default_session_state() -> Dict[str, Any]:
         "closeout_locked": False,
         "closeout_locked_by": None,
         "closeout_locked_at": None,
+        # Private beta session metadata
+        "company_id": None,
+        "workspace_label": None,
+        "created_at": now,
+        "updated_at": now,
     }
 
 
@@ -403,6 +411,8 @@ class _session_scope:
 
     def __exit__(self, exc_type, exc_value, traceback) -> None:
         try:
+            # Update metadata before saving.
+            STATE["updated_at"] = datetime.now(timezone.utc).isoformat()
             _SESSIONS[self.session_id] = dict(STATE)
             # Persist latest snapshot to disk.
             _persist_session(self.session_id, dict(STATE))
