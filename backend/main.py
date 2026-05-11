@@ -9686,51 +9686,28 @@ def debug_pipeline_diag(session_id: Optional[str] = None, source_file: Optional[
     """Read-only diagnostic endpoint.  Returns per-group pipeline traces written by
     _rebuild_field_data_outputs, plus extracted engineering plan signals (Phase 1).
     - Pass session_id= to read a specific session (same behaviour as /api/current-state).
-    - Omit session_id to scan ALL active sessions without minting a new one.
-    - Use source_file= to filter pipeline_diag to a single source file in either mode.
+    - Use source_file= to filter pipeline_diag to a single source file.
     Engineering plan signals are always returned unfiltered."""
+    # Private beta isolation: require explicit session_id
     sid = str(session_id or "").strip()
-    if sid:
-        # Exact-session path — identical to how every other endpoint works.
-        with _session_scope(sid):
-            diag: List[Dict[str, Any]] = list(STATE.get("pipeline_diag") or [])
-            # Read plan signals from STATE if already extracted; otherwise derive fresh.
-            plan_signals: List[Dict[str, Any]] = list(STATE.get("engineering_plan_signals") or [])
-            if not plan_signals:
-                plan_signals = _build_engineering_plan_signals_for_session(sid)
-        if source_file:
-            diag = [d for d in diag if str(d.get("source_file") or "").lower() == source_file.lower()]
-        return JSONResponse(content={
-            "success": True,
-            "session_id": sid,
-            "pipeline_diag": diag,
-            "engineering_plan_signal_count": len(plan_signals),
-            "engineering_plan_signals": plan_signals,
-        })
-    else:
-        # No session_id — scan all sessions already in memory. Never mints a new session.
-        with _SESSION_LOCK:
-            all_diag: List[Dict[str, Any]] = []
-            all_plan_signals: List[Dict[str, Any]] = []
-            for stored_sid, sess in _SESSIONS.items():
-                for record in (sess.get("pipeline_diag") or []):
-                    entry = dict(record)
-                    entry["_session_id"] = stored_sid
-                    all_diag.append(entry)
-                for signal in (sess.get("engineering_plan_signals") or []):
-                    entry = dict(signal)
-                    entry["_session_id"] = stored_sid
-                    all_plan_signals.append(entry)
-        if source_file:
-            all_diag = [d for d in all_diag
-                        if str(d.get("source_file") or "").lower() == source_file.lower()]
-        return JSONResponse(content={
-            "success": True,
-            "session_id": None,
-            "pipeline_diag": all_diag,
-            "engineering_plan_signal_count": len(all_plan_signals),
-            "engineering_plan_signals": all_plan_signals,
-        })
+    if not sid:
+        return JSONResponse(status_code=400, content={"error": "session_id is required"})
+    # Exact-session path — identical to how every other endpoint works.
+    with _session_scope(sid):
+        diag: List[Dict[str, Any]] = list(STATE.get("pipeline_diag") or [])
+        # Read plan signals from STATE if already extracted; otherwise derive fresh.
+        plan_signals: List[Dict[str, Any]] = list(STATE.get("engineering_plan_signals") or [])
+        if not plan_signals:
+            plan_signals = _build_engineering_plan_signals_for_session(sid)
+    if source_file:
+        diag = [d for d in diag if str(d.get("source_file") or "").lower() == source_file.lower()]
+    return JSONResponse(content={
+        "success": True,
+        "session_id": sid,
+        "pipeline_diag": diag,
+        "engineering_plan_signal_count": len(plan_signals),
+        "engineering_plan_signals": plan_signals,
+    })
 
 
 @app.post("/api/report-bug")
