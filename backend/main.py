@@ -9987,6 +9987,44 @@ def post_session_label(body: Dict[str, Any]) -> JSONResponse:
         return JSONResponse(status_code=500, content={"error": "Internal error"})
 
 
+@app.get("/api/observability/request-audit")
+def get_request_audit(limit: int = 100, session_id: Optional[str] = None) -> JSONResponse:
+    """private beta request audit observability
+
+    Read-only view of recent request audit records written to
+    `uploads/request_audit.jsonl`. Protected by observability middleware.
+
+    Query params: limit (default 100, max 500), session_id (optional filter).
+    Returns newest-first records. Malformed JSON lines are skipped.
+    """
+    limit = max(1, min(limit or 100, 500))
+    try:
+        if not REQUEST_AUDIT_PATH.exists():
+            return JSONResponse({"records": []})
+        with open(REQUEST_AUDIT_PATH, "r", encoding="utf-8") as _fh:
+            raw_lines = _fh.readlines()
+        records: List[Dict[str, Any]] = []
+        for line in reversed(raw_lines):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                rec = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            # Filter by session_id if provided
+            if session_id:
+                if str(rec.get("session_id") or "") != str(session_id):
+                    continue
+            records.append(rec)
+            if len(records) >= limit:
+                break
+        return JSONResponse({"records": records})
+    except Exception as e:
+        logging.warning(f"Failed to read request audit: {e}")
+        return JSONResponse({"records": []})
+
+
 @app.get("/api/observability/match-shadow-compare")
 def get_match_shadow_compare(limit: int = 50) -> JSONResponse:
     """Phase 1H-A — read-only view of the most recent shadow-compare rows.
