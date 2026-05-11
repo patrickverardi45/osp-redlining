@@ -9,6 +9,7 @@ import math
 import os
 import re
 import shutil
+import sqlite3
 import threading
 import time
 import uuid
@@ -45,6 +46,56 @@ else:
     TRUELINE_ALLOWED_ORIGINS = ["*"]
 PROJECT_ROUTE_CONTEXT_DIR = UPLOADS_DIR / "project_route_context"
 os.makedirs(PROJECT_ROUTE_CONTEXT_DIR, exist_ok=True)
+# ─── Private beta persistence foundation ──────────────────────────────────
+# Minimal SQLite persistence for session durability. Preserves all existing
+# in-memory behavior; adds disk fallback for session recovery.
+SESSION_DB_PATH = UPLOADS_DIR / "session_store.db"
+
+def _init_session_db():
+    """Initialize SQLite database and sessions table if not exists."""
+    try:
+        with sqlite3.connect(SESSION_DB_PATH) as conn:
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS sessions (
+                    session_id TEXT PRIMARY KEY,
+                    session_json TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+            """)
+            conn.commit()
+    except Exception as e:
+        logging.warning(f"Failed to initialize session DB: {e}")
+
+def _persist_session(session_id: str, session_data: Dict[str, Any]):
+    """Persist session snapshot to SQLite. Never blocks operational flow."""
+    try:
+        session_json = json.dumps(session_data)
+        updated_at = datetime.now(timezone.utc).isoformat()
+        with sqlite3.connect(SESSION_DB_PATH) as conn:
+            conn.execute("""
+                INSERT OR REPLACE INTO sessions (session_id, session_json, updated_at)
+                VALUES (?, ?, ?)
+            """, (session_id, session_json, updated_at))
+            conn.commit()
+    except Exception as e:
+        logging.warning(f"Failed to persist session {session_id}: {e}")
+
+def _load_persisted_session(session_id: str) -> Optional[Dict[str, Any]]:
+    """Load session from SQLite if available. Returns None on failure."""
+    try:
+        with sqlite3.connect(SESSION_DB_PATH) as conn:
+            cursor = conn.execute("""
+                SELECT session_json FROM sessions WHERE session_id = ?
+            """, (session_id,))
+            row = cursor.fetchone()
+            if row:
+                return json.loads(row[0])
+    except Exception as e:
+        logging.warning(f"Failed to load persisted session {session_id}: {e}")
+    return None
+
+# Initialize DB on module load.
+_init_session_db()
 
 # Phase 1D — append-only ingestion ledger (JSONL, read-only API).
 INGESTION_LEDGER_PATH = UPLOADS_DIR / "ingestion_ledger.jsonl"
@@ -330,7 +381,10 @@ def _get_session(session_id: str) -> Dict[str, Any]:
     with _SESSION_LOCK:
         session = _SESSIONS.get(session_id)
         if session is None:
-            session = _default_session_state()
+            # Try loading from persistence first.
+            session = _load_persisted_session(session_id)
+            if session is None:
+                session = _default_session_state()
             _SESSIONS[session_id] = session
         return session
 
@@ -350,6 +404,8 @@ class _session_scope:
     def __exit__(self, exc_type, exc_value, traceback) -> None:
         try:
             _SESSIONS[self.session_id] = dict(STATE)
+            # Persist latest snapshot to disk.
+            _persist_session(self.session_id, dict(STATE))
         finally:
             _SESSION_LOCK.release()
 
