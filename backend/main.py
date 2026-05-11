@@ -9866,6 +9866,54 @@ def get_match_audit_groups(limit: int = 50) -> JSONResponse:
         return JSONResponse({"entries": []})
 
 
+# ─── Private beta session observability ────────────────────────────────────
+# Lightweight read-only endpoint for inspecting persisted session metadata.
+# Protected by observability middleware; returns summaries only.
+@app.get("/api/observability/sessions")
+def get_sessions_observability(limit: int = 50) -> JSONResponse:
+    """Private beta — read-only view of persisted session metadata summaries.
+
+    Query param: ``limit`` (default 50, max 500). Returns sessions in reverse
+    chronological order (most recently updated first). Malformed sessions are
+    safely skipped. Returns lightweight summaries only.
+    """
+    limit = max(1, min(limit, 500))
+    try:
+        with sqlite3.connect(SESSION_DB_PATH) as conn:
+            cursor = conn.execute("""
+                SELECT session_id, session_json, updated_at
+                FROM sessions
+                ORDER BY updated_at DESC
+                LIMIT ?
+            """, (limit,))
+            rows = cursor.fetchall()
+        summaries = []
+        for row in rows:
+            session_id, session_json, updated_at = row
+            try:
+                session_data = json.loads(session_json)
+                company_id = session_data.get("company_id")
+                workspace_label = session_data.get("workspace_label")
+                created_at = session_data.get("created_at")
+                route_catalog = session_data.get("route_catalog", [])
+                route_count = len(route_catalog) if isinstance(route_catalog, list) else 0
+                summaries.append({
+                    "session_id": session_id,
+                    "company_id": company_id,
+                    "workspace_label": workspace_label,
+                    "created_at": created_at,
+                    "updated_at": updated_at,
+                    "route_count": route_count,
+                })
+            except (json.JSONDecodeError, KeyError, TypeError):
+                # Safely skip malformed sessions
+                continue
+        return JSONResponse({"sessions": summaries})
+    except Exception as e:
+        logging.warning(f"Failed to read sessions observability: {e}")
+        return JSONResponse({"sessions": []})
+
+
 @app.get("/api/observability/match-shadow-compare")
 def get_match_shadow_compare(limit: int = 50) -> JSONResponse:
     """Phase 1H-A — read-only view of the most recent shadow-compare rows.
