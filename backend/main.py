@@ -45,6 +45,25 @@ MATCH_AUDIT_MAX_ROWS = 2000
 MATCH_AUDIT_GROUPS_PATH = UPLOADS_DIR / "match_audit_groups.jsonl"
 MATCH_AUDIT_GROUPS_MAX_ROWS = 5000
 
+# Phase 1H-A — per-group shadow-compare log (JSONL, read-only API).
+MATCH_SHADOW_COMPARE_PATH = UPLOADS_DIR / "match_shadow_compare.jsonl"
+MATCH_SHADOW_COMPARE_MAX_ROWS = 5000
+
+# Phase 1K — append-only review-label telemetry (JSONL, observability-only).
+# Labels are human-review telemetry ONLY.  They never influence matching,
+# scoring, rendering, or any operational system.  See LABEL_USAGE_POLICY.md.
+REVIEW_LABELS_PATH = UPLOADS_DIR / "review_labels.jsonl"
+REVIEW_LABELS_MAX_ROWS = 5000
+
+# Phase 1U — append-only snap-review-event telemetry (JSONL, observability-only).
+# Events are operator review decisions ONLY.  They never influence geometry,
+# matching, scoring, rendering, billing, or any operational system.
+_SNAP_REVIEW_EVENTS_DIR = BASE_DIR / "data" / "operational_logs"
+_SNAP_REVIEW_EVENTS_DIR.mkdir(parents=True, exist_ok=True)
+SNAP_REVIEW_EVENTS_PATH = _SNAP_REVIEW_EVENTS_DIR / "snap_review_events.jsonl"
+SNAP_REVIEW_EVENTS_MAX_ROWS = 5000
+_SNAP_REVIEW_VALID_DECISIONS: frozenset = frozenset({"approved", "rejected", "revoked"})
+
 app = FastAPI(title="OSP Redlining Mapping Layer")
 app.mount("/uploads", StaticFiles(directory=BASE_UPLOAD_DIR), name="uploads")
 
@@ -93,6 +112,24 @@ STATE: Dict[str, Any] = {
         "polygon_features": [],
         "point_features": [],
     },
+    # Phase 1O — topology lineage bridge. Upload-scoped, read-only, diagnostic.
+    # Never consumed by renderer, matching, scoring, redline, or billing.
+    "kmz_topology_sidecar": None,
+    # Phase 1P — redline continuity advisor. Post-redline, read-only, advisory.
+    # Never consumed by matcher, scorer, route activation, billing, or closeout.
+    "redline_topology_continuity": None,
+    # Phase 1Q — node-anchored redline continuity advisor. Post-redline, read-only, advisory.
+    # Groups redline segments whose endpoints coincide with KMZ point features (handholes/nodes).
+    # Never consumed by matcher, scorer, route activation, billing, or closeout.
+    "redline_node_continuity": None,
+    # Phase 1S — bore-log redline endpoint validator. Post-redline, read-only, advisory.
+    # Classifies each redline endpoint as anchored/near/orphan/no_anchors_in_kmz.
+    # Never consumed by matcher, scorer, route activation, geometry, billing, or closeout.
+    "redline_endpoint_validation": None,
+    # Phase 1T — deterministic endpoint snap recommendations. Post-validator, read-only, advisory.
+    # Metadata-only "what-the-snap-would-look-like" for near/orphan endpoints.
+    # Never consumed by matcher, scorer, route activation, geometry, billing, or closeout.
+    "endpoint_snap_recommendations": None,
     "bug_reports": [],
     "matching_debug": [],
 }
@@ -161,6 +198,11 @@ def _reset_workspace_state() -> None:
                 "polygon_features": [],
                 "point_features": [],
             },
+            "kmz_topology_sidecar": None,
+            "redline_topology_continuity": None,
+            "redline_node_continuity": None,
+            "redline_endpoint_validation": None,
+            "endpoint_snap_recommendations": None,
             "bug_reports": preserved_bug_reports,
             "matching_debug": [],
             "engineering_plans": [],
@@ -212,6 +254,11 @@ def _default_session_state() -> Dict[str, Any]:
             "polygon_features": [],
             "point_features": [],
         },
+        "kmz_topology_sidecar": None,
+        "redline_topology_continuity": None,
+        "redline_node_continuity": None,
+        "redline_endpoint_validation": None,
+        "endpoint_snap_recommendations": None,
         "bug_reports": [],
         "matching_debug": [],
         "engineering_plans": [],
@@ -1513,10 +1560,15 @@ def _kmz_semantic_extract_multigeometry_children(
 ) -> List[Dict[str, Any]]:
     """For MultiGeometry placemarks, enumerate direct geometry children.
 
-    Each entry: {"kind": "Point|LineString|Polygon", "coord_hint": [lat,lon]|None}.
-    A common engineering pattern is a label-Point + cable-LineString in one
-    placemark; this exposes them so future consumers can treat the line as the
-    geometry while keeping the point for label placement.
+    Each entry contains:
+      - Point:      {"kind": "Point",      "coord_hint": [lat,lon]}
+      - LineString: {"kind": "LineString", "coord_hint": [lat,lon], "coords": [[lat,lon],...]}
+      - Polygon:    {"kind": "Polygon",    "coord_hint": [lat,lon], "outer": [[lat,lon],...],
+                                           "inner": [[[lat,lon],...], ...]}
+
+    Phase 2B additive: LineString now includes full ``coords``; Polygon now
+    includes full ``outer`` and ``inner`` rings.  The ``coord_hint`` field is
+    preserved unchanged for backwards compatibility with any existing consumer.
     """
     out: List[Dict[str, Any]] = []
     multi = placemark.find("kml:MultiGeometry", KML_NS)
@@ -1535,17 +1587,39 @@ def _kmz_semantic_extract_multigeometry_children(
             elif tag == "LineString":
                 coord_node = child.find("kml:coordinates", KML_NS)
                 if coord_node is not None and coord_node.text:
-                    coords = _parse_coordinate_text(coord_node.text)
+                    coords = _dedupe_consecutive(_parse_coordinate_text(coord_node.text))
                     if coords:
-                        out.append({"kind": "LineString", "coord_hint": coords[0]})
+                        entry: Dict[str, Any] = {
+                            "kind": "LineString",
+                            "coord_hint": coords[0],
+                        }
+                        if len(coords) >= 2:
+                            entry["coords"] = coords
+                        out.append(entry)
             elif tag == "Polygon":
-                coord_node = child.find(
+                poly_outer_node = child.find(
                     ".//kml:outerBoundaryIs/kml:LinearRing/kml:coordinates", KML_NS
                 )
-                if coord_node is not None and coord_node.text:
-                    coords = _parse_coordinate_text(coord_node.text)
-                    if coords:
-                        out.append({"kind": "Polygon", "coord_hint": coords[0]})
+                if poly_outer_node is not None and poly_outer_node.text:
+                    outer = _dedupe_consecutive(_parse_coordinate_text(poly_outer_node.text))
+                    if outer:
+                        poly_entry: Dict[str, Any] = {
+                            "kind": "Polygon",
+                            "coord_hint": outer[0],
+                        }
+                        if len(outer) >= 3:
+                            poly_entry["outer"] = outer
+                            inner_rings: List[List[List[float]]] = []
+                            for inner_node in child.findall(
+                                ".//kml:innerBoundaryIs/kml:LinearRing/kml:coordinates", KML_NS
+                            ):
+                                if inner_node.text:
+                                    ring = _dedupe_consecutive(_parse_coordinate_text(inner_node.text))
+                                    if len(ring) >= 3:
+                                        inner_rings.append(ring)
+                            if inner_rings:
+                                poly_entry["inner"] = inner_rings
+                        out.append(poly_entry)
         except Exception:
             # Per-child robustness: malformed inner geometry never aborts.
             continue
@@ -2493,6 +2567,511 @@ def _append_match_audit_v2_entries(
             f"{type(_v2_exc).__name__}: {_v2_exc}",
             flush=True,
         )
+
+
+def _append_match_shadow_compare_entries(
+    group_matches: List[Dict[str, Any]],
+) -> None:
+    """Phase 1H-A — persist one shadow-compare row per group_match per pass.
+
+    Schema version: "match-shadow-1".  Never raises; logs a warning on any
+    I/O failure.  Pure read of STATE — no mutations.
+
+    Calls ``_build_semantic_match_shadow()`` once per pass to obtain
+    group-level disagreement data.  If the shadow is unavailable (returns
+    None) or raises, every row is still written with ``had_shadow_payload=False``
+    and all ``semantic_*`` fields nulled — guaranteeing a row-per-group
+    invariant for replay analytics.
+
+    The ``operational_winner_*`` fields are sourced from ``group_matches``
+    (the production pipeline output), NOT from the shadow payload.
+    """
+    import uuid as _uuid_sc
+    from datetime import timezone as _tz_sc
+
+    try:
+        _pass_id_sc = str(_uuid_sc.uuid4())
+        _decided_at_sc = datetime.now(_tz_sc.utc).isoformat()
+        _session_sc = STATE.get("_session_id_hint")
+        _sha_sc = STATE.get("last_kmz_input_sha256")
+
+        # Call shadow generator once per pass — never propagates exceptions.
+        _shadow_payload_sc: Optional[Dict[str, Any]] = None
+        _had_shadow_sc: bool = False
+        _shadow_version_sc: Optional[str] = None
+        try:
+            _shadow_payload_sc = _build_semantic_match_shadow()
+            _had_shadow_sc = isinstance(_shadow_payload_sc, dict)
+            if _had_shadow_sc:
+                _shadow_version_sc = _shadow_payload_sc.get("version")  # type: ignore[union-attr]
+        except Exception:
+            _shadow_payload_sc = None
+            _had_shadow_sc = False
+
+        # Build a group_id → shadow group entry index for O(1) lookup when
+        # shadow is available.  Shadow iterates the same group_matches list,
+        # so group_index is the stable join key.
+        _shadow_groups_sc: List[Dict[str, Any]] = (
+            _shadow_payload_sc.get("groups") or []  # type: ignore[union-attr]
+            if _had_shadow_sc
+            else []
+        )
+
+        rows_sc: List[str] = []
+
+        for _gi_sc, _match_sc in enumerate(group_matches or []):
+            if not isinstance(_match_sc, dict):
+                continue
+
+            # Operational winner fields — from production pipeline output.
+            _op_rid = _match_sc.get("route_id")
+            _op_rname = _match_sc.get("route_name")
+            try:
+                _op_conf: Optional[float] = (
+                    float(_match_sc.get("confidence") or 0.0) or None
+                )
+            except (TypeError, ValueError):
+                _op_conf = None
+
+            _gid_sc = _match_sc.get("group_id")
+
+            # Shadow fields — from shadow payload keyed by group_index.
+            if _had_shadow_sc and _gi_sc < len(_shadow_groups_sc):
+                _sg = _shadow_groups_sc[_gi_sc]
+                if isinstance(_sg, dict):
+                    _sem_rid = _sg.get("semantic_best_route_id")
+                    _sem_rname = _sg.get("semantic_best_route_name")
+                    try:
+                        _sem_score: Optional[float] = (
+                            float(_sg.get("semantic_best_score") or 0.0) or None
+                        )
+                    except (TypeError, ValueError):
+                        _sem_score = None
+                    _agreement = _sg.get("agreement")
+                    try:
+                        _anch_op: int = int(_sg.get("anchors_near_selected_route") or 0)
+                    except (TypeError, ValueError):
+                        _anch_op = 0
+                    try:
+                        _anch_sem: int = int(
+                            _sg.get("anchors_near_semantic_best_route") or 0
+                        )
+                    except (TypeError, ValueError):
+                        _anch_sem = 0
+                    _contrib_ids: List[str] = [
+                        str(x)
+                        for x in (list(_sg.get("contributing_anchor_ids") or [])[:10])
+                    ]
+                    _expl_raw = _sg.get("explanation")
+                    _explanation: Optional[str] = (
+                        str(_expl_raw)[:500] if _expl_raw is not None else None
+                    )
+                else:
+                    # Shadow group entry was not a dict — treat as unavailable.
+                    _sem_rid = None
+                    _sem_rname = None
+                    _sem_score = None
+                    _agreement = None
+                    _anch_op = 0
+                    _anch_sem = 0
+                    _contrib_ids = []
+                    _explanation = None
+            else:
+                # Shadow unavailable for this group.
+                _sem_rid = None
+                _sem_rname = None
+                _sem_score = None
+                _agreement = None
+                _anch_op = 0
+                _anch_sem = 0
+                _contrib_ids = []
+                _explanation = None
+
+            row_sc: Dict[str, Any] = {
+                "schema_version": "match-shadow-1",
+                "decided_at": _decided_at_sc,
+                "match_pass_id": _pass_id_sc,
+                "session_id_hint": str(_session_sc) if _session_sc is not None else None,
+                "input_sha256": str(_sha_sc) if _sha_sc is not None else None,
+                "shadow_version": str(_shadow_version_sc) if _shadow_version_sc is not None else None,
+                "had_shadow_payload": _had_shadow_sc,
+                "group_id": str(_gid_sc) if _gid_sc is not None else None,
+                "group_index": _gi_sc,
+                "operational_winner_route_id": str(_op_rid) if _op_rid is not None else None,
+                "operational_winner_route_name": str(_op_rname) if _op_rname is not None else None,
+                "operational_confidence": _op_conf,
+                "semantic_winner_route_id": str(_sem_rid) if _sem_rid is not None else None,
+                "semantic_winner_route_name": str(_sem_rname) if _sem_rname is not None else None,
+                "semantic_winner_score": _sem_score,
+                "agreement": _agreement,
+                "anchors_near_operational_winner": _anch_op,
+                "anchors_near_semantic_winner": _anch_sem,
+                "contributing_anchor_ids": _contrib_ids,
+                "shadow_explanation": _explanation,
+            }
+
+            rows_sc.append(json.dumps(row_sc, separators=(",", ":")) + "\n")
+
+        if not rows_sc:
+            return
+
+        # Append all rows from this pass atomically.
+        with open(MATCH_SHADOW_COMPARE_PATH, "a", encoding="utf-8") as _fh_sc:
+            _fh_sc.writelines(rows_sc)
+
+        # Tail-truncate to cap.
+        with open(MATCH_SHADOW_COMPARE_PATH, "r", encoding="utf-8") as _fh_sc:
+            _all_lines_sc = _fh_sc.readlines()
+
+        if len(_all_lines_sc) > MATCH_SHADOW_COMPARE_MAX_ROWS:
+            _all_lines_sc = _all_lines_sc[-MATCH_SHADOW_COMPARE_MAX_ROWS:]
+            with open(MATCH_SHADOW_COMPARE_PATH, "w", encoding="utf-8") as _fh_sc:
+                _fh_sc.writelines(_all_lines_sc)
+
+    except Exception as _sc_exc:  # pragma: no cover
+        print(
+            f"[MATCH_SHADOW] WARNING: failed to append shadow-compare entries: "
+            f"{type(_sc_exc).__name__}: {_sc_exc}",
+            flush=True,
+        )
+
+
+def _compute_match_shadow_summary(
+    rows: List[Dict[str, Any]],
+    group_by: str,
+) -> Dict[str, Any]:
+    """Phase 1H-B-I — pure-function summary analytics over match-shadow-1 rows.
+
+    Takes the already-parsed row list (most-recent-first from the endpoint)
+    and a ``group_by`` string ("none" or "input_sha256").  Returns the
+    ``match-shadow-summary-1`` dict (9 keys; endpoint adds ``computed_at``).
+
+    Never raises — wraps entire computation in try/except and returns an
+    empty skeleton on any failure.
+
+    Only the 6 approved metric families are computed; no per-classification,
+    per-route-role, per-folder, or per-style metrics are included.
+    """
+    _MIN_RATE = 10           # global minimum sample size before rates are emitted
+    _MIN_RATE_SHA = 5        # per-SHA minimum sample size
+    _TOP_PASS_CAP = 10       # leaderboard cap
+    _BY_SHA_CAP = 50         # per-SHA rollup array cap
+
+    _STABILITY_NOTE = (
+        "match-shadow-summary-1 metrics are PROVISIONAL until at least 2 distinct "
+        "input_sha256 values have each contributed at least 100 groups in the "
+        "window. Per-classification (handhole / splice / structure / segment) "
+        "and per-route-role rates require Phase 1H-C; the absence of those "
+        "fields in this response does not indicate missing data."
+    )
+
+    def _empty_summary() -> Dict[str, Any]:
+        return {
+            "schema_version": "match-shadow-summary-1",
+            "window": {
+                "rows_read": 0,
+                "match_pass_count": 0,
+                "unique_input_sha256_count": 0,
+                "earliest_decided_at": None,
+                "latest_decided_at": None,
+            },
+            "shadow_availability": {
+                "sample_size": 0,
+                "rows_with_shadow_payload": 0,
+                "shadow_availability_rate": None,
+            },
+            "agreement": {
+                "sample_size": 0,
+                "agree_count": 0,
+                "disagree_count": 0,
+                "inconclusive_count": 0,
+                "agree_rate": None,
+                "disagree_rate": None,
+                "inconclusive_rate": None,
+            },
+            "anchor_participation": {
+                "sample_size": 0,
+                "groups_with_anchors_near_op": 0,
+                "groups_with_anchors_near_sem": 0,
+                "rate_anchors_near_op": None,
+                "rate_anchors_near_sem": None,
+                "avg_anchors_near_op": None,
+                "avg_anchors_near_sem": None,
+            },
+            "top_disagreement_passes": [],
+            "by_input_sha256": [],
+            "guards": {
+                "min_samples_for_rate": _MIN_RATE,
+                "min_samples_for_rate_per_sha": _MIN_RATE_SHA,
+                "rate_below_threshold_returns_null": True,
+            },
+            "stability_note": _STABILITY_NOTE,
+        }
+
+    try:
+        if not rows:
+            return _empty_summary()
+
+        # ── Family 1: window ─────────────────────────────────────────────────
+        _pass_ids: set = set()
+        _shas: set = set()
+        _decided_ats: List[str] = []
+
+        for _r in rows:
+            if not isinstance(_r, dict):
+                continue
+            _pid = _r.get("match_pass_id")
+            if _pid is not None:
+                _pass_ids.add(str(_pid))
+            _sha = _r.get("input_sha256")
+            if _sha is not None:
+                _shas.add(str(_sha))
+            _dat = _r.get("decided_at")
+            if _dat is not None:
+                _decided_ats.append(str(_dat))
+
+        _n_rows = sum(1 for _r in rows if isinstance(_r, dict))
+        _unique_sha_count = len(_shas)
+
+        _window: Dict[str, Any] = {
+            "rows_read": _n_rows,
+            "match_pass_count": len(_pass_ids),
+            "unique_input_sha256_count": _unique_sha_count,
+            "earliest_decided_at": min(_decided_ats) if _decided_ats else None,
+            "latest_decided_at": max(_decided_ats) if _decided_ats else None,
+        }
+
+        # ── Family 2: shadow_availability ───────────────────────────────────
+        _n_with_shadow = sum(
+            1 for _r in rows
+            if isinstance(_r, dict) and _r.get("had_shadow_payload") is True
+        )
+        _shadow_avail_rate: Optional[float] = (
+            round(_n_with_shadow / _n_rows, 4)
+            if _n_rows >= _MIN_RATE
+            else None
+        )
+        _shadow_availability: Dict[str, Any] = {
+            "sample_size": _n_rows,
+            "rows_with_shadow_payload": _n_with_shadow,
+            "shadow_availability_rate": _shadow_avail_rate,
+        }
+
+        # ── Shared: shadow-gated rows ────────────────────────────────────────
+        _shadow_rows = [
+            _r for _r in rows
+            if isinstance(_r, dict) and _r.get("had_shadow_payload") is True
+        ]
+        _n_shadow = len(_shadow_rows)
+
+        # ── Family 3: agreement ──────────────────────────────────────────────
+        _agree = sum(1 for _r in _shadow_rows if _r.get("agreement") is True)
+        _disagree = sum(1 for _r in _shadow_rows if _r.get("agreement") is False)
+        _inconclusive = sum(1 for _r in _shadow_rows if _r.get("agreement") is None)
+
+        if _n_shadow >= _MIN_RATE:
+            _agree_rate: Optional[float] = round(_agree / _n_shadow, 4)
+            _disagree_rate: Optional[float] = round(_disagree / _n_shadow, 4)
+            _inconcl_rate: Optional[float] = round(_inconclusive / _n_shadow, 4)
+        else:
+            _agree_rate = _disagree_rate = _inconcl_rate = None
+
+        _agreement: Dict[str, Any] = {
+            "sample_size": _n_shadow,
+            "agree_count": _agree,
+            "disagree_count": _disagree,
+            "inconclusive_count": _inconclusive,
+            "agree_rate": _agree_rate,
+            "disagree_rate": _disagree_rate,
+            "inconclusive_rate": _inconcl_rate,
+        }
+
+        # ── Family 4: anchor_participation ───────────────────────────────────
+        _n_anch_op = 0
+        _n_anch_sem = 0
+        _sum_anch_op = 0
+        _sum_anch_sem = 0
+
+        for _r in _shadow_rows:
+            try:
+                _a_op = int(_r.get("anchors_near_operational_winner") or 0)
+            except (TypeError, ValueError):
+                _a_op = 0
+            try:
+                _a_sem = int(_r.get("anchors_near_semantic_winner") or 0)
+            except (TypeError, ValueError):
+                _a_sem = 0
+            if _a_op > 0:
+                _n_anch_op += 1
+            if _a_sem > 0:
+                _n_anch_sem += 1
+            _sum_anch_op += _a_op
+            _sum_anch_sem += _a_sem
+
+        if _n_shadow >= _MIN_RATE:
+            _rate_op: Optional[float] = round(_n_anch_op / _n_shadow, 4)
+            _rate_sem: Optional[float] = round(_n_anch_sem / _n_shadow, 4)
+            _avg_op: Optional[float] = round(_sum_anch_op / _n_shadow, 2)
+            _avg_sem: Optional[float] = round(_sum_anch_sem / _n_shadow, 2)
+        else:
+            _rate_op = _rate_sem = _avg_op = _avg_sem = None
+
+        _anchor_participation: Dict[str, Any] = {
+            "sample_size": _n_shadow,
+            "groups_with_anchors_near_op": _n_anch_op,
+            "groups_with_anchors_near_sem": _n_anch_sem,
+            "rate_anchors_near_op": _rate_op,
+            "rate_anchors_near_sem": _rate_sem,
+            "avg_anchors_near_op": _avg_op,
+            "avg_anchors_near_sem": _avg_sem,
+        }
+
+        # ── Family 5: top_disagreement_passes ────────────────────────────────
+        _pass_bucket_dis: Dict[str, int] = {}
+        _pass_bucket_tot: Dict[str, int] = {}
+        _pass_bucket_dats: Dict[str, List[str]] = {}
+        _pass_bucket_sha: Dict[str, Optional[str]] = {}
+
+        for _r in rows:
+            if not isinstance(_r, dict):
+                continue
+            _pid_s = _r.get("match_pass_id")
+            if _pid_s is None:
+                continue
+            _pid_s = str(_pid_s)
+            _pass_bucket_tot[_pid_s] = _pass_bucket_tot.get(_pid_s, 0) + 1
+            _dat_s = _r.get("decided_at")
+            if _dat_s is not None:
+                _pass_bucket_dats.setdefault(_pid_s, []).append(str(_dat_s))
+            if _pass_bucket_sha.get(_pid_s) is None:
+                _sha_s = _r.get("input_sha256")
+                if _sha_s is not None:
+                    _pass_bucket_sha[_pid_s] = str(_sha_s)
+            if _r.get("had_shadow_payload") is True and _r.get("agreement") is False:
+                _pass_bucket_dis[_pid_s] = _pass_bucket_dis.get(_pid_s, 0) + 1
+
+        _leaderboard: List[Dict[str, Any]] = []
+        for _pid_s, _tot in _pass_bucket_tot.items():
+            _dis = _pass_bucket_dis.get(_pid_s, 0)
+            if _dis == 0:
+                continue
+            _dats_for_pass = _pass_bucket_dats.get(_pid_s) or []
+            _leaderboard.append(
+                {
+                    "match_pass_id": _pid_s,
+                    "decided_at": min(_dats_for_pass) if _dats_for_pass else None,
+                    "input_sha256": _pass_bucket_sha.get(_pid_s),
+                    "disagree_count": _dis,
+                    "group_count": _tot,
+                }
+            )
+        _leaderboard.sort(
+            key=lambda _e: (-_e["disagree_count"], -_e["group_count"], _e["match_pass_id"])
+        )
+        _top_passes = _leaderboard[:_TOP_PASS_CAP]
+
+        # ── Family 6: by_input_sha256 ────────────────────────────────────────
+        _sha_tot: Dict[str, int] = {}
+        _sha_shadow: Dict[str, int] = {}
+        _sha_agree: Dict[str, int] = {}
+        _sha_disagree: Dict[str, int] = {}
+        _sha_inconclusive: Dict[str, int] = {}
+        _sha_n_op: Dict[str, int] = {}
+        _sha_n_sem: Dict[str, int] = {}
+
+        for _r in rows:
+            if not isinstance(_r, dict):
+                continue
+            _sha_k = _r.get("input_sha256")
+            if _sha_k is None:
+                continue
+            _sha_k = str(_sha_k)
+            _sha_tot[_sha_k] = _sha_tot.get(_sha_k, 0) + 1
+            if _r.get("had_shadow_payload") is True:
+                _sha_shadow[_sha_k] = _sha_shadow.get(_sha_k, 0) + 1
+                _ag = _r.get("agreement")
+                if _ag is True:
+                    _sha_agree[_sha_k] = _sha_agree.get(_sha_k, 0) + 1
+                elif _ag is False:
+                    _sha_disagree[_sha_k] = _sha_disagree.get(_sha_k, 0) + 1
+                else:
+                    _sha_inconclusive[_sha_k] = _sha_inconclusive.get(_sha_k, 0) + 1
+                try:
+                    _sa_op = int(_r.get("anchors_near_operational_winner") or 0)
+                except (TypeError, ValueError):
+                    _sa_op = 0
+                try:
+                    _sa_sem = int(_r.get("anchors_near_semantic_winner") or 0)
+                except (TypeError, ValueError):
+                    _sa_sem = 0
+                if _sa_op > 0:
+                    _sha_n_op[_sha_k] = _sha_n_op.get(_sha_k, 0) + 1
+                if _sa_sem > 0:
+                    _sha_n_sem[_sha_k] = _sha_n_sem.get(_sha_k, 0) + 1
+
+        _by_sha: List[Dict[str, Any]] = []
+        for _sha_k, _sha_total in _sha_tot.items():
+            _n_shad = _sha_shadow.get(_sha_k, 0)
+            # shadow_availability_rate guarded by total rows for this SHA
+            _s_avail = (
+                round(_n_shad / _sha_total, 4)
+                if _sha_total >= _MIN_RATE_SHA
+                else None
+            )
+            # Agreement + anchor rates guarded by shadow-available rows for this SHA
+            if _n_shad >= _MIN_RATE_SHA:
+                _s_agree = round(_sha_agree.get(_sha_k, 0) / _n_shad, 4)
+                _s_dis = round(_sha_disagree.get(_sha_k, 0) / _n_shad, 4)
+                _s_inc = round(_sha_inconclusive.get(_sha_k, 0) / _n_shad, 4)
+                _s_op = round(_sha_n_op.get(_sha_k, 0) / _n_shad, 4)
+                _s_sem = round(_sha_n_sem.get(_sha_k, 0) / _n_shad, 4)
+            else:
+                _s_agree = _s_dis = _s_inc = _s_op = _s_sem = None
+            _by_sha.append(
+                {
+                    "input_sha256": _sha_k,
+                    "rows_in_window": _sha_total,
+                    "shadow_availability_rate": _s_avail,
+                    "agree_rate": _s_agree,
+                    "disagree_rate": _s_dis,
+                    "inconclusive_rate": _s_inc,
+                    "rate_anchors_near_op": _s_op,
+                    "rate_anchors_near_sem": _s_sem,
+                    "sample_size": _n_shad,
+                }
+            )
+        _by_sha.sort(key=lambda _e: (-_e["rows_in_window"], _e["input_sha256"]))
+        _by_sha = _by_sha[:_BY_SHA_CAP]
+
+        # Conditionally populate: only when explicitly requested or ≥2 SHAs present.
+        _emit_by_sha = (
+            group_by == "input_sha256" or _unique_sha_count >= 2
+        )
+        _by_sha_out = _by_sha if _emit_by_sha else []
+
+        return {
+            "schema_version": "match-shadow-summary-1",
+            "window": _window,
+            "shadow_availability": _shadow_availability,
+            "agreement": _agreement,
+            "anchor_participation": _anchor_participation,
+            "top_disagreement_passes": _top_passes,
+            "by_input_sha256": _by_sha_out,
+            "guards": {
+                "min_samples_for_rate": _MIN_RATE,
+                "min_samples_for_rate_per_sha": _MIN_RATE_SHA,
+                "rate_below_threshold_returns_null": True,
+            },
+            "stability_note": _STABILITY_NOTE,
+        }
+
+    except Exception as _sum_exc:  # pragma: no cover
+        print(
+            f"[MATCH_SHADOW_SUMMARY] WARNING: failed to compute summary: "
+            f"{type(_sum_exc).__name__}: {_sum_exc}",
+            flush=True,
+        )
+        return _empty_summary()
 
 
 def _build_route_catalog(file_bytes: bytes, filename: str) -> List[Dict[str, Any]]:
@@ -7576,6 +8155,8 @@ def _rebuild_field_data_outputs() -> None:
     STATE["route_match_candidates"] = group_matches
     # Phase 1G — per-group match audit (additive, never raises).
     _append_match_audit_v2_entries(group_matches)
+    # Phase 1H-A — shadow-compare audit (additive, never raises).
+    _append_match_shadow_compare_entries(group_matches)
     warn_count = sum(1 for record in matching_debug if str(record.get("validation", {}).get("validation_status") or "") == "warn")
     fail_count = sum(1 for record in matching_debug if str(record.get("validation", {}).get("validation_status") or "") == "fail")
     blocked_count = sum(1 for match in group_matches if not bool(match.get("render_allowed")))
@@ -7591,6 +8172,75 @@ def _rebuild_field_data_outputs() -> None:
         "warn_count": warn_count,
         "fail_count": fail_count,
     }
+    # Phase 1P — rebuild the redline topology continuity advisor after each
+    # operational rebuild.  Additive, isolated.  Failure here MUST NOT break
+    # any operational path.  Reads redline_segments (already written above) +
+    # kmz_topology_sidecar.  Never writes back to any operational STATE key.
+    try:
+        STATE["redline_topology_continuity"] = _build_redline_topology_continuity(
+            STATE.get("redline_segments"),
+            STATE.get("kmz_topology_sidecar"),
+            STATE.get("route_catalog"),
+            STATE.get("kmz_reference"),
+        )
+    except Exception as _rtc_exc:
+        STATE["redline_topology_continuity"] = None
+        print(
+            f"[REDLINE_TOPOLOGY_CONTINUITY] WARNING: advisor build failed: "
+            f"{type(_rtc_exc).__name__}: {_rtc_exc}",
+            flush=True,
+        )
+    # Phase 1Q — rebuild the node-anchored continuity advisor after each
+    # operational rebuild.  Additive, isolated.  Failure here MUST NOT break
+    # any operational path.  Reads redline_segments + kmz_reference +
+    # route_catalog (all already written above).  Never writes back to any
+    # operational STATE key.
+    try:
+        STATE["redline_node_continuity"] = _build_redline_node_continuity(
+            STATE.get("redline_segments"),
+            STATE.get("kmz_reference"),
+            STATE.get("route_catalog"),
+        )
+    except Exception as _rnc_exc:
+        STATE["redline_node_continuity"] = None
+        print(
+            f"[REDLINE_NODE_CONTINUITY] WARNING: advisor build failed: "
+            f"{type(_rnc_exc).__name__}: {_rnc_exc}",
+            flush=True,
+        )
+    # Phase 1S — rebuild the bore-log redline endpoint validator after each
+    # operational rebuild.  Additive, isolated.  Failure here MUST NOT break
+    # any operational path.  Reads redline_segments + kmz_reference +
+    # route_catalog.  Never writes back to any operational STATE key.
+    try:
+        STATE["redline_endpoint_validation"] = _build_redline_endpoint_validation(
+            STATE.get("redline_segments"),
+            STATE.get("kmz_reference"),
+            STATE.get("route_catalog"),
+        )
+    except Exception as _rev_exc:
+        STATE["redline_endpoint_validation"] = None
+        print(
+            f"[REDLINE_ENDPOINT_VALIDATION] WARNING: validator build failed: "
+            f"{type(_rev_exc).__name__}: {_rev_exc}",
+            flush=True,
+        )
+    # Phase 1T — build deterministic endpoint snap recommendations after the
+    # Phase 1S validator completes.  Additive, isolated.  Failure here MUST
+    # NOT break any operational path.  Reads redline_endpoint_validation +
+    # kmz_reference only.  Never writes to any operational STATE key.
+    try:
+        STATE["endpoint_snap_recommendations"] = _build_endpoint_snap_recommendations(
+            STATE.get("redline_endpoint_validation"),
+            STATE.get("kmz_reference"),
+        )
+    except Exception as _snap_exc:
+        STATE["endpoint_snap_recommendations"] = None
+        print(
+            f"[ENDPOINT_SNAP_RECOMMENDATIONS] WARNING: builder failed: "
+            f"{type(_snap_exc).__name__}: {_snap_exc}",
+            flush=True,
+        )
 
 
 def _kmz_reference_lite() -> Dict[str, Any]:
@@ -8748,6 +9398,20 @@ async def upload_design(
             # Phase 1F — stash SHA so _append_match_audit_entry can link the
             # subsequent active_route_set row to this ingestion ledger entry.
             STATE["last_kmz_input_sha256"] = hashlib.sha256(file_bytes).hexdigest()
+            # Phase 1O — build topology lineage sidecar. Additive, isolated.
+            # Failure here MUST NOT break upload, routing, or rendering.
+            try:
+                STATE["kmz_topology_sidecar"] = _build_kmz_topology_sidecar(
+                    STATE.get("kmz_semantic"),
+                    STATE.get("kmz_reference"),
+                )
+            except Exception as _sidecar_exc:
+                STATE["kmz_topology_sidecar"] = None
+                print(
+                    f"[KMZ_TOPOLOGY_SIDECAR] WARNING: sidecar build failed: "
+                    f"{type(_sidecar_exc).__name__}: {_sidecar_exc}",
+                    flush=True,
+                )
 
             default_route = _choose_default_route(route_catalog)
             _set_active_route(default_route)
@@ -9097,6 +9761,3871 @@ def get_match_audit_groups(limit: int = 50) -> JSONResponse:
             flush=True,
         )
         return JSONResponse({"entries": []})
+
+
+@app.get("/api/observability/match-shadow-compare")
+def get_match_shadow_compare(limit: int = 50) -> JSONResponse:
+    """Phase 1H-A — read-only view of the most recent shadow-compare rows.
+
+    Schema version: "match-shadow-1".  Query param: ``limit`` (default 50,
+    max 500). Returns rows in reverse chronological order (most recent first).
+    A missing or corrupt file returns ``{"entries": []}``.
+    """
+    limit = max(1, min(limit, 500))
+    try:
+        if not MATCH_SHADOW_COMPARE_PATH.exists():
+            return JSONResponse({"entries": []})
+        with open(MATCH_SHADOW_COMPARE_PATH, "r", encoding="utf-8") as _fh_sc:
+            raw_lines_sc = _fh_sc.readlines()
+        entries_sc: List[Dict[str, Any]] = []
+        for line in reversed(raw_lines_sc):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                entries_sc.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+            if len(entries_sc) >= limit:
+                break
+        return JSONResponse({"entries": entries_sc})
+    except Exception as _sc_read_exc:
+        print(
+            f"[MATCH_SHADOW] WARNING: failed to read shadow-compare file: "
+            f"{type(_sc_read_exc).__name__}: {_sc_read_exc}",
+            flush=True,
+        )
+        return JSONResponse({"entries": []})
+
+
+@app.get("/api/observability/match-shadow-summary")
+def get_match_shadow_summary(
+    limit: int = 500,
+    group_by: str = "none",
+) -> JSONResponse:
+    """Phase 1H-B-I — on-the-fly summary analytics over match-shadow-1 rows.
+
+    Schema version: "match-shadow-summary-1".
+
+    Query params:
+      ``limit``    — rows to scan (default 500, max 5000, min 1).
+      ``group_by`` — "none" (default) or "input_sha256".
+                    Any other value is silently coerced to "none".
+
+    Always returns HTTP 200.  A missing or unreadable file returns an empty
+    summary skeleton.  Reads ``MATCH_SHADOW_COMPARE_PATH`` only; no writes.
+    """
+    from datetime import timezone as _tz_sum
+
+    _computed_at = datetime.now(_tz_sum.utc).isoformat()
+    _limit = max(1, min(limit, 5000))
+    _group_by = group_by if group_by in ("none", "input_sha256") else "none"
+
+    try:
+        _rows_sum: List[Dict[str, Any]] = []
+        if MATCH_SHADOW_COMPARE_PATH.exists():
+            with open(MATCH_SHADOW_COMPARE_PATH, "r", encoding="utf-8") as _fh_sum:
+                _raw_sum = _fh_sum.readlines()
+            for _line in reversed(_raw_sum):
+                _line = _line.strip()
+                if not _line:
+                    continue
+                try:
+                    _rows_sum.append(json.loads(_line))
+                except json.JSONDecodeError:
+                    continue
+                if len(_rows_sum) >= _limit:
+                    break
+
+        _summary = _compute_match_shadow_summary(_rows_sum, _group_by)
+        _summary["computed_at"] = _computed_at
+        return JSONResponse(_summary)
+
+    except Exception as _sum_read_exc:
+        print(
+            f"[MATCH_SHADOW_SUMMARY] WARNING: failed to build summary: "
+            f"{type(_sum_read_exc).__name__}: {_sum_read_exc}",
+            flush=True,
+        )
+        _empty = _compute_match_shadow_summary([], "none")
+        _empty["computed_at"] = _computed_at
+        return JSONResponse(_empty)
+
+
+# ---------------------------------------------------------------------------
+# Phase 1I-A — Semantic disagreement drilldown
+# ---------------------------------------------------------------------------
+
+
+def _compute_match_shadow_disagreements(
+    rows: List[Dict[str, Any]],
+    min_review_priority: str,
+) -> Dict[str, Any]:
+    """Phase 1I-A — on-the-fly disagreement taxonomy over match-shadow-1 rows.
+
+    Schema version: "match-shadow-disagreements-1".
+
+    Pure function.  Takes a list of parsed match-shadow-1 row dicts
+    (most-recent-first) and a min_review_priority filter string.
+    Returns a 5-key dict; the calling endpoint adds ``computed_at``,
+    ``window``, and ``guards`` for 8 total top-level keys.
+    NEVER raises.
+    """
+    # All constants are local — no new module-level names.
+    _DOMINANT_THRESHOLD: int = 3
+    _THIN_TOTAL_THRESHOLD: int = 2
+    _APPROVED_LABELS: List[str] = sorted([
+        "DOMINANT_SHADOW_SUPPORT",
+        "MODEST_SHADOW_SUPPORT",
+        "COMPETING_SUPPORT",
+        "THIN_EVIDENCE",
+        "NO_CONTRIBUTORS_LISTED",
+    ])
+    _PRIORITY_ORDER: Dict[str, int] = {"elevated": 2, "standard": 1, "low": 0}
+    _STABILITY_NOTE: str = (
+        "match-shadow-disagreements-1 labels describe disagreement EVIDENCE "
+        "STRENGTH ONLY.  They are not claims about correctness of the "
+        "operational winner or the semantic winner.  Review priority is "
+        "PROVISIONAL until at least 3 distinct telecom KMZs have generated "
+        "shadow rows AND operator annotations exist.  Read-only, additive, "
+        "diagnostic only."
+    )
+
+    def _empty_skeleton() -> Dict[str, Any]:
+        return {
+            "schema_version": "match-shadow-disagreements-1",
+            "filters": {"min_review_priority": min_review_priority},
+            "taxonomy": {
+                "totals_by_priority": {"elevated": 0, "standard": 0, "low": 0},
+                "totals_by_kind": {lbl: 0 for lbl in _APPROVED_LABELS},
+                "approved_labels": _APPROVED_LABELS,
+            },
+            "entries": [],
+            "stability_note": _STABILITY_NOTE,
+        }
+
+    try:
+        _mrp: str = (
+            min_review_priority
+            if min_review_priority in _PRIORITY_ORDER
+            else "standard"
+        )
+        _min_rank: int = _PRIORITY_ORDER[_mrp]
+
+        entries: List[Dict[str, Any]] = []
+        totals_by_priority: Dict[str, int] = {"elevated": 0, "standard": 0, "low": 0}
+        totals_by_kind: Dict[str, int] = {lbl: 0 for lbl in _APPROVED_LABELS}
+
+        for _row in rows:
+            if not isinstance(_row, dict):
+                continue
+
+            # Hard filters — keep only genuine shadow disagreements.
+            if _row.get("had_shadow_payload") is not True:
+                continue
+            if _row.get("agreement") is not False:
+                continue
+            _op_id = _row.get("operational_winner_route_id")
+            _sem_id = _row.get("semantic_winner_route_id")
+            # Defensive: skip rows where both IDs are identical (should not
+            # occur when agreement=False, but guard anyway).
+            if _op_id and _sem_id and _op_id == _sem_id:
+                continue
+
+            # Classification inputs.
+            try:
+                _anch_op = int(_row.get("anchors_near_operational_winner") or 0)
+                _anch_sem = int(_row.get("anchors_near_semantic_winner") or 0)
+            except (TypeError, ValueError):
+                _anch_op, _anch_sem = 0, 0
+            _contrib_ids = _row.get("contributing_anchor_ids") or []
+            _contrib_count = (
+                len(_contrib_ids) if isinstance(_contrib_ids, list) else 0
+            )
+
+            # Multi-label classification.
+            _labels: List[str] = []
+            if _anch_op == 0 and _anch_sem >= _DOMINANT_THRESHOLD:
+                _labels.append("DOMINANT_SHADOW_SUPPORT")
+            if _anch_op == 0 and 1 <= _anch_sem <= 2:
+                _labels.append("MODEST_SHADOW_SUPPORT")
+            if _anch_op >= 1 and _anch_sem >= 1:
+                _labels.append("COMPETING_SUPPORT")
+            if (_anch_op + _anch_sem) <= _THIN_TOTAL_THRESHOLD:
+                _labels.append("THIN_EVIDENCE")
+            if _contrib_count == 0 and _anch_sem > 0:
+                _labels.append("NO_CONTRIBUTORS_LISTED")
+
+            # Priority assignment.
+            _reasons: List[str]
+            if (
+                "DOMINANT_SHADOW_SUPPORT" in _labels
+                and "THIN_EVIDENCE" not in _labels
+                and "NO_CONTRIBUTORS_LISTED" not in _labels
+            ):
+                _priority = "elevated"
+                _reasons = [
+                    "dominant_shadow_support",
+                    "non_thin_evidence",
+                    "contributors_listed",
+                ]
+            elif (
+                (
+                    "COMPETING_SUPPORT" in _labels
+                    or "MODEST_SHADOW_SUPPORT" in _labels
+                )
+                and "THIN_EVIDENCE" not in _labels
+            ):
+                _priority = "standard"
+                _reasons = ["competing_or_modest_support", "non_thin_evidence"]
+            elif "THIN_EVIDENCE" in _labels and len(_labels) == 1:
+                _priority = "low"
+                _reasons = ["thin_evidence_only"]
+            else:
+                _priority = "low"
+                _reasons = ["default_low"]
+
+            # Tally by kind and priority (counts reflect ALL disagreements
+            # before the min_priority filter is applied, so the taxonomy
+            # section is always a full picture of the window).
+            for _lbl in _labels:
+                if _lbl in totals_by_kind:
+                    totals_by_kind[_lbl] += 1
+            totals_by_priority[_priority] += 1
+
+            # Apply min_review_priority filter for the entries list only.
+            if _PRIORITY_ORDER.get(_priority, 0) < _min_rank:
+                continue
+
+            entries.append(
+                {
+                    "decided_at":                     _row.get("decided_at"),
+                    "match_pass_id":                  _row.get("match_pass_id"),
+                    "input_sha256":                   _row.get("input_sha256"),
+                    "group_id":                       _row.get("group_id"),
+                    "operational_winner_route_id":    _op_id,
+                    "operational_winner_route_name":  _row.get(
+                        "operational_winner_route_name"
+                    ),
+                    "semantic_winner_route_id":       _sem_id,
+                    "semantic_winner_route_name":     _row.get(
+                        "semantic_winner_route_name"
+                    ),
+                    "anchors_near_operational_winner": _anch_op,
+                    "anchors_near_semantic_winner":    _anch_sem,
+                    "contributing_anchor_count":       _contrib_count,
+                    "shadow_explanation":             _row.get("shadow_explanation"),
+                    "disagreement_kind":              _labels,
+                    "review_priority":                _priority,
+                    "review_priority_reasons":        _reasons,
+                }
+            )
+
+        return {
+            "schema_version": "match-shadow-disagreements-1",
+            "filters": {"min_review_priority": _mrp},
+            "taxonomy": {
+                "totals_by_priority": totals_by_priority,
+                "totals_by_kind": totals_by_kind,
+                "approved_labels": _APPROVED_LABELS,
+            },
+            "entries": entries,
+            "stability_note": _STABILITY_NOTE,
+        }
+
+    except Exception:
+        return _empty_skeleton()
+
+
+@app.get("/api/observability/match-shadow-disagreements")
+def get_match_shadow_disagreements(
+    limit: int = 500,
+    min_review_priority: str = "standard",
+) -> JSONResponse:
+    """Phase 1I-A — on-the-fly disagreement drilldown over match-shadow-1 rows.
+
+    Schema version: "match-shadow-disagreements-1".
+
+    Query params:
+      ``limit``               — rows to scan (default 500, max 5000, min 1).
+      ``min_review_priority`` — "elevated" | "standard" (default) | "low".
+                               Any other value is silently coerced to "standard".
+
+    Always returns HTTP 200.  A missing or unreadable file returns an empty
+    skeleton.  Reads MATCH_SHADOW_COMPARE_PATH only; no writes.
+
+    Top-level response keys (exactly 8):
+      schema_version, computed_at, window, filters, taxonomy,
+      entries, guards, stability_note.
+    """
+    from datetime import timezone as _tz_dis
+
+    _computed_at_dis = datetime.now(_tz_dis.utc).isoformat()
+    _limit_dis = max(1, min(limit, 5000))
+    _mrp_dis = (
+        min_review_priority
+        if min_review_priority in ("elevated", "standard", "low")
+        else "standard"
+    )
+
+    try:
+        _rows_dis: List[Dict[str, Any]] = []
+        _pass_ids_dis: set = set()
+        _sha_ids_dis: set = set()
+        _earliest_dis: Optional[str] = None
+        _latest_dis: Optional[str] = None
+
+        if MATCH_SHADOW_COMPARE_PATH.exists():
+            with open(MATCH_SHADOW_COMPARE_PATH, "r", encoding="utf-8") as _fh_dis:
+                _raw_dis = _fh_dis.readlines()
+            for _line_dis in reversed(_raw_dis):
+                _line_dis = _line_dis.strip()
+                if not _line_dis:
+                    continue
+                try:
+                    _r_dis = json.loads(_line_dis)
+                except json.JSONDecodeError:
+                    continue
+                _rows_dis.append(_r_dis)
+                _pid_dis = _r_dis.get("match_pass_id")
+                if _pid_dis:
+                    _pass_ids_dis.add(_pid_dis)
+                _sha_dis = _r_dis.get("input_sha256")
+                if _sha_dis:
+                    _sha_ids_dis.add(_sha_dis)
+                _ts_dis = _r_dis.get("decided_at")
+                if isinstance(_ts_dis, str) and _ts_dis:
+                    if _earliest_dis is None or _ts_dis < _earliest_dis:
+                        _earliest_dis = _ts_dis
+                    if _latest_dis is None or _ts_dis > _latest_dis:
+                        _latest_dis = _ts_dis
+                if len(_rows_dis) >= _limit_dis:
+                    break
+
+        _result_dis = _compute_match_shadow_disagreements(_rows_dis, _mrp_dis)
+        _result_dis["computed_at"] = _computed_at_dis
+        _result_dis["window"] = {
+            "rows_read": len(_rows_dis),
+            "match_pass_count": len(_pass_ids_dis),
+            "unique_input_sha256_count": len(_sha_ids_dis),
+            "earliest_decided_at": _earliest_dis,
+            "latest_decided_at": _latest_dis,
+        }
+        _result_dis["guards"] = {"min_review_priority_default": "standard"}
+        return JSONResponse(_result_dis)
+
+    except Exception as _dis_exc:
+        print(
+            f"[MATCH_SHADOW_DISAGREEMENTS] WARNING: failed to build drilldown: "
+            f"{type(_dis_exc).__name__}: {_dis_exc}",
+            flush=True,
+        )
+        _empty_dis = _compute_match_shadow_disagreements([], "standard")
+        _empty_dis["computed_at"] = _computed_at_dis
+        _empty_dis["window"] = {
+            "rows_read": 0,
+            "match_pass_count": 0,
+            "unique_input_sha256_count": 0,
+            "earliest_decided_at": None,
+            "latest_decided_at": None,
+        }
+        _empty_dis["guards"] = {"min_review_priority_default": "standard"}
+        return JSONResponse(_empty_dis)
+
+
+# ---------------------------------------------------------------------------
+# Phase 1L — Review-label analytics (compute-on-read, no writes, no state)
+# ---------------------------------------------------------------------------
+
+
+def _compute_review_label_summary(
+    label_rows: List[Dict[str, Any]],
+    shadow_rows: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """Phase 1L — compute review-label analytics over existing telemetry streams.
+
+    Pure function.  Never raises.  Reads ``label_rows`` (raw rows from
+    ``review_labels.jsonl`` in file order) and ``shadow_rows`` (raw rows from
+    ``match_shadow_compare.jsonl`` in any order).
+
+    Returns a structured analytics dict.
+
+    WORDING DISCIPLINE: All metrics describe review telemetry patterns only.
+    No accuracy, correctness, confidence, or operational guidance language.
+    No threshold adjustments.  No route ranking.  No recommendations.
+    """
+    _MIN_SAMPLES: int = 3
+    _STABILITY_NOTE: str = (
+        "review-label-summary-1 describes review telemetry patterns only.  "
+        "Rates and coverage figures are observational.  They do not reflect "
+        "correctness of any routing decision and must not be used to adjust "
+        "thresholds, promote routes, or alter any operational behavior.  "
+        "Read-only, additive, diagnostic only.  See LABEL_USAGE_POLICY.md."
+    )
+
+    def _safe_rate(numerator: int, denominator: int) -> Optional[float]:
+        if denominator < _MIN_SAMPLES:
+            return None
+        return round(numerator / denominator, 4)
+
+    def _empty_skeleton() -> Dict[str, Any]:
+        return {
+            "schema_version": "review-label-summary-1",
+            "window": {
+                "label_events_read": 0,
+                "shadow_rows_read": 0,
+                "resolved_labels": 0,
+                "disagreements_in_window": 0,
+            },
+            "total_review_labels": 0,
+            "resolved_label_counts": {"useful_catch": 0, "noise": 0, "unclear": 0},
+            "useful_catch_rate_by_review_priority": {
+                p: {"labeled": 0, "useful_catch": 0, "rate": None}
+                for p in ("elevated", "standard", "low")
+            },
+            "useful_catch_rate_by_disagreement_kind": [],
+            "label_coverage_by_review_priority": {
+                p: {"total_disagreements": 0, "labeled": 0, "coverage_rate": None}
+                for p in ("elevated", "standard", "low")
+            },
+            "top_input_sha256_by_noise_rate": [],
+            "stability_note": _STABILITY_NOTE,
+        }
+
+    try:
+        # ------------------------------------------------------------------
+        # Step 1: Latest-wins label resolution (oldest → newest = file order).
+        # Key: (match_pass_id, group_id) → full event dict.
+        # Tombstoned entries are excluded from the resolved set.
+        # ------------------------------------------------------------------
+        _resolved_map_s: Dict[Any, Dict[str, Any]] = {}
+        for _ev_s in label_rows:
+            if not isinstance(_ev_s, dict):
+                continue
+            _k_s = (_ev_s.get("match_pass_id"), _ev_s.get("group_id"))
+            _resolved_map_s[_k_s] = _ev_s
+
+        _resolved_s: List[Dict[str, Any]] = [
+            _ev_s
+            for _ev_s in _resolved_map_s.values()
+            if not _ev_s.get("tombstone", False)
+        ]
+
+        # ------------------------------------------------------------------
+        # Step 2: Raw counts
+        # ------------------------------------------------------------------
+        total_review_labels_s = len(label_rows)
+        resolved_label_counts_s: Dict[str, int] = {
+            "useful_catch": 0,
+            "noise": 0,
+            "unclear": 0,
+        }
+        for _ev_s in _resolved_s:
+            _lbl_s = _ev_s.get("label")
+            if _lbl_s in resolved_label_counts_s:
+                resolved_label_counts_s[_lbl_s] += 1
+
+        # ------------------------------------------------------------------
+        # Step 3: All disagreements from shadow rows.
+        # Use min_review_priority="low" so the entries list includes everything.
+        # ------------------------------------------------------------------
+        _dis_result_s = _compute_match_shadow_disagreements(shadow_rows, "low")
+        _dis_entries_s: List[Dict[str, Any]] = _dis_result_s.get("entries") or []
+        _dis_taxonomy_s = _dis_result_s.get("taxonomy") or {}
+        _totals_by_pri_s: Dict[str, int] = _dis_taxonomy_s.get(
+            "totals_by_priority"
+        ) or {"elevated": 0, "standard": 0, "low": 0}
+        total_disagreements_s = sum(_totals_by_pri_s.values())
+
+        # Build lookup: (match_pass_id, group_id) → disagreement entry.
+        _dis_lkp_s: Dict[Any, Dict[str, Any]] = {}
+        for _de_s in _dis_entries_s:
+            _dk_s = (_de_s.get("match_pass_id"), _de_s.get("group_id"))
+            _dis_lkp_s[_dk_s] = _de_s
+
+        # ------------------------------------------------------------------
+        # Step 4: Cross-reference labels → disagreement context
+        # ------------------------------------------------------------------
+        _pri_labeled_s: Dict[str, int] = {"elevated": 0, "standard": 0, "low": 0}
+        _pri_useful_s: Dict[str, int] = {"elevated": 0, "standard": 0, "low": 0}
+        _kind_labeled_s: Dict[str, int] = {}
+        _kind_useful_s: Dict[str, int] = {}
+        _sha_labeled_s: Dict[str, int] = {}
+        _sha_noise_s: Dict[str, int] = {}
+
+        for _ev_s in _resolved_s:
+            _mpid_s = _ev_s.get("match_pass_id")
+            _gid_s = _ev_s.get("group_id")
+            _lbl_s = _ev_s.get("label")
+            _sha_s = _ev_s.get("input_sha256")
+
+            if _sha_s:
+                _sha_labeled_s[_sha_s] = _sha_labeled_s.get(_sha_s, 0) + 1
+                if _lbl_s == "noise":
+                    _sha_noise_s[_sha_s] = _sha_noise_s.get(_sha_s, 0) + 1
+
+            _de_s = _dis_lkp_s.get((_mpid_s, _gid_s))
+            if _de_s is None:
+                continue
+
+            _dpri_s = _de_s.get("review_priority")
+            _dkinds_s: List[str] = _de_s.get("disagreement_kind") or []
+
+            if _dpri_s in _pri_labeled_s:
+                _pri_labeled_s[_dpri_s] += 1
+                if _lbl_s == "useful_catch":
+                    _pri_useful_s[_dpri_s] += 1
+
+            for _k_s in _dkinds_s:
+                _kind_labeled_s[_k_s] = _kind_labeled_s.get(_k_s, 0) + 1
+                if _lbl_s == "useful_catch":
+                    _kind_useful_s[_k_s] = _kind_useful_s.get(_k_s, 0) + 1
+
+        # ------------------------------------------------------------------
+        # Step 5: Build output metrics
+        # ------------------------------------------------------------------
+        useful_catch_rate_by_priority_s = {
+            p: {
+                "labeled": _pri_labeled_s.get(p, 0),
+                "useful_catch": _pri_useful_s.get(p, 0),
+                "rate": _safe_rate(_pri_useful_s.get(p, 0), _pri_labeled_s.get(p, 0)),
+            }
+            for p in ("elevated", "standard", "low")
+        }
+
+        useful_catch_rate_by_kind_s = sorted(
+            [
+                {
+                    "kind": k,
+                    "labeled": _kind_labeled_s[k],
+                    "useful_catch": _kind_useful_s.get(k, 0),
+                    "rate": _safe_rate(_kind_useful_s.get(k, 0), _kind_labeled_s[k]),
+                }
+                for k in _kind_labeled_s
+            ],
+            key=lambda x: (-x["labeled"], x["kind"]),
+        )
+
+        label_coverage_by_priority_s = {
+            p: {
+                "total_disagreements": _totals_by_pri_s.get(p, 0),
+                "labeled": _pri_labeled_s.get(p, 0),
+                "coverage_rate": (
+                    _safe_rate(
+                        _pri_labeled_s.get(p, 0),
+                        _totals_by_pri_s.get(p, 0),
+                    )
+                    if _totals_by_pri_s.get(p, 0) >= _MIN_SAMPLES
+                    else None
+                ),
+            }
+            for p in ("elevated", "standard", "low")
+        }
+
+        _sha_rows_s = [
+            {
+                "input_sha256": sha_v,
+                "total_labeled": cnt_v,
+                "noise": _sha_noise_s.get(sha_v, 0),
+                "noise_rate": _safe_rate(_sha_noise_s.get(sha_v, 0), cnt_v),
+            }
+            for sha_v, cnt_v in _sha_labeled_s.items()
+            if cnt_v >= _MIN_SAMPLES
+        ]
+        top_sha_by_noise_s = sorted(
+            _sha_rows_s,
+            key=lambda x: (-(x["noise_rate"] or 0.0), -x["total_labeled"], x["input_sha256"]),
+        )[:5]
+
+        return {
+            "schema_version": "review-label-summary-1",
+            "window": {
+                "label_events_read": len(label_rows),
+                "shadow_rows_read": len(shadow_rows),
+                "resolved_labels": len(_resolved_s),
+                "disagreements_in_window": total_disagreements_s,
+            },
+            "total_review_labels": total_review_labels_s,
+            "resolved_label_counts": resolved_label_counts_s,
+            "useful_catch_rate_by_review_priority": useful_catch_rate_by_priority_s,
+            "useful_catch_rate_by_disagreement_kind": useful_catch_rate_by_kind_s,
+            "label_coverage_by_review_priority": label_coverage_by_priority_s,
+            "top_input_sha256_by_noise_rate": top_sha_by_noise_s,
+            "stability_note": _STABILITY_NOTE,
+        }
+
+    except Exception:
+        return _empty_skeleton()
+
+
+@app.get("/api/observability/review-label-summary")
+def get_review_label_summary() -> JSONResponse:
+    """Phase 1L — compute-on-read analytics over review-label and shadow-compare streams.
+
+    Schema version: "review-label-summary-1".
+
+    Reads both ``REVIEW_LABELS_PATH`` and ``MATCH_SHADOW_COMPARE_PATH``.
+    Computes:
+      - resolved_label_counts
+      - useful_catch_rate_by_review_priority
+      - useful_catch_rate_by_disagreement_kind
+      - label_coverage_by_review_priority
+      - top_input_sha256_by_noise_rate
+
+    Always returns HTTP 200.  Missing files → empty skeleton.
+    No writes.  No state mutations.  No operational side effects.
+
+    WORDING: All metrics are review telemetry patterns only.  No accuracy,
+    correctness, confidence, or recommendation language.
+    """
+    from datetime import timezone as _tz_rls
+
+    _generated_at_rls = datetime.now(_tz_rls.utc).isoformat()
+
+    try:
+        _label_rows_rls: List[Dict[str, Any]] = []
+        if REVIEW_LABELS_PATH.exists():
+            with open(REVIEW_LABELS_PATH, "r", encoding="utf-8") as _fh_rls:
+                for _line_rls in _fh_rls:
+                    _line_rls = _line_rls.strip()
+                    if not _line_rls:
+                        continue
+                    try:
+                        _label_rows_rls.append(json.loads(_line_rls))
+                    except json.JSONDecodeError:
+                        continue
+
+        _shadow_rows_rls: List[Dict[str, Any]] = []
+        if MATCH_SHADOW_COMPARE_PATH.exists():
+            with open(MATCH_SHADOW_COMPARE_PATH, "r", encoding="utf-8") as _fh_rls:
+                for _line_rls in _fh_rls:
+                    _line_rls = _line_rls.strip()
+                    if not _line_rls:
+                        continue
+                    try:
+                        _shadow_rows_rls.append(json.loads(_line_rls))
+                    except json.JSONDecodeError:
+                        continue
+
+        _result_rls = _compute_review_label_summary(_label_rows_rls, _shadow_rows_rls)
+        _result_rls["generated_at"] = _generated_at_rls
+        return JSONResponse(_result_rls)
+
+    except Exception as _rls_exc:
+        print(
+            f"[REVIEW_LABEL_SUMMARY] WARNING: failed to compute summary: "
+            f"{type(_rls_exc).__name__}: {_rls_exc}",
+            flush=True,
+        )
+        _empty_rls = _compute_review_label_summary([], [])
+        _empty_rls["generated_at"] = _generated_at_rls
+        return JSONResponse(_empty_rls)
+
+
+# ---------------------------------------------------------------------------
+# Phase 1M — KMZ Engineering Fidelity Audit (compute-on-read, no writes)
+# ---------------------------------------------------------------------------
+
+# Semantic feature fields — full set from _build_kmz_semantic.
+# Used to compute the "dropped fields" list against reference ingest fields.
+_SEMANTIC_FEATURE_FIELD_NAMES: List[str] = sorted([
+    "feature_id", "placemark_id", "placemark_name", "description",
+    "description_raw", "folder_path", "folder_path_str", "geometry_type",
+    "style_url", "extended_data", "coords_hint", "classification",
+    "confidence", "classification_reason", "source_filename",
+    "chainage_ft", "chainage_source", "sequence_number", "sequence_kind",
+    "full_geometry", "multigeometry_children", "style_resolved", "lifecycle",
+    "classification_debug",
+])
+
+# Reference line-feature fields — from _build_kmz_reference line_features.
+_REFERENCE_LINE_FIELD_NAMES: List[str] = sorted([
+    "feature_id", "name", "folder_path", "role", "coords",
+    "stroke", "stroke_width", "length_ft",
+])
+
+_FIDELITY_STABILITY_NOTE: str = (
+    "kmz-fidelity-audit-1 describes engineering fidelity gaps between the "
+    "semantic ingest and the operational render ingest.  Preservation rates "
+    "reflect which fields and semantics are available in semantic parsing but "
+    "absent from the render pipeline.  No operational guidance.  Read-only, "
+    "additive, diagnostic only."
+)
+
+
+def _compute_kmz_fidelity_audit(
+    semantic: Optional[Dict[str, Any]],
+    reference: Optional[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """Phase 1M — compute engineering fidelity gap between semantic and render ingest.
+
+    Pure function.  Never raises.  Compares ``semantic`` (output of
+    ``_build_kmz_semantic``) against ``reference`` (output of
+    ``_build_kmz_reference``).
+
+    Returns a structured audit dict with six categories:
+      style_fidelity, folder_fidelity, extended_data_fidelity,
+      geometry_fidelity, render_simplification, window.
+
+    WORDING DISCIPLINE: Uses "fidelity", "preservation", "topology".
+    No accuracy, correctness, confidence, or operational guidance language.
+    """
+
+    def _safe_rate(numerator: int, denominator: int) -> Optional[float]:
+        if denominator <= 0:
+            return None
+        return round(numerator / denominator, 4)
+
+    def _empty_audit() -> Dict[str, Any]:
+        return {
+            "schema_version": "kmz-fidelity-audit-1",
+            "window": {
+                "semantic_feature_count": 0,
+                "reference_line_count": 0,
+                "reference_polygon_count": 0,
+                "reference_point_count": 0,
+                "has_semantic_ingest": False,
+                "has_reference_ingest": False,
+            },
+            "style_fidelity": {
+                "unique_style_urls_in_semantic": 0,
+                "features_with_resolved_style_props": 0,
+                "features_with_kml_line_color": 0,
+                "features_with_kml_poly_fill": 0,
+                "features_with_icon_href": 0,
+                "reference_feature_has_style_url": False,
+                "style_url_preservation_rate": None,
+            },
+            "folder_fidelity": {
+                "max_folder_depth": 0,
+                "avg_folder_depth": None,
+                "features_with_multi_level_path": 0,
+                "features_with_single_level_path": 0,
+                "reference_folder_is_flat_string": True,
+                "hierarchy_preservation_rate": None,
+            },
+            "extended_data_fidelity": {
+                "unique_key_count": 0,
+                "total_value_count": 0,
+                "reference_has_extended_data_field": False,
+                "top_keys": [],
+                "preservation_rate": None,
+            },
+            "geometry_fidelity": {
+                "multigeometry_placemark_count": 0,
+                "multigeometry_child_count": 0,
+                "reference_preserves_parent_placemark_identity": False,
+                "exploded_into_flat_geometries": True,
+            },
+            "render_simplification": {
+                "semantic_field_count": len(_SEMANTIC_FEATURE_FIELD_NAMES),
+                "reference_line_field_count": len(_REFERENCE_LINE_FIELD_NAMES),
+                "fields_in_semantic_not_in_reference": [],
+                "dropped_field_count": 0,
+            },
+            "stability_note": _FIDELITY_STABILITY_NOTE,
+        }
+
+    try:
+        _sem_features: List[Dict[str, Any]] = []
+        _sem_index: Dict[str, Any] = {}
+        _has_sem = False
+        if isinstance(semantic, dict):
+            _sem_features = semantic.get("features") or []
+            if not isinstance(_sem_features, list):
+                _sem_features = []
+            _sem_index = semantic.get("index") or {}
+            _has_sem = True
+
+        _ref: Dict[str, Any] = reference if isinstance(reference, dict) else {}
+        _ref_lines: List[Dict[str, Any]] = _ref.get("line_features") or []
+        _ref_polys: List[Dict[str, Any]] = _ref.get("polygon_features") or []
+        _ref_points: List[Dict[str, Any]] = _ref.get("point_features") or []
+        _has_ref = bool(_ref_lines or _ref_polys or _ref_points)
+
+        # ------------------------------------------------------------------
+        # A. Style fidelity
+        # ------------------------------------------------------------------
+        _unique_style_urls: set = set()
+        _resolved_style_count = 0
+        _kml_line_color_count = 0
+        _kml_poly_fill_count = 0
+        _icon_href_count = 0
+
+        for _f_fa in _sem_features:
+            if not isinstance(_f_fa, dict):
+                continue
+            _su = _f_fa.get("style_url")
+            if _su and isinstance(_su, str) and _su.strip():
+                _unique_style_urls.add(_su.strip())
+            _sr = _f_fa.get("style_resolved")
+            if isinstance(_sr, dict):
+                _resolved_style_count += 1
+                if _sr.get("line_color"):
+                    _kml_line_color_count += 1
+                if _sr.get("poly_fill"):
+                    _kml_poly_fill_count += 1
+                if _sr.get("icon_href"):
+                    _icon_href_count += 1
+
+        _n_style_urls = len(_unique_style_urls)
+
+        # ------------------------------------------------------------------
+        # B. Folder hierarchy fidelity
+        # ------------------------------------------------------------------
+        _folder_depths: List[int] = []
+        _multi_level_count = 0
+        _single_level_count = 0
+
+        for _f_fa in _sem_features:
+            if not isinstance(_f_fa, dict):
+                continue
+            _fp = _f_fa.get("folder_path")
+            if isinstance(_fp, list):
+                _depth = len(_fp)
+                _folder_depths.append(_depth)
+                if _depth > 1:
+                    _multi_level_count += 1
+                elif _depth == 1:
+                    _single_level_count += 1
+
+        _max_depth = max(_folder_depths) if _folder_depths else 0
+        _avg_depth: Optional[float] = (
+            round(sum(_folder_depths) / len(_folder_depths), 3)
+            if _folder_depths
+            else None
+        )
+
+        # ------------------------------------------------------------------
+        # C. ExtendedData fidelity
+        # ------------------------------------------------------------------
+        _ed_key_counts: Dict[str, int] = {}
+        _ed_total_values = 0
+
+        for _f_fa in _sem_features:
+            if not isinstance(_f_fa, dict):
+                continue
+            _ed = _f_fa.get("extended_data")
+            if isinstance(_ed, dict):
+                for _k in _ed.keys():
+                    _ed_key_counts[_k] = _ed_key_counts.get(_k, 0) + 1
+                    _ed_total_values += 1
+
+        _top_ed_keys = sorted(
+            [{"key": k, "count": v} for k, v in _ed_key_counts.items()],
+            key=lambda x: (-x["count"], x["key"]),
+        )[:5]
+
+        # ------------------------------------------------------------------
+        # D. MultiGeometry fidelity
+        # ------------------------------------------------------------------
+        _multi_geo_count = 0
+        _multi_child_count = 0
+
+        for _f_fa in _sem_features:
+            if not isinstance(_f_fa, dict):
+                continue
+            if _f_fa.get("geometry_type") == "MultiGeometry":
+                _multi_geo_count += 1
+                _children = _f_fa.get("multigeometry_children")
+                if isinstance(_children, list):
+                    _multi_child_count += len(_children)
+
+        # ------------------------------------------------------------------
+        # E. Render simplification
+        # ------------------------------------------------------------------
+        _sem_field_set = set(_SEMANTIC_FEATURE_FIELD_NAMES)
+        _ref_field_set = set(_REFERENCE_LINE_FIELD_NAMES)
+        _dropped = sorted(_sem_field_set - _ref_field_set)
+
+        return {
+            "schema_version": "kmz-fidelity-audit-1",
+            "window": {
+                "semantic_feature_count": len(_sem_features),
+                "reference_line_count": len(_ref_lines),
+                "reference_polygon_count": len(_ref_polys),
+                "reference_point_count": len(_ref_points),
+                "has_semantic_ingest": _has_sem,
+                "has_reference_ingest": _has_ref,
+            },
+            "style_fidelity": {
+                "unique_style_urls_in_semantic": _n_style_urls,
+                "features_with_resolved_style_props": _resolved_style_count,
+                "features_with_kml_line_color": _kml_line_color_count,
+                "features_with_kml_poly_fill": _kml_poly_fill_count,
+                "features_with_icon_href": _icon_href_count,
+                "reference_feature_has_style_url": False,
+                "style_url_preservation_rate": _safe_rate(0, _n_style_urls),
+            },
+            "folder_fidelity": {
+                "max_folder_depth": _max_depth,
+                "avg_folder_depth": _avg_depth,
+                "features_with_multi_level_path": _multi_level_count,
+                "features_with_single_level_path": _single_level_count,
+                "reference_folder_is_flat_string": True,
+                "hierarchy_preservation_rate": (
+                    _safe_rate(0, _multi_level_count)
+                    if _multi_level_count > 0
+                    else None
+                ),
+            },
+            "extended_data_fidelity": {
+                "unique_key_count": len(_ed_key_counts),
+                "total_value_count": _ed_total_values,
+                "reference_has_extended_data_field": False,
+                "top_keys": _top_ed_keys,
+                "preservation_rate": _safe_rate(0, len(_ed_key_counts)),
+            },
+            "geometry_fidelity": {
+                "multigeometry_placemark_count": _multi_geo_count,
+                "multigeometry_child_count": _multi_child_count,
+                "reference_preserves_parent_placemark_identity": False,
+                "exploded_into_flat_geometries": True,
+            },
+            "render_simplification": {
+                "semantic_field_count": len(_SEMANTIC_FEATURE_FIELD_NAMES),
+                "reference_line_field_count": len(_REFERENCE_LINE_FIELD_NAMES),
+                "fields_in_semantic_not_in_reference": _dropped,
+                "dropped_field_count": len(_dropped),
+            },
+            "stability_note": _FIDELITY_STABILITY_NOTE,
+        }
+
+    except Exception:
+        return _empty_audit()
+
+
+@app.get("/api/observability/kmz-fidelity-audit")
+def get_kmz_fidelity_audit() -> JSONResponse:
+    """Phase 1M — KMZ engineering fidelity audit (compute-on-read, no writes).
+
+    Schema version: "kmz-fidelity-audit-1".
+
+    Reads STATE["kmz_semantic"] and STATE["kmz_reference"] directly.
+    Computes six fidelity categories:
+      style_fidelity, folder_fidelity, extended_data_fidelity,
+      geometry_fidelity, render_simplification, window.
+
+    Always returns HTTP 200.  Missing STATE entries → empty skeleton.
+    No writes.  No state mutations.  No operational side effects.
+
+    WORDING: All metrics describe engineering topology fidelity gaps.
+    No accuracy, correctness, confidence, or operational guidance language.
+    """
+    from datetime import timezone as _tz_fa
+
+    _generated_at_fa = datetime.now(_tz_fa.utc).isoformat()
+    try:
+        _result_fa = _compute_kmz_fidelity_audit(
+            STATE.get("kmz_semantic"),
+            STATE.get("kmz_reference"),
+        )
+        _result_fa["generated_at"] = _generated_at_fa
+        return JSONResponse(_result_fa)
+    except Exception as _fa_exc:
+        print(
+            f"[KMZ_FIDELITY_AUDIT] WARNING: failed to compute audit: "
+            f"{type(_fa_exc).__name__}: {_fa_exc}",
+            flush=True,
+        )
+        _empty_fa = _compute_kmz_fidelity_audit(None, None)
+        _empty_fa["generated_at"] = _generated_at_fa
+        return JSONResponse(_empty_fa)
+
+
+# ---------------------------------------------------------------------------
+# Phase 1O — KMZ Topology Sidecar (upload-scoped, read-only, diagnostic)
+#
+# USAGE POLICY (see TOPOLOGY_SIDECAR_USAGE_POLICY.md for full text):
+#   • No operational code path may depend on this sidecar being present.
+#   • Renderer, matcher, scorer, redline, billing, closeout: DO NOT read this.
+#   • This sidecar is diagnostic lineage data ONLY.
+#   • Absence or error must never break any operational path.
+# ---------------------------------------------------------------------------
+
+_TOPOLOGY_SIDECAR_STABILITY_NOTE: str = (
+    "kmz-topology-sidecar-1 records best-effort topology lineage from the "
+    "KMZ semantic ingest to the operational reference ingest.  Joins are by "
+    "(placemark_name, folder_path_str) and are not guaranteed unique.  "
+    "Read-only, upload-scoped, diagnostic only.  "
+    "No renderer, matcher, scorer, redline, billing, or closeout path may "
+    "depend on this sidecar.  Absence must never cause operational failure."
+)
+
+
+def _build_kmz_topology_sidecar(
+    semantic: Optional[Dict[str, Any]],
+    reference: Optional[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """Phase 1O — build the topology lineage bridge sidecar.
+
+    Pure function.  Never raises.  Joins ``semantic`` (output of
+    ``_build_kmz_semantic``) against ``reference`` (output of
+    ``_build_kmz_reference``) by ``(placemark_name, folder_path_str)``.
+
+    Returns a structured dict with:
+      ``entries``: list of per-reference-feature topology lineage records.
+
+    Each entry carries exactly:
+      reference_feature_id, semantic_feature_id, placemark_id,
+      folder_path (array), multigeometry_group_id, document_order, style_url.
+
+    Join semantics:
+      • Key is ``(name, folder_path)`` from reference matched against
+        ``(placemark_name, folder_path_str)`` from semantic.
+      • First match wins when duplicates exist.
+      • Unmatched reference features get None for all semantic-derived fields.
+      • MultiGeometry semantic features give all their matched reference
+        fragments the same ``multigeometry_group_id`` (= semantic_feature_id).
+
+    WORDING: Fidelity, topology, lineage.  No accuracy/correctness language.
+    """
+
+    def _empty_sidecar() -> Dict[str, Any]:
+        return {
+            "schema_version": "kmz-topology-sidecar-1",
+            "entry_count": 0,
+            "entries": [],
+            "join_stats": {
+                "total_reference_features": 0,
+                "matched_count": 0,
+                "unmatched_count": 0,
+                "multigeometry_group_count": 0,
+            },
+            "stability_note": _TOPOLOGY_SIDECAR_STABILITY_NOTE,
+        }
+
+    try:
+        # ------------------------------------------------------------------ #
+        # 1. Index semantic features by (placemark_name, folder_path_str).
+        #    First-occurrence wins to handle duplicate names safely.
+        # ------------------------------------------------------------------ #
+        _sem_features: List[Dict[str, Any]] = []
+        if isinstance(semantic, dict):
+            _raw = semantic.get("features")
+            if isinstance(_raw, list):
+                _sem_features = _raw
+
+        # Build lookup: (name, folder_str) → (document_order, feature_dict)
+        # document_order is 1-based position in semantic.features.
+        _sem_index: Dict[tuple, tuple] = {}
+        for _doc_pos, _sf in enumerate(_sem_features, start=1):
+            if not isinstance(_sf, dict):
+                continue
+            _name = (_sf.get("placemark_name") or "").strip()
+            _fstr = (_sf.get("folder_path_str") or "").strip()
+            _key = (_name, _fstr)
+            if _key not in _sem_index:
+                _sem_index[_key] = (_doc_pos, _sf)
+
+        # ------------------------------------------------------------------ #
+        # 2. Iterate all reference features in flat order.
+        # ------------------------------------------------------------------ #
+        _ref: Dict[str, Any] = reference if isinstance(reference, dict) else {}
+        _all_ref: List[Dict[str, Any]] = []
+        for _bucket in ("line_features", "polygon_features", "point_features"):
+            _bucket_list = _ref.get(_bucket)
+            if isinstance(_bucket_list, list):
+                for _rf in _bucket_list:
+                    if isinstance(_rf, dict):
+                        _all_ref.append(_rf)
+
+        # ------------------------------------------------------------------ #
+        # 3. Build entries.
+        # ------------------------------------------------------------------ #
+        _entries: List[Dict[str, Any]] = []
+        _matched = 0
+        _multi_group_ids: set = set()
+
+        for _rf in _all_ref:
+            _ref_id = _rf.get("feature_id") or ""
+            _ref_name = (_rf.get("name") or "").strip()
+            _ref_fstr = (_rf.get("folder_path") or "").strip()
+            _join_key = (_ref_name, _ref_fstr)
+
+            _sem_match: Optional[Dict[str, Any]] = None
+            _doc_order: Optional[int] = None
+
+            # Primary join: name + folder_path_str
+            _hit = _sem_index.get(_join_key)
+            if _hit is None and _ref_fstr:
+                # Fallback: name-only join when folder_path_str differs slightly
+                _hit = _sem_index.get((_ref_name, ""))
+            if _hit is None and _ref_name:
+                # Last-resort: scan for name-only match (bounded, first found)
+                for (_n, _f), (_d, _s) in _sem_index.items():
+                    if _n == _ref_name:
+                        _hit = (_d, _s)
+                        break
+
+            if _hit is not None:
+                _doc_order, _sem_match = _hit
+                _matched += 1
+
+            # Extract semantic-derived fields (all None on miss).
+            if _sem_match is not None:
+                _sem_fid: Optional[str] = _sem_match.get("feature_id")
+                _placemark_id: Optional[str] = _sem_match.get("placemark_id")
+                _folder_path_arr: Optional[List[str]] = (
+                    _sem_match.get("folder_path")
+                    if isinstance(_sem_match.get("folder_path"), list)
+                    else None
+                )
+                _style_url: Optional[str] = _sem_match.get("style_url") or None
+                _is_multi = _sem_match.get("geometry_type") == "MultiGeometry"
+                _multi_gid: Optional[str] = _sem_fid if _is_multi else None
+                if _multi_gid:
+                    _multi_group_ids.add(_multi_gid)
+            else:
+                _sem_fid = None
+                _placemark_id = None
+                _folder_path_arr = None
+                _style_url = None
+                _multi_gid = None
+
+            _entries.append(
+                {
+                    "reference_feature_id": _ref_id,
+                    "semantic_feature_id": _sem_fid,
+                    "placemark_id": _placemark_id,
+                    "folder_path": _folder_path_arr,
+                    "multigeometry_group_id": _multi_gid,
+                    "document_order": _doc_order,
+                    "style_url": _style_url,
+                }
+            )
+
+        _total = len(_entries)
+        return {
+            "schema_version": "kmz-topology-sidecar-1",
+            "entry_count": _total,
+            "entries": _entries,
+            "join_stats": {
+                "total_reference_features": _total,
+                "matched_count": _matched,
+                "unmatched_count": _total - _matched,
+                "multigeometry_group_count": len(_multi_group_ids),
+            },
+            "stability_note": _TOPOLOGY_SIDECAR_STABILITY_NOTE,
+        }
+
+    except Exception:
+        return _empty_sidecar()
+
+
+# ---------------------------------------------------------------------------
+# Phase 1P — Redline Topology Continuity Advisor
+#
+# USAGE POLICY (see TOPOLOGY_SIDECAR_USAGE_POLICY.md for full context):
+#   • This advisor is POST-REDLINE only. It reads completed redline_segments.
+#   • It NEVER writes to redline_segments, kmz_reference, kmz_semantic,
+#     kmz_topology_sidecar, matching state, scoring state, or route activation.
+#   • Absence or empty output must never cause operational failure.
+#   • Matcher, scorer, route activator, billing, closeout: DO NOT read this.
+# ---------------------------------------------------------------------------
+
+_REDLINE_CONTINUITY_STABILITY_NOTE: str = (
+    "redline-topology-continuity-1 groups existing redline segments by "
+    "shared MultiGeometry engineering object identity recovered from the "
+    "KMZ topology sidecar.  Grouping is advisory only.  "
+    "Existing redline_segments are completely unchanged.  "
+    "No matcher, scorer, route activation, billing, or closeout path may "
+    "depend on this structure.  Absence must never cause operational failure."
+)
+
+# Hard cap on advisory groups to defend against pathological inputs.
+_REDLINE_CONTINUITY_MAX_GROUPS = 500
+
+# ---------------------------------------------------------------------------
+# Phase 1Q — Node-anchored redline continuity advisor constants.
+# ---------------------------------------------------------------------------
+# USAGE POLICY (see TOPOLOGY_SIDECAR_USAGE_POLICY.md for full context):
+#   • Advisory only.  Post-redline enrichment.  Never operational.
+#   • Matcher, scorer, route activator, billing, closeout: DO NOT read this.
+#   • Tolerance is fixed.  Never adaptive.  Never config-driven.
+#   • Absence or empty output must never cause operational failure.
+# ---------------------------------------------------------------------------
+
+_NODE_CONTINUITY_TOLERANCE_FT: float = 3.0
+_NODE_CONTINUITY_MAX_GROUPS: int = 500
+# Phase 1S — endpoint validator band constants.  Fixed.  Never adaptive.
+# Phase 1T — snap recommendation stability note.
+_SNAP_RECOMMENDATION_STABILITY_NOTE: str = (
+    "endpoint-snap-recommendation-1 lists candidate anchor coordinates for "
+    "redline endpoints classified as 'near' or 'orphan' by the Phase 1S "
+    "validator.  Each candidate_coordinate is the exact location of the "
+    "nearest KMZ point feature already identified by the validator — no new "
+    "geometry is computed.  snap_delta_ft equals current_distance_ft by "
+    "construction.  These records are review aids only.  No geometry, "
+    "matching, scoring, route activation, billing, or closeout path may "
+    "depend on this structure.  Absence must never cause operational failure."
+)
+_NEAR_ENDPOINT_BAND_FT: float = 10.0
+_ENDPOINT_VALIDATION_STABILITY_NOTE: str = (
+    "redline-endpoint-validation-1 classifies each redline segment endpoint "
+    "by distance to the nearest KMZ point feature (handhole/node).  "
+    f"'anchored': distance <= {_NODE_CONTINUITY_TOLERANCE_FT:.1f} ft.  "
+    f"'near': {_NODE_CONTINUITY_TOLERANCE_FT:.1f} ft < distance <= {_NEAR_ENDPOINT_BAND_FT:.1f} ft.  "
+    "'orphan': distance > "
+    f"{_NEAR_ENDPOINT_BAND_FT:.1f} ft.  "
+    "'no_anchors_in_kmz': no point features present.  "
+    "Classification is advisory only.  No geometry, scoring, matching, route "
+    "activation, billing, or closeout path may depend on this structure.  "
+    "Absence must never cause operational failure."
+)
+_NODE_CONTINUITY_STABILITY_NOTE: str = (
+    "redline-node-continuity-1 groups existing redline segments by "
+    "engineering anchor coincidence: endpoints within "
+    f"{_NODE_CONTINUITY_TOLERANCE_FT:.1f} ft of a KMZ point feature "
+    "(handhole/node) are placed in that anchor's advisory group.  "
+    "Grouping is advisory only.  Tolerance is fixed and non-adaptive.  "
+    "No redline_segments, routes, scores, or operational outputs are "
+    "modified.  No matcher, scorer, route activator, billing, or closeout "
+    "path may depend on this structure.  Absence must never cause failure."
+)
+
+
+def _build_redline_topology_continuity(
+    redline_segments: Optional[List[Dict[str, Any]]],
+    topology_sidecar: Optional[Dict[str, Any]],
+    route_catalog: Optional[List[Dict[str, Any]]],
+    reference: Optional[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """Phase 1P — build the redline topology continuity advisory structure.
+
+    Pure function.  Never raises.  Reads from its arguments only; writes
+    nothing.
+
+    JOIN CHAIN (all best-effort, first-match-wins on duplicates):
+      redline_segment.matched_route_id
+        → route_catalog[route_id].route_name + source_folder
+        → kmz_reference.line_features[name + folder_path].feature_id
+        → topology_sidecar.entries[reference_feature_id].multigeometry_group_id
+
+    Segments that share a non-None multigeometry_group_id are placed in the
+    same advisory group.  All unmatched or ungroupable segments are listed in
+    ``ungrouped_segment_ids``.
+
+    SIGNAL: multigeometry_group ONLY.  No folder lineage, style, order, or
+    classification inference.
+
+    OUTPUT GUARDRAILS:
+      • redline_segments is NEVER mutated.
+      • Groups are sorted deterministically by engineering_object_id.
+      • segment_ids within groups are sorted deterministically.
+      • Groups are capped at _REDLINE_CONTINUITY_MAX_GROUPS.
+    """
+
+    def _empty_result(all_ids: List[str]) -> Dict[str, Any]:
+        return {
+            "schema_version": "redline-topology-continuity-1",
+            "groups": [],
+            "ungrouped_segment_ids": sorted(all_ids),
+            "stability_note": _REDLINE_CONTINUITY_STABILITY_NOTE,
+        }
+
+    try:
+        _segs: List[Dict[str, Any]] = []
+        if isinstance(redline_segments, list):
+            for _s in redline_segments:
+                if isinstance(_s, dict):
+                    _segs.append(_s)
+
+        _all_seg_ids = [
+            str(_s.get("segment_id") or "")
+            for _s in _segs
+            if (_s.get("segment_id") or "")
+        ]
+
+        if not _segs:
+            return _empty_result([])
+
+        # ------------------------------------------------------------------ #
+        # 1. Build ref_feature_id → multigeometry_group_id from sidecar.
+        # ------------------------------------------------------------------ #
+        _ref_id_to_group: Dict[str, str] = {}
+        if isinstance(topology_sidecar, dict):
+            _entries = topology_sidecar.get("entries") or []
+            if isinstance(_entries, list):
+                for _entry in _entries:
+                    if not isinstance(_entry, dict):
+                        continue
+                    _gid = _entry.get("multigeometry_group_id")
+                    _rid = _entry.get("reference_feature_id")
+                    if _gid and _rid:
+                        _ref_id_to_group[str(_rid)] = str(_gid)
+
+        if not _ref_id_to_group:
+            return _empty_result(_all_seg_ids)
+
+        # ------------------------------------------------------------------ #
+        # 2. Build (name, folder_str) → reference_feature_id from line_features.
+        # ------------------------------------------------------------------ #
+        _name_folder_to_ref_id: Dict[tuple, str] = {}
+        if isinstance(reference, dict):
+            _line_feats = reference.get("line_features") or []
+            if isinstance(_line_feats, list):
+                for _lf in _line_feats:
+                    if not isinstance(_lf, dict):
+                        continue
+                    _lname = (_lf.get("name") or "").strip()
+                    _lfolder = (_lf.get("folder_path") or "").strip()
+                    _lfid = _lf.get("feature_id") or ""
+                    if _lfid:
+                        _key = (_lname, _lfolder)
+                        if _key not in _name_folder_to_ref_id:
+                            _name_folder_to_ref_id[_key] = str(_lfid)
+
+        # ------------------------------------------------------------------ #
+        # 3. Build route_id → multigeometry_group_id via route_catalog join.
+        # ------------------------------------------------------------------ #
+        _route_id_to_group: Dict[str, str] = {}
+        if isinstance(route_catalog, list):
+            for _route in route_catalog:
+                if not isinstance(_route, dict):
+                    continue
+                _rid = _route.get("route_id") or ""
+                if not _rid:
+                    continue
+                _rname = (_route.get("route_name") or _route.get("name") or "").strip()
+                _rfolder = (_route.get("source_folder") or "").strip()
+                # Primary join: (name, folder_str)
+                _ref_fid = _name_folder_to_ref_id.get((_rname, _rfolder))
+                if _ref_fid is None and _rfolder:
+                    # Fallback: name-only
+                    _ref_fid = _name_folder_to_ref_id.get((_rname, ""))
+                if _ref_fid is None and _rname:
+                    # Last-resort: scan for name-only
+                    for (_n, _f), _fid in _name_folder_to_ref_id.items():
+                        if _n == _rname:
+                            _ref_fid = _fid
+                            break
+                if _ref_fid:
+                    _grp = _ref_id_to_group.get(_ref_fid)
+                    if _grp:
+                        _route_id_to_group[str(_rid)] = _grp
+
+        # ------------------------------------------------------------------ #
+        # 4. Group segments by multigeometry_group_id.
+        # ------------------------------------------------------------------ #
+        _group_to_seg_ids: Dict[str, List[str]] = {}
+        _ungrouped: List[str] = []
+
+        for _seg in _segs:
+            _seg_id = str(_seg.get("segment_id") or "")
+            if not _seg_id:
+                continue
+            _route_id = str(_seg.get("matched_route_id") or _seg.get("route_id") or "")
+            _grp = _route_id_to_group.get(_route_id) if _route_id else None
+            if _grp:
+                _group_to_seg_ids.setdefault(_grp, []).append(_seg_id)
+            else:
+                _ungrouped.append(_seg_id)
+
+        # ------------------------------------------------------------------ #
+        # 5. Build output groups (only groups with ≥ 2 members are meaningful
+        #    continuity groups; include single-member groups for completeness).
+        # ------------------------------------------------------------------ #
+        _groups: List[Dict[str, Any]] = []
+        for _gid in sorted(_group_to_seg_ids.keys()):
+            _member_ids = sorted(_group_to_seg_ids[_gid])
+            _groups.append(
+                {
+                    "engineering_object_id": _gid,
+                    "signal": "multigeometry_group",
+                    "source_segment_ids": _member_ids,
+                    "evidence": {
+                        "shared_group_id": _gid,
+                        "fragment_count": len(_member_ids),
+                    },
+                }
+            )
+            if len(_groups) >= _REDLINE_CONTINUITY_MAX_GROUPS:
+                break
+
+        return {
+            "schema_version": "redline-topology-continuity-1",
+            "groups": _groups,
+            "ungrouped_segment_ids": sorted(_ungrouped),
+            "stability_note": _REDLINE_CONTINUITY_STABILITY_NOTE,
+        }
+
+    except Exception:
+        _fallback_ids = []
+        try:
+            if isinstance(redline_segments, list):
+                for _s in redline_segments:
+                    if isinstance(_s, dict):
+                        _sid = str(_s.get("segment_id") or "")
+                        if _sid:
+                            _fallback_ids.append(_sid)
+        except Exception:
+            pass
+        return _empty_result(_fallback_ids)
+
+
+@app.get("/api/observability/redline-topology-continuity")
+def get_redline_topology_continuity() -> JSONResponse:
+    """Phase 1P — redline topology continuity advisor (read-only, post-redline).
+
+    Schema version: "redline-topology-continuity-1".
+
+    Returns STATE["redline_topology_continuity"] directly if populated, or
+    computes it on-the-fly from current STATE when the stored value is None.
+
+    Always returns HTTP 200.  No writes.  No state mutations.
+    No operational side effects.
+
+    USAGE POLICY: See TOPOLOGY_SIDECAR_USAGE_POLICY.md.
+    No operational consumer (matcher, scorer, route activator, billing,
+    closeout) may depend on this endpoint being non-empty.
+    """
+    from datetime import timezone as _tz_rtc
+
+    _generated_at_rtc = datetime.now(_tz_rtc.utc).isoformat()
+    try:
+        _stored = STATE.get("redline_topology_continuity")
+        if isinstance(_stored, dict):
+            _result = dict(_stored)
+        else:
+            # Compute on-the-fly when not yet built (no bore logs uploaded yet).
+            _result = _build_redline_topology_continuity(
+                STATE.get("redline_segments"),
+                STATE.get("kmz_topology_sidecar"),
+                STATE.get("route_catalog"),
+                STATE.get("kmz_reference"),
+            )
+        _result["generated_at"] = _generated_at_rtc
+        return JSONResponse(_result)
+    except Exception as _rtc_exc:
+        print(
+            f"[REDLINE_TOPOLOGY_CONTINUITY] WARNING: failed to serve advisor: "
+            f"{type(_rtc_exc).__name__}: {_rtc_exc}",
+            flush=True,
+        )
+        _empty = _build_redline_topology_continuity(None, None, None, None)
+        _empty["generated_at"] = _generated_at_rtc
+        return JSONResponse(_empty)
+
+
+# ---------------------------------------------------------------------------
+# Phase 1Q — Node-anchored redline continuity advisor
+# ---------------------------------------------------------------------------
+
+
+def _build_redline_node_continuity(
+    redline_segments: Optional[List[Dict[str, Any]]],
+    reference: Optional[Dict[str, Any]],
+    route_catalog: Optional[List[Dict[str, Any]]],
+) -> Dict[str, Any]:
+    """Phase 1Q — build the node-anchored redline continuity advisory structure.
+
+    Pure function.  Never raises.  Reads from its arguments only; writes
+    nothing.
+
+    ALGORITHM:
+      For each redline segment:
+        1. Resolve its route from route_catalog to get endpoint coordinates.
+        2. Test both endpoints (start = coords[0], end = coords[-1]) against
+           every point feature in kmz_reference.
+        3. If distance <= _NODE_CONTINUITY_TOLERANCE_FT, assign the
+           segment+endpoint to that anchor's advisory group.
+      A segment is ``ungrouped`` only if NEITHER endpoint falls within
+      tolerance of any anchor.  A segment may appear in more than one group
+      (start → anchor A, end → anchor B).
+
+    SIGNAL: endpoint-to-anchor coincidence ONLY.
+      No folder lineage.  No style inference.  No transitive chaining.
+      No nearest-neighbour fallback.
+
+    OUTPUT GUARDRAILS:
+      • redline_segments is NEVER mutated.
+      • Groups are emitted only for anchors that have ≥ 1 endpoint.
+      • Groups are sorted deterministically by anchor_reference_feature_id.
+      • source_segment_ids within groups are sorted deterministically.
+      • Groups are capped at _NODE_CONTINUITY_MAX_GROUPS.
+    """
+
+    def _empty_result(all_ids: List[str]) -> Dict[str, Any]:
+        return {
+            "schema_version": "redline-node-continuity-1",
+            "tolerance_ft": _NODE_CONTINUITY_TOLERANCE_FT,
+            "groups": [],
+            "ungrouped_segment_ids": sorted(all_ids),
+            "stats": {
+                "anchor_points_considered": 0,
+                "anchor_points_with_groups": 0,
+                "redline_segments_total": len(all_ids),
+                "redline_segments_anchored": 0,
+                "redline_segments_unanchored": len(all_ids),
+            },
+            "stability_note": _NODE_CONTINUITY_STABILITY_NOTE,
+        }
+
+    try:
+        # ------------------------------------------------------------------ #
+        # 0. Coerce + validate inputs.
+        # ------------------------------------------------------------------ #
+        _segs: List[Dict[str, Any]] = []
+        if isinstance(redline_segments, list):
+            for _s in redline_segments:
+                if isinstance(_s, dict):
+                    _segs.append(_s)
+
+        _all_seg_ids = [
+            str(_s.get("segment_id") or "")
+            for _s in _segs
+            if (_s.get("segment_id") or "")
+        ]
+
+        if not _segs:
+            return _empty_result([])
+
+        # ------------------------------------------------------------------ #
+        # 1. Build anchor index: point_feature_id → anchor dict.
+        # ------------------------------------------------------------------ #
+        _anchors: List[Dict[str, Any]] = []
+        if isinstance(reference, dict):
+            _pt_feats = reference.get("point_features") or []
+            if isinstance(_pt_feats, list):
+                for _pf in _pt_feats:
+                    if not isinstance(_pf, dict):
+                        continue
+                    _lat = _pf.get("lat")
+                    _lon = _pf.get("lon")
+                    _fid = _pf.get("feature_id") or ""
+                    if _fid and isinstance(_lat, (int, float)) and isinstance(_lon, (int, float)):
+                        _anchors.append(
+                            {
+                                "feature_id": str(_fid),
+                                "name": (_pf.get("name") or "").strip() or "Unnamed Feature",
+                                "folder_path": _pf.get("folder_path"),
+                                "lat": float(_lat),
+                                "lon": float(_lon),
+                            }
+                        )
+
+        _anchor_count = len(_anchors)
+        if not _anchors:
+            return _empty_result(_all_seg_ids)
+
+        # ------------------------------------------------------------------ #
+        # 2. Build route_id → route dict (coords + name).
+        # ------------------------------------------------------------------ #
+        _route_by_id: Dict[str, Dict[str, Any]] = {}
+        if isinstance(route_catalog, list):
+            for _rc in route_catalog:
+                if not isinstance(_rc, dict):
+                    continue
+                _rid = _rc.get("route_id") or ""
+                if _rid:
+                    _route_by_id[str(_rid)] = _rc
+
+        # ------------------------------------------------------------------ #
+        # 3. For each segment resolve endpoints and test against anchors.
+        #    anchor_id → {seg_id → list[(endpoint_label, distance_ft)]}
+        # ------------------------------------------------------------------ #
+        # anchor_id → {seg_id: [(endpoint_label, distance_ft), ...]}
+        _anchor_hits: Dict[str, Dict[str, List[tuple]]] = {}
+        # seg_id → route_id (for engineering_object_ids in output)
+        _seg_route_id: Dict[str, str] = {}
+        # set of seg_ids that have at least one anchor match
+        _anchored_seg_ids: set = set()
+
+        for _seg in _segs:
+            _seg_id = str(_seg.get("segment_id") or "")
+            if not _seg_id:
+                continue
+            _route_id = str(
+                _seg.get("matched_route_id") or _seg.get("route_id") or ""
+            )
+            _seg_route_id[_seg_id] = _route_id
+
+            _route = _route_by_id.get(_route_id) if _route_id else None
+            if not _route:
+                continue
+
+            _coords = _route.get("coords") or []
+            if not isinstance(_coords, list) or len(_coords) < 1:
+                continue
+
+            # Extract start and end endpoints; guard against degenerate routes.
+            _endpoints: List[tuple] = []
+            _c0 = _coords[0]
+            if isinstance(_c0, (list, tuple)) and len(_c0) >= 2:
+                _endpoints.append(("start", float(_c0[0]), float(_c0[1])))
+            _c1 = _coords[-1]
+            if isinstance(_c1, (list, tuple)) and len(_c1) >= 2:
+                # Only add end if it is distinct from start (non-trivial route).
+                if len(_coords) > 1:
+                    _endpoints.append(("end", float(_c1[0]), float(_c1[1])))
+
+            for _ep_label, _ep_lat, _ep_lon in _endpoints:
+                for _anc in _anchors:
+                    try:
+                        _d = _haversine_feet(
+                            _ep_lat, _ep_lon, _anc["lat"], _anc["lon"]
+                        )
+                    except Exception:
+                        continue
+                    if _d <= _NODE_CONTINUITY_TOLERANCE_FT:
+                        _aid = _anc["feature_id"]
+                        if _aid not in _anchor_hits:
+                            _anchor_hits[_aid] = {}
+                        _anchor_hits[_aid].setdefault(_seg_id, []).append(
+                            (_ep_label, round(_d, 3))
+                        )
+                        _anchored_seg_ids.add(_seg_id)
+
+        # ------------------------------------------------------------------ #
+        # 4. Build ungrouped list.
+        # ------------------------------------------------------------------ #
+        _ungrouped = sorted(
+            sid for sid in _all_seg_ids if sid not in _anchored_seg_ids
+        )
+
+        # ------------------------------------------------------------------ #
+        # 5. Build output groups.
+        #
+        # Sort key: (-segment_count, anchor_id) so that the cap only drops
+        # single-segment groups when multi-segment groups fit within the cap.
+        # Without this, lexicographic sort on anchor_id causes IDs like
+        # "point_59" to sort AFTER "point_499", silently dropping multi-
+        # segment groups (4-9 cables converging at a handhole) while
+        # preserving single-segment entries that are less useful as
+        # continuity evidence.  Determinism is preserved within each tier.
+        # ------------------------------------------------------------------ #
+        _groups: List[Dict[str, Any]] = []
+        _sorted_anchor_ids = sorted(
+            _anchor_hits.keys(),
+            key=lambda _k: (-len(_anchor_hits[_k]), _k),
+        )
+        for _aid in _sorted_anchor_ids:
+            _seg_map = _anchor_hits[_aid]
+            if not _seg_map:
+                continue
+
+            # Find anchor metadata.
+            _anc_meta = next(
+                (a for a in _anchors if a["feature_id"] == _aid), None
+            )
+            if not _anc_meta:
+                continue
+
+            _src_seg_ids = sorted(_seg_map.keys())
+            _eng_obj_ids = sorted(
+                {_seg_route_id.get(sid, "") for sid in _src_seg_ids} - {""}
+            )
+            _evidence = []
+            for _sid in _src_seg_ids:
+                for _ep_label, _dist in _seg_map[_sid]:
+                    _evidence.append(
+                        {
+                            "segment_id": _sid,
+                            "endpoint": _ep_label,
+                            "distance_ft": _dist,
+                        }
+                    )
+            # Sort evidence deterministically.
+            _evidence.sort(key=lambda x: (x["segment_id"], x["endpoint"]))
+
+            _groups.append(
+                {
+                    "anchor_reference_feature_id": _aid,
+                    "anchor_folder_path": _anc_meta.get("folder_path"),
+                    "anchor_name": _anc_meta["name"],
+                    "anchor_coordinate": [
+                        _anc_meta["lon"],
+                        _anc_meta["lat"],
+                    ],
+                    "source_segment_ids": _src_seg_ids,
+                    "engineering_object_ids": _eng_obj_ids,
+                    "endpoint_count": len(_evidence),
+                    "evidence": _evidence,
+                }
+            )
+            if len(_groups) >= _NODE_CONTINUITY_MAX_GROUPS:
+                break
+
+        _anchored_total = len(_anchored_seg_ids)
+        return {
+            "schema_version": "redline-node-continuity-1",
+            "tolerance_ft": _NODE_CONTINUITY_TOLERANCE_FT,
+            "groups": _groups,
+            "ungrouped_segment_ids": _ungrouped,
+            "stats": {
+                "anchor_points_considered": _anchor_count,
+                "anchor_points_with_groups": len(_groups),
+                "redline_segments_total": len(_all_seg_ids),
+                "redline_segments_anchored": _anchored_total,
+                "redline_segments_unanchored": len(_all_seg_ids) - _anchored_total,
+            },
+            "stability_note": _NODE_CONTINUITY_STABILITY_NOTE,
+        }
+
+    except Exception:
+        _fallback_ids: List[str] = []
+        try:
+            if isinstance(redline_segments, list):
+                for _s in redline_segments:
+                    if isinstance(_s, dict):
+                        _sid = str(_s.get("segment_id") or "")
+                        if _sid:
+                            _fallback_ids.append(_sid)
+        except Exception:
+            pass
+        return _empty_result(_fallback_ids)
+
+
+@app.get("/api/observability/redline-node-continuity")
+def get_redline_node_continuity() -> JSONResponse:
+    """Phase 1Q — node-anchored redline continuity advisor (read-only, post-redline).
+
+    Schema version: "redline-node-continuity-1".
+
+    Returns STATE["redline_node_continuity"] directly if populated, or
+    computes it on-the-fly from current STATE when the stored value is None.
+
+    Groups redline segments whose endpoints fall within
+    _NODE_CONTINUITY_TOLERANCE_FT of a KMZ point feature (handhole/node).
+
+    Always returns HTTP 200.  No writes.  No state mutations.
+    No operational side effects.
+
+    USAGE POLICY: See TOPOLOGY_SIDECAR_USAGE_POLICY.md.
+    No operational consumer (matcher, scorer, route activator, billing,
+    closeout) may depend on this endpoint being non-empty.
+    """
+    from datetime import timezone as _tz_rnc
+
+    _generated_at_rnc = datetime.now(_tz_rnc.utc).isoformat()
+    try:
+        _stored = STATE.get("redline_node_continuity")
+        if isinstance(_stored, dict):
+            _result = dict(_stored)
+        else:
+            _result = _build_redline_node_continuity(
+                STATE.get("redline_segments"),
+                STATE.get("kmz_reference"),
+                STATE.get("route_catalog"),
+            )
+        _result["generated_at"] = _generated_at_rnc
+        return JSONResponse(_result)
+    except Exception as _rnc_exc:
+        print(
+            f"[REDLINE_NODE_CONTINUITY] WARNING: failed to serve advisor: "
+            f"{type(_rnc_exc).__name__}: {_rnc_exc}",
+            flush=True,
+        )
+        _empty = _build_redline_node_continuity(None, None, None)
+        _empty["generated_at"] = _generated_at_rnc
+        return JSONResponse(_empty)
+
+
+# ---------------------------------------------------------------------------
+# Phase 1S — Bore-log Redline Endpoint Validator
+# ---------------------------------------------------------------------------
+
+
+def _build_redline_endpoint_validation(
+    redline_segments: Optional[List[Dict[str, Any]]],
+    reference: Optional[Dict[str, Any]],
+    route_catalog: Optional[List[Dict[str, Any]]],
+) -> Dict[str, Any]:
+    """Phase 1S — bore-log redline endpoint validator.
+
+    Pure function.  Never raises.  Reads from its arguments only; writes
+    nothing.
+
+    For every redline segment endpoint (start = coords[0], end = coords[-1]),
+    finds the nearest KMZ point feature anchor and classifies:
+      - anchored          : distance <= _NODE_CONTINUITY_TOLERANCE_FT (3.0 ft)
+      - near              : _NODE_CONTINUITY_TOLERANCE_FT < distance <= _NEAR_ENDPOINT_BAND_FT (10.0 ft)
+      - orphan            : distance > _NEAR_ENDPOINT_BAND_FT
+      - no_anchors_in_kmz : no point features present in kmz_reference
+
+    OUTPUT GUARDRAILS:
+      • redline_segments is NEVER mutated.
+      • Geometry is NEVER modified.
+      • Scores, routes, and all operational STATE are untouched.
+      • No sorting or cap — every endpoint is recorded.
+    """
+
+    def _empty_result() -> Dict[str, Any]:
+        return {
+            "schema_version": "redline-endpoint-validation-1",
+            "tolerance_ft": _NODE_CONTINUITY_TOLERANCE_FT,
+            "near_band_ft": _NEAR_ENDPOINT_BAND_FT,
+            "endpoints": [],
+            "summary": {
+                "total_endpoints": 0,
+                "anchored_count": 0,
+                "near_count": 0,
+                "orphan_count": 0,
+                "no_anchors_in_kmz_count": 0,
+                "anchored_pct": None,
+                "by_route": {},
+                "flagged_segments": [],
+            },
+            "stability_note": _ENDPOINT_VALIDATION_STABILITY_NOTE,
+        }
+
+    try:
+        # ------------------------------------------------------------------ #
+        # 0. Coerce inputs.
+        # ------------------------------------------------------------------ #
+        _segs: List[Dict[str, Any]] = []
+        if isinstance(redline_segments, list):
+            for _s in redline_segments:
+                if isinstance(_s, dict):
+                    _segs.append(_s)
+
+        if not _segs:
+            return _empty_result()
+
+        # ------------------------------------------------------------------ #
+        # 1. Build anchor list and "no anchors" sentinel.
+        # ------------------------------------------------------------------ #
+        _anchors: List[Dict[str, Any]] = []
+        if isinstance(reference, dict):
+            _pt_feats = reference.get("point_features") or []
+            if isinstance(_pt_feats, list):
+                for _pf in _pt_feats:
+                    if not isinstance(_pf, dict):
+                        continue
+                    _lat = _pf.get("lat")
+                    _lon = _pf.get("lon")
+                    _fid = _pf.get("feature_id") or ""
+                    if (
+                        _fid
+                        and isinstance(_lat, (int, float))
+                        and isinstance(_lon, (int, float))
+                    ):
+                        _anchors.append(
+                            {
+                                "feature_id": str(_fid),
+                                "name": (
+                                    (_pf.get("name") or "").strip()
+                                    or "Unnamed Feature"
+                                ),
+                                "lat": float(_lat),
+                                "lon": float(_lon),
+                            }
+                        )
+
+        _no_anchors = len(_anchors) == 0
+
+        # ------------------------------------------------------------------ #
+        # 2. Build route_id → route dict for coordinate resolution.
+        # ------------------------------------------------------------------ #
+        _route_by_id: Dict[str, Dict[str, Any]] = {}
+        if isinstance(route_catalog, list):
+            for _rc in route_catalog:
+                if not isinstance(_rc, dict):
+                    continue
+                _rid = _rc.get("route_id") or ""
+                if _rid:
+                    _route_by_id[str(_rid)] = _rc
+
+        # ------------------------------------------------------------------ #
+        # 3. Process each segment, classify each endpoint.
+        # ------------------------------------------------------------------ #
+        _endpoint_records: List[Dict[str, Any]] = []
+        _by_route: Dict[str, Dict[str, int]] = {}
+        _flagged: set = set()
+
+        for _seg in _segs:
+            _seg_id = str(_seg.get("segment_id") or "")
+            if not _seg_id:
+                continue
+            _route_id = str(
+                _seg.get("matched_route_id") or _seg.get("route_id") or ""
+            )
+            _route = _route_by_id.get(_route_id) if _route_id else None
+
+            _coords = _route.get("coords") or [] if _route else []
+            if not isinstance(_coords, list) or len(_coords) < 1:
+                continue
+
+            # Build endpoint list: start (always), end (only if route > 1 pt).
+            _ep_defs: List[tuple] = []
+            _c0 = _coords[0]
+            if isinstance(_c0, (list, tuple)) and len(_c0) >= 2:
+                _ep_defs.append(("start", float(_c0[0]), float(_c0[1])))
+            if len(_coords) > 1:
+                _c1 = _coords[-1]
+                if isinstance(_c1, (list, tuple)) and len(_c1) >= 2:
+                    _ep_defs.append(("end", float(_c1[0]), float(_c1[1])))
+
+            for _ep_label, _ep_lat, _ep_lon in _ep_defs:
+                if _no_anchors:
+                    _cls = "no_anchors_in_kmz"
+                    _nearest_id: Optional[str] = None
+                    _nearest_name: Optional[str] = None
+                    _dist_ft: Optional[float] = None
+                else:
+                    _best_d: Optional[float] = None
+                    _best_anc: Optional[Dict[str, Any]] = None
+                    for _anc in _anchors:
+                        try:
+                            _d = _haversine_feet(
+                                _ep_lat, _ep_lon,
+                                _anc["lat"], _anc["lon"],
+                            )
+                        except Exception:
+                            continue
+                        if _best_d is None or _d < _best_d:
+                            _best_d = _d
+                            _best_anc = _anc
+
+                    if _best_d is None:
+                        _cls = "no_anchors_in_kmz"
+                        _nearest_id = None
+                        _nearest_name = None
+                        _dist_ft = None
+                    elif _best_d <= _NODE_CONTINUITY_TOLERANCE_FT:
+                        _cls = "anchored"
+                        _nearest_id = _best_anc["feature_id"]  # type: ignore[index]
+                        _nearest_name = _best_anc["name"]  # type: ignore[index]
+                        _dist_ft = round(_best_d, 3)
+                    elif _best_d <= _NEAR_ENDPOINT_BAND_FT:
+                        _cls = "near"
+                        _nearest_id = _best_anc["feature_id"]  # type: ignore[index]
+                        _nearest_name = _best_anc["name"]  # type: ignore[index]
+                        _dist_ft = round(_best_d, 3)
+                    else:
+                        _cls = "orphan"
+                        _nearest_id = _best_anc["feature_id"]  # type: ignore[index]
+                        _nearest_name = _best_anc["name"]  # type: ignore[index]
+                        _dist_ft = round(_best_d, 3)
+
+                _endpoint_records.append(
+                    {
+                        "segment_id": _seg_id,
+                        "route_id": _route_id or None,
+                        "endpoint": _ep_label,
+                        "coordinate": [_ep_lon, _ep_lat],
+                        "nearest_anchor_id": _nearest_id,
+                        "nearest_anchor_name": _nearest_name,
+                        "distance_ft": _dist_ft,
+                        "classification": _cls,
+                    }
+                )
+
+                # Accumulate by_route.
+                if _route_id:
+                    if _route_id not in _by_route:
+                        _by_route[_route_id] = {
+                            "anchored": 0, "near": 0, "orphan": 0,
+                            "no_anchors_in_kmz": 0,
+                        }
+                    _by_route[_route_id][_cls] = _by_route[_route_id].get(_cls, 0) + 1
+
+                # Flag segments with any non-anchored endpoint.
+                if _cls != "anchored":
+                    _flagged.add(_seg_id)
+
+        # ------------------------------------------------------------------ #
+        # 4. Build summary.
+        # ------------------------------------------------------------------ #
+        _total = len(_endpoint_records)
+        _anchored_n = sum(1 for r in _endpoint_records if r["classification"] == "anchored")
+        _near_n = sum(1 for r in _endpoint_records if r["classification"] == "near")
+        _orphan_n = sum(1 for r in _endpoint_records if r["classification"] == "orphan")
+        _no_anc_n = sum(1 for r in _endpoint_records if r["classification"] == "no_anchors_in_kmz")
+        _anchored_pct = round(_anchored_n / _total, 4) if _total > 0 else None
+
+        return {
+            "schema_version": "redline-endpoint-validation-1",
+            "tolerance_ft": _NODE_CONTINUITY_TOLERANCE_FT,
+            "near_band_ft": _NEAR_ENDPOINT_BAND_FT,
+            "endpoints": _endpoint_records,
+            "summary": {
+                "total_endpoints": _total,
+                "anchored_count": _anchored_n,
+                "near_count": _near_n,
+                "orphan_count": _orphan_n,
+                "no_anchors_in_kmz_count": _no_anc_n,
+                "anchored_pct": _anchored_pct,
+                "by_route": _by_route,
+                "flagged_segments": sorted(_flagged),
+            },
+            "stability_note": _ENDPOINT_VALIDATION_STABILITY_NOTE,
+        }
+
+    except Exception:
+        return _empty_result()
+
+
+@app.get("/api/observability/redline-endpoint-validation")
+def get_redline_endpoint_validation() -> JSONResponse:
+    """Phase 1S — bore-log redline endpoint validator (read-only, post-redline).
+
+    Schema version: "redline-endpoint-validation-1".
+
+    Classifies each redline segment endpoint (start/end) as:
+    anchored / near / orphan / no_anchors_in_kmz based on haversine distance
+    to the nearest KMZ point feature.
+
+    Returns STATE["redline_endpoint_validation"] directly if populated, or
+    computes on-the-fly from current STATE.
+
+    Always returns HTTP 200.  No writes.  No state mutations.
+    No operational side effects.
+
+    USAGE POLICY: See TOPOLOGY_SIDECAR_USAGE_POLICY.md.
+    No operational consumer (matcher, scorer, route activator, geometry,
+    billing, closeout) may depend on this endpoint being non-empty.
+    """
+    from datetime import timezone as _tz_rev
+
+    _generated_at_rev = datetime.now(_tz_rev.utc).isoformat()
+    try:
+        _stored = STATE.get("redline_endpoint_validation")
+        if isinstance(_stored, dict):
+            _result = dict(_stored)
+        else:
+            _result = _build_redline_endpoint_validation(
+                STATE.get("redline_segments"),
+                STATE.get("kmz_reference"),
+                STATE.get("route_catalog"),
+            )
+        _result["generated_at"] = _generated_at_rev
+        return JSONResponse(_result)
+    except Exception as _rev_exc:
+        print(
+            f"[REDLINE_ENDPOINT_VALIDATION] WARNING: failed to serve validator: "
+            f"{type(_rev_exc).__name__}: {_rev_exc}",
+            flush=True,
+        )
+        _empty = _build_redline_endpoint_validation(None, None, None)
+        _empty["generated_at"] = _generated_at_rev
+        return JSONResponse(_empty)
+
+
+# ---------------------------------------------------------------------------
+# Phase 1T — Deterministic Endpoint Snap Recommendations
+# ---------------------------------------------------------------------------
+
+
+def _build_endpoint_snap_recommendations(
+    endpoint_validation: Optional[Dict[str, Any]],
+    reference: Optional[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """Phase 1T — deterministic endpoint snap recommendations.
+
+    Pure function.  Never raises.  Reads from its arguments only; writes
+    nothing.
+
+    Consumes the already-computed Phase 1S ``endpoint_validation`` result
+    and the ``kmz_reference`` anchor list.  Produces one recommendation for
+    every endpoint classified as ``near`` or ``orphan``.  Anchored and
+    ``no_anchors_in_kmz`` endpoints produce **no** recommendation.
+
+    ``candidate_coordinate`` is the exact ``[lon, lat]`` of the nearest
+    anchor already identified by the Phase 1S validator — no new geometric
+    computation is performed.  ``snap_delta_ft`` equals
+    ``current_distance_ft`` by construction.
+
+    OUTPUT GUARDRAILS:
+      • redline_segments is NEVER read or mutated.
+      • No geometry is computed or modified.
+      • Matching, scoring, routing, billing, closeout are untouched.
+      • No persistence.  No JSONL.
+    """
+
+    def _empty_result() -> Dict[str, Any]:
+        return {
+            "schema_version": "endpoint-snap-recommendation-1",
+            "tolerance_ft": _NODE_CONTINUITY_TOLERANCE_FT,
+            "near_band_ft": _NEAR_ENDPOINT_BAND_FT,
+            "recommendations": [],
+            "summary": {
+                "total_recommendations": 0,
+                "near_recommendations": 0,
+                "orphan_recommendations": 0,
+            },
+            "stability_note": _SNAP_RECOMMENDATION_STABILITY_NOTE,
+        }
+
+    try:
+        # ------------------------------------------------------------------ #
+        # 0. Guard: need a valid validation result with endpoints.
+        # ------------------------------------------------------------------ #
+        if not isinstance(endpoint_validation, dict):
+            return _empty_result()
+        _ep_records = endpoint_validation.get("endpoints")
+        if not isinstance(_ep_records, list) or not _ep_records:
+            return _empty_result()
+
+        # ------------------------------------------------------------------ #
+        # 1. Build anchor lookup: feature_id → {lat, lon, name}.
+        # ------------------------------------------------------------------ #
+        _anchor_by_id: Dict[str, Dict[str, Any]] = {}
+        if isinstance(reference, dict):
+            _pt_feats = reference.get("point_features") or []
+            if isinstance(_pt_feats, list):
+                for _pf in _pt_feats:
+                    if not isinstance(_pf, dict):
+                        continue
+                    _fid = _pf.get("feature_id") or ""
+                    _lat = _pf.get("lat")
+                    _lon = _pf.get("lon")
+                    if (
+                        _fid
+                        and isinstance(_lat, (int, float))
+                        and isinstance(_lon, (int, float))
+                    ):
+                        _anchor_by_id[str(_fid)] = {
+                            "lat": float(_lat),
+                            "lon": float(_lon),
+                            "name": (
+                                (_pf.get("name") or "").strip()
+                                or "Unnamed Feature"
+                            ),
+                        }
+
+        # ------------------------------------------------------------------ #
+        # 2. Build recommendations for near/orphan endpoints only.
+        # ------------------------------------------------------------------ #
+        _recommendations: List[Dict[str, Any]] = []
+        _near_n = 0
+        _orphan_n = 0
+
+        for _ep in _ep_records:
+            if not isinstance(_ep, dict):
+                continue
+            _cls = _ep.get("classification") or ""
+            if _cls not in ("near", "orphan"):
+                continue  # anchored and no_anchors_in_kmz → no recommendation
+
+            _seg_id = str(_ep.get("segment_id") or "")
+            if not _seg_id:
+                continue
+
+            _anc_id = _ep.get("nearest_anchor_id") or ""
+            if not _anc_id:
+                continue  # no anchor identified → cannot produce a candidate
+
+            _dist = _ep.get("distance_ft")
+            if not isinstance(_dist, (int, float)):
+                continue
+
+            _anc = _anchor_by_id.get(str(_anc_id))
+            if _anc is None:
+                # Anchor not resolvable from reference; skip rather than guess.
+                continue
+
+            _recommendations.append(
+                {
+                    "segment_id": _seg_id,
+                    "route_id": _ep.get("route_id"),
+                    "endpoint": _ep.get("endpoint") or "",
+                    "current_coordinate": _ep.get("coordinate") or [None, None],
+                    "current_distance_ft": round(float(_dist), 3),
+                    "candidate_anchor_id": str(_anc_id),
+                    "candidate_anchor_name": _anc["name"],
+                    "candidate_coordinate": [_anc["lon"], _anc["lat"]],
+                    "snap_delta_ft": round(float(_dist), 3),
+                    "classification": _cls,
+                }
+            )
+
+            if _cls == "near":
+                _near_n += 1
+            else:
+                _orphan_n += 1
+
+        return {
+            "schema_version": "endpoint-snap-recommendation-1",
+            "tolerance_ft": _NODE_CONTINUITY_TOLERANCE_FT,
+            "near_band_ft": _NEAR_ENDPOINT_BAND_FT,
+            "recommendations": _recommendations,
+            "summary": {
+                "total_recommendations": len(_recommendations),
+                "near_recommendations": _near_n,
+                "orphan_recommendations": _orphan_n,
+            },
+            "stability_note": _SNAP_RECOMMENDATION_STABILITY_NOTE,
+        }
+
+    except Exception:
+        return _empty_result()
+
+
+@app.get("/api/observability/endpoint-snap-recommendations")
+def get_endpoint_snap_recommendations() -> JSONResponse:
+    """Phase 1T — endpoint snap recommendations (read-only, post-validator).
+
+    Schema version: "endpoint-snap-recommendation-1".
+
+    For each redline endpoint classified as 'near' or 'orphan' by the Phase
+    1S validator, returns the candidate anchor coordinate — the exact location
+    of the nearest KMZ point feature already identified by the validator.
+    No new geometry is computed.
+
+    Returns STATE["endpoint_snap_recommendations"] if populated, or
+    computes on-the-fly from current STATE.
+
+    Always returns HTTP 200.  No writes.  No state mutations.
+    No operational side effects.
+
+    USAGE POLICY: See TOPOLOGY_SIDECAR_USAGE_POLICY.md.
+    No operational consumer may depend on this endpoint being non-empty.
+    """
+    from datetime import timezone as _tz_snap
+
+    _generated_at_snap = datetime.now(_tz_snap.utc).isoformat()
+    try:
+        _stored = STATE.get("endpoint_snap_recommendations")
+        if isinstance(_stored, dict):
+            _result = dict(_stored)
+        else:
+            _result = _build_endpoint_snap_recommendations(
+                STATE.get("redline_endpoint_validation"),
+                STATE.get("kmz_reference"),
+            )
+        _result["generated_at"] = _generated_at_snap
+        return JSONResponse(_result)
+    except Exception as _snap_exc:
+        print(
+            f"[ENDPOINT_SNAP_RECOMMENDATIONS] WARNING: failed to serve: "
+            f"{type(_snap_exc).__name__}: {_snap_exc}",
+            flush=True,
+        )
+        _empty = _build_endpoint_snap_recommendations(None, None)
+        _empty["generated_at"] = _generated_at_snap
+        return JSONResponse(_empty)
+
+
+# ---------------------------------------------------------------------------
+# Phase 1U — Operator-Approved Snap Review Events
+# ---------------------------------------------------------------------------
+
+
+def _snap_recommendation_sha256(snapshot: Dict[str, Any]) -> str:
+    """Compute a deterministic sha256 hex-digest for a recommendation snapshot.
+
+    Snapshot is serialised with sorted keys, compact separators, then hashed.
+    Pure function — no side effects.
+    """
+    _raw = json.dumps(snapshot, sort_keys=True, separators=(",", ":"), default=str)
+    return hashlib.sha256(_raw.encode("utf-8")).hexdigest()
+
+
+def _append_snap_review_event(
+    segment_id: str,
+    endpoint_label: str,
+    decision: str,
+    recommendation_snapshot: Dict[str, Any],
+    operator_id: str,
+    session_id: Optional[str],
+) -> str:
+    """Phase 1U — append one snap-review-event to the JSONL log.
+
+    Returns the generated event_id.
+
+    ISOLATION GUARANTEE: This function only writes to ``SNAP_REVIEW_EVENTS_PATH``.
+    It NEVER reads or writes to any matching, scoring, geometry, billing, or
+    operational system.
+    """
+    from datetime import timezone as _tz_sre
+
+    _event_id_sre = str(uuid.uuid4())
+    try:
+        _snapshot = dict(recommendation_snapshot) if isinstance(recommendation_snapshot, dict) else {}
+        _sha = _snap_recommendation_sha256(_snapshot)
+        _row_sre: Dict[str, Any] = {
+            "schema_version": "snap-review-event-1",
+            "event_id": _event_id_sre,
+            "created_at": datetime.now(_tz_sre.utc).isoformat(),
+            "recommendation_key": {
+                "segment_id": str(segment_id),
+                "endpoint": str(endpoint_label),
+            },
+            "recommendation_snapshot": _snapshot,
+            "input_sha256": _sha,
+            "decision": str(decision),
+            "operator_id": str(operator_id)[:200] if operator_id else "anonymous",
+            "session_id": str(session_id) if session_id else None,
+        }
+
+        with open(SNAP_REVIEW_EVENTS_PATH, "a", encoding="utf-8") as _fh_sre:
+            _fh_sre.write(json.dumps(_row_sre, separators=(",", ":")) + "\n")
+
+        # Tail-truncate to cap — same pattern as other observability appenders.
+        with open(SNAP_REVIEW_EVENTS_PATH, "r", encoding="utf-8") as _fh_sre:
+            _all_sre = _fh_sre.readlines()
+        if len(_all_sre) > SNAP_REVIEW_EVENTS_MAX_ROWS:
+            _all_sre = _all_sre[-SNAP_REVIEW_EVENTS_MAX_ROWS:]
+            with open(SNAP_REVIEW_EVENTS_PATH, "w", encoding="utf-8") as _fh_sre:
+                _fh_sre.writelines(_all_sre)
+
+    except Exception as _sre_exc:
+        print(
+            f"[SNAP_REVIEW_EVENTS] WARNING: failed to append event: "
+            f"{type(_sre_exc).__name__}: {_sre_exc}",
+            flush=True,
+        )
+    return _event_id_sre
+
+
+def _resolve_current_snap_review_decisions(
+    segment_id: Optional[str] = None,
+    endpoint_label: Optional[str] = None,
+) -> Dict[str, Optional[Dict[str, Any]]]:
+    """Phase 1U — latest-wins resolution of snap review decisions.
+
+    Returns a dict keyed by ``"<segment_id>|<endpoint>"`` strings.  For each
+    key, the value is the most-recent non-revoked event dict, or ``None`` if
+    the most-recent event is a revoke (revoked clears the decision).
+
+    If ``segment_id`` and ``endpoint_label`` are both provided, the result
+    is scoped to that single key.  Otherwise all keys present in the file
+    are returned.
+
+    Pure computation over the JSONL file.  No writes.  Never raises.
+    """
+    _result: Dict[str, Optional[Dict[str, Any]]] = {}
+    try:
+        if not SNAP_REVIEW_EVENTS_PATH.exists():
+            return _result
+        with open(SNAP_REVIEW_EVENTS_PATH, "r", encoding="utf-8") as _fh_sre:
+            _lines_sre = _fh_sre.readlines()
+
+        # Scoped filter if requested.
+        _filter_key: Optional[str] = None
+        if segment_id and endpoint_label:
+            _filter_key = f"{segment_id}|{endpoint_label}"
+
+        # Oldest → newest; last write wins.
+        for _line_sre in _lines_sre:
+            _line_sre = _line_sre.strip()
+            if not _line_sre:
+                continue
+            try:
+                _ev_sre = json.loads(_line_sre)
+            except json.JSONDecodeError:
+                continue
+            _key_sre = _ev_sre.get("recommendation_key") or {}
+            _seg = _key_sre.get("segment_id") or ""
+            _ep = _key_sre.get("endpoint") or ""
+            _composite = f"{_seg}|{_ep}"
+            if _filter_key and _composite != _filter_key:
+                continue
+            _decision_sre = _ev_sre.get("decision") or ""
+            if _decision_sre == "revoked":
+                _result[_composite] = None  # revoke clears the current decision
+            else:
+                _result[_composite] = _ev_sre
+    except Exception as _sre_read_exc:
+        print(
+            f"[SNAP_REVIEW_EVENTS] WARNING: failed to resolve decisions: "
+            f"{type(_sre_read_exc).__name__}: {_sre_read_exc}",
+            flush=True,
+        )
+    return _result
+
+
+@app.post("/api/observability/snap-review-events")
+def post_snap_review_event(
+    body: Dict[str, Any] = Body(default_factory=dict),
+    session_id: Optional[str] = None,
+) -> JSONResponse:
+    """Phase 1U — append a snap-review-event (operator review telemetry only).
+
+    Schema version: "snap-review-event-1".
+
+    Required body keys:
+      segment_id — str (must match a live recommendation in STATE)
+      endpoint   — "start" | "end"
+      decision   — "approved" | "rejected" | "revoked"
+
+    Optional body keys:
+      operator_id — str identifier for the reviewer (truncated to 200 chars)
+
+    Rejects (returns {"accepted": false}) if:
+      - decision not in valid set
+      - segment_id + endpoint not found in current STATE recommendations
+      - closeout is locked for this session
+
+    Returns {"accepted": true, "event_id": str} on success.
+    Always HTTP 200.  No operational side effects.
+    """
+    if _is_closeout_locked():
+        return JSONResponse({"accepted": False, "error": "closeout_locked"})
+
+    if not isinstance(body, dict):
+        return JSONResponse({"accepted": False, "error": "invalid_body"})
+
+    _decision_sre = str(body.get("decision") or "").strip()
+    if _decision_sre not in _SNAP_REVIEW_VALID_DECISIONS:
+        return JSONResponse({"accepted": False, "error": "invalid_decision"})
+
+    _seg_sre = str(body.get("segment_id") or "").strip()
+    _ep_sre = str(body.get("endpoint") or "").strip()
+    if not _seg_sre or _ep_sre not in ("start", "end"):
+        return JSONResponse({"accepted": False, "error": "invalid_key"})
+
+    # Look up live recommendation snapshot — reject stale keys.
+    _snap_state = STATE.get("endpoint_snap_recommendations")
+    _recs_sre: List[Dict[str, Any]] = []
+    if isinstance(_snap_state, dict):
+        _recs_sre = _snap_state.get("recommendations") or []
+    _live_rec: Optional[Dict[str, Any]] = None
+    for _r_sre in _recs_sre:
+        if (
+            isinstance(_r_sre, dict)
+            and str(_r_sre.get("segment_id") or "") == _seg_sre
+            and str(_r_sre.get("endpoint") or "") == _ep_sre
+        ):
+            _live_rec = _r_sre
+            break
+
+    if _live_rec is None:
+        return JSONResponse({"accepted": False, "error": "recommendation_not_found"})
+
+    # Build snapshot with exactly the fields defined by the schema.
+    _snapshot_sre: Dict[str, Any] = {
+        "route_id": _live_rec.get("route_id"),
+        "current_coordinate": _live_rec.get("current_coordinate"),
+        "current_distance_ft": _live_rec.get("current_distance_ft"),
+        "candidate_anchor_id": _live_rec.get("candidate_anchor_id"),
+        "candidate_anchor_name": _live_rec.get("candidate_anchor_name"),
+        "candidate_coordinate": _live_rec.get("candidate_coordinate"),
+        "snap_delta_ft": _live_rec.get("snap_delta_ft"),
+        "classification": _live_rec.get("classification"),
+    }
+    _operator_sre = str(body.get("operator_id") or "anonymous")[:200]
+    _sid_sre = str(session_id).strip() if session_id else None
+
+    _event_id_sre = _append_snap_review_event(
+        segment_id=_seg_sre,
+        endpoint_label=_ep_sre,
+        decision=_decision_sre,
+        recommendation_snapshot=_snapshot_sre,
+        operator_id=_operator_sre,
+        session_id=_sid_sre,
+    )
+    return JSONResponse({"accepted": True, "event_id": _event_id_sre, "decision": _decision_sre})
+
+
+@app.get("/api/observability/snap-review-events")
+def get_snap_review_events(
+    limit: int = 100,
+    decision: Optional[str] = None,
+) -> JSONResponse:
+    """Phase 1U — newest-first event log of all snap-review-events.
+
+    Query params:
+      limit    — int, default 100, max 1000, min 1
+      decision — optional filter: "approved" | "rejected" | "revoked"
+
+    Also returns a summary block:
+      total_events, approved_count, rejected_count, revoked_count,
+      reviewed_recommendation_count, unreviewed_recommendation_count.
+
+    Always HTTP 200.  Missing or corrupt file → empty results.
+    Read-only: no writes.
+    """
+    _limit_sre = max(1, min(limit, 1000))
+    _dec_filter = str(decision).strip() if decision else None
+    try:
+        _events_sre: List[Dict[str, Any]] = []
+        _all_sre: List[Dict[str, Any]] = []
+
+        if SNAP_REVIEW_EVENTS_PATH.exists():
+            with open(SNAP_REVIEW_EVENTS_PATH, "r", encoding="utf-8") as _fh_sre:
+                _raw_sre = _fh_sre.readlines()
+            for _line_sre in reversed(_raw_sre):
+                _line_sre = _line_sre.strip()
+                if not _line_sre:
+                    continue
+                try:
+                    _ev_sre = json.loads(_line_sre)
+                except json.JSONDecodeError:
+                    continue
+                _all_sre.append(_ev_sre)
+                if _dec_filter and _ev_sre.get("decision") != _dec_filter:
+                    continue
+                if len(_events_sre) < _limit_sre:
+                    _events_sre.append(_ev_sre)
+
+        # Compute summary from full (unfiltered) list.
+        _approved_n = sum(1 for e in _all_sre if e.get("decision") == "approved")
+        _rejected_n = sum(1 for e in _all_sre if e.get("decision") == "rejected")
+        _revoked_n = sum(1 for e in _all_sre if e.get("decision") == "revoked")
+        # Reviewed keys = keys that have any event; unreviewed = current recs minus reviewed.
+        _all_keys_sre: set = set()
+        for _ev_sre in _all_sre:
+            _k_sre = _ev_sre.get("recommendation_key") or {}
+            _seg_k = _k_sre.get("segment_id") or ""
+            _ep_k = _k_sre.get("endpoint") or ""
+            if _seg_k and _ep_k:
+                _all_keys_sre.add(f"{_seg_k}|{_ep_k}")
+        _reviewed_n = len(_all_keys_sre)
+
+        _snap_recs_sre = STATE.get("endpoint_snap_recommendations") or {}
+        _total_recs_sre = len(_snap_recs_sre.get("recommendations") or []) if isinstance(_snap_recs_sre, dict) else 0
+        _unreviewed_n = max(0, _total_recs_sre - _reviewed_n)
+
+        return JSONResponse(
+            {
+                "events": _events_sre,
+                "summary": {
+                    "total_events": len(_all_sre),
+                    "approved_count": _approved_n,
+                    "rejected_count": _rejected_n,
+                    "revoked_count": _revoked_n,
+                    "reviewed_recommendation_count": _reviewed_n,
+                    "unreviewed_recommendation_count": _unreviewed_n,
+                },
+            }
+        )
+    except Exception as _sre_get_exc:
+        print(
+            f"[SNAP_REVIEW_EVENTS] WARNING: failed to read events: "
+            f"{type(_sre_get_exc).__name__}: {_sre_get_exc}",
+            flush=True,
+        )
+        return JSONResponse({"events": [], "summary": {}})
+
+
+@app.get("/api/observability/snap-review-events/current")
+def get_snap_review_events_current(
+    segment_id: str = Query(""),
+    endpoint: str = Query(""),
+) -> JSONResponse:
+    """Phase 1U — latest-wins resolved decision for a single recommendation key.
+
+    Query params: segment_id (str), endpoint ("start" | "end").
+    Returns {"current": <event> | null}.
+    - null means no decision, or the most-recent event was a revoke.
+    Always HTTP 200.  Read-only.
+    """
+    _seg_sre = str(segment_id).strip()
+    _ep_sre = str(endpoint).strip()
+    if not _seg_sre or _ep_sre not in ("start", "end"):
+        return JSONResponse({"current": None})
+    try:
+        _resolved = _resolve_current_snap_review_decisions(_seg_sre, _ep_sre)
+        _key = f"{_seg_sre}|{_ep_sre}"
+        return JSONResponse({"current": _resolved.get(_key)})
+    except Exception as _sre_cur_exc:
+        print(
+            f"[SNAP_REVIEW_EVENTS] WARNING: failed to resolve current: "
+            f"{type(_sre_cur_exc).__name__}: {_sre_cur_exc}",
+            flush=True,
+        )
+        return JSONResponse({"current": None})
+
+
+# ---------------------------------------------------------------------------
+# Phase 1V — Endpoint-Only Snap Preview Markers (read-only, diagnostic-only)
+# ---------------------------------------------------------------------------
+
+_SNAP_PREVIEW_MARKER_STABILITY_NOTE = (
+    "Snap preview markers are advisory review aids only. Each marker derives "
+    "from existing endpoint snap recommendations and existing operator review "
+    "events. No new geometry is computed. The operational redline layer is "
+    "never modified."
+)
+
+
+def _build_snap_preview_markers(
+    snap_recommendations: Optional[Dict[str, Any]],
+    decisions: Optional[Dict[str, Optional[Dict[str, Any]]]] = None,
+) -> Dict[str, Any]:
+    """Phase 1V — derive a list of ghost-marker records from existing
+    endpoint snap recommendations.
+
+    Pure function.  Never raises.  Never mutates inputs.
+
+    Each marker's ``candidate_coordinate`` is byte-identical to the
+    corresponding recommendation's ``candidate_coordinate``.  No interpolation,
+    no geometry math, no route reconstruction.
+
+    ``decisions`` is the optional output of
+    ``_resolve_current_snap_review_decisions()``.  When omitted, the marker's
+    ``current_decision`` is always ``None``.
+
+    Returns a schema-locked dict; never None.
+    """
+    from datetime import timezone as _tz_mk
+
+    _generated_at_mk = datetime.now(_tz_mk.utc).isoformat()
+    _empty_mk: Dict[str, Any] = {
+        "schema_version": "snap-preview-marker-1",
+        "generated_at": _generated_at_mk,
+        "markers": [],
+        "summary": {
+            "total_markers": 0,
+            "near_markers": 0,
+            "orphan_markers": 0,
+            "with_decision": 0,
+            "without_decision": 0,
+        },
+        "stability_note": _SNAP_PREVIEW_MARKER_STABILITY_NOTE,
+    }
+
+    try:
+        if not isinstance(snap_recommendations, dict):
+            return _empty_mk
+        _recs_mk = snap_recommendations.get("recommendations")
+        if not isinstance(_recs_mk, list):
+            return _empty_mk
+
+        _decisions_mk: Dict[str, Optional[Dict[str, Any]]] = (
+            decisions if isinstance(decisions, dict) else {}
+        )
+
+        _markers_mk: List[Dict[str, Any]] = []
+        _near_n = 0
+        _orphan_n = 0
+        _with_dec_n = 0
+        _without_dec_n = 0
+
+        for _rec_mk in _recs_mk:
+            if not isinstance(_rec_mk, dict):
+                continue
+            _seg_mk = _rec_mk.get("segment_id")
+            _ep_mk = _rec_mk.get("endpoint")
+            if not isinstance(_seg_mk, str) or not _seg_mk:
+                continue
+            if _ep_mk not in ("start", "end"):
+                continue
+
+            _classification_mk = _rec_mk.get("classification")
+            if _classification_mk not in ("near", "orphan"):
+                continue
+
+            # Deterministic marker_id: sha1(segment_id|endpoint)[:16]
+            _key_mk = f"{_seg_mk}|{_ep_mk}"
+            _marker_id_mk = hashlib.sha1(_key_mk.encode("utf-8")).hexdigest()[:16]
+
+            # Decision lookup — revoked → None.
+            _dec_event_mk = _decisions_mk.get(_key_mk)
+            _current_decision_mk: Optional[str] = None
+            if isinstance(_dec_event_mk, dict):
+                _decval = _dec_event_mk.get("decision")
+                if _decval in ("approved", "rejected"):
+                    _current_decision_mk = _decval
+
+            if _current_decision_mk is not None:
+                _with_dec_n += 1
+            else:
+                _without_dec_n += 1
+
+            if _classification_mk == "near":
+                _near_n += 1
+            elif _classification_mk == "orphan":
+                _orphan_n += 1
+
+            _markers_mk.append(
+                {
+                    "marker_id": _marker_id_mk,
+                    "segment_id": _seg_mk,
+                    "endpoint": _ep_mk,
+                    "current_coordinate": _rec_mk.get("current_coordinate"),
+                    "candidate_coordinate": _rec_mk.get("candidate_coordinate"),
+                    "candidate_anchor_id": _rec_mk.get("candidate_anchor_id"),
+                    "candidate_anchor_name": _rec_mk.get("candidate_anchor_name"),
+                    "snap_delta_ft": _rec_mk.get("snap_delta_ft"),
+                    "classification": _classification_mk,
+                    "current_decision": _current_decision_mk,
+                    "presentation_role": "ghost_marker",
+                }
+            )
+
+        return {
+            "schema_version": "snap-preview-marker-1",
+            "generated_at": _generated_at_mk,
+            "markers": _markers_mk,
+            "summary": {
+                "total_markers": len(_markers_mk),
+                "near_markers": _near_n,
+                "orphan_markers": _orphan_n,
+                "with_decision": _with_dec_n,
+                "without_decision": _without_dec_n,
+            },
+            "stability_note": _SNAP_PREVIEW_MARKER_STABILITY_NOTE,
+        }
+
+    except Exception as _mk_exc:  # pragma: no cover
+        print(
+            f"[SNAP_PREVIEW_MARKERS] WARNING: failed to build markers: "
+            f"{type(_mk_exc).__name__}: {_mk_exc}",
+            flush=True,
+        )
+        return _empty_mk
+
+
+@app.get("/api/observability/snap-preview-markers")
+def get_snap_preview_markers() -> JSONResponse:
+    """Phase 1V — endpoint-only snap preview markers (read-only, diagnostic).
+
+    Schema version: "snap-preview-marker-1".
+
+    Computes on-the-fly from STATE["endpoint_snap_recommendations"] and
+    the latest-wins resolution of Phase 1U review events.  No persistence.
+    No mutation of any STATE key.  No new geometry.
+
+    Always returns HTTP 200.
+
+    USAGE POLICY:
+    Markers are advisory review aids only.  They MUST NOT be rendered into
+    the operational map layer; they live exclusively in the diagnostics
+    panel.  No operational consumer may depend on this endpoint being
+    non-empty.
+    """
+    try:
+        _snap_state_mk = STATE.get("endpoint_snap_recommendations")
+        _decisions_mk = _resolve_current_snap_review_decisions()
+        _result_mk = _build_snap_preview_markers(
+            snap_recommendations=_snap_state_mk if isinstance(_snap_state_mk, dict) else None,
+            decisions=_decisions_mk,
+        )
+        return JSONResponse(_result_mk)
+    except Exception as _mk_endpoint_exc:  # pragma: no cover
+        print(
+            f"[SNAP_PREVIEW_MARKERS] WARNING: endpoint failed: "
+            f"{type(_mk_endpoint_exc).__name__}: {_mk_endpoint_exc}",
+            flush=True,
+        )
+        from datetime import timezone as _tz_mk_err
+        return JSONResponse(
+            {
+                "schema_version": "snap-preview-marker-1",
+                "generated_at": datetime.now(_tz_mk_err.utc).isoformat(),
+                "markers": [],
+                "summary": {
+                    "total_markers": 0,
+                    "near_markers": 0,
+                    "orphan_markers": 0,
+                    "with_decision": 0,
+                    "without_decision": 0,
+                },
+                "stability_note": _SNAP_PREVIEW_MARKER_STABILITY_NOTE,
+            }
+        )
+
+
+# ---------------------------------------------------------------------------
+# Phase 1W — Reviewed Snapped Geometry Preview Layer (read-only, diagnostic)
+# ---------------------------------------------------------------------------
+
+_REVIEWED_SNAP_PREVIEW_STABILITY_NOTE = (
+    "Reviewed snap preview geometry is advisory only. Each preview is a "
+    "clone of the operational redline segment with ONLY approved endpoint "
+    "coordinate(s) substituted. Intermediate vertices are byte-identical to "
+    "the operational source. The operational redline layer is never modified."
+)
+
+_REVIEWED_SNAP_PREVIEW_FORBIDDEN_FIELDS: frozenset = frozenset(
+    {"confidence", "score", "probability", "weight", "priority",
+     "apply", "commit", "recommended", "final", "authoritative"}
+)
+
+
+def _build_reviewed_snap_preview(
+    redline_segments: Optional[List[Dict[str, Any]]],
+    snap_recommendations: Optional[Dict[str, Any]],
+    decisions: Optional[Dict[str, Optional[Dict[str, Any]]]] = None,
+) -> Dict[str, Any]:
+    """Phase 1W — build preview geometry for segments with approved endpoint
+    substitutions.
+
+    Pure function.  Never raises.  Never mutates inputs.
+
+    For each operational redline segment that has at least one APPROVED review
+    event, produces a preview record containing:
+      - A cloned coordinate array in GeoJSON [lon, lat] order.
+      - Endpoint coordinate(s) replaced ONLY at indices backed by an approved
+        Phase 1U event.
+      - A substitution lineage tying each replacement to the originating event
+        and recommendation.
+      - A sha256 checksum of the operational segment's original coordinates.
+
+    HARD GUARANTEES:
+      - len(preview.coordinates) == len(original segment coordinates).
+      - Intermediate coordinates are byte-identical to the operational source.
+      - Substituted coordinates are byte-identical to candidate_coordinate from
+        the matching recommendation.
+      - No preview is emitted without at least one approved event.
+      - Rejected / revoked / unreviewed recommendations produce no substitution.
+      - No geometry recomputation.
+      - Inputs are never mutated.
+    """
+    from datetime import timezone as _tz_pr
+
+    _generated_at_pr = datetime.now(_tz_pr.utc).isoformat()
+    _empty_pr: Dict[str, Any] = {
+        "schema_version": "reviewed-snap-preview-1",
+        "generated_at": _generated_at_pr,
+        "previews": [],
+        "summary": {
+            "total_previews": 0,
+            "previews_with_start_only": 0,
+            "previews_with_end_only": 0,
+            "previews_with_both": 0,
+            "stale_previews": 0,
+        },
+        "stability_note": _REVIEWED_SNAP_PREVIEW_STABILITY_NOTE,
+    }
+
+    try:
+        # ------------------------------------------------------------------ #
+        # 0. Coerce inputs.
+        # ------------------------------------------------------------------ #
+        _segs_pr: List[Dict[str, Any]] = []
+        if isinstance(redline_segments, list):
+            for _s in redline_segments:
+                if isinstance(_s, dict):
+                    _segs_pr.append(_s)
+
+        _recs_pr: List[Dict[str, Any]] = []
+        if isinstance(snap_recommendations, dict):
+            _recs_list = snap_recommendations.get("recommendations")
+            if isinstance(_recs_list, list):
+                _recs_pr = [r for r in _recs_list if isinstance(r, dict)]
+
+        _decisions_pr: Dict[str, Optional[Dict[str, Any]]] = (
+            decisions if isinstance(decisions, dict) else {}
+        )
+
+        if not _segs_pr:
+            return _empty_pr
+
+        # ------------------------------------------------------------------ #
+        # 1. Index: segment_id → segment (first occurrence wins).
+        # ------------------------------------------------------------------ #
+        _seg_index: Dict[str, Dict[str, Any]] = {}
+        for _s in _segs_pr:
+            _sid = str(_s.get("segment_id") or "")
+            if _sid and _sid not in _seg_index:
+                _seg_index[_sid] = _s
+
+        # ------------------------------------------------------------------ #
+        # 2. Index: (segment_id, endpoint) → recommendation.
+        # ------------------------------------------------------------------ #
+        _rec_index: Dict[str, Dict[str, Any]] = {}
+        for _r in _recs_pr:
+            _rsid = str(_r.get("segment_id") or "")
+            _rep = str(_r.get("endpoint") or "")
+            if _rsid and _rep in ("start", "end"):
+                _rec_index[f"{_rsid}|{_rep}"] = _r
+
+        # ------------------------------------------------------------------ #
+        # 3. Collect all segment_ids that have at least one approved decision.
+        # ------------------------------------------------------------------ #
+        _approved_by_seg: Dict[str, Dict[str, Dict[str, Any]]] = {}
+        # _decisions_pr keys are "<segment_id>|<endpoint>".
+        for _dk, _dev in _decisions_pr.items():
+            if not isinstance(_dev, dict):
+                continue  # revoked or None → skip
+            if _dev.get("decision") != "approved":
+                continue
+            _parts = _dk.split("|", 1)
+            if len(_parts) != 2:
+                continue
+            _dsid, _dep = _parts[0], _parts[1]
+            if _dep not in ("start", "end"):
+                continue
+            if _dsid not in _approved_by_seg:
+                _approved_by_seg[_dsid] = {}
+            _approved_by_seg[_dsid][_dep] = _dev
+
+        if not _approved_by_seg:
+            return _empty_pr
+
+        # ------------------------------------------------------------------ #
+        # 4. Build preview records.
+        # ------------------------------------------------------------------ #
+        _previews_pr: List[Dict[str, Any]] = []
+        _start_only_n = 0
+        _end_only_n = 0
+        _both_n = 0
+        _stale_n = 0
+
+        # Deterministic order.
+        for _psid in sorted(_approved_by_seg.keys()):
+            _pep_map = _approved_by_seg[_psid]  # {"start": ev, ...}
+
+            # Stale check: segment must exist in redline_segments.
+            _seg_pr = _seg_index.get(_psid)
+            if _seg_pr is None:
+                _stale_n += 1
+                continue
+
+            # Get operational coords (native [lat, lon] from route clipping).
+            _raw_coords = _seg_pr.get("coords")
+            if not isinstance(_raw_coords, list) or len(_raw_coords) < 2:
+                _stale_n += 1
+                continue
+
+            # Validate coord entries.
+            _valid_coords: List[List[float]] = []
+            for _c in _raw_coords:
+                if isinstance(_c, (list, tuple)) and len(_c) >= 2:
+                    try:
+                        _valid_coords.append([float(_c[0]), float(_c[1])])
+                    except (TypeError, ValueError):
+                        _stale_n += 1
+                        _valid_coords = []
+                        break
+                else:
+                    _stale_n += 1
+                    _valid_coords = []
+                    break
+
+            if len(_valid_coords) < 2:
+                _stale_n += 1
+                continue
+
+            # Compute operational checksum over native coords before any clone.
+            _op_checksum = hashlib.sha256(
+                json.dumps(_valid_coords, separators=(",", ":")).encode("utf-8")
+            ).hexdigest()
+
+            # Convert to [lon, lat] for GeoJSON preview_geometry.
+            # Native format is [lat, lon], so swap indices.
+            _preview_coords: List[List[float]] = [
+                [_c[1], _c[0]] for _c in _valid_coords
+            ]
+
+            # Build endpoint substitutions.
+            _sub_start: Optional[Dict[str, Any]] = None
+            _sub_end: Optional[Dict[str, Any]] = None
+
+            for _ep_label in ("start", "end"):
+                _ev_pr = _pep_map.get(_ep_label)
+                if _ev_pr is None:
+                    continue  # not approved for this endpoint
+                _rec_pr = _rec_index.get(f"{_psid}|{_ep_label}")
+                if _rec_pr is None:
+                    _stale_n += 1
+                    continue  # recommendation no longer present → stale
+                _cand_coord = _rec_pr.get("candidate_coordinate")
+                if (
+                    not isinstance(_cand_coord, (list, tuple))
+                    or len(_cand_coord) < 2
+                ):
+                    _stale_n += 1
+                    continue
+                try:
+                    _cand_lon = float(_cand_coord[0])
+                    _cand_lat = float(_cand_coord[1])
+                except (TypeError, ValueError):
+                    _stale_n += 1
+                    continue
+
+                _coord_idx = 0 if _ep_label == "start" else -1
+                _orig_coord = list(_preview_coords[_coord_idx])  # snapshot [lon, lat]
+
+                # Substitute endpoint with candidate coordinate (byte-identical).
+                _preview_coords[_coord_idx] = [_cand_lon, _cand_lat]
+
+                _ev_id_pr = str(_ev_pr.get("event_id") or "")
+                _sub = {
+                    "approved_event_id": _ev_id_pr,
+                    "recommendation_key": {
+                        "segment_id": _psid,
+                        "endpoint": _ep_label,
+                    },
+                    "original_coordinate": _orig_coord,
+                    "substituted_coordinate": [_cand_lon, _cand_lat],
+                    "candidate_anchor_id": str(_rec_pr.get("candidate_anchor_id") or ""),
+                }
+                if _ep_label == "start":
+                    _sub_start = _sub
+                else:
+                    _sub_end = _sub
+
+            # Require at least one actual substitution.
+            if _sub_start is None and _sub_end is None:
+                _stale_n += 1
+                continue
+
+            # Coordinate count must be preserved exactly.
+            assert len(_preview_coords) == len(_valid_coords)  # internal invariant
+
+            # Deterministic preview_id.
+            _start_eid = _sub_start["approved_event_id"] if _sub_start else ""
+            _end_eid = _sub_end["approved_event_id"] if _sub_end else ""
+            _pid_input = f"{_psid}|{_start_eid}|{_end_eid}"
+            _preview_id = hashlib.sha1(_pid_input.encode("utf-8")).hexdigest()[:16]
+
+            _previews_pr.append(
+                {
+                    "preview_id": _preview_id,
+                    "source_segment_id": _psid,
+                    "preview_geometry": {
+                        "type": "LineString",
+                        "coordinates": _preview_coords,
+                    },
+                    "endpoint_substitutions": {
+                        "start": _sub_start,
+                        "end": _sub_end,
+                    },
+                    "operational_segment_checksum": _op_checksum,
+                    "presentation_role": "preview_polyline",
+                }
+            )
+
+            if _sub_start and _sub_end:
+                _both_n += 1
+            elif _sub_start:
+                _start_only_n += 1
+            else:
+                _end_only_n += 1
+
+        return {
+            "schema_version": "reviewed-snap-preview-1",
+            "generated_at": _generated_at_pr,
+            "previews": _previews_pr,
+            "summary": {
+                "total_previews": len(_previews_pr),
+                "previews_with_start_only": _start_only_n,
+                "previews_with_end_only": _end_only_n,
+                "previews_with_both": _both_n,
+                "stale_previews": _stale_n,
+            },
+            "stability_note": _REVIEWED_SNAP_PREVIEW_STABILITY_NOTE,
+        }
+
+    except Exception as _pr_exc:  # pragma: no cover
+        print(
+            f"[REVIEWED_SNAP_PREVIEW] WARNING: failed to build previews: "
+            f"{type(_pr_exc).__name__}: {_pr_exc}",
+            flush=True,
+        )
+        return _empty_pr
+
+
+# ---------------------------------------------------------------------------
+# Phase 2A — KMZ Engineering Render Payload (read-only, compute-on-read)
+# ---------------------------------------------------------------------------
+
+_KMZ_RENDER_PAYLOAD_SCHEMA = "kmz-render-payload-3"
+_KMZ_RENDER_MAX_POINTS: int = 4000
+_KMZ_RENDER_MAX_LINES: int = 1500
+_KMZ_RENDER_MAX_POLYGONS: int = 500
+_KMZ_RENDER_MAX_VERTICES_PER_LINE: int = 200
+_KMZ_RENDER_MAX_NAME_LEN: int = 80
+_KMZ_RENDER_MAX_SUMMARY_LEN: int = 120
+_KMZ_RENDER_MAX_FOLDER_DEPTH: int = 4
+_KMZ_RENDER_DEFAULT_COLOR: str = "#4a9eff"
+
+# Classifications that map to specific glyphs on the map.
+_KMZ_RENDER_GLYPH_MAP: Dict[str, str] = {
+    "handhole": "circle",
+    "node": "circle",
+    "splice": "square",
+    "splice_enclosure": "square",
+    "reel": "diamond",
+    "slack_loop": "diamond",
+    "structure_marker": "circle",  # Phase 2B V2.1 — splice/HH/service structures
+}
+
+# Lifecycle labels that suggest a dashed rendering.
+_KMZ_RENDER_DASH_LIFECYCLES: frozenset = frozenset(
+    {"proposed", "decommissioned", "survey"}
+)
+
+# Forbidden: these fields must never appear in the render payload because
+# they are observability-internal or operational pipeline fields.
+_KMZ_RENDER_PAYLOAD_FORBIDDEN_FIELDS: frozenset = frozenset(
+    {
+        "redline_segments",
+        "route_catalog",
+        "match_pass_id",
+        "snap_review_events",
+        "endpoint_snap_recommendations",
+    }
+)
+
+
+def _build_kmz_render_payload(
+    kmz_semantic: Optional[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """Derive a capped, pre-styled render payload from *kmz_semantic*.
+
+    Phase 2B V2 — pure, never raises, never mutates the input.
+    Schema version: "kmz-render-payload-2".
+
+    Adds per-feature fields: description, extended_data, chainage_ft,
+    sequence_number, sequence_kind, lifecycle (full struct).
+    Adds polygon inner rings.
+    Fixes per-type truncation flags.
+    Consumes full MultiGeometry LineString coords and Polygon outer/inner rings.
+
+    Output shape:
+        {
+          "schema_version": "kmz-render-payload-2",
+          "generated_at": str,
+          "render_caps": {max_points, max_lines, max_polygons, max_vertices_per_line},
+          "points":    [KmzRenderPoint, ...],
+          "lines":     [KmzRenderLine, ...],
+          "polygons":  [KmzRenderPolygon, ...],
+          "categories":[KmzRenderCategory, ...],
+          "summary":   KmzRenderSummary,
+        }
+
+    Caps: 4 000 points, 1 500 lines, 500 polygons, 200 vertices/line.
+    Text: names ≤ 80 chars, descriptions ≤ 200 chars, folder depth ≤ 4.
+
+    USAGE POLICY:
+    This payload is advisory / rendering-only.  It MUST NOT influence
+    matching, scoring, billing, closeout, or any operational pipeline.
+    The payload is derived entirely from STATE["kmz_semantic"] and carries
+    no write path.
+    """
+    from datetime import timezone as _tz_rp
+
+    _generated_at = datetime.now(_tz_rp.utc).isoformat()
+
+    _empty: Dict[str, Any] = {
+        "schema_version": _KMZ_RENDER_PAYLOAD_SCHEMA,
+        "generated_at": _generated_at,
+        "render_caps": {
+            "max_points": _KMZ_RENDER_MAX_POINTS,
+            "max_lines": _KMZ_RENDER_MAX_LINES,
+            "max_polygons": _KMZ_RENDER_MAX_POLYGONS,
+            "max_vertices_per_line": _KMZ_RENDER_MAX_VERTICES_PER_LINE,
+        },
+        "points": [],
+        "lines": [],
+        "polygons": [],
+        "categories": [],
+        "summary": {
+            "total_points": 0,
+            "total_lines": 0,
+            "total_polygons": 0,
+            "points_truncated": False,
+            "lines_truncated": False,
+            "polygons_truncated": False,
+            "source_feature_count": 0,
+        },
+    }
+
+    # ── inner helpers (scoped) ───────────────────────────────────────────────
+
+    def _cap_coords(raw: Any) -> List[List[float]]:
+        """Validate and cap a coordinate list to max_vertices_per_line."""
+        out_c: List[List[float]] = []
+        if not isinstance(raw, list):
+            return out_c
+        for _v in raw[: _KMZ_RENDER_MAX_VERTICES_PER_LINE]:
+            if isinstance(_v, (list, tuple)) and len(_v) >= 2:
+                try:
+                    out_c.append([float(_v[0]), float(_v[1])])
+                except (TypeError, ValueError):
+                    pass
+        return out_c
+
+    def _cap_inner_rings(raw: Any) -> List[List[List[float]]]:
+        """Validate and cap a list of inner rings."""
+        out_r: List[List[List[float]]] = []
+        if not isinstance(raw, list):
+            return out_r
+        for _ring in raw:
+            _ring_safe = _cap_coords(_ring)
+            if len(_ring_safe) >= 3:
+                out_r.append(_ring_safe)
+        return out_r
+
+    def _make_lifecycle(raw: Any) -> Optional[Dict[str, str]]:
+        """Return a full lifecycle struct {label, confidence, reason} or None."""
+        if not isinstance(raw, dict):
+            return None
+        _lbl = str(raw.get("label") or "").strip()
+        if not _lbl:
+            return None
+        return {
+            "label": _lbl,
+            "confidence": str(raw.get("confidence") or ""),
+            "reason": str(raw.get("reason") or ""),
+        }
+
+    def _make_extended_data(raw: Any) -> Dict[str, str]:
+        """Return first 32 key-value pairs, values truncated to 80 chars."""
+        if not isinstance(raw, dict):
+            return {}
+        _out_ed: Dict[str, str] = {}
+        for _k, _v in list(raw.items())[:32]:
+            _out_ed[str(_k)] = str(_v)[:80]
+        return _out_ed
+
+    def _common_fields(feat: Dict[str, Any]) -> Dict[str, Any]:
+        """Fields shared by every point, line, and polygon record."""
+        _desc = str(feat.get("description") or "")[:200]
+        _desc_raw = str(feat.get("description_raw") or "")[:4096]
+        _ext = _make_extended_data(feat.get("extended_data"))
+        _ch = feat.get("chainage_ft")
+        _seq_num = feat.get("sequence_number")
+        _seq_kind = feat.get("sequence_kind")
+        _lc = _make_lifecycle(feat.get("lifecycle"))
+        # Phase 2I — icon/style fidelity fields
+        _style_url = str(feat.get("style_url") or "")
+        _style_res = feat.get("style_resolved")
+        _icon_href = str(_style_res.get("icon_href") or "") if isinstance(_style_res, dict) else ""
+        return {
+            "description": _desc,
+            "description_raw": _desc_raw,
+            "extended_data": _ext,
+            "chainage_ft": float(_ch) if isinstance(_ch, (int, float)) and _ch is not None else None,
+            "sequence_number": str(_seq_num) if _seq_num is not None else None,
+            "sequence_kind": str(_seq_kind) if _seq_kind is not None else None,
+            "lifecycle": _lc,
+            "style_url": _style_url,
+            "icon_href": _icon_href,
+        }
+
+    # ── main iteration ───────────────────────────────────────────────────────
+
+    try:
+        if not isinstance(kmz_semantic, dict):
+            return _empty
+
+        features = kmz_semantic.get("features")
+        if not isinstance(features, list) or not features:
+            return _empty
+
+        points: List[Dict[str, Any]] = []
+        lines: List[Dict[str, Any]] = []
+        polygons: List[Dict[str, Any]] = []
+        # category counters: classification -> {point, line, polygon}
+        cat_counts: Dict[str, Dict[str, int]] = {}
+        # Phase 2B — per-type cap flags (fixed truncation bug)
+        _points_capped = False
+        _lines_capped = False
+        _polygons_capped = False
+
+        source_feature_count = 0
+
+        for _feat in features:
+            if not isinstance(_feat, dict):
+                continue
+            source_feature_count += 1
+
+            _fid = str(_feat.get("feature_id") or "")
+            _cls = str(_feat.get("classification") or "unknown")
+            _raw_name = _feat.get("placemark_name") or ""
+            _name = str(_raw_name)[:_KMZ_RENDER_MAX_NAME_LEN]
+
+            # folder_path: list of strings, depth-capped
+            _raw_fp = _feat.get("folder_path")
+            if isinstance(_raw_fp, list):
+                _folder_path: List[str] = [
+                    str(p) for p in _raw_fp[: _KMZ_RENDER_MAX_FOLDER_DEPTH]
+                ]
+            else:
+                _folder_path = []
+
+            # Style resolution
+            _style = _feat.get("style_resolved")
+            if not isinstance(_style, dict):
+                _style = {}
+
+            _line_color = _style.get("line_color")
+            _poly_fill = _style.get("poly_fill")
+            _line_width_raw = _style.get("line_width")
+            try:
+                _line_width = min(float(_line_width_raw), 3.0) if _line_width_raw is not None else 2.0
+            except (TypeError, ValueError):
+                _line_width = 2.0
+
+            # Lifecycle → dash hint + full struct
+            _lifecycle_raw = _feat.get("lifecycle")
+            _lifecycle_label = ""
+            if isinstance(_lifecycle_raw, dict):
+                _lifecycle_label = str(_lifecycle_raw.get("label") or "")
+            _dash = _lifecycle_label in _KMZ_RENDER_DASH_LIFECYCLES
+
+            # Icon glyph
+            _icon_glyph = _KMZ_RENDER_GLYPH_MAP.get(_cls, "ring")
+
+            # Category counter
+            if _cls not in cat_counts:
+                cat_counts[_cls] = {"point": 0, "line": 0, "polygon": 0}
+
+            # Shared Tier-1 metadata fields (Phase 2B)
+            _common = _common_fields(_feat)
+
+            # Geometry dispatch
+            _geom = _feat.get("full_geometry")
+            if not isinstance(_geom, dict):
+                # MultiGeometry — walk children
+                _children = _feat.get("multigeometry_children")
+                if isinstance(_children, list):
+                    for _child in _children:
+                        if not isinstance(_child, dict):
+                            continue
+                        _ckind = _child.get("kind")
+                        if _ckind == "Point":
+                            if len(points) >= _KMZ_RENDER_MAX_POINTS:
+                                _points_capped = True
+                                continue
+                            _ch_coord = _child.get("coord_hint")
+                            if not isinstance(_ch_coord, (list, tuple)) or len(_ch_coord) < 2:
+                                continue
+                            try:
+                                _ch_lat = float(_ch_coord[0])
+                                _ch_lon = float(_ch_coord[1])
+                            except (TypeError, ValueError):
+                                continue
+                            points.append(
+                                {
+                                    "feature_id": f"{_fid}_pt",
+                                    "coord": [_ch_lat, _ch_lon],
+                                    "classification": _cls,
+                                    "name": _name,
+                                    "icon_glyph": _icon_glyph,
+                                    "color": _line_color or _KMZ_RENDER_DEFAULT_COLOR,
+                                    "folder_path": _folder_path,
+                                    **_common,
+                                }
+                            )
+                            cat_counts[_cls]["point"] += 1
+                        elif _ckind == "LineString":
+                            if len(lines) >= _KMZ_RENDER_MAX_LINES:
+                                _lines_capped = True
+                                continue
+                            # Phase 2B: prefer full coords; fall back to coord_hint-only skip
+                            _ch_coords = _child.get("coords")
+                            if not isinstance(_ch_coords, list):
+                                # Pre-2B child: no full coords available
+                                continue
+                            _capped = _cap_coords(_ch_coords)
+                            if len(_capped) < 2:
+                                continue
+                            lines.append(
+                                {
+                                    "feature_id": f"{_fid}_ls",
+                                    "coords": _capped,
+                                    "classification": _cls,
+                                    "name": _name,
+                                    "color": _line_color or _KMZ_RENDER_DEFAULT_COLOR,
+                                    "width": _line_width,
+                                    "dash": _dash,
+                                    "folder_path": _folder_path,
+                                    **_common,
+                                }
+                            )
+                            cat_counts[_cls]["line"] += 1
+                        elif _ckind == "Polygon":
+                            if len(polygons) >= _KMZ_RENDER_MAX_POLYGONS:
+                                _polygons_capped = True
+                                continue
+                            # Phase 2B: prefer full outer; fall back to skip
+                            _ch_outer = _child.get("outer")
+                            if not isinstance(_ch_outer, list):
+                                continue
+                            _ch_outer_safe = _cap_coords(_ch_outer)
+                            if len(_ch_outer_safe) < 3:
+                                continue
+                            _ch_inner = _cap_inner_rings(_child.get("inner"))
+                            polygons.append(
+                                {
+                                    "feature_id": f"{_fid}_pg",
+                                    "outer": _ch_outer_safe,
+                                    "inner": _ch_inner,
+                                    "classification": _cls,
+                                    "name": _name,
+                                    "fill_color": _poly_fill or _line_color or _KMZ_RENDER_DEFAULT_COLOR,
+                                    "folder_path": _folder_path,
+                                    **_common,
+                                }
+                            )
+                            cat_counts[_cls]["polygon"] += 1
+                continue
+
+            _geom_kind = _geom.get("kind")
+
+            if _geom_kind == "Point":
+                if len(points) >= _KMZ_RENDER_MAX_POINTS:
+                    _points_capped = True
+                    continue
+                _pt_coord = _geom.get("coord")
+                if not isinstance(_pt_coord, (list, tuple)) or len(_pt_coord) < 2:
+                    continue
+                try:
+                    _pt_lat = float(_pt_coord[0])
+                    _pt_lon = float(_pt_coord[1])
+                except (TypeError, ValueError):
+                    continue
+                points.append(
+                    {
+                        "feature_id": _fid,
+                        "coord": [_pt_lat, _pt_lon],
+                        "classification": _cls,
+                        "name": _name,
+                        "icon_glyph": _icon_glyph,
+                        "color": _line_color or _KMZ_RENDER_DEFAULT_COLOR,
+                        "folder_path": _folder_path,
+                        **_common,
+                    }
+                )
+                cat_counts[_cls]["point"] += 1
+
+            elif _geom_kind == "LineString":
+                if len(lines) >= _KMZ_RENDER_MAX_LINES:
+                    _lines_capped = True
+                    continue
+                _ls_coords = _geom.get("coords")
+                if not isinstance(_ls_coords, list) or len(_ls_coords) < 2:
+                    continue
+                _ls_capped = _cap_coords(_ls_coords)
+                if len(_ls_capped) < 2:
+                    continue
+                lines.append(
+                    {
+                        "feature_id": _fid,
+                        "coords": _ls_capped,
+                        "classification": _cls,
+                        "name": _name,
+                        "color": _line_color or _KMZ_RENDER_DEFAULT_COLOR,
+                        "width": _line_width,
+                        "dash": _dash,
+                        "folder_path": _folder_path,
+                        **_common,
+                    }
+                )
+                cat_counts[_cls]["line"] += 1
+
+            elif _geom_kind == "Polygon":
+                if len(polygons) >= _KMZ_RENDER_MAX_POLYGONS:
+                    _polygons_capped = True
+                    continue
+                _pg_outer = _geom.get("outer")
+                if not isinstance(_pg_outer, list) or len(_pg_outer) < 3:
+                    continue
+                _pg_outer_safe = _cap_coords(_pg_outer)
+                if len(_pg_outer_safe) < 3:
+                    continue
+                # Phase 2B: extract inner rings for donut-hole rendering
+                _pg_inner = _cap_inner_rings(_geom.get("inner"))
+                polygons.append(
+                    {
+                        "feature_id": _fid,
+                        "outer": _pg_outer_safe,
+                        "inner": _pg_inner,
+                        "classification": _cls,
+                        "name": _name,
+                        "fill_color": _poly_fill or _line_color or _KMZ_RENDER_DEFAULT_COLOR,
+                        "folder_path": _folder_path,
+                        **_common,
+                    }
+                )
+                cat_counts[_cls]["polygon"] += 1
+
+        # Build categories list sorted by total desc then classification asc
+        categories: List[Dict[str, Any]] = []
+        for _clas, _cnts in sorted(
+            cat_counts.items(),
+            key=lambda _kv: (-((_kv[1]["point"] + _kv[1]["line"] + _kv[1]["polygon"])), _kv[0]),
+        ):
+            _tot = _cnts["point"] + _cnts["line"] + _cnts["polygon"]
+            if _tot == 0:
+                continue
+            categories.append(
+                {
+                    "classification": _clas,
+                    "point_count": _cnts["point"],
+                    "line_count": _cnts["line"],
+                    "polygon_count": _cnts["polygon"],
+                    "total": _tot,
+                }
+            )
+
+        return {
+            "schema_version": _KMZ_RENDER_PAYLOAD_SCHEMA,
+            "generated_at": _generated_at,
+            "render_caps": {
+                "max_points": _KMZ_RENDER_MAX_POINTS,
+                "max_lines": _KMZ_RENDER_MAX_LINES,
+                "max_polygons": _KMZ_RENDER_MAX_POLYGONS,
+                "max_vertices_per_line": _KMZ_RENDER_MAX_VERTICES_PER_LINE,
+            },
+            "points": points,
+            "lines": lines,
+            "polygons": polygons,
+            "categories": categories,
+            "summary": {
+                "total_points": len(points),
+                "total_lines": len(lines),
+                "total_polygons": len(polygons),
+                "points_truncated": _points_capped,
+                "lines_truncated": _lines_capped,
+                "polygons_truncated": _polygons_capped,
+                "source_feature_count": source_feature_count,
+            },
+        }
+
+    except Exception as _rp_exc:
+        print(
+            f"[KMZ_RENDER_PAYLOAD] WARNING: _build_kmz_render_payload failed: "
+            f"{type(_rp_exc).__name__}: {_rp_exc}",
+            flush=True,
+        )
+        return _empty
+
+
+@app.get("/api/observability/kmz-render-payload")
+def get_kmz_render_payload() -> JSONResponse:
+    """Phase 2A — KMZ engineering render payload (read-only, compute-on-read).
+
+    Schema version: "kmz-render-payload-1".
+
+    Reads STATE["kmz_semantic"] and derives a capped, pre-styled payload
+    for the frontend map KMZ context layer.
+
+    No STATE writes.  No persistence.  No operational side effects.
+    Always returns HTTP 200.
+
+    USAGE POLICY:
+    The render payload is advisory / display-only.  It MUST NOT influence
+    matching, scoring, billing, closeout, or any operational pipeline.
+    No operational consumer may depend on this endpoint being non-empty.
+    """
+    try:
+        _sem = STATE.get("kmz_semantic")
+        _result_rp = _build_kmz_render_payload(
+            _sem if isinstance(_sem, dict) else None
+        )
+        return JSONResponse(_result_rp)
+    except Exception as _rp_ep_exc:  # pragma: no cover
+        print(
+            f"[KMZ_RENDER_PAYLOAD] WARNING: endpoint failed: "
+            f"{type(_rp_ep_exc).__name__}: {_rp_ep_exc}",
+            flush=True,
+        )
+        from datetime import timezone as _tz_rp_err
+        return JSONResponse(
+            {
+                "schema_version": _KMZ_RENDER_PAYLOAD_SCHEMA,
+                "generated_at": datetime.now(_tz_rp_err.utc).isoformat(),
+                "render_caps": {
+                    "max_points": _KMZ_RENDER_MAX_POINTS,
+                    "max_lines": _KMZ_RENDER_MAX_LINES,
+                    "max_polygons": _KMZ_RENDER_MAX_POLYGONS,
+                    "max_vertices_per_line": _KMZ_RENDER_MAX_VERTICES_PER_LINE,
+                },
+                "points": [],
+                "lines": [],
+                "polygons": [],
+                "categories": [],
+                "summary": {
+                    "total_points": 0,
+                    "total_lines": 0,
+                    "total_polygons": 0,
+                    "points_truncated": False,
+                    "lines_truncated": False,
+                    "polygons_truncated": False,
+                    "source_feature_count": 0,
+                },
+            }
+        )
+
+
+@app.get("/api/observability/reviewed-snap-preview")
+def get_reviewed_snap_preview() -> JSONResponse:
+    """Phase 1W — reviewed snapped geometry preview (read-only, diagnostic).
+
+    Schema version: "reviewed-snap-preview-1".
+
+    Computes on-the-fly from:
+      - STATE["redline_segments"]
+      - STATE["endpoint_snap_recommendations"]
+      - Phase 1U review event log (via _resolve_current_snap_review_decisions)
+
+    No persistence.  No mutation of any STATE key.  No new geometry
+    computation.  Endpoint coordinates are substituted from existing
+    approved recommendations ONLY.
+
+    Always returns HTTP 200.
+
+    USAGE POLICY:
+    Preview geometry is advisory only.  It MUST NOT be rendered into the
+    operational map layer; it lives exclusively in the diagnostics panel.
+    No operational consumer may depend on this endpoint being non-empty.
+    """
+    try:
+        _segs_state = STATE.get("redline_segments")
+        _recs_state = STATE.get("endpoint_snap_recommendations")
+        _decisions_state = _resolve_current_snap_review_decisions()
+        _result_pr = _build_reviewed_snap_preview(
+            redline_segments=_segs_state if isinstance(_segs_state, list) else None,
+            snap_recommendations=_recs_state if isinstance(_recs_state, dict) else None,
+            decisions=_decisions_state,
+        )
+        return JSONResponse(_result_pr)
+    except Exception as _pr_ep_exc:  # pragma: no cover
+        print(
+            f"[REVIEWED_SNAP_PREVIEW] WARNING: endpoint failed: "
+            f"{type(_pr_ep_exc).__name__}: {_pr_ep_exc}",
+            flush=True,
+        )
+        from datetime import timezone as _tz_pr_err
+        return JSONResponse(
+            {
+                "schema_version": "reviewed-snap-preview-1",
+                "generated_at": datetime.now(_tz_pr_err.utc).isoformat(),
+                "previews": [],
+                "summary": {
+                    "total_previews": 0,
+                    "previews_with_start_only": 0,
+                    "previews_with_end_only": 0,
+                    "previews_with_both": 0,
+                    "stale_previews": 0,
+                },
+                "stability_note": _REVIEWED_SNAP_PREVIEW_STABILITY_NOTE,
+            }
+        )
+
+
+@app.get("/api/observability/kmz-topology-sidecar")
+def get_kmz_topology_sidecar() -> JSONResponse:
+    """Phase 1O — KMZ topology sidecar (read-only, upload-scoped, diagnostic).
+
+    Schema version: "kmz-topology-sidecar-1".
+
+    Reads STATE["kmz_topology_sidecar"] directly.
+    Returns the pre-built sidecar from the most recent upload_design call.
+    If no upload has occurred, returns the empty skeleton.
+
+    Always returns HTTP 200.  No writes.  No state mutations.
+    No operational side effects.
+
+    USAGE POLICY: See TOPOLOGY_SIDECAR_USAGE_POLICY.md.
+    No operational consumer may depend on this endpoint being non-empty.
+    """
+    from datetime import timezone as _tz_sidecar
+
+    _generated_at_sc = datetime.now(_tz_sidecar.utc).isoformat()
+    try:
+        _sidecar = STATE.get("kmz_topology_sidecar")
+        if not isinstance(_sidecar, dict):
+            # No upload yet or sidecar was cleared.
+            _sidecar = _build_kmz_topology_sidecar(None, None)
+        _result = dict(_sidecar)
+        _result["generated_at"] = _generated_at_sc
+        return JSONResponse(_result)
+    except Exception as _sc_exc:
+        print(
+            f"[KMZ_TOPOLOGY_SIDECAR] WARNING: failed to serve sidecar: "
+            f"{type(_sc_exc).__name__}: {_sc_exc}",
+            flush=True,
+        )
+        _empty = _build_kmz_topology_sidecar(None, None)
+        _empty["generated_at"] = _generated_at_sc
+        return JSONResponse(_empty)
+
+
+# ---------------------------------------------------------------------------
+# Phase 1K — Ground Truth Review Labels (observability-only telemetry)
+# ---------------------------------------------------------------------------
+
+_REVIEW_LABEL_VALID_SET = frozenset({"useful_catch", "noise", "unclear", "cleared"})
+
+
+def _append_review_label(
+    match_pass_id: str,
+    group_id: Optional[str],
+    input_sha256: Optional[str],
+    label: str,
+    previous_label: Optional[str] = None,
+    reviewer_hint: Optional[str] = None,
+    note: Optional[str] = None,
+    tombstone: bool = False,
+) -> None:
+    """Phase 1K — append one review-label telemetry event.
+
+    Schema version: "review-label-1".  Mirrors ``_append_match_shadow_compare_entries``
+    structure: append-only, tail-truncates at cap, never raises, prints warning
+    on failure only.
+
+    ISOLATION GUARANTEE: This function only writes to ``REVIEW_LABELS_PATH``.
+    It NEVER reads or writes to any matching, scoring, or rendering subsystem.
+    See ``LABEL_USAGE_POLICY.md``.
+    """
+    from datetime import timezone as _tz_rl
+
+    try:
+        row_rl: Dict[str, Any] = {
+            "schema_version": "review-label-1",
+            "labeled_at": datetime.now(_tz_rl.utc).isoformat(),
+            "match_pass_id": str(match_pass_id) if match_pass_id else None,
+            "group_id": str(group_id) if group_id is not None else None,
+            "input_sha256": str(input_sha256) if input_sha256 is not None else None,
+            "label": label,
+            "previous_label": str(previous_label) if previous_label is not None else None,
+            "reviewer_hint": str(reviewer_hint)[:200] if reviewer_hint is not None else None,
+            "note": str(note)[:500] if note is not None else None,
+            "tombstone": bool(tombstone),
+        }
+
+        with open(REVIEW_LABELS_PATH, "a", encoding="utf-8") as _fh_rl:
+            _fh_rl.write(json.dumps(row_rl, separators=(",", ":")) + "\n")
+
+        # Tail-truncate to cap — same pattern as other observability appenders.
+        with open(REVIEW_LABELS_PATH, "r", encoding="utf-8") as _fh_rl:
+            _all_lines_rl = _fh_rl.readlines()
+
+        if len(_all_lines_rl) > REVIEW_LABELS_MAX_ROWS:
+            _all_lines_rl = _all_lines_rl[-REVIEW_LABELS_MAX_ROWS:]
+            with open(REVIEW_LABELS_PATH, "w", encoding="utf-8") as _fh_rl:
+                _fh_rl.writelines(_all_lines_rl)
+
+    except Exception as _rl_exc:  # pragma: no cover
+        print(
+            f"[REVIEW_LABELS] WARNING: failed to append review label: "
+            f"{type(_rl_exc).__name__}: {_rl_exc}",
+            flush=True,
+        )
+
+
+@app.post("/api/observability/review-labels")
+def post_review_label(body: Dict[str, Any] = Body(default_factory=dict)) -> JSONResponse:
+    """Phase 1K — append a review-label event (observability telemetry only).
+
+    Schema version: "review-label-1".
+
+    Accepted body keys:
+      match_pass_id  — str (required, non-empty)
+      group_id       — str | null
+      input_sha256   — str | null
+      label          — "useful_catch" | "noise" | "unclear" | "cleared"
+      previous_label — str | null
+      reviewer_hint  — str | null
+      note           — str | null
+      tombstone      — bool (default false)
+
+    Always returns HTTP 200.
+    Invalid or missing label → silent no-op, returns {"accepted": false, "label": null}.
+    Missing or empty match_pass_id → silent no-op.
+    No operational side effects of any kind.
+    """
+    if not isinstance(body, dict):
+        return JSONResponse({"accepted": False, "label": None})
+
+    label_rl = body.get("label")
+    if label_rl not in _REVIEW_LABEL_VALID_SET:
+        return JSONResponse({"accepted": False, "label": None})
+
+    match_pass_id_rl = body.get("match_pass_id")
+    if not match_pass_id_rl or not str(match_pass_id_rl).strip():
+        return JSONResponse({"accepted": False, "label": None})
+
+    _append_review_label(
+        match_pass_id=str(match_pass_id_rl).strip(),
+        group_id=body.get("group_id"),
+        input_sha256=body.get("input_sha256"),
+        label=str(label_rl),
+        previous_label=body.get("previous_label"),
+        reviewer_hint=body.get("reviewer_hint"),
+        note=body.get("note"),
+        tombstone=bool(body.get("tombstone", False)),
+    )
+    return JSONResponse({"accepted": True, "label": label_rl})
+
+
+@app.get("/api/observability/review-labels")
+def get_review_labels(limit: int = 100) -> JSONResponse:
+    """Phase 1K — newest-first event log of all review-label events.
+
+    Query param: ``limit`` (default 100, max 1000, min 1).
+    Always returns HTTP 200.  Missing or corrupt file → {"events": []}.
+    Read-only: no writes.
+    """
+    _limit_rl = max(1, min(limit, 1000))
+    try:
+        if not REVIEW_LABELS_PATH.exists():
+            return JSONResponse({"events": []})
+        with open(REVIEW_LABELS_PATH, "r", encoding="utf-8") as _fh_rl:
+            _raw_rl = _fh_rl.readlines()
+        _events_rl: List[Dict[str, Any]] = []
+        for _line_rl in reversed(_raw_rl):
+            _line_rl = _line_rl.strip()
+            if not _line_rl:
+                continue
+            try:
+                _events_rl.append(json.loads(_line_rl))
+            except json.JSONDecodeError:
+                continue
+            if len(_events_rl) >= _limit_rl:
+                break
+        return JSONResponse({"events": _events_rl})
+    except Exception as _rl_read_exc:
+        print(
+            f"[REVIEW_LABELS] WARNING: failed to read review-labels file: "
+            f"{type(_rl_read_exc).__name__}: {_rl_read_exc}",
+            flush=True,
+        )
+        return JSONResponse({"events": []})
+
+
+@app.get("/api/observability/review-labels/current")
+def get_review_labels_current(match_pass_id: str = Query("")) -> JSONResponse:
+    """Phase 1K — latest-wins resolved labels for a given match_pass_id.
+
+    Reads the full label log and returns the most-recent label per
+    ``(match_pass_id, group_id)`` key.  Tombstoned entries are excluded from
+    the result but still consume the "latest" slot (a tombstone clears a label).
+
+    Query param: ``match_pass_id`` (required non-empty str).
+    Always returns HTTP 200.  Missing file or empty match_pass_id → {"resolved": []}.
+    Read-only: no writes.
+    """
+    _mpid_rl = str(match_pass_id).strip()
+    if not _mpid_rl:
+        return JSONResponse({"resolved": []})
+    try:
+        if not REVIEW_LABELS_PATH.exists():
+            return JSONResponse({"resolved": []})
+        with open(REVIEW_LABELS_PATH, "r", encoding="utf-8") as _fh_rl:
+            _raw_rl = _fh_rl.readlines()
+
+        # Collect all events for this pass in file order (oldest → newest).
+        _events_for_pass_rl: List[Dict[str, Any]] = []
+        for _line_rl in _raw_rl:
+            _line_rl = _line_rl.strip()
+            if not _line_rl:
+                continue
+            try:
+                _ev_rl = json.loads(_line_rl)
+            except json.JSONDecodeError:
+                continue
+            if _ev_rl.get("match_pass_id") == _mpid_rl:
+                _events_for_pass_rl.append(_ev_rl)
+
+        # Latest-write-wins per group_id (None is a valid key).
+        _resolved_map_rl: Dict[Optional[str], Dict[str, Any]] = {}
+        for _ev_rl in _events_for_pass_rl:
+            _gid_key: Optional[str] = _ev_rl.get("group_id")
+            _resolved_map_rl[_gid_key] = _ev_rl
+
+        # Tombstoned entries are excluded from the visible result.
+        _resolved_rl: List[Dict[str, Any]] = [
+            {
+                "group_id": _ev_rl.get("group_id"),
+                "label": _ev_rl.get("label"),
+                "labeled_at": _ev_rl.get("labeled_at"),
+                "reviewer_hint": _ev_rl.get("reviewer_hint"),
+                "note": _ev_rl.get("note"),
+            }
+            for _ev_rl in _resolved_map_rl.values()
+            if not _ev_rl.get("tombstone", False)
+        ]
+        return JSONResponse({"resolved": _resolved_rl})
+
+    except Exception as _rl_cur_exc:
+        print(
+            f"[REVIEW_LABELS] WARNING: failed to resolve current labels: "
+            f"{type(_rl_cur_exc).__name__}: {_rl_cur_exc}",
+            flush=True,
+        )
+        return JSONResponse({"resolved": []})
 
 
 STATION_PHOTO_ROOT = UPLOADS_DIR / "station_photos"

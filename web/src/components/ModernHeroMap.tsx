@@ -14,6 +14,7 @@ import type {
   BackendState,
   KmzLineFeature,
   KmzPolygonFeature,
+  KmzRenderPayloadResponse,
   RedlineSegment,
   StationPhoto,
   StationPoint,
@@ -57,6 +58,163 @@ function cleanCoords(coords: number[][] | undefined | null): Array<[number, numb
     out.push([lat, lon]);
   }
   return out;
+}
+
+// Phase 2F — mute a KMZ hex color ~55% toward slate-gray so KMZ context never
+// competes with operational redlines. Pure, never throws.
+function muteKmzColorMHM(hex: string | null | undefined): string {
+  const fallback = "#7c8da6";
+  if (!hex || !/^#[0-9a-fA-F]{6}$/.test(hex)) return fallback;
+  const r = parseInt(hex.slice(1, 3), 16);
+  const g = parseInt(hex.slice(3, 5), 16);
+  const b = parseInt(hex.slice(5, 7), 16);
+  return `#${Math.round(r*0.55+148*0.45).toString(16).padStart(2,"0")}${Math.round(g*0.55+163*0.45).toString(16).padStart(2,"0")}${Math.round(b*0.55+184*0.45).toString(16).padStart(2,"0")}`;
+}
+
+// Phase 2G — derive structural subtype from folder_path and name so markers
+// can be styled distinctly without backend changes. Pure function, never throws.
+type KmzPointSubtype = "splice_hh"|"terminal_port_hh"|"installer_hh"|"flower_pot"|"house"|"generic_structure";
+function getKmzPointSubtype(
+  name: string|null|undefined,
+  folderPath: string[]|null|undefined,
+): KmzPointSubtype {
+  const sig = [
+    ...(Array.isArray(folderPath) ? folderPath : []),
+    name ?? "",
+  ].join(" / ").toLowerCase();
+  if (sig.includes("splice hh") || sig.includes("splice loc")) return "splice_hh";
+  if (sig.includes("terminal port"))                             return "terminal_port_hh";
+  if (sig.includes("installer hh") || sig.includes("installer")) return "installer_hh";
+  if (sig.includes("flower pot") || sig.includes("flowerpot"))   return "flower_pot";
+  if (sig.includes("house"))                                     return "house";
+  return "generic_structure";
+}
+// Marker style per subtype. All are deliberately muted/small so they don't
+// compete with operational redlines or station markers.
+// Phase 2J: subtype visual hierarchy — splice_hh most prominent, house most subdued.
+const KMZ_POINT_STYLES: Record<KmzPointSubtype, { fillColor:string; color:string; radius:number; fillOpacity:number; weight:number }> = {
+  splice_hh:        { fillColor:"#c2344a", color:"rgba(15,23,42,0.85)", radius:5.5, fillOpacity:0.82, weight:1.4 },
+  terminal_port_hh: { fillColor:"#2f7fbc", color:"rgba(15,23,42,0.80)", radius:5.0, fillOpacity:0.75, weight:1.2 },
+  installer_hh:     { fillColor:"#c27a1a", color:"rgba(15,23,42,0.75)", radius:4.5, fillOpacity:0.68, weight:1.1 },
+  flower_pot:       { fillColor:"#3a9455", color:"rgba(15,23,42,0.70)", radius:4.0, fillOpacity:0.60, weight:1.0 },
+  house:            { fillColor:"#5a6374", color:"rgba(15,23,42,0.55)", radius:2.6, fillOpacity:0.38, weight:0.7 },
+  generic_structure:{ fillColor:"#6e7e96", color:"rgba(15,23,42,0.55)", radius:2.8, fillOpacity:0.42, weight:0.8 },
+};
+
+// ─── Phase 2I: SVG engineering glyph system ─────────────────────────────────
+// Inline SVG glyphs (24x24 viewBox) for recognizable telecom node symbols.
+// Colors are applied per-subtype at render time via fill substitution.
+
+type KmzGlyphKind = "triangle" | "square" | "diamond" | "house" | "flower" | "circle";
+
+/** Build a 24×24 inline SVG string with the given fill color (14px rendered). */
+function _kmzSvg(path: string, fillColor: string, fillOpacity = 0.72): string {
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="14" height="14"><path d="${path}" fill="${fillColor}" fill-opacity="${fillOpacity}" stroke="rgba(15,23,42,0.75)" stroke-width="1"/></svg>`;
+}
+
+const _KMZ_GLYPH_PATHS: Record<KmzGlyphKind, string> = {
+  // Upward-pointing triangle — Terminal Port Handhole
+  triangle: "M12 3 L21 21 L3 21 Z",
+  // Filled square — Installer HH / Splice HH
+  square: "M3 3 H21 V21 H3 Z",
+  // Rotated square (diamond) — Reel / slack
+  diamond: "M12 2 L22 12 L12 22 L2 12 Z",
+  // Simple house silhouette — House drop
+  house: "M12 2 L22 10 V22 H15 V14 H9 V22 H2 V10 Z",
+  // 5-petal flower — Flower Pot
+  flower: "M12 12 m-5-5 a5 5 0 1 1 10 0 a5 5 0 1 1-10 0 M12 7 a4 4 0 1 0 0.001 0 M7 12 a4 4 0 1 0 0.001 0 M17 12 a4 4 0 1 0 0.001 0 M12 17 a4 4 0 1 0 0.001 0 M12 12 m-3-3 a4 4 0 1 1 6 6 a4 4 0 1 1-6-6 M12 9 a3 3 0 1 0 0.001 0",
+  // Filled circle — generic / splice (fallback)
+  circle: "M12 4 a8 8 0 1 1 0 0.001 Z",
+};
+
+/** Build a complete inline SVG string for the given glyph and fill color. */
+function buildKmzGlyphSvg(glyph: KmzGlyphKind, fillColor: string): string {
+  return _kmzSvg(_KMZ_GLYPH_PATHS[glyph], fillColor);
+}
+
+/**
+ * Inspect `icon_href` (from KML IconStyle) for well-known telecom icon filename hints.
+ * Returns a glyph kind when a match is found, or null to fall back to circleMarker.
+ */
+function getKmzGlyphFromIconHref(icon_href: string | undefined | null): KmzGlyphKind | null {
+  if (!icon_href) return null;
+  const lc = icon_href.toLowerCase();
+  if (lc.includes("triangle")) return "triangle";
+  if (lc.includes("square"))   return "square";
+  if (lc.includes("diamond"))  return "diamond";
+  if (lc.includes("house"))    return "house";
+  if (lc.includes("flower") || lc.includes("star")) return "flower";
+  return null;
+}
+
+// ─── Phase 2K: engineering attribute extraction + inspection helpers ─────────
+
+/** Human-readable label for each KMZ point subtype (popup header). */
+const KMZ_SUBTYPE_LABELS: Record<KmzPointSubtype, string> = {
+  splice_hh:        "Splice Handhole",
+  terminal_port_hh: "Terminal Port Handhole",
+  installer_hh:     "Installer Handhole",
+  flower_pot:       "Flower Pot",
+  house:            "House",
+  generic_structure:"Generic Structure",
+};
+
+/**
+ * Telecom field priority order.
+ * Known fields appear first in the Engineering Attributes panel; remainder are alphabetical.
+ */
+const ENGINEERING_FIELD_PRIORITY: string[] = [
+  "AP Number", "Node Type", "HH Size", "Flower Pot Size",
+  "Terminal Length", "Splitter Count", "SCID", "Splice Location",
+  "Cable ID", "Fiber Size", "Terminal ID", "Address", "Notes",
+];
+
+/**
+ * Parse Google Earth description HTML and extract structured key/value rows
+ * from `<table><tr><td>` patterns. Pure, never throws, max 48 rows.
+ */
+function extractEngineeringAttributes(
+  descriptionRaw: string,
+): Array<{ key: string; value: string }> {
+  if (!descriptionRaw || typeof document === "undefined") return [];
+  try {
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(descriptionRaw, "text/html");
+    const result: Array<{ key: string; value: string }> = [];
+    const trs = Array.from(doc.querySelectorAll("tr"));
+    for (const tr of trs) {
+      const cells = Array.from(tr.querySelectorAll("td, th"));
+      if (cells.length < 2) continue;
+      const normalize = (el: Element) =>
+        (el.textContent ?? "").replace(/\u00a0/g, " ").replace(/\s+/g, " ").trim();
+      const key = normalize(cells[0]);
+      const val = normalize(cells[1]);
+      if (!key || !val) continue;
+      if (key.length > 120 || val.length > 300) continue;
+      result.push({ key, value: val });
+      if (result.length >= 48) break;
+    }
+    return result;
+  } catch {
+    return [];
+  }
+}
+
+/** Sort extracted engineering rows: known priority fields first, then alphabetical. */
+function sortEngineeringAttributes(
+  rows: Array<{ key: string; value: string }>,
+): Array<{ key: string; value: string }> {
+  const priorityOf = (key: string): number => {
+    const lc = key.toLowerCase();
+    const idx = ENGINEERING_FIELD_PRIORITY.findIndex(p => p.toLowerCase() === lc);
+    return idx === -1 ? ENGINEERING_FIELD_PRIORITY.length : idx;
+  };
+  return [...rows].sort((a, b) => {
+    const da = priorityOf(a.key);
+    const db = priorityOf(b.key);
+    if (da !== db) return da - db;
+    return a.key.localeCompare(b.key);
+  });
 }
 
 // ─── Footage-based KMZ placement helpers ────────────────────────────────────
@@ -336,6 +494,17 @@ export default function ModernHeroMap({
   const fieldTrailLayerRef = useRef<ReturnType<LeafletNS["polyline"]> | null>(null);
   const fieldPhotoLayersRef = useRef<Array<ReturnType<LeafletNS["circleMarker"]>>>([]);
   const bridgedGpsPhotoLayersRef = useRef<Array<ReturnType<LeafletNS["circleMarker"]>>>([]);
+  // Phase 2F — KMZ context render payload layers. Separate from the simplified
+  // kmz_reference layers. Stored in independent refs so they can be rebuilt
+  // without touching operational geometry.
+  const kmzCtxPolygonLayersRef = useRef<Array<ReturnType<LeafletNS["polygon"]>>>([]);
+  const kmzCtxLineLayersRef = useRef<Array<ReturnType<LeafletNS["polyline"]>>>([]);
+  const kmzCtxPointLayersRef = useRef<Array<ReturnType<LeafletNS["circleMarker"]>>>([]);
+  // Phase 2J: layers that have permanent tooltips, separated for zoom-aware toggling.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const kmzPtPermLabelLayersRef = useRef<Array<any>>([]);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const kmzLinePermLabelLayersRef = useRef<Array<any>>([]);
   // Parallel arrays of evidence-layer ids, one per layer in stationLayersRef /
   // redlineLayersRef. Index-aligned with the layer arrays. A null entry means
   // "no evidence layer" — those layers are never filtered by hiddenLayers.
@@ -398,6 +567,22 @@ export default function ModernHeroMap({
   // hiding a layer suppresses both its station markers and its redline
   // segments without re-fitting the map.
   const [hiddenLayers, setHiddenLayers] = useState<Set<string>>(new Set());
+  // Phase 2F — KMZ engineering context layer state. Local only. No backend writes.
+  const [layerKmzContext, setLayerKmzContext] = useState(false);
+  const [kmzRenderPayload, setKmzRenderPayload] = useState<KmzRenderPayloadResponse | null>(null);
+  const [kmzHiddenFolders, setKmzHiddenFolders] = useState<Set<string>>(new Set());
+  type SelectedKmzCtxFeature = {
+    feature_id: string; feature_type: "point"|"line"|"polygon";
+    name?: string; classification?: string; folder_path?: string[];
+    description?: string; extended_data?: Record<string,string>;
+    chainage_ft?: number|null; sequence_number?: string|null;
+    sequence_kind?: string|null; lifecycle?: {label:string;confidence:string;reason:string}|null;
+    // Phase 2I — balloon fidelity
+    description_raw?: string; style_url?: string; icon_href?: string;
+    // Phase 2K — subtype for human-readable header
+    subtype?: KmzPointSubtype;
+  };
+  const [selectedKmzCtxFeature, setSelectedKmzCtxFeature] = useState<SelectedKmzCtxFeature|null>(null);
   // Mirror into a ref so the geometry render-effect can read latest visibility
   // without depending on it (toggling visibility must not re-trigger
   // fitBounds).
@@ -876,6 +1061,7 @@ export default function ModernHeroMap({
           setSelectedFieldPhotoIdx(null);
           setSelectedPhotoPointIdx(null);
           setSelectedBridgedPhotoIdx(null);
+          setSelectedKmzCtxFeature(null);
         });
       } catch {
         if (!cancelled) setError("Leaflet map failed to initialize.");
@@ -903,8 +1089,202 @@ export default function ModernHeroMap({
       fieldTrailLayerRef.current = null;
       fieldPhotoLayersRef.current = [];
       bridgedGpsPhotoLayersRef.current = [];
+      kmzCtxPolygonLayersRef.current = [];
+      kmzCtxLineLayersRef.current = [];
+      kmzCtxPointLayersRef.current = [];
+      kmzPtPermLabelLayersRef.current = [];
+      kmzLinePermLabelLayersRef.current = [];
     };
   }, []);
+
+  // Phase 2F — Fetch KMZ render payload when context toggle turns ON.
+  // Silent failure. No STATE writes. Read-only.
+  useEffect(() => {
+    if (!layerKmzContext) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await fetch(appendSessionId(`${API_BASE}/api/observability/kmz-render-payload`, projectId), { cache: "no-store" });
+        if (!res.ok) return;
+        const data = (await res.json()) as KmzRenderPayloadResponse;
+        if (!cancelled) setKmzRenderPayload(data);
+      } catch { /* silent */ }
+    })();
+    return () => { cancelled = true; };
+  }, [layerKmzContext, projectId]);
+
+  // Phase 2F — Render KMZ context layers on the Leaflet map.
+  // Separate from the operational geometry effect so it never touches redlines/stations.
+  // KMZ context layers are added to a low-z pane so operational redlines stay dominant.
+  useEffect(() => {
+    const L = leafletRef.current;
+    const map = mapRef.current;
+    // Clean up existing KMZ context layers.
+    for (const ly of kmzCtxPolygonLayersRef.current) { try { ly.remove(); } catch { /* noop */ } }
+    for (const ly of kmzCtxLineLayersRef.current) { try { ly.remove(); } catch { /* noop */ } }
+    for (const ly of kmzCtxPointLayersRef.current) { try { ly.remove(); } catch { /* noop */ } }
+    kmzCtxPolygonLayersRef.current = [];
+    kmzCtxLineLayersRef.current = [];
+    kmzCtxPointLayersRef.current = [];
+    kmzPtPermLabelLayersRef.current = [];
+    kmzLinePermLabelLayersRef.current = [];
+    if (!L || !map || !layerKmzContext || !kmzRenderPayload) return;
+
+    // Phase 2H.1 — Updated pane z-index hierarchy:
+    //   KMZ ctx polygons (200) < KMZ ctx lines (210) < kmz_reference design lines (280)
+    //   < KMZ ctx point markers (320) < overlayPane redlines/stations (~400)
+    // This ensures structure markers are always visible above design route lines.
+    const POLY_PANE = "kmzContextPolygonPane";
+    const LINE_PANE = "kmzContextLinePane";
+    const PT_PANE   = "kmzContextPointPane";
+    if (!map.getPane(POLY_PANE)) { const p = map.createPane(POLY_PANE); p.style.zIndex = "200"; }
+    if (!map.getPane(LINE_PANE)) { const p = map.createPane(LINE_PANE); p.style.zIndex = "210"; }
+    if (!map.getPane(PT_PANE))   { const p = map.createPane(PT_PANE);   p.style.zIndex = "320"; }
+
+    const _lineClasses = new Set(["cable","cable_route","backbone","lateral","drop","duct","route_segment"]);
+    const _labelClasses = new Set(["Backbone","Underground Cable","Terminal Tail","Vacant Pipe"]);
+
+    // 1. Polygons — lowest KMZ pane
+    for (const poly of (kmzRenderPayload.polygons ?? [])) {
+      const fk = (poly.folder_path ?? []).join(" / ");
+      if (kmzHiddenFolders.has(fk)) continue;
+      const coords: [number,number][] = (poly.outer ?? [])
+        .filter(p => Array.isArray(p) && p.length>=2 && Number.isFinite(p[0]) && Number.isFinite(p[1]))
+        .map(p => [p[0],p[1]]);
+      if (coords.length < 3) continue;
+      const fc = muteKmzColorMHM(poly.fill_color);
+      const layer = L.polygon(coords, { pane: POLY_PANE, color: fc, weight: 0.9, opacity: 0.35, fillColor: fc, fillOpacity: 0.10, interactive: true });
+      if (poly.name) layer.bindTooltip(poly.name.slice(0,24), { permanent: false, direction: "center", className: "tl-station-label" });
+      layer.on("click", (e) => {
+        L.DomEvent.stopPropagation(e);
+        setSelectedKmzCtxFeature({ feature_id: poly.feature_id, feature_type: "polygon", name: poly.name, classification: poly.classification, folder_path: poly.folder_path, description: poly.description, extended_data: poly.extended_data, chainage_ft: poly.chainage_ft, sequence_number: poly.sequence_number, sequence_kind: poly.sequence_kind, lifecycle: poly.lifecycle, description_raw: poly.description_raw, style_url: poly.style_url, icon_href: poly.icon_href });
+      });
+      layer.addTo(map);
+      kmzCtxPolygonLayersRef.current.push(layer);
+    }
+
+    // 2. Lines — middle KMZ pane (above polygons, below points)
+    for (const line of (kmzRenderPayload.lines ?? [])) {
+      const fk = (line.folder_path ?? []).join(" / ");
+      if (kmzHiddenFolders.has(fk)) continue;
+      const coords: [number,number][] = (line.coords ?? [])
+        .filter(p => Array.isArray(p) && p.length>=2 && Number.isFinite(p[0]) && Number.isFinite(p[1]))
+        .map(p => [p[0],p[1]]);
+      if (coords.length < 2) continue;
+      const lc = muteKmzColorMHM(line.color);
+      const layer = L.polyline(coords, { pane: LINE_PANE, color: lc, weight: 1.2, opacity: 0.42, interactive: true });
+      // Phase 2J: label-eligible lines use permanent tooltips (zoom-gated separately).
+      const showLabel = line.name && line.name !== "House Drop" && _lineClasses.has(line.classification) && _labelClasses.has(line.name);
+      if (showLabel && line.name) {
+        layer.bindTooltip(line.name.slice(0, 20), { permanent: true, direction: "center", className: "tl-station-label" });
+        kmzLinePermLabelLayersRef.current.push(layer);
+      }
+      layer.on("click", (e) => {
+        L.DomEvent.stopPropagation(e);
+        setSelectedKmzCtxFeature({ feature_id: line.feature_id, feature_type: "line", name: line.name, classification: line.classification, folder_path: line.folder_path, description: line.description, extended_data: line.extended_data, chainage_ft: line.chainage_ft, sequence_number: line.sequence_number, sequence_kind: line.sequence_kind, lifecycle: line.lifecycle, description_raw: line.description_raw, style_url: line.style_url, icon_href: line.icon_href });
+      });
+      layer.addTo(map);
+      kmzCtxLineLayersRef.current.push(layer);
+    }
+
+    // 3. Points — top KMZ pane (above lines and polygons) with reliable hit area (Phase 2G/2H)
+    for (const pt of (kmzRenderPayload.points ?? [])) {
+      const fk = (pt.folder_path ?? []).join(" / ");
+      if (kmzHiddenFolders.has(fk)) continue;
+      if (!Array.isArray(pt.coord) || pt.coord.length < 2) continue;
+      const [ptLat, ptLon] = pt.coord;
+      if (!Number.isFinite(ptLat) || !Number.isFinite(ptLon)) continue;
+      const subtype = getKmzPointSubtype(pt.name, pt.folder_path);
+      const sty = KMZ_POINT_STYLES[subtype];
+      const tooltipText = pt.name ? pt.name.slice(0, 24) : KMZ_SUBTYPE_LABELS[subtype];
+      // Phase 2J: persistent annotation for named engineering structures only.
+      const _usePermLabel = subtype === "splice_hh" || subtype === "terminal_port_hh" ||
+                            subtype === "installer_hh" || subtype === "flower_pot";
+      // Phase 2K: enlarge hit area for high-priority structures.
+      const _isHighPriority = subtype === "splice_hh" || subtype === "terminal_port_hh" ||
+                              subtype === "installer_hh" || subtype === "flower_pot";
+      const _clickPayload = {
+        feature_id: pt.feature_id, feature_type: "point" as const,
+        name: pt.name, classification: pt.classification,
+        folder_path: pt.folder_path, description: pt.description,
+        extended_data: pt.extended_data, chainage_ft: pt.chainage_ft,
+        sequence_number: pt.sequence_number, sequence_kind: pt.sequence_kind,
+        lifecycle: pt.lifecycle,
+        description_raw: pt.description_raw, style_url: pt.style_url, icon_href: pt.icon_href,
+        subtype, // Phase 2K: pass subtype through for popup header
+      };
+
+      // Phase 2K unified two-layer pattern:
+      //   Layer 1 — transparent hit circle (always circleMarker, handles tooltip + click)
+      //   Layer 2 — visual glyph (either divIcon L.marker or circleMarker, non-interactive)
+      // This guarantees reliable clicks regardless of visual representation.
+      const hitMarker = L.circleMarker([ptLat, ptLon], {
+        pane: PT_PANE,
+        radius: _isHighPriority ? 10 : 8,
+        fillColor: "transparent", fillOpacity: 0,
+        color: "transparent", weight: 0,
+        interactive: true, bubblingMouseEvents: false,
+      });
+      hitMarker.bindTooltip(tooltipText, { permanent: _usePermLabel, direction: "top", offset: _usePermLabel ? [0,-8] : undefined, className: "tl-station-label" });
+      if (_usePermLabel) kmzPtPermLabelLayersRef.current.push(hitMarker);
+      hitMarker.on("click", (e) => { L.DomEvent.stopPropagation(e); setSelectedKmzCtxFeature(_clickPayload); });
+
+      // Visual layer — non-interactive.
+      const glyphKind = getKmzGlyphFromIconHref(pt.icon_href);
+      if (glyphKind) {
+        const svgHtml = buildKmzGlyphSvg(glyphKind, sty.fillColor);
+        const divIco = L.divIcon({ html: svgHtml, className: "tl-kmz-glyph", iconSize: [14, 14], iconAnchor: [7, 7] });
+        const visualMarker = L.marker([ptLat, ptLon], { pane: PT_PANE, icon: divIco, interactive: false, bubblingMouseEvents: false });
+        visualMarker.addTo(map);
+        kmzCtxPointLayersRef.current.push(visualMarker as unknown as ReturnType<LeafletNS["circleMarker"]>);
+      } else {
+        const visualMarker = L.circleMarker([ptLat, ptLon], {
+          pane: PT_PANE,
+          radius: sty.radius, color: sty.color, weight: sty.weight,
+          fillColor: sty.fillColor, fillOpacity: sty.fillOpacity,
+          interactive: false, bubblingMouseEvents: false,
+        });
+        visualMarker.addTo(map);
+        kmzCtxPointLayersRef.current.push(visualMarker);
+      }
+      // Hit marker added last — sits on top in DOM within the same pane, receives events first.
+      hitMarker.addTo(map);
+      kmzCtxPointLayersRef.current.push(hitMarker);
+    }
+    // Phase 2J: apply initial zoom visibility so labels don't show at low zoom on first load.
+    const _initZoom = map.getZoom();
+    const _initShowPtLabel   = _initZoom >= 17;
+    const _initShowLineLabel = _initZoom >= 18;
+    for (const ly of kmzPtPermLabelLayersRef.current) {
+      try { if (_initShowPtLabel) ly.openTooltip(); else ly.closeTooltip(); } catch { /* noop */ }
+    }
+    for (const ly of kmzLinePermLabelLayersRef.current) {
+      try { if (_initShowLineLabel) ly.openTooltip(); else ly.closeTooltip(); } catch { /* noop */ }
+    }
+
+    // Belt-and-suspenders: bring visual glyph markers to front of their SVG pane
+    // after all KMZ context layers are added, ensuring correct intra-pane DOM order.
+    for (const ly of kmzCtxPointLayersRef.current) {
+      try { (ly as { bringToFront?: () => void }).bringToFront?.(); } catch { /* noop */ }
+    }
+  }, [layerKmzContext, kmzRenderPayload, kmzHiddenFolders]);
+
+  // Phase 2J — Zoom-aware KMZ label decluttering.
+  // Permanent point labels (splice, terminal, installer, flower) appear at zoom >= 17.
+  // Permanent line labels (Backbone, Underground Cable etc.) appear at zoom >= 18.
+  // Only labels are toggled — geometry is never hidden.
+  useEffect(() => {
+    const KMZ_PT_LABEL_MIN_ZOOM   = 17;
+    const KMZ_LINE_LABEL_MIN_ZOOM = 18;
+    const showPt   = mapZoom >= KMZ_PT_LABEL_MIN_ZOOM;
+    const showLine = mapZoom >= KMZ_LINE_LABEL_MIN_ZOOM;
+    for (const ly of kmzPtPermLabelLayersRef.current) {
+      try { if (showPt) ly.openTooltip(); else ly.closeTooltip(); } catch { /* noop */ }
+    }
+    for (const ly of kmzLinePermLabelLayersRef.current) {
+      try { if (showLine) ly.openTooltip(); else ly.closeTooltip(); } catch { /* noop */ }
+    }
+  }, [mapZoom]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -1019,10 +1399,20 @@ export default function ModernHeroMap({
       allPoints.push(...coords);
     }
 
+    // Phase 2H.1 — Move kmz_reference design route lines to a dedicated pane at z-index 280
+    // so that KMZ context point markers (kmzContextPointPane at 320) visually sit above them,
+    // while operational redlines remain dominant on overlayPane (~400).
+    const KMZ_REF_LINE_PANE = "kmzRefDesignPane";
+    if (!map.getPane(KMZ_REF_LINE_PANE)) {
+      const p = map.createPane(KMZ_REF_LINE_PANE);
+      p.style.zIndex = "280";
+    }
+
     for (const feature of kmzLines) {
       const coords = feature.coords ?? [];
       if (coords.length < 2) continue;
       const layer = L.polyline(coords, {
+        pane: KMZ_REF_LINE_PANE,
         color: lineColor(feature),
         weight: lineWidth(feature),
         opacity: 0.92,
@@ -2592,7 +2982,183 @@ export default function ModernHeroMap({
           >
             {showStations ? "Hide Stations" : "Show Stations"}
           </button>
+          {/* Phase 2F — KMZ context toggle */}
+          <button
+            type="button"
+            onClick={() => setLayerKmzContext((v) => !v)}
+            data-active={layerKmzContext ? "true" : "false"}
+            title="Show uploaded KMZ engineering features as an advisory context layer beneath operational redlines"
+            style={layerKmzContext ? { borderColor: "rgba(251,191,36,0.7)", color: "rgba(251,191,36,0.95)" } : {}}
+          >
+            KMZ context
+          </button>
         </div>
+
+        {/* Phase 2F — Folder filter panel. Only when KMZ context ON and payload loaded. */}
+        {layerKmzContext && kmzRenderPayload && (() => {
+          const _allFeats = [...(kmzRenderPayload.points??[]), ...(kmzRenderPayload.lines??[]), ...(kmzRenderPayload.polygons??[])];
+          const _folderMap = new Map<string,{short:string;full:string;count:number}>();
+          for (const f of _allFeats) {
+            const fp = Array.isArray(f.folder_path) ? f.folder_path : [];
+            const key = fp.join(" / ");
+            if (!key) continue;
+            const ex = _folderMap.get(key);
+            if (ex) { ex.count++; }
+            else { _folderMap.set(key,{short:fp[fp.length-1]??key,full:key,count:1}); }
+          }
+          if (_folderMap.size === 0) return null;
+          const _rows = Array.from(_folderMap.entries()).sort((a,b)=>a[0].localeCompare(b[0]));
+          const _hasDrops = _rows.some(([k])=>k.includes("House Drop"));
+          return (
+            <div style={{ position:"absolute", top:46, right:10, zIndex:600, background:"rgba(2,8,23,0.9)", border:"1px solid rgba(251,191,36,0.28)", borderRadius:8, padding:"6px 10px", fontSize:10, color:"#e2e8f0", fontFamily:"ui-sans-serif,system-ui,sans-serif", maxHeight:180, overflowY:"auto", minWidth:200, pointerEvents:"all" }}>
+              <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:4 }}>
+                <span style={{ fontWeight:700, fontSize:10, color:"rgba(251,191,36,0.85)", letterSpacing:"0.04em", textTransform:"uppercase" }}>KMZ Layers</span>
+                <div style={{ display:"flex", gap:5 }}>
+                  {_hasDrops && (
+                    <button type="button" style={{ background:"none", border:"1px solid rgba(148,163,184,0.28)", borderRadius:4, cursor:"pointer", color:"rgba(148,163,184,0.72)", fontSize:9, padding:"1px 5px" }}
+                      onClick={()=>setKmzHiddenFolders(prev=>{ const n=new Set(prev); for(const[k] of _rows) if(k.includes("House Drop")) n.add(k); return n; })}>
+                      Hide drops
+                    </button>
+                  )}
+                  <button type="button" style={{ background:"none", border:"1px solid rgba(148,163,184,0.28)", borderRadius:4, cursor:"pointer", color:"rgba(148,163,184,0.72)", fontSize:9, padding:"1px 5px" }}
+                    onClick={()=>setKmzHiddenFolders(new Set())}>
+                    Show all
+                  </button>
+                </div>
+              </div>
+              {_rows.map(([key,meta])=>{
+                const _vis = !kmzHiddenFolders.has(key);
+                return (
+                  <label key={key} title={meta.full} style={{ display:"flex", alignItems:"center", gap:5, cursor:"pointer", userSelect:"none", padding:"1px 0", color:_vis?"#cbd5e1":"rgba(148,163,184,0.38)" }}>
+                    <input type="checkbox" checked={_vis} style={{ accentColor:"rgba(251,191,36,0.9)", cursor:"pointer" }}
+                      onChange={e=>setKmzHiddenFolders(prev=>{ const n=new Set(prev); if(e.target.checked) n.delete(key); else n.add(key); return n; })} />
+                    <span style={{ flex:1, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{meta.short}</span>
+                    <span style={{ color:"rgba(148,163,184,0.45)", fontSize:9, flexShrink:0 }}>{meta.count}</span>
+                  </label>
+                );
+              })}
+            </div>
+          );
+        })()}
+
+        {/* Phase 2K — KMZ engineering inspection popup */}
+        {selectedKmzCtxFeature && (() => {
+          const f = selectedKmzCtxFeature;
+
+          // Engineering attribute extraction (Phase 2K Part A+B)
+          const _engAttrs = sortEngineeringAttributes(
+            extractEngineeringAttributes(f.description_raw ?? "")
+          );
+
+          // Shared micro-components for compact two-column rows
+          const _lbl = (label: string) => (
+            <span style={{ color:"rgba(148,163,184,0.52)", fontSize:10, minWidth:78, flexShrink:0, paddingTop:1, lineHeight:1.4 }}>{label}</span>
+          );
+          const _val = (v: React.ReactNode, bold = false) => (
+            <span style={{ color: bold ? "#f1f5f9" : "#cbd5e1", fontWeight: bold ? 600 : 400, wordBreak:"break-word", flex:1, lineHeight:1.4 }}>{v}</span>
+          );
+          const _row = (label: string, value: React.ReactNode, bold = false) => (
+            <div style={{ display:"flex", gap:8, alignItems:"baseline", minHeight:16 }}>
+              {_lbl(label)}{_val(value, bold)}
+            </div>
+          );
+          const _divider = (label?: string) => (
+            <div style={{ display:"flex", alignItems:"center", gap:6, margin:"5px 0 3px" }}>
+              <div style={{ borderTop:"1px solid rgba(148,163,184,0.12)", flex:1 }} />
+              {label && <span style={{ color:"rgba(148,163,184,0.42)", fontSize:9, textTransform:"uppercase", letterSpacing:"0.06em", flexShrink:0 }}>{label}</span>}
+              {label && <div style={{ borderTop:"1px solid rgba(148,163,184,0.12)", flex:1 }} />}
+            </div>
+          );
+
+          // Subtype label for header (Part E)
+          const _subtypeLabel = f.subtype ? KMZ_SUBTYPE_LABELS[f.subtype] : null;
+          const _headerSub = _subtypeLabel
+            ? _subtypeLabel
+            : `${f.feature_type}${f.classification ? ` · ${f.classification}` : ""}`;
+
+          return (
+            <div style={{ position:"absolute", top: layerKmzContext&&kmzRenderPayload ? 250 : 56, right:10, zIndex:700, width:316, maxWidth:"calc(100% - 20px)", background:"rgba(3,9,25,0.96)", border:"1px solid rgba(148,163,184,0.20)", borderRadius:10, boxShadow:"0 6px 32px rgba(0,0,0,0.82)", fontFamily:"ui-sans-serif,system-ui,sans-serif", fontSize:11, color:"#e2e8f0", pointerEvents:"all", userSelect:"text", overflow:"hidden" }}>
+
+              {/* Header — KMZ Feature + subtype (Part E) */}
+              <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"6px 12px 5px", borderBottom:"1px solid rgba(148,163,184,0.13)", background:"rgba(15,23,42,0.60)" }}>
+                <div style={{ display:"flex", flexDirection:"column", gap:1 }}>
+                  <span style={{ fontWeight:700, fontSize:10, color:"rgba(251,191,36,0.88)", letterSpacing:"0.05em", textTransform:"uppercase", lineHeight:1.2 }}>KMZ Feature</span>
+                  <span style={{ fontSize:10, color:"rgba(148,163,184,0.68)", lineHeight:1.3, fontStyle: _subtypeLabel ? "normal" : "italic" }}>
+                    {_headerSub}
+                  </span>
+                </div>
+                <button type="button" onClick={()=>setSelectedKmzCtxFeature(null)} style={{ background:"none", border:"none", cursor:"pointer", color:"rgba(148,163,184,0.55)", fontSize:16, lineHeight:1, padding:"2px 4px", borderRadius:4 }} title="Close" aria-label="Close KMZ feature info">×</button>
+              </div>
+
+              {/* Scrollable body */}
+              <div style={{ padding:"7px 12px 9px", display:"flex", flexDirection:"column", gap:3, maxHeight:540, overflowY:"auto" }}>
+
+                {/* 1. Core metadata */}
+                {f.name && _row("Name", f.name, true)}
+                {Array.isArray(f.folder_path) && f.folder_path.length > 0 && _row("Folder", f.folder_path.join(" / "))}
+                {f.description && _row("Notes", f.description.length > 160 ? f.description.slice(0,160)+"…" : f.description)}
+                {f.chainage_ft != null && _row("Chainage", `${f.chainage_ft} ft`)}
+                {(f.sequence_number || f.sequence_kind) && _row("Sequence", [f.sequence_number, f.sequence_kind].filter(Boolean).join(" · "))}
+                {f.lifecycle && _row("Lifecycle", (
+                  <span>
+                    <span style={{ color:"#fbbf24", fontWeight:600 }}>{f.lifecycle.label}</span>
+                    {f.lifecycle.confidence && <span style={{ color:"rgba(148,163,184,0.48)", fontSize:10 }}> ({f.lifecycle.confidence})</span>}
+                  </span>
+                ))}
+
+                {/* 2. Engineering Attributes — extracted from description_raw (Part C) */}
+                {_engAttrs.length > 0 && (
+                  <>
+                    {_divider("Engineering Attributes")}
+                    {_engAttrs.map(({ key, value }) => (
+                      <div key={key} style={{ display:"flex", gap:8, alignItems:"baseline" }}>
+                        <span style={{ color:"rgba(148,163,184,0.58)", fontSize:10, minWidth:78, flexShrink:0, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{key}</span>
+                        <span style={{ color:"#dde5f0", wordBreak:"break-word", fontSize:10, flex:1, fontWeight: ENGINEERING_FIELD_PRIORITY.some(p=>p.toLowerCase()===key.toLowerCase()) ? 500 : 400 }}>{value}</span>
+                      </div>
+                    ))}
+                  </>
+                )}
+
+                {/* 3. Extended data (KMZ ExtendedData tags) */}
+                {f.extended_data && Object.keys(f.extended_data).length > 0 && (
+                  <>
+                    {_divider("KMZ ExtendedData")}
+                    {Object.entries(f.extended_data).slice(0, 32).map(([k, v]) => (
+                      <div key={k} style={{ display:"flex", gap:8, alignItems:"baseline" }}>
+                        <span style={{ color:"rgba(148,163,184,0.52)", fontSize:10, minWidth:78, flexShrink:0, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{k}</span>
+                        <span style={{ color:"#c8d4e6", wordBreak:"break-word", fontSize:10, flex:1 }}>{String(v)}</span>
+                      </div>
+                    ))}
+                  </>
+                )}
+
+                {/* 4. Original Google Earth balloon (Phase 2I — preserved) */}
+                {f.description_raw && f.description_raw.trim() && (
+                  <>
+                    {_divider("Original Balloon")}
+                    <details>
+                      <summary style={{ cursor:"pointer", color:"rgba(148,163,184,0.58)", fontSize:10, userSelect:"none", outline:"none", paddingBottom:3 }}>Show original balloon</summary>
+                      <iframe
+                        sandbox=""
+                        srcDoc={f.description_raw}
+                        style={{ width:"100%", maxHeight:220, height:220, border:"1px solid rgba(148,163,184,0.18)", borderRadius:5, background:"#0b1220", marginTop:4, display:"block", overflow:"hidden" }}
+                        title="KMZ original balloon"
+                      />
+                    </details>
+                  </>
+                )}
+
+                {/* 5. Icon source hint */}
+                {f.icon_href && (
+                  <div style={{ marginTop:3, color:"rgba(148,163,184,0.30)", fontSize:9, wordBreak:"break-all" }}>
+                    Icon: {f.icon_href}
+                  </div>
+                )}
+              </div>
+            </div>
+          );
+        })()}
+
         {selectedStationIndex !== null && stationPoints[selectedStationIndex] && (
           <StationInspectorPanel
             station={stationPoints[selectedStationIndex].source}

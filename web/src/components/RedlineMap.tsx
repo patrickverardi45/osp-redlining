@@ -492,6 +492,20 @@ function buildWorldPath(
     .join(" ");
 }
 
+// Phase 2C — blend any KMZ source hex ~55% toward slate-400 (#94a3b8) to kill
+// neon KML saturation while preserving hue identity. Pure function, never throws.
+function muteKmzColor(hex: string | null | undefined): string {
+  const fallback = "#7c8da6";
+  if (!hex || !/^#[0-9a-fA-F]{6}$/.test(hex)) return fallback;
+  const r = parseInt(hex.slice(1, 3), 16);
+  const g = parseInt(hex.slice(3, 5), 16);
+  const b = parseInt(hex.slice(5, 7), 16);
+  const mr = Math.round(r * 0.55 + 148 * 0.45);
+  const mg = Math.round(g * 0.55 + 163 * 0.45);
+  const mb = Math.round(b * 0.55 + 184 * 0.45);
+  return `#${mr.toString(16).padStart(2, "0")}${mg.toString(16).padStart(2, "0")}${mb.toString(16).padStart(2, "0")}`;
+}
+
 function escapeXml(value: unknown): string {
   return String(value ?? "")
     .replace(/&/g, "&amp;")
@@ -1070,6 +1084,31 @@ function OfficeRedlineMapInner({
   const [layerRoutes, setLayerRoutes] = useState(true);
   const [layerStructures, setLayerStructures] = useState(true);
   const [layerPhotos, setLayerPhotos] = useState(true);
+  // Phase 1X — reviewed snap preview overlay. OFF by default. Advisory only.
+  // Never mutates operational geometry. Not persisted to localStorage.
+  const [layerSnapPreview, setLayerSnapPreview] = useState(false);
+  const [snapPreviewData, setSnapPreviewData] = useState<import("@/lib/types/backend").ReviewedSnapPreviewResponse | null>(null);
+  // Phase 2A — KMZ engineering context layer. OFF by default. Advisory/display only.
+  // Never mutates operational geometry or matching state.
+  const [layerKmzContext, setLayerKmzContext] = useState(false);
+  const [kmzRenderPayload, setKmzRenderPayload] = useState<import("@/lib/types/backend").KmzRenderPayloadResponse | null>(null);
+  // Phase 2D — selected KMZ feature for info popup. Read-only. No operational impact.
+  type SelectedKmzFeature = {
+    feature_id: string;
+    feature_type: "point" | "line" | "polygon";
+    name?: string;
+    classification?: string;
+    folder_path?: string[];
+    description?: string;
+    extended_data?: Record<string, string>;
+    chainage_ft?: number | null;
+    sequence_number?: string | null;
+    sequence_kind?: string | null;
+    lifecycle?: { label: string; confidence: string; reason: string } | null;
+  };
+  const [selectedKmzFeature, setSelectedKmzFeature] = useState<SelectedKmzFeature | null>(null);
+  // Phase 2E — KMZ folder/category visibility toggles. Local state only. No backend impact.
+  const [kmzHiddenCategories, setKmzHiddenCategories] = useState<Set<string>>(new Set());
   const [mapBaseStyle, setMapBaseStyle] = useState<"standard" | "satellite">("satellite");
   const [showPlannedRouteHighlight, setShowPlannedRouteHighlight] = useState(false);
   const [presentationView, setPresentationView] = useState(false);
@@ -1346,6 +1385,54 @@ function OfficeRedlineMapInner({
       jobId: selectedFieldJobId,
     });
   }, [selectedFieldSessionId, selectedFieldJobId]);
+
+  // Phase 1X — fetch reviewed snap preview geometry when overlay is enabled.
+  // Read-only. Never mutates operational state. Silent failure.
+  useEffect(() => {
+    if (!layerSnapPreview) return;
+    let cancelled = false;
+    async function loadSnapPreview() {
+      try {
+        const res = await fetch(
+          `${API_BASE}/api/observability/reviewed-snap-preview`,
+          { cache: "no-store" },
+        );
+        if (!res.ok || cancelled) return;
+        const data = (await res.json()) as import("@/lib/types/backend").ReviewedSnapPreviewResponse;
+        if (!cancelled) setSnapPreviewData(data);
+      } catch {
+        // Silently ignore — overlay is advisory review aid only.
+      }
+    }
+    void loadSnapPreview();
+    return () => {
+      cancelled = true;
+    };
+  }, [layerSnapPreview]);
+
+  // Phase 2A — fetch KMZ engineering render payload when context layer is enabled.
+  // Read-only. Never mutates operational state. Silent failure.
+  useEffect(() => {
+    if (!layerKmzContext) return;
+    let cancelled = false;
+    async function loadKmzRenderPayload() {
+      try {
+        const res = await fetch(
+          `${API_BASE}/api/observability/kmz-render-payload`,
+          { cache: "no-store" },
+        );
+        if (!res.ok || cancelled) return;
+        const data = (await res.json()) as import("@/lib/types/backend").KmzRenderPayloadResponse;
+        if (!cancelled) setKmzRenderPayload(data);
+      } catch {
+        // Silently ignore — layer is advisory display-only.
+      }
+    }
+    void loadKmzRenderPayload();
+    return () => {
+      cancelled = true;
+    };
+  }, [layerKmzContext]);
 
   const kmzLineFeatures = useMemo(
     () =>
@@ -2504,6 +2591,156 @@ ${fieldSubmissionPlacemarks.length > 0 ? buildFolder("Selected Field Submission"
     state?.selected_route_name,
     stationPoints,
   ]);
+
+  // Phase 2H — Engineering KML export mode.
+  // Fetches the rich kmz-render-payload and emits full engineering context + redlines.
+  // Does NOT modify handleExportKml; that closeout export is preserved unchanged.
+  const handleExportEngineeringKml = useCallback(async () => {
+    let payload: import("@/lib/types/backend").KmzRenderPayloadResponse | null = null;
+    try {
+      const res = await fetch(`${API_BASE}/api/observability/kmz-render-payload`, { cache: "no-store" });
+      if (!res.ok) { console.warn("[eng-kml-export] payload fetch failed:", res.status); return; }
+      payload = (await res.json()) as import("@/lib/types/backend").KmzRenderPayloadResponse;
+    } catch (e) {
+      console.warn("[eng-kml-export] fetch error:", e);
+      return;
+    }
+    if (!payload) return;
+
+    const buildEngFolder = (name: string, marks: string[]) =>
+      `    <Folder>\n      <name>${escapeXml(name)}</name>\n${marks.join("\n")}\n    </Folder>`;
+
+    // Build metadata description table for any engineering feature.
+    const engMeta = (f: {
+      description: string;
+      classification: string;
+      folder_path: string[];
+      chainage_ft: number | null;
+      sequence_number: string | null;
+      sequence_kind: string | null;
+      lifecycle: { label: string; confidence: string; reason: string } | null;
+      extended_data: Record<string, string>;
+    }) => {
+      const rows: Array<{ label: string; value: string }> = [];
+      if (f.description) rows.push({ label: "Description", value: f.description });
+      rows.push({ label: "Classification", value: f.classification });
+      rows.push({ label: "Folder", value: (f.folder_path ?? []).join(" / ") || "--" });
+      if (f.chainage_ft != null) rows.push({ label: "Chainage (ft)", value: String(f.chainage_ft) });
+      if (f.sequence_number) rows.push({ label: "Sequence #", value: f.sequence_number });
+      if (f.sequence_kind) rows.push({ label: "Sequence kind", value: f.sequence_kind });
+      if (f.lifecycle) rows.push({ label: "Lifecycle", value: `${f.lifecycle.label} (${f.lifecycle.confidence})` });
+      let extCount = 0;
+      for (const [k, v] of Object.entries(f.extended_data ?? {})) {
+        if (extCount >= 8) break;
+        rows.push({ label: k, value: String(v) });
+        extCount++;
+      }
+      return kmlDescriptionTable(rows);
+    };
+
+    // Group placemarks by folder_path key.
+    const folderMap = new Map<string, string[]>();
+    const getFolderBucket = (fp: string[]) => {
+      const key = (fp ?? []).length > 0 ? (fp ?? []).join(" / ") : "Uncategorized";
+      if (!folderMap.has(key)) folderMap.set(key, []);
+      return folderMap.get(key)!;
+    };
+
+    // Points
+    for (const pt of (payload.points ?? [])) {
+      const [lat, lon] = pt.coord ?? [];
+      const coord = kmlCoordinateFromLatLon(lat, lon);
+      if (!coord) continue;
+      const name = pt.name || pt.classification || "Unnamed Point";
+      getFolderBucket(pt.folder_path).push(
+        `      <Placemark>\n        <name>${escapeXml(name)}</name>\n        <description>${engMeta(pt)}</description>\n        <styleUrl>#engPointStyle</styleUrl>\n        <Point><coordinates>${coord}</coordinates></Point>\n      </Placemark>`,
+      );
+    }
+
+    // Lines
+    for (const line of (payload.lines ?? [])) {
+      const coords = (line.coords ?? [])
+        .map((p) => kmlCoordinateFromLatLon(p[0], p[1]))
+        .filter((c): c is string => Boolean(c));
+      if (coords.length < 2) continue;
+      const name = line.name || "Unnamed Line";
+      getFolderBucket(line.folder_path).push(
+        `      <Placemark>\n        <name>${escapeXml(name)}</name>\n        <description>${engMeta(line)}</description>\n        <styleUrl>#engLineStyle</styleUrl>\n        <LineString><tessellate>1</tessellate><coordinates>${coords.join(" ")}</coordinates></LineString>\n      </Placemark>`,
+      );
+    }
+
+    // Polygons
+    for (const poly of (payload.polygons ?? [])) {
+      const outer = (poly.outer ?? [])
+        .map((p) => kmlCoordinateFromLatLon(p[0], p[1]))
+        .filter((c): c is string => Boolean(c));
+      if (outer.length < 3) continue;
+      const name = poly.name || "Unnamed Polygon";
+      const innerRingsXml = (poly.inner ?? [])
+        .map((ring) => {
+          const rc = ring.map((p) => kmlCoordinateFromLatLon(p[0], p[1])).filter((c): c is string => Boolean(c));
+          if (rc.length < 3) return "";
+          return `          <innerBoundaryIs><LinearRing><coordinates>${rc.join(" ")}</coordinates></LinearRing></innerBoundaryIs>`;
+        })
+        .filter(Boolean)
+        .join("\n");
+      getFolderBucket(poly.folder_path).push(
+        `      <Placemark>\n        <name>${escapeXml(name)}</name>\n        <description>${engMeta(poly)}</description>\n        <styleUrl>#engPolyStyle</styleUrl>\n        <Polygon><tessellate>1</tessellate><outerBoundaryIs><LinearRing><coordinates>${outer.join(" ")}</coordinates></LinearRing></outerBoundaryIs>${innerRingsXml ? "\n" + innerRingsXml : ""}\n        </Polygon>\n      </Placemark>`,
+      );
+    }
+
+    // Engineering context folders
+    const engFolderBlocks = Array.from(folderMap.entries())
+      .filter(([, marks]) => marks.length > 0)
+      .map(([key, marks]) => buildEngFolder(key, marks))
+      .join("\n");
+
+    // As-Built Redlines (same logic as existing export, no mutation)
+    const redlinePlacemarks: string[] = [];
+    redlineSegments.forEach((segment, idx) => {
+      const coordinates = cleanCoords(segment.coords)
+        .map((pt) => kmlCoordinateFromLatLon(pt[0], pt[1]))
+        .filter((c): c is string => Boolean(c));
+      if (coordinates.length < 2) return;
+      const name = cleanDisplayText(segment.source_file || segment.segment_id || `Redline ${idx + 1}`);
+      redlinePlacemarks.push(
+        `      <Placemark>\n        <name>${escapeXml(`Redline - ${name}`)}</name>\n        <styleUrl>#engRedlineStyle</styleUrl>\n        <LineString><tessellate>1</tessellate><coordinates>${coordinates.join(" ")}</coordinates></LineString>\n      </Placemark>`,
+      );
+    });
+
+    const kml = `<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2">
+  <Document>
+    <name>${escapeXml("Engineering KMZ Context + Redlines")}</name>
+    <Style id="engLineStyle">
+      <LineStyle><color>ff94a3b8</color><width>2</width></LineStyle>
+    </Style>
+    <Style id="engPointStyle">
+      <IconStyle><scale>0.8</scale></IconStyle>
+      <LabelStyle><scale>0.7</scale></LabelStyle>
+    </Style>
+    <Style id="engPolyStyle">
+      <LineStyle><color>8894a3b8</color><width>1</width></LineStyle>
+      <PolyStyle><color>1a94a3b8</color><fill>1</fill><outline>1</outline></PolyStyle>
+    </Style>
+    <Style id="engRedlineStyle">
+      <LineStyle><color>ff0000ff</color><width>5</width></LineStyle>
+    </Style>
+${engFolderBlocks}
+${redlinePlacemarks.length > 0 ? buildEngFolder("As-Built Redlines", redlinePlacemarks) : ""}
+  </Document>
+</kml>`;
+
+    const blob = new Blob([kml], { type: "application/vnd.google-earth.kml+xml" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "engineering_kmz_context_plus_redlines.kml";
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  }, [redlineSegments]);
 
   const fitToBounds = useCallback((targetBounds: Bounds | null) => {
     const container = mapContainerRef.current;
@@ -4038,7 +4275,165 @@ ${fieldSubmissionPlacemarks.length > 0 ? buildFolder("Selected Field Submission"
                         {label}
                       </label>
                     ))}
+                    {/* Phase 1X — reviewed snap preview overlay toggle. OFF by default. */}
+                    <label
+                      style={{
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: 5,
+                        cursor: "pointer",
+                        userSelect: "none",
+                        color: layerSnapPreview ? "rgba(20,184,166,0.95)" : undefined,
+                      }}
+                      title="Show deterministic endpoint snap preview geometry (advisory review only)"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={layerSnapPreview}
+                        onChange={(e) => setLayerSnapPreview(e.target.checked)}
+                      />
+                      Preview
+                    </label>
+                    {/* Phase 2A — KMZ engineering context layer toggle. OFF by default. Advisory/display only. */}
+                    <label
+                      style={{
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: 5,
+                        cursor: "pointer",
+                        userSelect: "none",
+                        color: layerKmzContext ? "rgba(251,191,36,0.95)" : undefined,
+                      }}
+                      title="Show uploaded KMZ engineering features (advisory context layer — beneath operational redlines)"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={layerKmzContext}
+                        onChange={(e) => setLayerKmzContext(e.target.checked)}
+                      />
+                      KMZ context
+                    </label>
                   </div>
+                  {/* Phase 2E.1 — KMZ folder/category filter panel.
+                      Keyed by folder_path.join(" / ") for fine-grained per-folder control.
+                      Derived from actual feature data — one row per unique folder path.
+                      Filtering is frontend-only — no backend calls, no operational impact. */}
+                  {layerKmzContext && kmzRenderPayload && (() => {
+                    // Build a map: folderKey -> { shortLabel, fullLabel, count }
+                    const _folderMap = new Map<string, { short: string; full: string; count: number }>();
+                    const _allFeatures = [
+                      ...(kmzRenderPayload.points ?? []),
+                      ...(kmzRenderPayload.lines ?? []),
+                      ...(kmzRenderPayload.polygons ?? []),
+                    ];
+                    for (const f of _allFeatures) {
+                      const fp = Array.isArray(f.folder_path) ? f.folder_path : [];
+                      const key = fp.join(" / ");
+                      if (!key) continue;
+                      const existing = _folderMap.get(key);
+                      if (existing) {
+                        existing.count++;
+                      } else {
+                        const parts = fp;
+                        const short = parts[parts.length - 1] ?? key;
+                        _folderMap.set(key, { short, full: key, count: 1 });
+                      }
+                    }
+                    if (_folderMap.size === 0) return null;
+                    const _folderRows = Array.from(_folderMap.entries()).sort((a, b) => a[0].localeCompare(b[0]));
+                    const hasHouseDrop = _folderRows.some(([k]) => k.includes("House Drop"));
+                    return (
+                      <div
+                        style={{
+                          marginTop: 4,
+                          padding: "6px 10px",
+                          background: "rgba(2,8,23,0.82)",
+                          border: "1px solid rgba(251,191,36,0.22)",
+                          borderRadius: 8,
+                          fontSize: 10,
+                          color: "#e2e8f0",
+                          fontFamily: "ui-sans-serif,system-ui,-apple-system,'Segoe UI',sans-serif",
+                          maxHeight: 160,
+                          overflowY: "auto",
+                          minWidth: 220,
+                        }}
+                      >
+                        {/* Header row */}
+                        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
+                          <span style={{ fontWeight: 700, fontSize: 10, color: "rgba(251,191,36,0.82)", letterSpacing: "0.04em", textTransform: "uppercase" }}>
+                            KMZ Layers
+                          </span>
+                          <div style={{ display: "flex", gap: 6 }}>
+                            {hasHouseDrop && (
+                              <button
+                                type="button"
+                                title="Hide all House Drop folder features"
+                                style={{ background: "none", border: "1px solid rgba(148,163,184,0.28)", borderRadius: 4, cursor: "pointer", color: "rgba(148,163,184,0.72)", fontSize: 9, padding: "1px 5px" }}
+                                onClick={() => {
+                                  setKmzHiddenCategories(prev => {
+                                    const next = new Set(prev);
+                                    for (const [k] of _folderRows) {
+                                      if (k.includes("House Drop")) next.add(k);
+                                    }
+                                    return next;
+                                  });
+                                }}
+                              >
+                                Hide drops
+                              </button>
+                            )}
+                            <button
+                              type="button"
+                              title="Show all KMZ folders"
+                              style={{ background: "none", border: "1px solid rgba(148,163,184,0.28)", borderRadius: 4, cursor: "pointer", color: "rgba(148,163,184,0.72)", fontSize: 9, padding: "1px 5px" }}
+                              onClick={() => setKmzHiddenCategories(new Set())}
+                            >
+                              Show all
+                            </button>
+                          </div>
+                        </div>
+                        {/* Folder rows */}
+                        {_folderRows.map(([_folderKey, _meta]) => {
+                          const _isVisible = !kmzHiddenCategories.has(_folderKey);
+                          return (
+                            <label
+                              key={_folderKey}
+                              title={_meta.full}
+                              style={{
+                                display: "flex",
+                                alignItems: "center",
+                                gap: 5,
+                                cursor: "pointer",
+                                userSelect: "none",
+                                padding: "1px 0",
+                                color: _isVisible ? "#cbd5e1" : "rgba(148,163,184,0.38)",
+                              }}
+                            >
+                              <input
+                                type="checkbox"
+                                checked={_isVisible}
+                                onChange={(e) => {
+                                  setKmzHiddenCategories(prev => {
+                                    const next = new Set(prev);
+                                    if (e.target.checked) next.delete(_folderKey);
+                                    else next.add(_folderKey);
+                                    return next;
+                                  });
+                                }}
+                                style={{ accentColor: "rgba(251,191,36,0.9)", cursor: "pointer" }}
+                              />
+                              <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                                {_meta.short}
+                              </span>
+                              <span style={{ color: "rgba(148,163,184,0.45)", fontSize: 9, flexShrink: 0 }}>
+                                {_meta.count}
+                              </span>
+                            </label>
+                          );
+                        })}
+                      </div>
+                    );
+                  })()}
                   <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
                     <button
                       type="button"
@@ -4309,6 +4704,332 @@ ${fieldSubmissionPlacemarks.length > 0 ? buildFolder("Selected Field Submission"
                         );
                       })}
                     </g>
+                    ) : null}
+
+                    {/* Phase 2A — KMZ Engineering Context Layer.
+                        Advisory display-only. Never mutates operational geometry.
+                        Renders ONLY when layerKmzContext toggle is ON.
+                        Drawn BEFORE operational redlines so redlines stay on top.
+                        pointerEvents="none" on all elements — no click interception.
+                        Render order: polygons → lines → points → labels. */}
+                    {layerKmzContext && renderBounds && projectionMetrics && kmzRenderPayload ? (
+                      /* Phase 2C: opacity={0.78} whole-layer dimming — KMZ stays behind operational redlines */
+                      <g id="kmz-context-layer" aria-label="KMZ engineering context (advisory)" opacity={0.78}>
+                        {/* 1. Polygons — muted fill, evenodd inner-ring holes, clickable */}
+                        {(kmzRenderPayload.polygons ?? []).map((poly) => {
+                          if (kmzHiddenCategories.has((poly.folder_path ?? []).join(" / "))) return null;
+                          const outerCoords = poly.outer;
+                          if (!Array.isArray(outerCoords) || outerCoords.length < 3) return null;
+                          const validOuter: number[][] = [];
+                          for (const pt of outerCoords) {
+                            if (Array.isArray(pt) && pt.length >= 2 && typeof pt[0] === "number" && typeof pt[1] === "number" && Number.isFinite(pt[0]) && Number.isFinite(pt[1])) {
+                              validOuter.push([pt[0], pt[1]]);
+                            }
+                          }
+                          if (validOuter.length < 3) return null;
+                          const outerPath = buildWorldPath([...validOuter, validOuter[0]], renderBounds, projectionMetrics);
+                          if (!outerPath) return null;
+                          let combinedPath = outerPath + " Z";
+                          for (const ring of (Array.isArray(poly.inner) ? poly.inner : [])) {
+                            if (!Array.isArray(ring) || ring.length < 3) continue;
+                            const validInner: number[][] = [];
+                            for (const ip of ring) {
+                              if (Array.isArray(ip) && ip.length >= 2 && typeof ip[0] === "number" && typeof ip[1] === "number" && Number.isFinite(ip[0]) && Number.isFinite(ip[1])) {
+                                validInner.push([ip[0], ip[1]]);
+                              }
+                            }
+                            if (validInner.length < 3) continue;
+                            const innerPath = buildWorldPath([...validInner, validInner[0]], renderBounds, projectionMetrics);
+                            if (innerPath) combinedPath += " " + innerPath + " Z";
+                          }
+                          const fillColor = muteKmzColor(poly.fill_color);
+                          return (
+                            <path
+                              key={`kmzpoly-${poly.feature_id}`}
+                              d={combinedPath}
+                              fillRule="evenodd"
+                              fill={fillColor}
+                              fillOpacity={0.10}
+                              stroke={fillColor}
+                              strokeWidth={0.9}
+                              strokeOpacity={0.35}
+                              vectorEffect="non-scaling-stroke"
+                              style={{ cursor: "pointer" }}
+                              onClick={(e) => { e.stopPropagation(); setSelectedKmzFeature({ feature_id: poly.feature_id, feature_type: "polygon", name: poly.name, classification: poly.classification, folder_path: poly.folder_path, description: poly.description, extended_data: poly.extended_data, chainage_ft: poly.chainage_ft, sequence_number: poly.sequence_number, sequence_kind: poly.sequence_kind, lifecycle: poly.lifecycle }); }}
+                            />
+                          );
+                        })}
+                        {/* 2. Lines — muted color, dark casing, slimmed width, clickable */}
+                        {(kmzRenderPayload.lines ?? []).map((line) => {
+                          if (kmzHiddenCategories.has((line.folder_path ?? []).join(" / "))) return null;
+                          const lineCoords = line.coords;
+                          if (!Array.isArray(lineCoords) || lineCoords.length < 2) return null;
+                          const validLine: number[][] = [];
+                          for (const pt of lineCoords) {
+                            if (Array.isArray(pt) && pt.length >= 2 && typeof pt[0] === "number" && typeof pt[1] === "number" && Number.isFinite(pt[0]) && Number.isFinite(pt[1])) {
+                              validLine.push([pt[0], pt[1]]);
+                            }
+                          }
+                          if (validLine.length < 2) return null;
+                          const linePath = buildWorldPath(validLine, renderBounds, projectionMetrics);
+                          if (!linePath) return null;
+                          const lineColor = muteKmzColor(line.color);
+                          const lineWidth = Math.min(line.width ?? 1.2, 1.4);
+                          const dashArr = line.dash ? "5 3" : undefined;
+                          const _onClickLine = (e: React.MouseEvent) => { e.stopPropagation(); setSelectedKmzFeature({ feature_id: line.feature_id, feature_type: "line", name: line.name, classification: line.classification, folder_path: line.folder_path, description: line.description, extended_data: line.extended_data, chainage_ft: line.chainage_ft, sequence_number: line.sequence_number, sequence_kind: line.sequence_kind, lifecycle: line.lifecycle }); };
+                          return (
+                            <g key={`kmzline-${line.feature_id}`} style={{ cursor: "pointer" }} onClick={_onClickLine}>
+                              {/* Dark satellite casing — wide hit area */}
+                              <path d={linePath} fill="none" stroke="rgba(15,23,42,0.55)" strokeWidth={lineWidth + 0.9} strokeLinecap="round" strokeLinejoin="round" vectorEffect="non-scaling-stroke" pointerEvents="none" />
+                              {/* Transparent wider hit path for easier click */}
+                              <path d={linePath} fill="none" stroke="transparent" strokeWidth={8} strokeLinecap="round" pointerEvents="stroke" />
+                              {/* Muted feature color */}
+                              <path d={linePath} fill="none" stroke={lineColor} strokeWidth={lineWidth} strokeOpacity={0.42} strokeDasharray={dashArr} strokeLinecap="round" strokeLinejoin="round" vectorEffect="non-scaling-stroke" pointerEvents="none" />
+                            </g>
+                          );
+                        })}
+                        {/* 3. Points — smaller glyphs, muted colors, dark outline, clickable */}
+                        {(kmzRenderPayload.points ?? []).map((pt) => {
+                          if (kmzHiddenCategories.has((pt.folder_path ?? []).join(" / "))) return null;
+                          if (!Array.isArray(pt.coord) || pt.coord.length < 2) return null;
+                          const [ptLat, ptLon] = pt.coord;
+                          if (!Number.isFinite(ptLat) || !Number.isFinite(ptLon)) return null;
+                          const ptColor = muteKmzColor(pt.color);
+                          const { x: svgX, y: svgY } = projectWorldPoint(ptLat, ptLon, renderBounds, projectionMetrics);
+                          const glyph = pt.icon_glyph ?? "ring";
+                          const halo = "rgba(15,23,42,0.65)";
+                          const _onClickPt = (e: React.MouseEvent) => { e.stopPropagation(); setSelectedKmzFeature({ feature_id: pt.feature_id, feature_type: "point", name: pt.name, classification: pt.classification, folder_path: pt.folder_path, description: pt.description, extended_data: pt.extended_data, chainage_ft: pt.chainage_ft, sequence_number: pt.sequence_number, sequence_kind: pt.sequence_kind, lifecycle: pt.lifecycle }); };
+                          return (
+                            <g key={`kmzpt-${pt.feature_id}`} style={{ cursor: "pointer" }} onClick={_onClickPt}>
+                              {/* Transparent hit circle for easier touch/click */}
+                              <circle cx={svgX} cy={svgY} r={7} fill="transparent" pointerEvents="all" />
+                              {glyph === "circle" && (
+                                <circle cx={svgX} cy={svgY} r={2.2} fill={ptColor} fillOpacity={0.55} stroke={halo} strokeWidth={0.9} vectorEffect="non-scaling-stroke" pointerEvents="none" />
+                              )}
+                              {glyph === "square" && (
+                                <rect x={svgX - 2} y={svgY - 2} width={4} height={4} fill={ptColor} fillOpacity={0.55} stroke={halo} strokeWidth={0.9} vectorEffect="non-scaling-stroke" pointerEvents="none" />
+                              )}
+                              {glyph === "diamond" && (
+                                <polygon points={`${svgX},${svgY - 3} ${svgX + 2.4},${svgY} ${svgX},${svgY + 3} ${svgX - 2.4},${svgY}`} fill={ptColor} fillOpacity={0.55} stroke={halo} strokeWidth={0.9} vectorEffect="non-scaling-stroke" pointerEvents="none" />
+                              )}
+                              {glyph === "ring" && (
+                                <circle cx={svgX} cy={svgY} r={2.2} fill="none" stroke={ptColor} strokeOpacity={0.62} strokeWidth={1.1} vectorEffect="non-scaling-stroke" pointerEvents="none" />
+                              )}
+                            </g>
+                          );
+                        })}
+                        {/* 4. Point labels — halo for readability, neutral fill, 16-char truncation */}
+                        {viewport.zoom >= LOW_ZOOM_LABEL_THRESHOLD && (kmzRenderPayload.points ?? []).map((pt) => {
+                          if (kmzHiddenCategories.has((pt.folder_path ?? []).join(" / "))) return null;
+                          if (!pt.name) return null;
+                          if (!Array.isArray(pt.coord) || pt.coord.length < 2) return null;
+                          const [ptLat, ptLon] = pt.coord;
+                          if (!Number.isFinite(ptLat) || !Number.isFinite(ptLon)) return null;
+                          const { x: svgX, y: svgY } = projectWorldPoint(ptLat, ptLon, renderBounds, projectionMetrics);
+                          const display = pt.name.length > 16 ? pt.name.slice(0, 16) + "…" : pt.name;
+                          return (
+                            <text
+                              key={`kmzlbl-${pt.feature_id}`}
+                              x={svgX + 4}
+                              y={svgY - 4}
+                              fontSize={7}
+                              fontFamily="ui-sans-serif,system-ui,-apple-system,'Segoe UI',sans-serif"
+                              fontWeight={500}
+                              fill="rgba(226,232,240,0.88)"
+                              stroke="rgba(15,23,42,0.88)"
+                              strokeWidth={2.4}
+                              paintOrder="stroke"
+                              strokeLinejoin="round"
+                              pointerEvents="none"
+                            >
+                              {display}
+                            </text>
+                          );
+                        })}
+                        {/* 5. Line labels — "House Drop" suppressed (density); others halo-styled */}
+                        {viewport.zoom >= LOW_ZOOM_LABEL_THRESHOLD && (kmzRenderPayload.lines ?? []).map((line) => {
+                          if (kmzHiddenCategories.has((line.folder_path ?? []).join(" / "))) return null;
+                          if (!line.name || line.name === "House Drop") return null;
+                          const _lineClasses = new Set(["cable", "cable_route", "backbone", "lateral", "drop", "duct", "route_segment"]);
+                          if (!_lineClasses.has(line.classification)) return null;
+                          const lineCoords = line.coords;
+                          if (!Array.isArray(lineCoords) || lineCoords.length < 2) return null;
+                          const midIdx = Math.floor(lineCoords.length / 2);
+                          const midPt = lineCoords[midIdx];
+                          if (!Array.isArray(midPt) || midPt.length < 2) return null;
+                          const [mlat, mlon] = midPt;
+                          if (!Number.isFinite(mlat) || !Number.isFinite(mlon)) return null;
+                          const { x: svgX, y: svgY } = projectWorldPoint(mlat, mlon, renderBounds, projectionMetrics);
+                          const display = line.name.length > 16 ? line.name.slice(0, 16) + "…" : line.name;
+                          return (
+                            <text
+                              key={`kmzlinelbl-${line.feature_id}`}
+                              x={svgX + 4}
+                              y={svgY - 4}
+                              fontSize={7}
+                              fontFamily="ui-sans-serif,system-ui,-apple-system,'Segoe UI',sans-serif"
+                              fontWeight={500}
+                              fill="rgba(226,232,240,0.88)"
+                              stroke="rgba(15,23,42,0.88)"
+                              strokeWidth={2.4}
+                              paintOrder="stroke"
+                              strokeLinejoin="round"
+                              pointerEvents="none"
+                            >
+                              {display}
+                            </text>
+                          );
+                        })}
+                        {/* 6. Polygon labels — halo-styled at centroid */}
+                        {viewport.zoom >= LOW_ZOOM_LABEL_THRESHOLD && (kmzRenderPayload.polygons ?? []).map((poly) => {
+                          if (kmzHiddenCategories.has((poly.folder_path ?? []).join(" / "))) return null;
+                          if (!poly.name) return null;
+                          const outerCoords = poly.outer;
+                          if (!Array.isArray(outerCoords) || outerCoords.length < 3) return null;
+                          let sumLat = 0, sumLon = 0, cnt = 0;
+                          for (const pv of outerCoords) {
+                            if (Array.isArray(pv) && pv.length >= 2 && Number.isFinite(pv[0]) && Number.isFinite(pv[1])) {
+                              sumLat += pv[0]; sumLon += pv[1]; cnt++;
+                            }
+                          }
+                          if (cnt === 0) return null;
+                          const { x: svgX, y: svgY } = projectWorldPoint(sumLat / cnt, sumLon / cnt, renderBounds, projectionMetrics);
+                          const display = poly.name.length > 16 ? poly.name.slice(0, 16) + "…" : poly.name;
+                          return (
+                            <text
+                              key={`kmzpolylbl-${poly.feature_id}`}
+                              x={svgX + 4}
+                              y={svgY - 4}
+                              fontSize={7}
+                              fontFamily="ui-sans-serif,system-ui,-apple-system,'Segoe UI',sans-serif"
+                              fontWeight={500}
+                              fill="rgba(226,232,240,0.88)"
+                              stroke="rgba(15,23,42,0.88)"
+                              strokeWidth={2.4}
+                              paintOrder="stroke"
+                              strokeLinejoin="round"
+                              pointerEvents="none"
+                            >
+                              {display}
+                            </text>
+                          );
+                        })}
+                        {/* In-map legend */}
+                        <g pointerEvents="none" transform="translate(12, 38)">
+                          {(() => {
+                            const _anyCapped = kmzRenderPayload.summary?.points_truncated || kmzRenderPayload.summary?.lines_truncated || kmzRenderPayload.summary?.polygons_truncated;
+                            const _legendH = _anyCapped ? 38 : 22;
+                            return (
+                              <>
+                                <rect x={0} y={0} width={150} height={_legendH} rx={3} fill="rgba(0,0,0,0.52)" stroke="rgba(251,191,36,0.45)" strokeWidth={0.8} />
+                                <circle cx={10} cy={11} r={3.5} fill="none" stroke="rgba(251,191,36,0.85)" strokeWidth={1.2} />
+                                <text x={20} y={15} fill="rgba(251,191,36,0.92)" fontSize={9} fontFamily="monospace" fontWeight="600">
+                                  KMZ context
+                                </text>
+                                {_anyCapped && (
+                                  <text x={20} y={31} fill="rgba(251,191,36,0.65)" fontSize={7} fontFamily="monospace">
+                                    +more (capped)
+                                  </text>
+                                )}
+                              </>
+                            );
+                          })()}
+                        </g>
+                      </g>
+                    ) : null}
+
+                    {/* Phase 1X — Reviewed Snap Preview Overlay.
+                        Advisory review aid only. Never mutates operational geometry.
+                        Renders ONLY when layerSnapPreview toggle is ON.
+                        pointerEvents="none" on all elements — no click interception.
+                        presentation_role guard: only "preview_polyline" entries rendered. */}
+                    {layerSnapPreview && renderBounds && projectionMetrics ? (
+                      <g id="snap-preview-layer" aria-label="Reviewed preview geometry (advisory)">
+                        {(snapPreviewData?.previews ?? []).map((preview) => {
+                          // Safety guard: only render advisory preview_polyline entries.
+                          if (preview.presentation_role !== "preview_polyline") return null;
+                          const rawCoords = preview.preview_geometry?.coordinates;
+                          if (!Array.isArray(rawCoords) || rawCoords.length < 2) return null;
+                          // GeoJSON coordinates are [lon, lat]; buildWorldPath expects [lat, lon].
+                          const latLonCoords: number[][] = [];
+                          for (const pt of rawCoords) {
+                            if (
+                              Array.isArray(pt) &&
+                              pt.length >= 2 &&
+                              typeof pt[0] === "number" &&
+                              typeof pt[1] === "number" &&
+                              Number.isFinite(pt[0]) &&
+                              Number.isFinite(pt[1])
+                            ) {
+                              latLonCoords.push([pt[1], pt[0]]); // swap: [lon,lat]→[lat,lon]
+                            }
+                          }
+                          if (latLonCoords.length < 2) return null;
+                          const previewPath = buildWorldPath(latLonCoords, renderBounds, projectionMetrics);
+                          if (!previewPath) return null;
+                          return (
+                            <g key={preview.preview_id} pointerEvents="none">
+                              {/* Outer halo for visibility against dark redlines */}
+                              <path
+                                d={previewPath}
+                                fill="none"
+                                stroke="rgba(0,0,0,0.35)"
+                                strokeWidth={3.4}
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                                strokeDasharray="5 4"
+                                vectorEffect="non-scaling-stroke"
+                                pointerEvents="none"
+                              />
+                              {/* Advisory preview line — dashed teal, thinner than operational */}
+                              <path
+                                d={previewPath}
+                                fill="none"
+                                stroke="rgba(20,184,166,0.82)"
+                                strokeWidth={1.9}
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                                strokeDasharray="5 4"
+                                vectorEffect="non-scaling-stroke"
+                                pointerEvents="none"
+                              />
+                            </g>
+                          );
+                        })}
+                        {/* In-map legend — visible only when overlay is active */}
+                        <g pointerEvents="none" transform="translate(12, 12)">
+                          <rect
+                            x={0}
+                            y={0}
+                            width={180}
+                            height={22}
+                            rx={3}
+                            fill="rgba(0,0,0,0.52)"
+                            stroke="rgba(20,184,166,0.55)"
+                            strokeWidth={0.8}
+                          />
+                          <line
+                            x1={8}
+                            y1={11}
+                            x2={26}
+                            y2={11}
+                            stroke="rgba(20,184,166,0.9)"
+                            strokeWidth={2}
+                            strokeDasharray="4 3"
+                            strokeLinecap="round"
+                          />
+                          <text
+                            x={32}
+                            y={15}
+                            fill="rgba(20,184,166,0.92)"
+                            fontSize={9}
+                            fontFamily="monospace"
+                            fontWeight="600"
+                          >
+                            Preview geometry (review-only)
+                          </text>
+                        </g>
+                      </g>
                     ) : null}
 
                     {layerStructures ? (
@@ -4681,6 +5402,136 @@ ${fieldSubmissionPlacemarks.length > 0 ? buildFolder("Selected Field Submission"
                 ) : (
                   <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", textAlign: "center", padding: 24, color: "#cbd5e1", fontWeight: 700 }}>
                     Upload field data to render map output.
+                  </div>
+                )}
+
+                {/* Phase 2D — KMZ Feature Info Popup.
+                    Read-only. No operational impact. No backend calls.
+                    Anchored top-right inside map container. Closes on X button.
+                    Positioned to avoid layer-controls widget (which is top-right at z=25). */}
+                {selectedKmzFeature && (
+                  <div
+                    style={{
+                      position: "absolute",
+                      top: 56,
+                      right: 12,
+                      zIndex: 30,
+                      width: 320,
+                      maxWidth: "calc(100% - 24px)",
+                      background: "rgba(2,8,23,0.93)",
+                      border: "1px solid rgba(148,163,184,0.28)",
+                      borderRadius: 10,
+                      boxShadow: "0 4px 32px rgba(0,0,0,0.72), inset 0 1px 0 rgba(255,255,255,0.05)",
+                      fontFamily: "ui-sans-serif,system-ui,-apple-system,'Segoe UI',sans-serif",
+                      fontSize: 11,
+                      color: "#e2e8f0",
+                      pointerEvents: "all",
+                      userSelect: "text",
+                    }}
+                  >
+                    {/* Header row */}
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "8px 12px 6px", borderBottom: "1px solid rgba(148,163,184,0.15)" }}>
+                      <span style={{ fontWeight: 700, fontSize: 11, color: "rgba(251,191,36,0.92)", letterSpacing: "0.04em", textTransform: "uppercase" }}>
+                        KMZ Feature
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setSelectedKmzFeature(null)}
+                        style={{ background: "none", border: "none", cursor: "pointer", color: "rgba(148,163,184,0.72)", fontSize: 14, lineHeight: 1, padding: "0 2px", display: "flex", alignItems: "center" }}
+                        title="Close"
+                        aria-label="Close KMZ feature info"
+                      >
+                        ×
+                      </button>
+                    </div>
+
+                    {/* Body */}
+                    <div style={{ padding: "8px 12px 10px", display: "flex", flexDirection: "column", gap: 5 }}>
+                      {/* Name */}
+                      {selectedKmzFeature.name && (
+                        <div>
+                          <span style={{ color: "rgba(148,163,184,0.65)", marginRight: 4 }}>Name</span>
+                          <span style={{ fontWeight: 600, color: "#f1f5f9" }}>{selectedKmzFeature.name}</span>
+                        </div>
+                      )}
+                      {/* Type / Classification */}
+                      <div style={{ display: "flex", gap: 12 }}>
+                        <div>
+                          <span style={{ color: "rgba(148,163,184,0.65)", marginRight: 4 }}>Type</span>
+                          <span style={{ color: "#cbd5e1" }}>{selectedKmzFeature.feature_type}</span>
+                        </div>
+                        {selectedKmzFeature.classification && (
+                          <div>
+                            <span style={{ color: "rgba(148,163,184,0.65)", marginRight: 4 }}>Class</span>
+                            <span style={{ color: "#cbd5e1" }}>{selectedKmzFeature.classification}</span>
+                          </div>
+                        )}
+                      </div>
+                      {/* Folder path */}
+                      {Array.isArray(selectedKmzFeature.folder_path) && selectedKmzFeature.folder_path.length > 0 && (
+                        <div>
+                          <span style={{ color: "rgba(148,163,184,0.65)", marginRight: 4 }}>Folder</span>
+                          <span style={{ color: "#94a3b8", fontStyle: "italic" }}>{selectedKmzFeature.folder_path.join(" / ")}</span>
+                        </div>
+                      )}
+                      {/* Description */}
+                      {selectedKmzFeature.description && (
+                        <div>
+                          <div style={{ color: "rgba(148,163,184,0.65)", marginBottom: 2 }}>Description</div>
+                          <div style={{ color: "#cbd5e1", lineHeight: 1.45, whiteSpace: "pre-wrap", wordBreak: "break-word", maxHeight: 60, overflow: "hidden" }}>
+                            {selectedKmzFeature.description.length > 180 ? selectedKmzFeature.description.slice(0, 180) + "…" : selectedKmzFeature.description}
+                          </div>
+                        </div>
+                      )}
+                      {/* Chainage */}
+                      {selectedKmzFeature.chainage_ft != null && (
+                        <div>
+                          <span style={{ color: "rgba(148,163,184,0.65)", marginRight: 4 }}>Chainage</span>
+                          <span style={{ color: "#cbd5e1" }}>{selectedKmzFeature.chainage_ft} ft</span>
+                        </div>
+                      )}
+                      {/* Sequence */}
+                      {(selectedKmzFeature.sequence_number || selectedKmzFeature.sequence_kind) && (
+                        <div style={{ display: "flex", gap: 12 }}>
+                          {selectedKmzFeature.sequence_number && (
+                            <div>
+                              <span style={{ color: "rgba(148,163,184,0.65)", marginRight: 4 }}>Seq#</span>
+                              <span style={{ color: "#cbd5e1" }}>{selectedKmzFeature.sequence_number}</span>
+                            </div>
+                          )}
+                          {selectedKmzFeature.sequence_kind && (
+                            <div>
+                              <span style={{ color: "rgba(148,163,184,0.65)", marginRight: 4 }}>Kind</span>
+                              <span style={{ color: "#cbd5e1" }}>{selectedKmzFeature.sequence_kind}</span>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                      {/* Lifecycle */}
+                      {selectedKmzFeature.lifecycle && (
+                        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                          <span style={{ color: "rgba(148,163,184,0.65)", marginRight: 4 }}>Lifecycle</span>
+                          <span style={{ color: "#fbbf24", fontWeight: 600 }}>{selectedKmzFeature.lifecycle.label}</span>
+                          {selectedKmzFeature.lifecycle.confidence && (
+                            <span style={{ color: "rgba(148,163,184,0.55)", fontSize: 10 }}>({selectedKmzFeature.lifecycle.confidence})</span>
+                          )}
+                        </div>
+                      )}
+                      {/* Extended data */}
+                      {selectedKmzFeature.extended_data && Object.keys(selectedKmzFeature.extended_data).length > 0 && (
+                        <div style={{ marginTop: 4, borderTop: "1px solid rgba(148,163,184,0.12)", paddingTop: 5 }}>
+                          <div style={{ color: "rgba(148,163,184,0.65)", marginBottom: 3, fontSize: 10, textTransform: "uppercase", letterSpacing: "0.05em" }}>Extended data</div>
+                          <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                            {Object.entries(selectedKmzFeature.extended_data).slice(0, 8).map(([k, v]) => (
+                              <div key={k} style={{ display: "flex", gap: 6, alignItems: "baseline" }}>
+                                <span style={{ color: "rgba(148,163,184,0.72)", minWidth: 80, flexShrink: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{k}</span>
+                                <span style={{ color: "#cbd5e1", wordBreak: "break-word" }}>{String(v)}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
                   </div>
                 )}
 
@@ -6344,6 +7195,9 @@ ${fieldSubmissionPlacemarks.length > 0 ? buildFolder("Selected Field Submission"
                     <div className="no-print" style={{ display: "grid", gap: 10 }}>
                       <button onClick={handleExportKml} style={{ ...buttonStyle("#ffffff", "#0f172a", "#cfd8e3", false), width: "100%" }}>
                         Export to Google Earth (KML)
+                      </button>
+                      <button onClick={handleExportEngineeringKml} style={{ ...buttonStyle("#0f2a1a", "#86efac", "#22c55e", false), width: "100%" }}>
+                        Export Engineering KMZ + Redlines
                       </button>
                       <button onClick={handlePrintReport} style={{ ...buttonStyle("#0f172a", "#ffffff", "#000000", false), width: "100%" }}>
                         Print / Export Report
