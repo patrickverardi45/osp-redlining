@@ -50,6 +50,10 @@ os.makedirs(PROJECT_ROUTE_CONTEXT_DIR, exist_ok=True)
 # Minimal SQLite persistence for session durability. Preserves all existing
 # in-memory behavior; adds disk fallback for session recovery.
 SESSION_DB_PATH = UPLOADS_DIR / "session_store.db"
+REQUEST_AUDIT_PATH = UPLOADS_DIR / "request_audit.jsonl"
+
+# ─── Private beta request audit foundation ─────────────────────────────────
+# Append-only JSONL of lightweight request traces. Failures are non-fatal.
 
 def _init_session_db():
     """Initialize SQLite database and sessions table if not exists."""
@@ -162,6 +166,44 @@ class ObservabilityTokenMiddleware(BaseHTTPMiddleware):
         return response
 
 app.add_middleware(ObservabilityTokenMiddleware)
+
+# ─── Private beta request audit middleware ─────────────────────────────────
+# Minimal request correlation logging. Appends one JSON object per line to
+# `uploads/request_audit.jsonl`. Do NOT log bodies or auth tokens. Failures
+# are non-fatal and must not break request handling.
+class RequestAuditMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        start = time.perf_counter()
+        request_id = uuid.uuid4().hex
+        timestamp = datetime.now(timezone.utc).isoformat()
+        session_id = request.query_params.get("session_id")
+        status_code = None
+        try:
+            response = await call_next(request)
+            status_code = getattr(response, "status_code", None)
+            return response
+        finally:
+            try:
+                duration_ms = int((time.perf_counter() - start) * 1000)
+                record = {
+                    "timestamp": timestamp,
+                    "request_id": request_id,
+                    "method": request.method,
+                    "path": request.url.path,
+                    "session_id": session_id,
+                    "duration_ms": duration_ms,
+                    "status_code": status_code,
+                }
+                try:
+                    with open(str(REQUEST_AUDIT_PATH), "a", encoding="utf-8") as _fh:
+                        _fh.write(json.dumps(record, separators=(",", ":")) + "\n")
+                except Exception:
+                    logging.warning("Failed to write request audit record")
+            except Exception:
+                # Protect request flow from any unexpected error in logging
+                pass
+
+app.add_middleware(RequestAuditMiddleware)
 
 KML_NS = {
     "kml": "http://www.opengis.net/kml/2.2",
