@@ -33,6 +33,8 @@ BASE_DIR = Path(__file__).resolve().parent
 BASE_UPLOAD_DIR = os.getenv("OSP_UPLOAD_DIR") or str(BASE_DIR / "uploads")
 UPLOADS_DIR = Path(BASE_UPLOAD_DIR)
 os.makedirs(UPLOADS_DIR, exist_ok=True)
+logging.basicConfig(level=logging.INFO)
+logging.info(f"[TrueLine] Upload dir: {BASE_UPLOAD_DIR}")
 
 # ─── Private beta security scaffolding ─────────────────────────────────────
 # Environment variables for upcoming authentication and token validation.
@@ -40,11 +42,13 @@ os.makedirs(UPLOADS_DIR, exist_ok=True)
 TRUELINE_API_TOKEN = os.getenv("TRUELINE_API_TOKEN", "").strip()
 TRUELINE_OBS_TOKEN = os.getenv("TRUELINE_OBS_TOKEN", "").strip()
 _ALLOWED_ORIGINS_RAW = os.getenv("TRUELINE_ALLOWED_ORIGINS", "").strip()
-# Parse CSV list; fallback to ["*"] if not provided or empty.
-if _ALLOWED_ORIGINS_RAW:
-    TRUELINE_ALLOWED_ORIGINS = [origin.strip() for origin in _ALLOWED_ORIGINS_RAW.split(",") if origin.strip()]
-else:
-    TRUELINE_ALLOWED_ORIGINS = ["*"]
+# Parse CSV list; fail at startup if not provided — no wildcard fallback.
+assert _ALLOWED_ORIGINS_RAW, (
+    "TRUELINE_ALLOWED_ORIGINS must be set before starting the server. "
+    "Set it to a comma-separated list of allowed origins (e.g. https://app.example.com). "
+    "Wildcard '*' is not permitted."
+)
+TRUELINE_ALLOWED_ORIGINS = [origin.strip() for origin in _ALLOWED_ORIGINS_RAW.split(",") if origin.strip()]
 PROJECT_ROUTE_CONTEXT_DIR = UPLOADS_DIR / "project_route_context"
 os.makedirs(PROJECT_ROUTE_CONTEXT_DIR, exist_ok=True)
 # ─── Private beta persistence foundation ──────────────────────────────────
@@ -163,11 +167,11 @@ _SNAP_REVIEW_VALID_DECISIONS: frozenset = frozenset({"approved", "rejected", "re
 
 app = FastAPI(title="OSP Redlining Mapping Layer")
 
-# APIRouter security grouping — auth dependency applied at router level in the auth sprint.
-# protected_router: all routes that handle tenant data (requires get_current_tenant later).
-# localhost_router: debug endpoints already gated by _is_localhost_request (no auth dep).
+# APIRouter security grouping.
+# protected_router: tenant data routes — JWT required.
+# localhost_router: pilot diagnostic routes — JWT required (same dependency as protected_router).
 protected_router = APIRouter(dependencies=[Depends(get_current_tenant)])
-localhost_router = APIRouter()
+localhost_router = APIRouter(dependencies=[Depends(get_current_tenant)])
 app.include_router(protected_router)
 app.include_router(localhost_router)
 
@@ -16965,7 +16969,7 @@ def _office_artifacts_payload(job_id: str) -> List[Dict[str, Any]]:
     ]
 
 
-@app.get("/jobs")
+@protected_router.get("/jobs")
 def get_jobs(session_id: Optional[str] = None) -> List[Dict[str, Any]]:
     resolved_session_id = _resolve_session_id(session_id)
     with _session_scope(resolved_session_id):
@@ -17035,7 +17039,7 @@ def create_job_exception(job_id: str, payload: Dict[str, Any] = Body(...)) -> JS
     return JSONResponse(content=_office_public_exception_record(record), status_code=201)
 
 
-@app.get("/jobs/{job_id}")
+@protected_router.get("/jobs/{job_id}")
 def get_job_by_id(job_id: str, session_id: Optional[str] = None) -> Dict[str, Any]:
     resolved_session_id = _resolve_session_id(session_id)
     with _session_scope(resolved_session_id):

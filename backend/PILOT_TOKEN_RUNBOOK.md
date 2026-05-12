@@ -16,16 +16,26 @@ There are no user accounts, no OAuth flow, and no database of credentials. The t
 
 | Requirement | Details |
 |---|---|
-| `TRUELINE_JWT_SECRET` | Must be set in the shell before running the script. Same value the backend server uses. Never commit this value. |
+| `TRUELINE_JWT_SECRET` | **Required.** Backend hard-fails at startup if missing. Never commit this value. |
+| `TRUELINE_ALLOWED_ORIGINS` | **Required (F5).** Backend hard-fails at startup if missing or empty. Comma-separated list of exact allowed origins. No wildcard. |
+| `OSP_UPLOAD_DIR` | **Strongly recommended.** Set to the persistent disk mount path on Render. Falls back to ephemeral `backend/uploads/` if unset — data will be lost on redeploy. |
 | Python venv active | `venv\Scripts\activate` (Windows) or `source venv/bin/activate` (Unix) from `backend/` |
 | PyJWT installed | Included in `requirements.txt`; present if venv is current |
 
-Verify the secret is loaded:
+Verify before starting:
 
 ```bash
-# Should print a non-empty string
-echo $TRUELINE_JWT_SECRET        # Unix
-$env:TRUELINE_JWT_SECRET         # PowerShell
+# Each should print a non-empty string
+echo $TRUELINE_JWT_SECRET              # Unix
+echo $TRUELINE_ALLOWED_ORIGINS         # Unix
+$env:TRUELINE_JWT_SECRET               # PowerShell
+$env:TRUELINE_ALLOWED_ORIGINS          # PowerShell
+```
+
+Example `TRUELINE_ALLOWED_ORIGINS` value:
+
+```
+https://app.trueline.io,http://localhost:3000
 ```
 
 ---
@@ -98,7 +108,9 @@ If a token is accidentally sent over an insecure channel, treat it as compromise
 
 ---
 
-## 6. Four-Case Smoke Test
+## 6. Smoke Tests
+
+### 6a. F4 four-case token smoke test
 
 After minting and deploying a token, verify the four critical paths:
 
@@ -108,6 +120,20 @@ After minting and deploying a token, verify the four critical paths:
 | **Valid token** | Paste a freshly minted token at `/auth/token` | Redirected to `/`, app loads normally, API calls succeed (check Network tab: `Authorization: Bearer ...` present, responses `200`) |
 | **Expired token** | Mint with `--ttl-days -1`, paste it | App clears the token and redirects to `/auth/token` immediately after load |
 | **Wrong tenant** | Use a valid token for `tenant-b` against a session created by `tenant-a` | Backend returns `403`; app surfaces an error |
+
+### 6b. F5 Batch A smoke test
+
+Run before delivering tokens to any company. Each item has a clear pass/fail.
+
+| # | Test | How to run | Pass | Fail |
+|---|---|---|---|---|
+| 1 | CORS env required | Start backend without `TRUELINE_ALLOWED_ORIGINS` set | Server exits immediately with `AssertionError: TRUELINE_ALLOWED_ORIGINS must be set` | Server starts |
+| 2 | CORS with valid origins | Start backend with `TRUELINE_ALLOWED_ORIGINS=https://your-app.vercel.app` | Server starts normally | Server exits |
+| 3 | Debug route requires JWT | `curl https://<backend>/api/debug-state?session_id=any` with no `Authorization` header | `401` response | `200` or any payload |
+| 4 | Observability route requires JWT | `curl https://<backend>/api/observability/sessions` with no header | `401` response | `200` or any payload |
+| 5 | `/jobs` requires JWT | `curl https://<backend>/jobs` with no header | `401` response | `200` or any payload |
+| 6 | Boot log shows upload dir | Check server startup logs on Render | Log line `[TrueLine] Upload dir: /path/to/disk` present | No such log line; fallback path used |
+| 7 | Persistent disk survives redeploy | Upload KMZ → get session_id → trigger redeploy → re-fetch `/api/current-state?session_id=<id>` with valid token | `200` with prior state | `404` or empty state (disk not mounted) |
 
 ---
 
