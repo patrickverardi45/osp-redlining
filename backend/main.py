@@ -115,6 +115,18 @@ def _get_session_tenant_id(session_id: str) -> Optional[str]:
     return value.strip()
 
 
+def _require_tenant_owns_session(session_id: str) -> None:
+    """Raise 403 if a JWT caller does not own the given session. No-op outside auth context."""
+    caller = current_tenant()
+    if caller is None:
+        return
+    stored = _get_session_tenant_id(session_id)
+    if stored is None:
+        return
+    if stored != caller.tenant_id:
+        raise HTTPException(status_code=403, detail="Session does not belong to this tenant.")
+
+
 # Initialize DB on module load.
 _init_session_db()
 
@@ -16108,12 +16120,6 @@ def get_walk_route_context(projectId: Optional[str] = Query(None)) -> Dict[str, 
     if normalized:
         doc = _load_project_route_context_doc(normalized)
     if not doc:
-        # V1 PROJECTS->JOBS bridge: jobs in /walk don't carry their own KMZ,
-        # so fall back to the most recently uploaded project route. Preserves
-        # prior empty-response behavior when no KMZ has ever been uploaded.
-        doc = _load_latest_project_route_context_doc()
-        source = "latest_project_fallback" if doc else "project"
-    if not doc:
         return {"routes": [], "route_count": 0}
     catalog = doc.get("route_catalog")
     if not isinstance(catalog, list):
@@ -16261,6 +16267,7 @@ def archive_walk_session(session_id: str) -> JSONResponse:
     sid = str(session_id or "").strip()
     if not sid:
         return JSONResponse({"ok": False, "error": "session_id is required"}, status_code=400)
+    _require_tenant_owns_session(sid)
     archived_at = datetime.now(timezone.utc).isoformat()
     idx = _load_walk_submissions_index()
     subs_raw = idx.get("submissions")
@@ -16374,7 +16381,7 @@ def get_walk_session_bore_log(session_id: str) -> List[Dict[str, Any]]:
     sid = str(session_id or "").strip()
     if not sid:
         return []
-
+    _require_tenant_owns_session(sid)
     safe_sid = _walk_submission_sid(sid)
     if not safe_sid:
         return []
@@ -17074,6 +17081,7 @@ def get_engineered_segments(session_id: Optional[str] = Query(None)) -> Dict[str
     sid = str(session_id or "").strip()
     if not sid:
         return {"session_id": "", "segments": []}
+    _require_tenant_owns_session(sid)
     try:
         from app.services.engineered_segments import build_engineered_segments
         segments = build_engineered_segments(sid)
