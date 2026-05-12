@@ -12,6 +12,7 @@ import React, { useState, useEffect, useCallback, useMemo } from "react";
 import type { NovaSummary, QaFlagItem, QaFlagSeverity } from "@/lib/types/nova";
 import { toMoney } from "@/lib/format/money";
 import { appendSessionId, getStoredSessionId } from "@/lib/session";
+import { apiFetch } from "@/lib/apiFetch";
 
 type Props = {
   summary: NovaSummary;
@@ -632,7 +633,7 @@ export default function NovaSummaryCard({ summary, onFocusIssue, onOverrideSourc
       const sessionId = getStoredSessionId();
       if (!sessionId || !API_BASE) { setOverridesLoaded(true); return; }
       try {
-        const res = await fetch(appendSessionId(`${API_BASE}/api/nova-overrides`));
+        const res = await apiFetch(appendSessionId(`${API_BASE}/api/nova-overrides`));
         if (!res.ok) { setOverridesLoaded(true); return; }
         const data = await res.json();
         if (Array.isArray(data.overrides)) {
@@ -657,7 +658,7 @@ export default function NovaSummaryCard({ summary, onFocusIssue, onOverrideSourc
     const sessionId = getStoredSessionId();
     if (!sessionId || !API_BASE) return;
     try {
-      const res = await fetch(`${API_BASE}/api/nova-overrides`, {
+      const res = await apiFetch(`${API_BASE}/api/nova-overrides`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ ...record, session_id: sessionId }),

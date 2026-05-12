@@ -14,6 +14,7 @@ import { getJobs, getJobById, type Job, type Route } from "@/lib/api";
 import {
   rememberSessionFromResponse,
 } from "@/lib/session";
+import { apiFetch } from "@/lib/apiFetch";
 
 // ─── Configuration ────────────────────────────────────────────────────────────
 
@@ -98,7 +99,7 @@ async function fetchEngineeredSegmentsForSession(
   sessionId: string,
 ): Promise<EngineeredSegment[]> {
   try {
-    const res = await fetch(
+    const res = await apiFetch(
       `${API_BASE}/api/engineered-segments?session_id=${encodeURIComponent(sessionId)}`,
       { cache: "no-store" },
     );
@@ -670,7 +671,7 @@ function writePersistedForm(fields: WalkFormFields): void {
 }
 
 async function postJson(path: string, body: unknown): Promise<Response> {
-  return fetch(`${API_BASE}${path}`, {
+  return apiFetch(`${API_BASE}${path}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -741,7 +742,7 @@ function uploadStationPhotoFilesNonBlocking(
   form.append("session_id", walkSid);
   form.append("note", opts.note ?? "");
 
-  void fetch(`${base}/api/station-photos/upload`, {
+  void apiFetch(`${base}/api/station-photos/upload`, {
     method: "POST",
     body: form,
   })
@@ -1085,7 +1086,7 @@ function WalkPageInner() {
               walkProjectScope.trim(),
             )}`
           : `${API_BASE}/api/walk/route-context`;
-        const res = await fetch(url, { cache: "no-store" });
+        const res = await apiFetch(url, { cache: "no-store" });
         if (cancelled) return;
         if (!res.ok) throw new Error(String(res.status));
         const data: unknown = await res.json();

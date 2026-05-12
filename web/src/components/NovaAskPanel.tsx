@@ -6,6 +6,7 @@
 
 import React, { useState, useRef, useEffect, useCallback } from "react";
 import { getStoredSessionId } from "@/lib/session";
+import { apiFetch } from "@/lib/apiFetch";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -70,7 +71,7 @@ export default function NovaAskPanel() {
     setError(null);
 
     try {
-      const res = await fetch(`${API_BASE}/api/nova-chat`, {
+      const res = await apiFetch(`${API_BASE}/api/nova-chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ question, session_id: sessionId, recent_messages: contextMessages }),

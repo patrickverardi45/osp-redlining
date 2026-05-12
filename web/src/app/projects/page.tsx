@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { apiFetch } from "@/lib/apiFetch";
 
 const API_BASE =
   process.env.NEXT_PUBLIC_API_BASE?.replace(/\/+$/, "") ||
@@ -349,7 +350,7 @@ function ProjectCard({ project }: { project: Project }) {
       }
 
       try {
-        const response = await fetch(`${API_BASE}/api/current-state?session_id=${encodeURIComponent(sessionId)}`);
+        const response = await apiFetch(`${API_BASE}/api/current-state?session_id=${encodeURIComponent(sessionId)}`);
         if (!response.ok) return;
         const data = await response.json();
         if (cancelled || data?.success === false) return;

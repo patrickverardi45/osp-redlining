@@ -21,6 +21,7 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
 
 import { appendSessionId } from "@/lib/session";
+import { apiFetch } from "@/lib/apiFetch";
 import type {
   BackendState,
   IngestionLedgerEntry,
@@ -343,7 +344,7 @@ export default function KmzSemanticDiagnosticsPanel({
       setLoading(true);
       setError(null);
       try {
-        const res = await fetch(
+        const res = await apiFetch(
           appendSessionId(`${API_BASE}/api/current-state`, projectIdForSession),
           { cache: "no-store" },
         );
@@ -373,7 +374,7 @@ export default function KmzSemanticDiagnosticsPanel({
     let cancelled = false;
     async function loadLedger(): Promise<void> {
       try {
-        const res = await fetch(
+        const res = await apiFetch(
           `${API_BASE}/api/observability/ingestion-ledger?limit=10`,
           { cache: "no-store" },
         );
@@ -400,10 +401,10 @@ export default function KmzSemanticDiagnosticsPanel({
     async function loadShadow(): Promise<void> {
       try {
         const [summaryRes, compareRes] = await Promise.all([
-          fetch(`${API_BASE}/api/observability/match-shadow-summary?limit=500`, {
+          apiFetch(`${API_BASE}/api/observability/match-shadow-summary?limit=500`, {
             cache: "no-store",
           }),
-          fetch(`${API_BASE}/api/observability/match-shadow-compare?limit=10`, {
+          apiFetch(`${API_BASE}/api/observability/match-shadow-compare?limit=10`, {
             cache: "no-store",
           }),
         ]);
@@ -436,7 +437,7 @@ export default function KmzSemanticDiagnosticsPanel({
     let cancelled = false;
     async function loadDisagreements(): Promise<void> {
       try {
-        const res = await fetch(
+        const res = await apiFetch(
           `${API_BASE}/api/observability/match-shadow-disagreements?limit=500&min_review_priority=standard`,
           { cache: "no-store" },
         );
@@ -464,7 +465,7 @@ export default function KmzSemanticDiagnosticsPanel({
     let cancelled = false;
     async function loadLabels(): Promise<void> {
       try {
-        const res = await fetch(
+        const res = await apiFetch(
           `${API_BASE}/api/observability/review-labels/current?match_pass_id=${encodeURIComponent(passId ?? "")}`,
           { cache: "no-store" },
         );
@@ -496,7 +497,7 @@ export default function KmzSemanticDiagnosticsPanel({
     let cancelled = false;
     async function loadReviewLabelSummary(): Promise<void> {
       try {
-        const res = await fetch(
+        const res = await apiFetch(
           `${API_BASE}/api/observability/review-label-summary`,
           { cache: "no-store" },
         );
@@ -522,7 +523,7 @@ export default function KmzSemanticDiagnosticsPanel({
     let cancelled = false;
     async function loadFidelityAudit(): Promise<void> {
       try {
-        const res = await fetch(
+        const res = await apiFetch(
           `${API_BASE}/api/observability/kmz-fidelity-audit`,
           { cache: "no-store" },
         );
@@ -548,7 +549,7 @@ export default function KmzSemanticDiagnosticsPanel({
     let cancelled = false;
     async function loadContinuityAdvisor(): Promise<void> {
       try {
-        const res = await fetch(
+        const res = await apiFetch(
           `${API_BASE}/api/observability/redline-topology-continuity`,
           { cache: "no-store" },
         );
@@ -573,7 +574,7 @@ export default function KmzSemanticDiagnosticsPanel({
     let cancelled = false;
     async function loadNodeAdvisor(): Promise<void> {
       try {
-        const res = await fetch(
+        const res = await apiFetch(
           `${API_BASE}/api/observability/redline-node-continuity`,
           { cache: "no-store" },
         );
@@ -598,7 +599,7 @@ export default function KmzSemanticDiagnosticsPanel({
     let cancelled = false;
     async function loadEndpointValidation(): Promise<void> {
       try {
-        const res = await fetch(
+        const res = await apiFetch(
           `${API_BASE}/api/observability/redline-endpoint-validation`,
           { cache: "no-store" },
         );
@@ -623,7 +624,7 @@ export default function KmzSemanticDiagnosticsPanel({
     let cancelled = false;
     async function loadSnapRecs(): Promise<void> {
       try {
-        const res = await fetch(
+        const res = await apiFetch(
           `${API_BASE}/api/observability/endpoint-snap-recommendations`,
           { cache: "no-store" },
         );
@@ -646,7 +647,7 @@ export default function KmzSemanticDiagnosticsPanel({
   // Silent failure. Advisory only — never affects operational behavior.
   const refreshSnapReviews = useCallback(async () => {
     try {
-      const res = await fetch(
+      const res = await apiFetch(
         `${API_BASE}/api/observability/snap-review-events?limit=1000`,
         { cache: "no-store" },
       );
@@ -675,7 +676,7 @@ export default function KmzSemanticDiagnosticsPanel({
   // Refreshed whenever decisions change, since markers carry decision badges.
   const refreshSnapMarkers = useCallback(async () => {
     try {
-      const res = await fetch(
+      const res = await apiFetch(
         `${API_BASE}/api/observability/snap-preview-markers`,
         { cache: "no-store" },
       );
@@ -694,7 +695,7 @@ export default function KmzSemanticDiagnosticsPanel({
   // Phase 1W — fetch reviewed snap preview (diagnostic-only).
   const refreshSnapPreview = useCallback(async () => {
     try {
-      const res = await fetch(
+      const res = await apiFetch(
         `${API_BASE}/api/observability/reviewed-snap-preview`,
         { cache: "no-store" },
       );
@@ -2833,7 +2834,7 @@ function DisagreementEntryCard({
     if (submitting) return;
     setSubmitting(true);
     try {
-      await fetch(`${API_BASE}/api/observability/review-labels`, {
+      await apiFetch(`${API_BASE}/api/observability/review-labels`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -4238,7 +4239,7 @@ function DiagEndpointSnapCandidates({
     const key = `${segId}|${ep}`;
     setPosting(key);
     try {
-      await fetch(`${API_BASE}/api/observability/snap-review-events`, {
+      await apiFetch(`${API_BASE}/api/observability/snap-review-events`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { BackendState } from "@/lib/types/backend";
 import { appendSessionId, appendSessionIdToForm, rememberSessionFromResponse } from "@/lib/session";
+import { apiFetch } from "@/lib/apiFetch";
 
 const API_BASE =
   process.env.NEXT_PUBLIC_API_BASE?.replace(/\/+$/, "") ||
@@ -38,7 +39,7 @@ export default function DesignSetupPanel({ onMutated }: DesignSetupPanelProps) {
         setStatusTone("neutral");
       }
       try {
-        const response = await fetch(appendSessionId(`${API_BASE}/api/current-state`), { cache: "no-store" });
+        const response = await apiFetch(appendSessionId(`${API_BASE}/api/current-state`), { cache: "no-store" });
         const data: BackendState = await response.json();
         rememberSessionFromResponse(data);
         if (!response.ok || data.success === false) {
@@ -80,7 +81,7 @@ export default function DesignSetupPanel({ onMutated }: DesignSetupPanelProps) {
         form.append("file", file);
         appendSessionIdToForm(form);
 
-        const response = await fetch(`${API_BASE}/api/upload-design`, {
+        const response = await apiFetch(`${API_BASE}/api/upload-design`, {
           method: "POST",
           body: form,
         });
@@ -111,7 +112,7 @@ export default function DesignSetupPanel({ onMutated }: DesignSetupPanelProps) {
       const form = new FormData();
       form.append("route_id", suggestedRouteId);
         appendSessionIdToForm(form);
-      const response = await fetch(`${API_BASE}/api/select-active-route`, {
+      const response = await apiFetch(`${API_BASE}/api/select-active-route`, {
         method: "POST",
         body: form,
       });
