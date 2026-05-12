@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import { apiFetch } from "@/lib/apiFetch";
 
 const API_BASE =
@@ -55,32 +56,29 @@ type ProjectSummary = {
   lastUpdated: string | null;
 };
 
-const projects: Project[] = [
-  {
-    projectId: "brenham-phase-5",
-    name: "Brenham Phase 5",
-    href: "/projects/brenham-phase-5",
-    location: "Brenham, TX",
-  },
-  {
-    projectId: "dublin-tx",
-    name: "Dublin TX",
-    href: "/projects/dublin-tx",
-    location: "Dublin, TX",
-  },
-  {
-    projectId: "san-antonio-test-build",
-    name: "San Antonio Test Build",
-    href: "/projects/san-antonio-test-build",
-    location: "San Antonio, TX",
-  },
-  {
-    projectId: "future-project",
-    name: "Future Project",
-    href: "/projects/future-project",
-    location: "TBD",
-  },
-];
+const PROJECTS_STORAGE_KEY = "trueline_projects";
+
+function generateSlug(name: string): string {
+  const slug = name
+    .toLowerCase()
+    .trim()
+    .replace(/\s+/g, "-")
+    .replace(/[^a-z0-9-]/g, "")
+    .replace(/-+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return slug || "new-project";
+}
+
+function loadProjectsFromStorage(): Project[] {
+  try {
+    const raw = window.localStorage.getItem(PROJECTS_STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
 
 function getProjectSessionId(projectId: string): string | null {
   if (typeof window === "undefined") return null;
@@ -205,7 +203,51 @@ function summarizeState(state: ProjectState, projectId: string): ProjectSummary 
 }
 
 export default function ProjectsPage() {
-  const [showNewProjectNotice, setShowNewProjectNotice] = useState(false);
+  const router = useRouter();
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [showCreateForm, setShowCreateForm] = useState(false);
+  const [newName, setNewName] = useState("");
+  const [newLocation, setNewLocation] = useState("");
+  const nameInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    setProjects(loadProjectsFromStorage());
+  }, []);
+
+  useEffect(() => {
+    if (showCreateForm) {
+      nameInputRef.current?.focus();
+    }
+  }, [showCreateForm]);
+
+  const handleCreate = useCallback(
+    (e: React.FormEvent) => {
+      e.preventDefault();
+      const trimmedName = newName.trim();
+      if (!trimmedName) return;
+
+      const base = generateSlug(trimmedName);
+      const existingSlugs = new Set(projects.map((p) => p.projectId));
+      const slug = existingSlugs.has(base) ? `${base}-${Date.now()}` : base;
+
+      const project: Project = {
+        projectId: slug,
+        name: trimmedName,
+        href: `/projects/${slug}`,
+        location: newLocation.trim(),
+      };
+
+      const next = [...projects, project];
+      try {
+        window.localStorage.setItem(PROJECTS_STORAGE_KEY, JSON.stringify(next));
+      } catch {
+        // storage unavailable — navigate anyway
+      }
+      setProjects(next);
+      router.push(`/projects/${slug}`);
+    },
+    [newName, newLocation, projects, router]
+  );
 
   return (
     <main className="tl-page">
@@ -231,58 +273,93 @@ export default function ProjectsPage() {
 
             <button
               type="button"
-              onClick={() => setShowNewProjectNotice((v) => !v)}
+              onClick={() => setShowCreateForm((v) => !v)}
               className="tl-btn tl-btn-primary"
-              aria-expanded={showNewProjectNotice}
-              aria-controls="new-project-notice"
+              aria-expanded={showCreateForm}
+              aria-controls="new-project-form"
               style={{ flexShrink: 0, whiteSpace: "nowrap" }}
             >
               + New Project
             </button>
           </div>
 
-          {showNewProjectNotice && (
-            <div
-              id="new-project-notice"
-              role="status"
+          {showCreateForm && (
+            <form
+              id="new-project-form"
+              onSubmit={handleCreate}
               className="tl-card"
               style={{
                 marginTop: 16,
-                padding: "12px 14px",
+                padding: "16px 18px",
                 display: "flex",
-                alignItems: "flex-start",
-                justifyContent: "space-between",
+                flexDirection: "column",
                 gap: 12,
-                borderColor: "var(--tl-amber-border)",
-                background: "var(--tl-surface)",
-                color: "#fde68a",
-                fontSize: 13,
-                lineHeight: 1.5,
               }}
             >
-              <div>
-                <strong style={{ fontWeight: 700 }}>
-                  Coming next: project creation.
-                </strong>{" "}
-                Backend wiring for new-project setup isn&apos;t hooked up yet —
-                this button is a placeholder so the workflow has a home in the
-                UI.
+              <div style={{ fontWeight: 600, fontSize: 14, color: "var(--tl-text)" }}>
+                New Project
               </div>
-              <button
-                type="button"
-                onClick={() => setShowNewProjectNotice(false)}
-                className="tl-btn tl-btn-ghost"
-                aria-label="Dismiss new project notice"
-                style={{
-                  fontSize: 12,
-                  padding: "4px 10px",
-                  color: "#fde68a",
-                  borderColor: "var(--tl-amber-border)",
-                }}
-              >
-                Close
-              </button>
-            </div>
+              <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end" }}>
+                <div style={{ flex: "1 1 200px", display: "flex", flexDirection: "column", gap: 4 }}>
+                  <label htmlFor="new-project-name" style={{ fontSize: 12, color: "var(--tl-text-muted)" }}>
+                    Project name <span aria-hidden>*</span>
+                  </label>
+                  <input
+                    id="new-project-name"
+                    ref={nameInputRef}
+                    type="text"
+                    required
+                    value={newName}
+                    onChange={(e) => setNewName(e.target.value)}
+                    placeholder="e.g. Brenham Phase 6"
+                    style={{
+                      padding: "6px 10px",
+                      borderRadius: 6,
+                      border: "1px solid var(--tl-border)",
+                      background: "var(--tl-bg)",
+                      color: "var(--tl-text)",
+                      fontSize: 14,
+                    }}
+                  />
+                </div>
+                <div style={{ flex: "1 1 160px", display: "flex", flexDirection: "column", gap: 4 }}>
+                  <label htmlFor="new-project-location" style={{ fontSize: 12, color: "var(--tl-text-muted)" }}>
+                    Location (optional)
+                  </label>
+                  <input
+                    id="new-project-location"
+                    type="text"
+                    value={newLocation}
+                    onChange={(e) => setNewLocation(e.target.value)}
+                    placeholder="e.g. Brenham, TX"
+                    style={{
+                      padding: "6px 10px",
+                      borderRadius: 6,
+                      border: "1px solid var(--tl-border)",
+                      background: "var(--tl-bg)",
+                      color: "var(--tl-text)",
+                      fontSize: 14,
+                    }}
+                  />
+                </div>
+                <div style={{ display: "flex", gap: 8, paddingBottom: 1 }}>
+                  <button type="submit" className="tl-btn tl-btn-primary" disabled={!newName.trim()}>
+                    Create &amp; Open
+                  </button>
+                  <button
+                    type="button"
+                    className="tl-btn tl-btn-ghost"
+                    onClick={() => {
+                      setShowCreateForm(false);
+                      setNewName("");
+                      setNewLocation("");
+                    }}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            </form>
           )}
 
           <div style={{ display: "flex", gap: 10, marginTop: 16, flexWrap: "wrap" }}>
@@ -295,18 +372,33 @@ export default function ProjectsPage() {
           </div>
         </header>
 
-        <section
-          aria-label="Project list"
-          style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))",
-            gap: 16,
-          }}
-        >
-          {projects.map((project) => (
-            <ProjectCard key={project.href} project={project} />
-          ))}
-        </section>
+        {projects.length === 0 ? (
+          <div
+            style={{
+              textAlign: "center",
+              padding: "64px 24px",
+              color: "var(--tl-text-muted)",
+              fontSize: 14,
+            }}
+          >
+            <div style={{ fontSize: 32, marginBottom: 12, opacity: 0.4 }}>📋</div>
+            <div style={{ fontWeight: 600, marginBottom: 6, color: "var(--tl-text)" }}>No projects yet</div>
+            <div>Click <strong>+ New Project</strong> to create your first workspace.</div>
+          </div>
+        ) : (
+          <section
+            aria-label="Project list"
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))",
+              gap: 16,
+            }}
+          >
+            {projects.map((project) => (
+              <ProjectCard key={project.href} project={project} />
+            ))}
+          </section>
+        )}
       </div>
     </main>
   );
