@@ -45,7 +45,10 @@ def create_access_token(user_row: sqlite3.Row, membership_row: sqlite3.Row) -> s
 
 def decode_access_token(token: str) -> dict:
     """Decode and validate; raises jwt.InvalidTokenError subclasses on failure."""
-    return jwt.decode(token, _secret(), algorithms=[AUTH_JWT_ALGORITHM])
+    payload = jwt.decode(token, _secret(), algorithms=[AUTH_JWT_ALGORITHM])
+    if payload.get("typ") != "access":
+        raise jwt.InvalidTokenError("invalid_token_type")
+    return payload
 
 
 # ---------------------------------------------------------------------------
