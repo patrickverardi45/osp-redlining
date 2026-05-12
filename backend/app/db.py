@@ -8,11 +8,10 @@ pilot-token auth path in auth.py is untouched.
 DB file: backend/uploads/auth.db (overridable via TRUELINE_AUTH_DB_PATH)
 """
 
-import hashlib
 import os
-import secrets
 import sqlite3
 import uuid
+import bcrypt
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -106,18 +105,14 @@ def _now() -> str:
 
 
 def hash_password(plaintext: str) -> str:
-    """SHA-256 + random salt, stored as 'sha256$<salt>$<hex_digest>'."""
-    salt = secrets.token_hex(16)
-    digest = hashlib.sha256((salt + plaintext).encode()).hexdigest()
-    return f"sha256${salt}${digest}"
+    """bcrypt hash; self-describing and safe to store directly."""
+    return bcrypt.hashpw(plaintext.encode(), bcrypt.gensalt()).decode()
 
 
 def verify_password(plaintext: str, stored_hash: str) -> bool:
-    if not stored_hash or not stored_hash.startswith("sha256$"):
+    if not stored_hash:
         return False
-    _, salt, digest = stored_hash.split("$", 2)
-    expected = hashlib.sha256((salt + plaintext).encode()).hexdigest()
-    return secrets.compare_digest(expected, digest)
+    return bcrypt.checkpw(plaintext.encode(), stored_hash.encode())
 
 
 # ---------------------------------------------------------------------------
