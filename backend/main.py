@@ -171,8 +171,6 @@ app = FastAPI(title="OSP Redlining Mapping Layer")
 # localhost_router: pilot diagnostic routes — JWT required (same dependency as protected_router).
 protected_router = APIRouter(dependencies=[Depends(get_current_tenant)])
 localhost_router = APIRouter(dependencies=[Depends(get_current_tenant)])
-app.include_router(protected_router)
-app.include_router(localhost_router)
 
 
 # ─── Private beta security scaffolding: CORS with env-sourced origin list ───
@@ -17099,3 +17097,8 @@ def get_engineered_segments(session_id: Optional[str] = Query(None)) -> Dict[str
     if not isinstance(segments, list):
         segments = []
     return {"session_id": sid, "segments": segments}
+
+
+# Routers are included after all route definitions so every decorated route is mounted.
+app.include_router(protected_router)
+app.include_router(localhost_router)
