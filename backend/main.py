@@ -22,9 +22,10 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import boto3
 import pandas as pd
-from fastapi import Body, FastAPI, File, Form, Query, Request, UploadFile
+from fastapi import APIRouter, Body, Depends, FastAPI, File, Form, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
+from app.auth import get_current_tenant
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
 
@@ -133,6 +134,15 @@ SNAP_REVIEW_EVENTS_MAX_ROWS = 5000
 _SNAP_REVIEW_VALID_DECISIONS: frozenset = frozenset({"approved", "rejected", "revoked"})
 
 app = FastAPI(title="OSP Redlining Mapping Layer")
+
+# APIRouter security grouping — auth dependency applied at router level in the auth sprint.
+# protected_router: all routes that handle tenant data (requires get_current_tenant later).
+# localhost_router: debug endpoints already gated by _is_localhost_request (no auth dep).
+protected_router = APIRouter(dependencies=[Depends(get_current_tenant)])
+localhost_router = APIRouter()
+app.include_router(protected_router)
+app.include_router(localhost_router)
+
 app.mount("/uploads", StaticFiles(directory=BASE_UPLOAD_DIR), name="uploads")
 
 # ─── Private beta security scaffolding: CORS with env-sourced origin list ───
@@ -9476,7 +9486,7 @@ def _summary_payload(include_debug: bool = False) -> Dict[str, Any]:
     }
 
 
-@app.post("/api/upload-design")
+@protected_router.post("/api/upload-design")
 async def upload_design(
     file: UploadFile = File(...),
     session_id: Optional[str] = Form(None),
@@ -9617,7 +9627,7 @@ async def upload_design(
         return _err(str(exc), session_id=resolved_session_id)
 
 
-@app.post("/api/select-active-route")
+@protected_router.post("/api/select-active-route")
 async def select_active_route(
     route_id: str = Form(...),
     session_id: Optional[str] = Form(None),
@@ -9637,7 +9647,7 @@ async def select_active_route(
         return _err(str(exc), session_id=resolved_session_id)
 
 
-@app.post("/api/upload-structured-bore-files")
+@protected_router.post("/api/upload-structured-bore-files")
 async def upload_structured_bore_files(
     files: List[UploadFile] = File(...),
     session_id: Optional[str] = Form(None),
@@ -9680,7 +9690,7 @@ async def upload_structured_bore_files(
 
 
 
-@app.post("/api/reset-state")
+@protected_router.post("/api/reset-state")
 def reset_state(session_id: Optional[str] = None) -> JSONResponse:
     resolved_session_id = _resolve_session_id(session_id)
     with _session_scope(resolved_session_id):
@@ -9690,7 +9700,7 @@ def reset_state(session_id: Optional[str] = None) -> JSONResponse:
         return _ok(session_id=resolved_session_id, message="Workspace reset successfully", **_summary_payload())
 
 
-@app.get("/api/current-state")
+@protected_router.get("/api/current-state")
 def current_state(session_id: Optional[str] = None) -> JSONResponse:
     resolved_session_id = _resolve_session_id(session_id)
     print(
@@ -9716,7 +9726,7 @@ def current_state(session_id: Optional[str] = None) -> JSONResponse:
         return _ok(session_id=resolved_session_id, **_summary_payload(include_debug=False))
 
 
-@app.get("/api/debug-state")
+@localhost_router.get("/api/debug-state")
 def debug_state(session_id: Optional[str] = None) -> JSONResponse:
     # Private beta isolation: require explicit session_id
     sid = str(session_id or "").strip()
@@ -9726,7 +9736,7 @@ def debug_state(session_id: Optional[str] = None) -> JSONResponse:
         return _ok(session_id=sid, **_summary_payload(include_debug=True))
 
 
-@app.get("/api/debug/pipeline-diag")
+@localhost_router.get("/api/debug/pipeline-diag")
 def debug_pipeline_diag(session_id: Optional[str] = None, source_file: Optional[str] = None) -> JSONResponse:
     """Read-only diagnostic endpoint.  Returns per-group pipeline traces written by
     _rebuild_field_data_outputs, plus extracted engineering plan signals (Phase 1).
@@ -9755,7 +9765,7 @@ def debug_pipeline_diag(session_id: Optional[str] = None, source_file: Optional[
     })
 
 
-@app.post("/api/report-bug")
+@protected_router.post("/api/report-bug")
 def report_bug(payload: Dict[str, Any] = Body(...), session_id: Optional[str] = None) -> JSONResponse:
     body_session_id = payload.get("session_id") if isinstance(payload, dict) else None
     resolved_session_id = _resolve_session_id(session_id or body_session_id)
@@ -9776,14 +9786,14 @@ def report_bug(payload: Dict[str, Any] = Body(...), session_id: Optional[str] = 
         return _ok(session_id=resolved_session_id, message="Bug report captured", bug_report_count=len(STATE["bug_reports"]))
 
 
-@app.get("/api/bug-reports")
+@protected_router.get("/api/bug-reports")
 def get_bug_reports(session_id: Optional[str] = None) -> JSONResponse:
     resolved_session_id = _resolve_session_id(session_id)
     with _session_scope(resolved_session_id):
         return _ok(session_id=resolved_session_id, bug_reports=STATE.get("bug_reports", []) or [])
 
 
-@app.get("/api/observability/ingestion-ledger")
+@localhost_router.get("/api/observability/ingestion-ledger")
 def get_ingestion_ledger(limit: int = 25) -> JSONResponse:
     """Phase 1D — read-only view of the most recent ingestion ledger rows.
 
@@ -9818,7 +9828,7 @@ def get_ingestion_ledger(limit: int = 25) -> JSONResponse:
         return JSONResponse({"entries": []})
 
 
-@app.get("/api/observability/match-audit")
+@localhost_router.get("/api/observability/match-audit")
 def get_match_audit(limit: int = 25) -> JSONResponse:
     """Phase 1F — read-only view of the most recent match audit rows.
 
@@ -9853,7 +9863,7 @@ def get_match_audit(limit: int = 25) -> JSONResponse:
         return JSONResponse({"entries": []})
 
 
-@app.get("/api/observability/match-audit-groups")
+@localhost_router.get("/api/observability/match-audit-groups")
 def get_match_audit_groups(limit: int = 50) -> JSONResponse:
     """Phase 1G — read-only view of the most recent per-group match audit rows.
 
@@ -9891,7 +9901,7 @@ def get_match_audit_groups(limit: int = 50) -> JSONResponse:
 # ─── Private beta session observability ────────────────────────────────────
 # Lightweight read-only endpoint for inspecting persisted session metadata.
 # Protected by observability middleware; returns summaries only.
-@app.get("/api/observability/sessions")
+@localhost_router.get("/api/observability/sessions")
 def get_sessions_observability(limit: int = 50) -> JSONResponse:
     """Private beta — read-only view of persisted session metadata summaries.
 
@@ -9939,7 +9949,7 @@ def get_sessions_observability(limit: int = 50) -> JSONResponse:
 # ─── Private beta session labeling ─────────────────────────────────────────
 # Protected internal endpoint to label persisted sessions with metadata.
 # Updates only company_id, workspace_label, and updated_at.
-@app.post("/api/observability/session-label")
+@localhost_router.post("/api/observability/session-label")
 def post_session_label(body: Dict[str, Any]) -> JSONResponse:
     """Private beta — update session metadata labels.
 
@@ -9987,7 +9997,7 @@ def post_session_label(body: Dict[str, Any]) -> JSONResponse:
         return JSONResponse(status_code=500, content={"error": "Internal error"})
 
 
-@app.get("/api/observability/request-audit")
+@localhost_router.get("/api/observability/request-audit")
 def get_request_audit(limit: int = 100, session_id: Optional[str] = None) -> JSONResponse:
     """private beta request audit observability
 
@@ -10025,7 +10035,7 @@ def get_request_audit(limit: int = 100, session_id: Optional[str] = None) -> JSO
         return JSONResponse({"records": []})
 
 
-@app.get("/api/observability/match-shadow-compare")
+@localhost_router.get("/api/observability/match-shadow-compare")
 def get_match_shadow_compare(limit: int = 50) -> JSONResponse:
     """Phase 1H-A — read-only view of the most recent shadow-compare rows.
 
@@ -10060,7 +10070,7 @@ def get_match_shadow_compare(limit: int = 50) -> JSONResponse:
         return JSONResponse({"entries": []})
 
 
-@app.get("/api/observability/match-shadow-summary")
+@localhost_router.get("/api/observability/match-shadow-summary")
 def get_match_shadow_summary(
     limit: int = 500,
     group_by: str = "none",
@@ -10299,7 +10309,7 @@ def _compute_match_shadow_disagreements(
         return _empty_skeleton()
 
 
-@app.get("/api/observability/match-shadow-disagreements")
+@localhost_router.get("/api/observability/match-shadow-disagreements")
 def get_match_shadow_disagreements(
     limit: int = 500,
     min_review_priority: str = "standard",
@@ -10620,7 +10630,7 @@ def _compute_review_label_summary(
         return _empty_skeleton()
 
 
-@app.get("/api/observability/review-label-summary")
+@localhost_router.get("/api/observability/review-label-summary")
 def get_review_label_summary() -> JSONResponse:
     """Phase 1L — compute-on-read analytics over review-label and shadow-compare streams.
 
@@ -10957,7 +10967,7 @@ def _compute_kmz_fidelity_audit(
         return _empty_audit()
 
 
-@app.get("/api/observability/kmz-fidelity-audit")
+@localhost_router.get("/api/observability/kmz-fidelity-audit")
 def get_kmz_fidelity_audit() -> JSONResponse:
     """Phase 1M — KMZ engineering fidelity audit (compute-on-read, no writes).
 
@@ -11426,7 +11436,7 @@ def _build_redline_topology_continuity(
         return _empty_result(_fallback_ids)
 
 
-@app.get("/api/observability/redline-topology-continuity")
+@localhost_router.get("/api/observability/redline-topology-continuity")
 def get_redline_topology_continuity() -> JSONResponse:
     """Phase 1P — redline topology continuity advisor (read-only, post-redline).
 
@@ -11739,7 +11749,7 @@ def _build_redline_node_continuity(
         return _empty_result(_fallback_ids)
 
 
-@app.get("/api/observability/redline-node-continuity")
+@localhost_router.get("/api/observability/redline-node-continuity")
 def get_redline_node_continuity() -> JSONResponse:
     """Phase 1Q — node-anchored redline continuity advisor (read-only, post-redline).
 
@@ -12019,7 +12029,7 @@ def _build_redline_endpoint_validation(
         return _empty_result()
 
 
-@app.get("/api/observability/redline-endpoint-validation")
+@localhost_router.get("/api/observability/redline-endpoint-validation")
 def get_redline_endpoint_validation() -> JSONResponse:
     """Phase 1S — bore-log redline endpoint validator (read-only, post-redline).
 
@@ -12215,7 +12225,7 @@ def _build_endpoint_snap_recommendations(
         return _empty_result()
 
 
-@app.get("/api/observability/endpoint-snap-recommendations")
+@localhost_router.get("/api/observability/endpoint-snap-recommendations")
 def get_endpoint_snap_recommendations() -> JSONResponse:
     """Phase 1T — endpoint snap recommendations (read-only, post-validator).
 
@@ -12389,7 +12399,7 @@ def _resolve_current_snap_review_decisions(
     return _result
 
 
-@app.post("/api/observability/snap-review-events")
+@localhost_router.post("/api/observability/snap-review-events")
 def post_snap_review_event(
     body: Dict[str, Any] = Body(default_factory=dict),
     session_id: Optional[str] = None,
@@ -12472,7 +12482,7 @@ def post_snap_review_event(
     return JSONResponse({"accepted": True, "event_id": _event_id_sre, "decision": _decision_sre})
 
 
-@app.get("/api/observability/snap-review-events")
+@localhost_router.get("/api/observability/snap-review-events")
 def get_snap_review_events(
     limit: int = 100,
     decision: Optional[str] = None,
@@ -12553,7 +12563,7 @@ def get_snap_review_events(
         return JSONResponse({"events": [], "summary": {}})
 
 
-@app.get("/api/observability/snap-review-events/current")
+@localhost_router.get("/api/observability/snap-review-events/current")
 def get_snap_review_events_current(
     segment_id: str = Query(""),
     endpoint: str = Query(""),
@@ -12722,7 +12732,7 @@ def _build_snap_preview_markers(
         return _empty_mk
 
 
-@app.get("/api/observability/snap-preview-markers")
+@localhost_router.get("/api/observability/snap-preview-markers")
 def get_snap_preview_markers() -> JSONResponse:
     """Phase 1V — endpoint-only snap preview markers (read-only, diagnostic).
 
@@ -13533,7 +13543,7 @@ def _build_kmz_render_payload(
         return _empty
 
 
-@app.get("/api/observability/kmz-render-payload")
+@localhost_router.get("/api/observability/kmz-render-payload")
 def get_kmz_render_payload() -> JSONResponse:
     """Phase 2A — KMZ engineering render payload (read-only, compute-on-read).
 
@@ -13590,7 +13600,7 @@ def get_kmz_render_payload() -> JSONResponse:
         )
 
 
-@app.get("/api/observability/reviewed-snap-preview")
+@localhost_router.get("/api/observability/reviewed-snap-preview")
 def get_reviewed_snap_preview() -> JSONResponse:
     """Phase 1W — reviewed snapped geometry preview (read-only, diagnostic).
 
@@ -13646,7 +13656,7 @@ def get_reviewed_snap_preview() -> JSONResponse:
         )
 
 
-@app.get("/api/observability/kmz-topology-sidecar")
+@localhost_router.get("/api/observability/kmz-topology-sidecar")
 def get_kmz_topology_sidecar() -> JSONResponse:
     """Phase 1O — KMZ topology sidecar (read-only, upload-scoped, diagnostic).
 
@@ -13747,7 +13757,7 @@ def _append_review_label(
         )
 
 
-@app.post("/api/observability/review-labels")
+@localhost_router.post("/api/observability/review-labels")
 def post_review_label(body: Dict[str, Any] = Body(default_factory=dict)) -> JSONResponse:
     """Phase 1K — append a review-label event (observability telemetry only).
 
@@ -13792,7 +13802,7 @@ def post_review_label(body: Dict[str, Any] = Body(default_factory=dict)) -> JSON
     return JSONResponse({"accepted": True, "label": label_rl})
 
 
-@app.get("/api/observability/review-labels")
+@localhost_router.get("/api/observability/review-labels")
 def get_review_labels(limit: int = 100) -> JSONResponse:
     """Phase 1K — newest-first event log of all review-label events.
 
@@ -13827,7 +13837,7 @@ def get_review_labels(limit: int = 100) -> JSONResponse:
         return JSONResponse({"events": []})
 
 
-@app.get("/api/observability/review-labels/current")
+@localhost_router.get("/api/observability/review-labels/current")
 def get_review_labels_current(match_pass_id: str = Query("")) -> JSONResponse:
     """Phase 1K — latest-wins resolved labels for a given match_pass_id.
 
@@ -14061,7 +14071,7 @@ def _station_photo_public_record(record: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-@app.get("/api/station-photos")
+@protected_router.get("/api/station-photos")
 async def get_station_photos(station_identity: str, session_id: Optional[str] = None) -> JSONResponse:
     resolved_session_id = _resolve_session_id(session_id)
     station_identity_raw = str(station_identity or "").strip()
@@ -14084,7 +14094,7 @@ async def get_station_photos(station_identity: str, session_id: Optional[str] = 
     )
 
 
-@app.post("/api/station-photos/upload")
+@protected_router.post("/api/station-photos/upload")
 async def upload_station_photos(
     station_identity: str = Form(...),
     session_id: Optional[str] = Form(None),
@@ -14195,7 +14205,7 @@ async def upload_station_photos(
     )
 
 
-@app.get("/api/station-photos/file/{photo_id}")
+@protected_router.get("/api/station-photos/file/{photo_id}")
 async def get_station_photo_file(photo_id: str, session_id: Optional[str] = None):
     resolved_session_id = _resolve_session_id(session_id)
     target = str(photo_id or "").strip()
@@ -14222,7 +14232,7 @@ async def get_station_photo_file(photo_id: str, session_id: Optional[str] = None
     return _err("Photo file was not found.", status_code=404, session_id=resolved_session_id)
 
 
-@app.post("/api/station-photos/{photo_id}/adjust")
+@protected_router.post("/api/station-photos/{photo_id}/adjust")
 async def adjust_station_photo(
     photo_id: str,
     payload: Dict[str, Any] = Body(...),
@@ -14414,7 +14424,7 @@ def _load_engineering_plan_index_for_session(session_id: str) -> List[Dict[str, 
         return []
 
 
-@app.post("/api/upload-engineering-plans")
+@protected_router.post("/api/upload-engineering-plans")
 async def upload_engineering_plans(
     files: List[UploadFile] = File(...),
     session_id: Optional[str] = Form(None),
@@ -14513,7 +14523,7 @@ async def upload_engineering_plans(
     )
 
 
-@app.get("/api/engineering-plans")
+@protected_router.get("/api/engineering-plans")
 async def get_engineering_plans(session_id: Optional[str] = None) -> JSONResponse:
     resolved_session_id = _resolve_session_id(session_id)
     plans = _load_engineering_plan_index_for_session(resolved_session_id)
@@ -14522,7 +14532,7 @@ async def get_engineering_plans(session_id: Optional[str] = None) -> JSONRespons
 
 # ── Nova override decision endpoints ─────────────────────────────────────────
 
-@app.get("/api/nova-overrides")
+@protected_router.get("/api/nova-overrides")
 def get_nova_overrides(session_id: Optional[str] = None) -> JSONResponse:
     """Return all persisted Nova QA override decisions for this session."""
     resolved_session_id = _resolve_session_id(session_id)
@@ -14545,7 +14555,7 @@ def get_nova_overrides(session_id: Optional[str] = None) -> JSONResponse:
     })
 
 
-@app.post("/api/nova-overrides")
+@protected_router.post("/api/nova-overrides")
 def save_nova_override(
     payload: Dict[str, Any] = Body(...),
     session_id: Optional[str] = None,
@@ -14610,7 +14620,7 @@ def save_nova_override(
     })
 
 
-@app.delete("/api/nova-overrides/{issue_id}")
+@protected_router.delete("/api/nova-overrides/{issue_id}")
 def delete_nova_override(
     issue_id: str,
     session_id: Optional[str] = None,
@@ -14654,9 +14664,9 @@ def _closeout_unlock_role_from_payload(payload: Any) -> str:
     return str(payload.get("role") or "").strip()
 
 
-@app.post("/api/closeout/lock")
-@app.post("/closeout/lock")
-@app.post("/api/jobs/{job_id}/lock-closeout")
+@protected_router.post("/api/closeout/lock")
+@protected_router.post("/closeout/lock")
+@protected_router.post("/api/jobs/{job_id}/lock-closeout")
 def api_closeout_lock(
     job_id: Optional[str] = None,
     payload: Dict[str, Any] = Body(default_factory=dict),
@@ -14697,9 +14707,9 @@ def api_closeout_lock(
         )
 
 
-@app.post("/api/closeout/unlock")
-@app.post("/closeout/unlock")
-@app.post("/api/jobs/{job_id}/unlock-closeout")
+@protected_router.post("/api/closeout/unlock")
+@protected_router.post("/closeout/unlock")
+@protected_router.post("/api/jobs/{job_id}/unlock-closeout")
 def api_closeout_unlock(
     job_id: Optional[str] = None,
     payload: Dict[str, Any] = Body(default_factory=dict),
@@ -15584,7 +15594,7 @@ def _nova_deterministic_answer(
     return _nc_general_answer(pipeline_diag, plan_signals, overrides)
 
 
-@app.post("/api/nova-chat")
+@protected_router.post("/api/nova-chat")
 def nova_chat(
     payload: Dict[str, Any] = Body(...),
     session_id: Optional[str] = None,
@@ -15672,7 +15682,7 @@ if not _walk_test_logger.handlers:
     _walk_test_logger.propagate = False
 
 
-@app.post("/api/walk/test-event")
+@protected_router.post("/api/walk/test-event")
 def walk_test_event(payload: _WalkTestDict[str, _WalkTestAny] = Body(default={})) -> JSONResponse:
     """
     Connectivity probe for the mobile walk app.
@@ -15807,7 +15817,7 @@ def _walk_clean_station_event(ev: Any) -> Optional[Dict[str, Any]]:
     return cleaned
 
 
-@app.post("/api/walk/start")
+@protected_router.post("/api/walk/start")
 def walk_start(payload: Dict[str, Any] = Body(default={})) -> JSONResponse:
     body_session_id = payload.get("session_id") if isinstance(payload, dict) else None
     resolved_session_id = _resolve_session_id(body_session_id)
@@ -15838,7 +15848,7 @@ def walk_start(payload: Dict[str, Any] = Body(default={})) -> JSONResponse:
         return _err(str(exc), session_id=resolved_session_id)
 
 
-@app.post("/api/walk/breadcrumbs")
+@protected_router.post("/api/walk/breadcrumbs")
 def walk_breadcrumbs(payload: Dict[str, Any] = Body(default={})) -> JSONResponse:
     body_session_id = payload.get("session_id") if isinstance(payload, dict) else None
     resolved_session_id = _resolve_session_id(body_session_id)
@@ -15884,7 +15894,7 @@ def walk_breadcrumbs(payload: Dict[str, Any] = Body(default={})) -> JSONResponse
         return _err(str(exc), session_id=resolved_session_id)
 
 
-@app.post("/api/walk/station-events")
+@protected_router.post("/api/walk/station-events")
 def walk_station_events(payload: Dict[str, Any] = Body(default={})) -> JSONResponse:
     body_session_id = payload.get("session_id") if isinstance(payload, dict) else None
     resolved_session_id = _resolve_session_id(body_session_id)
@@ -15929,7 +15939,7 @@ def walk_station_events(payload: Dict[str, Any] = Body(default={})) -> JSONRespo
         return _err(str(exc), session_id=resolved_session_id)
 
 
-@app.post("/api/walk/end")
+@protected_router.post("/api/walk/end")
 def walk_end(payload: Dict[str, Any] = Body(default={})) -> JSONResponse:
     body_session_id = payload.get("session_id") if isinstance(payload, dict) else None
     resolved_session_id = _resolve_session_id(body_session_id)
@@ -16055,7 +16065,7 @@ def _load_latest_project_route_context_doc() -> Optional[Dict[str, Any]]:
     return None
 
 
-@app.get("/api/walk/route-context")
+@protected_router.get("/api/walk/route-context")
 def get_walk_route_context(projectId: Optional[str] = Query(None)) -> Dict[str, Any]:
     normalized = _normalize_walk_project_id(projectId)
     doc: Optional[Dict[str, Any]] = None
@@ -16210,7 +16220,7 @@ def _load_walk_submissions_for_job(job_id: str) -> List[Dict[str, Any]]:
     return list(subs)
 
 
-@app.post("/api/walk-sessions/{session_id}/archive")
+@protected_router.post("/api/walk-sessions/{session_id}/archive")
 def archive_walk_session(session_id: str) -> JSONResponse:
     """Mark a walk submission as archived (index-only). Does not delete JSON or photos."""
     sid = str(session_id or "").strip()
@@ -16240,7 +16250,7 @@ def archive_walk_session(session_id: str) -> JSONResponse:
     return JSONResponse({"ok": True, "session_id": sid, "archived_at": archived_at}, status_code=200)
 
 
-@app.get("/api/debug/walk-submissions")
+@localhost_router.get("/api/debug/walk-submissions")
 def debug_walk_submissions_readonly() -> Dict[str, Any]:
     """TEMPORARY: inspect disk walk submissions on deploy (e.g. Render). Read-only."""
     try:
@@ -16319,7 +16329,7 @@ def _walk_bore_log_iso_from_ts(ts_value: Any) -> Optional[str]:
     return None
 
 
-@app.get("/api/walk-sessions/{session_id}/bore-log")
+@protected_router.get("/api/walk-sessions/{session_id}/bore-log")
 def get_walk_session_bore_log(session_id: str) -> List[Dict[str, Any]]:
     """MVP: walk session → structured bore-log rows.
 
@@ -16936,7 +16946,7 @@ def get_jobs(session_id: Optional[str] = None) -> List[Dict[str, Any]]:
         ]
 
 
-@app.post("/jobs/{job_id}/exceptions")
+@protected_router.post("/jobs/{job_id}/exceptions")
 def create_job_exception(job_id: str, payload: Dict[str, Any] = Body(...)) -> JSONResponse:
     safe_job_id = str(job_id or "").strip()
     if not safe_job_id:
@@ -17024,7 +17034,7 @@ import logging as _engineered_segments_logging
 _engineered_segments_logger = _engineered_segments_logging.getLogger("engineered_segments")
 
 
-@app.get("/api/engineered-segments")
+@protected_router.get("/api/engineered-segments")
 def get_engineered_segments(session_id: Optional[str] = Query(None)) -> Dict[str, Any]:
     sid = str(session_id or "").strip()
     if not sid:
