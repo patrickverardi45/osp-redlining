@@ -4,6 +4,9 @@ import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { apiFetch } from "@/lib/apiFetch";
+import { getAccessToken } from "@/lib/accessToken";
+import { getPilotToken } from "@/lib/pilotToken";
+import LogoutButton from "@/components/LogoutButton";
 
 const API_BASE =
   process.env.NEXT_PUBLIC_API_BASE?.replace(/\/+$/, "") ||
@@ -204,15 +207,27 @@ function summarizeState(state: ProjectState, projectId: string): ProjectSummary 
 
 export default function ProjectsPage() {
   const router = useRouter();
+  const [authReady, setAuthReady] = useState(false);
   const [projects, setProjects] = useState<Project[]>([]);
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [newName, setNewName] = useState("");
   const [newLocation, setNewLocation] = useState("");
   const nameInputRef = useRef<HTMLInputElement>(null);
 
+  // Local auth gate — defense in depth independent of AuthGuard.
+  // Must pass before any project data is read or rendered.
   useEffect(() => {
+    if (getAccessToken() || getPilotToken()) {
+      setAuthReady(true);
+    } else {
+      router.replace("/auth/login");
+    }
+  }, [router]);
+
+  useEffect(() => {
+    if (!authReady) return;
     setProjects(loadProjectsFromStorage());
-  }, []);
+  }, [authReady]);
 
   useEffect(() => {
     if (showCreateForm) {
@@ -249,6 +264,8 @@ export default function ProjectsPage() {
     [newName, newLocation, projects, router]
   );
 
+  if (!authReady) return null;
+
   return (
     <main className="tl-page">
       <div className="tl-page-inner">
@@ -271,16 +288,19 @@ export default function ProjectsPage() {
               </p>
             </div>
 
-            <button
-              type="button"
-              onClick={() => setShowCreateForm((v) => !v)}
-              className="tl-btn tl-btn-primary"
-              aria-expanded={showCreateForm}
-              aria-controls="new-project-form"
-              style={{ flexShrink: 0, whiteSpace: "nowrap" }}
-            >
-              + New Project
-            </button>
+            <div style={{ display: "flex", gap: 8, flexShrink: 0, flexWrap: "wrap", alignItems: "center" }}>
+              <button
+                type="button"
+                onClick={() => setShowCreateForm((v) => !v)}
+                className="tl-btn tl-btn-primary"
+                aria-expanded={showCreateForm}
+                aria-controls="new-project-form"
+                style={{ whiteSpace: "nowrap" }}
+              >
+                + New Project
+              </button>
+              <LogoutButton />
+            </div>
           </div>
 
           {showCreateForm && (

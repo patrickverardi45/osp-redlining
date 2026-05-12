@@ -2,6 +2,7 @@
 
 import { use, useCallback, useState } from "react";
 import Link from "next/link";
+import LogoutButton from "@/components/LogoutButton";
 import RedlineMap, { type BridgedGpsPhoto } from "@/components/RedlineMap";
 import ModernHeroMap from "@/components/ModernHeroMap";
 import KmzSemanticDiagnosticsPanel from "@/components/KmzSemanticDiagnosticsPanel";
@@ -100,7 +101,7 @@ export default function ProjectPage({ params }: ProjectPageProps) {
             </p>
           </div>
 
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
             <Link
               href={`/walk?projectId=${encodeURIComponent(projectId)}`}
               className="tl-btn tl-btn-ghost"
@@ -108,6 +109,7 @@ export default function ProjectPage({ params }: ProjectPageProps) {
             >
               Field walk (mobile) →
             </Link>
+            <LogoutButton />
           </div>
         </div>
       </header>
