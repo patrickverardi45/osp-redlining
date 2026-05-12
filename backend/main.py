@@ -75,6 +75,7 @@ os.makedirs(PROJECT_ROUTE_CONTEXT_DIR, exist_ok=True)
 # in-memory behavior; adds disk fallback for session recovery.
 SESSION_DB_PATH = UPLOADS_DIR / "session_store.db"
 REQUEST_AUDIT_PATH = UPLOADS_DIR / "request_audit.jsonl"
+AUTH_EVENTS_PATH = UPLOADS_DIR / "auth_events.jsonl"
 
 # ─── Private beta request audit foundation ─────────────────────────────────
 # Append-only JSONL of lightweight request traces. Failures are non-fatal.
@@ -10117,6 +10118,40 @@ def get_request_audit(limit: int = 100, session_id: Optional[str] = None) -> JSO
         return JSONResponse({"records": records})
     except Exception as e:
         logging.warning(f"Failed to read request audit: {e}")
+        return JSONResponse({"records": []})
+
+
+@localhost_router.get("/api/observability/auth-events")
+def get_auth_events(limit: int = 100) -> JSONResponse:
+    """Auth lifecycle event observability.
+
+    Read-only view of recent auth events written to `uploads/auth_events.jsonl`.
+    Protected by observability middleware.
+
+    Query params: limit (default 100, max 500).
+    Returns newest-first records. Malformed JSON lines are skipped.
+    """
+    limit = max(1, min(limit or 100, 500))
+    try:
+        if not AUTH_EVENTS_PATH.exists():
+            return JSONResponse({"records": []})
+        with open(AUTH_EVENTS_PATH, "r", encoding="utf-8") as _fh:
+            raw_lines = _fh.readlines()
+        records: List[Dict[str, Any]] = []
+        for line in reversed(raw_lines):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                rec = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            records.append(rec)
+            if len(records) >= limit:
+                break
+        return JSONResponse({"records": records})
+    except Exception as e:
+        logging.warning(f"Failed to read auth events: {e}")
         return JSONResponse({"records": []})
 
 
