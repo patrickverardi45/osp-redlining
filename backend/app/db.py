@@ -125,6 +125,20 @@ def get_company_by_slug(conn: sqlite3.Connection, slug: str) -> Optional[sqlite3
     ).fetchone()
 
 
+def get_company_by_id(conn: sqlite3.Connection, company_id: str) -> Optional[sqlite3.Row]:
+    return conn.execute(
+        "SELECT * FROM companies WHERE id = ?", (company_id,)
+    ).fetchone()
+
+
+def get_first_membership(conn: sqlite3.Connection, user_id: str) -> Optional[sqlite3.Row]:
+    """Return the user's primary membership, deterministic by created_at ASC."""
+    return conn.execute(
+        "SELECT * FROM memberships WHERE user_id = ? ORDER BY created_at ASC LIMIT 1",
+        (user_id,),
+    ).fetchone()
+
+
 def create_company(conn: sqlite3.Connection, slug: str, name: str) -> str:
     """Insert company and return its id. Raises IntegrityError if slug taken."""
     company_id = str(uuid.uuid4())
