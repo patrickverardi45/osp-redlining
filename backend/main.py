@@ -26,6 +26,7 @@ from fastapi import APIRouter, Body, Depends, FastAPI, File, Form, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from app.auth import current_tenant, get_current_tenant
+from app.auth_bridge import resolve_caller
 from starlette.middleware.base import BaseHTTPMiddleware
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -48,6 +49,24 @@ assert _ALLOWED_ORIGINS_RAW, (
     "Wildcard '*' is not permitted."
 )
 TRUELINE_ALLOWED_ORIGINS = [origin.strip() for origin in _ALLOWED_ORIGINS_RAW.split(",") if origin.strip()]
+
+# ─── Dual-auth rollout guard ─────────────────────────────────────────────────
+# TRUELINE_DUAL_AUTH=1 enables the Phase 2b trust bridge (resolve_caller).
+# Default is OFF — pilot token auth remains the only active path.
+# Rollback: unset or set to empty/0 to revert to pilot-only at next deploy.
+# Do NOT enable until Phase 2b go/no-go criteria are met (slug bridge verified).
+_DUAL_AUTH_ENABLED = os.getenv("TRUELINE_DUAL_AUTH", "").strip() == "1"
+
+
+def _auth_dependency():
+    """Return the active auth dependency callable for protected routes.
+
+    Pilot remains default unless TRUELINE_DUAL_AUTH=1 is explicitly set.
+    Called once at module load — resolves at startup, not per-request.
+    """
+    if _DUAL_AUTH_ENABLED:
+        return resolve_caller
+    return get_current_tenant
 PROJECT_ROUTE_CONTEXT_DIR = UPLOADS_DIR / "project_route_context"
 os.makedirs(PROJECT_ROUTE_CONTEXT_DIR, exist_ok=True)
 # ─── Private beta persistence foundation ──────────────────────────────────
@@ -177,8 +196,10 @@ app = FastAPI(title="OSP Redlining Mapping Layer")
 # APIRouter security grouping.
 # protected_router: tenant data routes — JWT required.
 # localhost_router: pilot diagnostic routes — JWT required (same dependency as protected_router).
-protected_router = APIRouter(dependencies=[Depends(get_current_tenant)])
-localhost_router = APIRouter(dependencies=[Depends(get_current_tenant)])
+# _auth_dependency() resolves to get_current_tenant by default (pilot-only).
+# Set TRUELINE_DUAL_AUTH=1 to activate the Phase 2b dual-auth bridge.
+protected_router = APIRouter(dependencies=[Depends(_auth_dependency())])
+localhost_router = APIRouter(dependencies=[Depends(_auth_dependency())])
 
 
 # ─── Private beta security scaffolding: CORS with env-sourced origin list ───
