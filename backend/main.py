@@ -99,6 +99,22 @@ def _load_persisted_session(session_id: str) -> Optional[Dict[str, Any]]:
         logging.warning(f"Failed to load persisted session {session_id}: {e}")
     return None
 
+
+def _get_session_tenant_id(session_id: str) -> Optional[str]:
+    """Read the tenant_id stamp from the persisted session record.
+    Returns None if the session is unknown or unbound."""
+    sid = str(session_id or "").strip()
+    if not sid:
+        return None
+    record = _load_persisted_session(sid)
+    if not isinstance(record, dict):
+        return None
+    value = record.get("tenant_id")
+    if not isinstance(value, str) or not value.strip():
+        return None
+    return value.strip()
+
+
 # Initialize DB on module load.
 _init_session_db()
 
@@ -423,6 +439,9 @@ def _default_session_state() -> Dict[str, Any]:
         "workspace_label": None,
         "created_at": now,
         "updated_at": now,
+        # Sprint J tenant ownership
+        "tenant_id": None,
+        "tenant_bound_at": None,
     }
 
 
