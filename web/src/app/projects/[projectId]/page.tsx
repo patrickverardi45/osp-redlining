@@ -5,6 +5,7 @@ import Link from "next/link";
 import RedlineMap, { type BridgedGpsPhoto } from "@/components/RedlineMap";
 import ModernHeroMap from "@/components/ModernHeroMap";
 import KmzSemanticDiagnosticsPanel from "@/components/KmzSemanticDiagnosticsPanel";
+import type { SemanticKmz } from "@/lib/types/backend";
 
 // Phase 1B — KMZ semantic diagnostics panel is gated behind a build-time
 // env flag so production end-users never see it. Set
@@ -37,6 +38,7 @@ export default function ProjectPage({ params }: ProjectPageProps) {
   const [selectedFieldJobId, setSelectedFieldJobId] = useState<string | null>(null);
   const [modernMapRefreshVersion, setModernMapRefreshVersion] = useState<number>(0);
   const [bridgedGpsPhotos, setBridgedGpsPhotos] = useState<BridgedGpsPhoto[]>([]);
+  const [kmzSemantic, setKmzSemantic] = useState<SemanticKmz | null>(null);
 
   const handleFieldSelectionChange = useCallback(
     (selection: { sessionId: string | null; jobId: string | null }) => {
@@ -51,6 +53,9 @@ export default function ProjectPage({ params }: ProjectPageProps) {
   }, []);
   const handleGpsPhotosChange = useCallback((photos: BridgedGpsPhoto[]) => {
     setBridgedGpsPhotos(photos);
+  }, []);
+  const handleKmzSemanticChange = useCallback((semantic: SemanticKmz | null) => {
+    setKmzSemantic(semantic);
   }, []);
 
   return (
@@ -188,6 +193,7 @@ export default function ProjectPage({ params }: ProjectPageProps) {
             onFieldSelectionChange={handleFieldSelectionChange}
             onWorkspaceStateChanged={handleWorkspaceStateChanged}
             onGpsPhotosChange={handleGpsPhotosChange}
+            onKmzSemanticChange={handleKmzSemanticChange}
             operationalMap={
               <ModernHeroMap
                 key={`modern-map-${projectId}`}
@@ -196,6 +202,7 @@ export default function ProjectPage({ params }: ProjectPageProps) {
                 selectedFieldJobId={selectedFieldJobId}
                 refreshVersion={modernMapRefreshVersion}
                 bridgedGpsPhotos={bridgedGpsPhotos}
+                kmzSemantic={kmzSemantic}
               />
             }
           />

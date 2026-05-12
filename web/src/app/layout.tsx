@@ -2,6 +2,11 @@ import "./globals.css";
 import "leaflet/dist/leaflet.css";
 import AuthGuard from "@/components/AuthGuard";
 
+export const metadata = {
+  title: "TrueLine",
+  description: "Field operations platform by Midway Data Tech",
+};
+
 export default function RootLayout({
   children,
 }: {

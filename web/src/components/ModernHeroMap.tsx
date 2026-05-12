@@ -17,6 +17,7 @@ import type {
   KmzPolygonFeature,
   KmzRenderPayloadResponse,
   RedlineSegment,
+  SemanticKmz,
   StationPhoto,
   StationPoint,
 } from "@/lib/types/backend";
@@ -46,6 +47,10 @@ type ModernHeroMapProps = {
    *  meaningless. Optional; defaults to 0. */
   refreshVersion?: number;
   bridgedGpsPhotos?: BridgedGpsPhoto[];
+  /** Already-hydrated semantic KMZ data from the parent's current-state response.
+   *  When provided, pre-fetches the render payload without requiring the user to
+   *  toggle the KMZ context layer on first. */
+  kmzSemantic?: SemanticKmz | null;
 };
 
 function cleanCoords(coords: number[][] | undefined | null): Array<[number, number]> {
@@ -476,6 +481,7 @@ export default function ModernHeroMap({
   selectedFieldJobId = null,
   refreshVersion = 0,
   bridgedGpsPhotos = [],
+  kmzSemantic,
 }: ModernHeroMapProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<ReturnType<LeafletNS["map"]> | null>(null);
@@ -1101,7 +1107,7 @@ export default function ModernHeroMap({
   // Phase 2F — Fetch KMZ render payload when context toggle turns ON.
   // Silent failure. No STATE writes. Read-only.
   useEffect(() => {
-    if (!layerKmzContext) return;
+    if (!kmzSemantic) return;
     let cancelled = false;
     void (async () => {
       try {
@@ -1112,7 +1118,7 @@ export default function ModernHeroMap({
       } catch { /* silent */ }
     })();
     return () => { cancelled = true; };
-  }, [layerKmzContext, projectId]);
+  }, [kmzSemantic, projectId]);
 
   // Phase 2F — Render KMZ context layers on the Leaflet map.
   // Separate from the operational geometry effect so it never touches redlines/stations.

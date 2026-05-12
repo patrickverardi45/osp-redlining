@@ -18,6 +18,10 @@ _current_tenant_ctx: ContextVar[Optional["CurrentTenant"]] = ContextVar("current
 
 @dataclass
 class CurrentTenant:
+    # tenant_id is ALWAYS a pilot slug (e.g. "acme-corp") — never a company UUID.
+    # Session ownership, disk isolation, and all ownership checks key on this slug.
+    # Phase 2b bridge (resolve_caller) MUST translate company_id UUID → company.slug
+    # before populating this field; using a UUID here silently breaks ownership checks.
     tenant_id: str
     user_id: Optional[str] = None
     email: Optional[str] = None

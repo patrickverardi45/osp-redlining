@@ -400,6 +400,9 @@ export default function ProjectsPage() {
           </section>
         )}
       </div>
+      <footer style={{ marginTop: 48, paddingTop: 16, borderTop: "1px solid var(--tl-border)", textAlign: "center", fontSize: 12, color: "var(--tl-text-muted)", opacity: 0.5 }}>
+        Powered by Midway Data Tech
+      </footer>
     </main>
   );
 }
