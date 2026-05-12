@@ -8,6 +8,7 @@ import {
   appendSessionIdToForm,
   rememberSessionFromResponse,
 } from "@/lib/session";
+import { apiFetch } from "@/lib/apiFetch";
 import type { BridgedGpsPhoto } from "@/components/RedlineMap";
 import { getJobById, type JobDetail, type Photo, type Session, type Station } from "@/lib/api";
 import type {
@@ -986,7 +987,7 @@ export default function ModernHeroMap({
       setLoading(true);
       setError(null);
       try {
-        const res = await fetch(appendSessionId(`${API_BASE}/api/current-state`, projectId), {
+        const res = await apiFetch(appendSessionId(`${API_BASE}/api/current-state`, projectId), {
           cache: "no-store",
         });
         const data = (await res.json()) as BackendState;
@@ -1104,7 +1105,7 @@ export default function ModernHeroMap({
     let cancelled = false;
     void (async () => {
       try {
-        const res = await fetch(appendSessionId(`${API_BASE}/api/observability/kmz-render-payload`, projectId), { cache: "no-store" });
+        const res = await apiFetch(appendSessionId(`${API_BASE}/api/observability/kmz-render-payload`, projectId), { cache: "no-store" });
         if (!res.ok) return;
         const data = (await res.json()) as KmzRenderPayloadResponse;
         if (!cancelled) setKmzRenderPayload(data);
@@ -2178,7 +2179,7 @@ export default function ModernHeroMap({
           `${API_BASE}/api/station-photos/${encodeURIComponent(photoId)}/adjust`,
           projectId,
         );
-        const res = await fetch(url, {
+        const res = await apiFetch(url, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -2341,7 +2342,7 @@ export default function ModernHeroMap({
       setStationPhotosLoading(true);
       setStationPhotoError(null);
       try {
-        const res = await fetch(
+        const res = await apiFetch(
           appendSessionId(
             `${API_BASE}/api/station-photos?station_identity=${encodeURIComponent(identity)}`,
             projectId,
@@ -2390,7 +2391,7 @@ export default function ModernHeroMap({
         Array.from(files).forEach((file) => form.append("files", file));
         appendSessionIdToForm(form, projectId);
 
-        const res = await fetch(`${API_BASE}/api/station-photos/upload`, {
+        const res = await apiFetch(`${API_BASE}/api/station-photos/upload`, {
           method: "POST",
           body: form,
         });

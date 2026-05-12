@@ -46,6 +46,7 @@ import { clamp, formatNumber, cleanDisplayText, formatDisplayDate } from "@/lib/
 import { toMoney } from "@/lib/format/money";
 import { extractGps } from "@/lib/photos/exif";
 import { appendSessionId, appendSessionIdToForm, getStoredSessionId, rememberSessionFromResponse } from "@/lib/session";
+import { apiFetch } from "@/lib/apiFetch";
 import type { PipelineDiagEntry, EngineeringPlanSignal, QaFlagItem } from "@/lib/types/nova";
 import { buildNovaSummary } from "@/lib/nova/buildNovaSummary";
 import CloseoutPacket from "@/components/CloseoutPacket";
@@ -1241,7 +1242,7 @@ function OfficeRedlineMapInner({
     setBoreLogLoading(true);
     setBoreLogError(null);
     try {
-      const res = await fetch(
+      const res = await apiFetch(
         `${API_BASE}/api/walk-sessions/${encodeURIComponent(sid)}/bore-log`,
         { cache: "no-store" },
       );
@@ -1393,7 +1394,7 @@ function OfficeRedlineMapInner({
     let cancelled = false;
     async function loadSnapPreview() {
       try {
-        const res = await fetch(
+        const res = await apiFetch(
           `${API_BASE}/api/observability/reviewed-snap-preview`,
           { cache: "no-store" },
         );
@@ -1417,7 +1418,7 @@ function OfficeRedlineMapInner({
     let cancelled = false;
     async function loadKmzRenderPayload() {
       try {
-        const res = await fetch(
+        const res = await apiFetch(
           `${API_BASE}/api/observability/kmz-render-payload`,
           { cache: "no-store" },
         );
@@ -2598,7 +2599,7 @@ ${fieldSubmissionPlacemarks.length > 0 ? buildFolder("Selected Field Submission"
   const handleExportEngineeringKml = useCallback(async () => {
     let payload: import("@/lib/types/backend").KmzRenderPayloadResponse | null = null;
     try {
-      const res = await fetch(`${API_BASE}/api/observability/kmz-render-payload`, { cache: "no-store" });
+      const res = await apiFetch(`${API_BASE}/api/observability/kmz-render-payload`, { cache: "no-store" });
       if (!res.ok) { console.warn("[eng-kml-export] payload fetch failed:", res.status); return; }
       payload = (await res.json()) as import("@/lib/types/backend").KmzRenderPayloadResponse;
     } catch (e) {
@@ -2920,7 +2921,7 @@ ${redlinePlacemarks.length > 0 ? buildEngFolder("As-Built Redlines", redlinePlac
       setStatusTone("neutral");
     }
     try {
-      const response = await fetch(appendSessionId(`${API_BASE}/api/current-state`, projectId));
+      const response = await apiFetch(appendSessionId(`${API_BASE}/api/current-state`, projectId));
       const data: BackendState = await response.json();
       const sessionId = rememberSessionFromResponse(data, projectId);
       if (!response.ok || data.success === false) throw new Error(data.error || "Unable to load current state.");
@@ -2952,7 +2953,7 @@ ${redlinePlacemarks.length > 0 ? buildEngFolder("As-Built Redlines", redlinePlac
   // Nova Phase 1 — fire-and-forget. Non-fatal. Nova degrades gracefully if unavailable.
   async function fetchPipelineDiag(): Promise<void> {
     try {
-      const res = await fetch(appendSessionId(`${API_BASE}/api/debug/pipeline-diag`, projectId));
+      const res = await apiFetch(appendSessionId(`${API_BASE}/api/debug/pipeline-diag`, projectId));
       if (!res.ok) return;
       const data = await res.json();
       if (Array.isArray(data.pipeline_diag)) setPipelineDiag(data.pipeline_diag);
@@ -2967,7 +2968,7 @@ ${redlinePlacemarks.length > 0 ? buildEngFolder("As-Built Redlines", redlinePlac
   async function handleReset() {
     setBusy(true);
     try {
-      const response = await fetch(appendSessionId(`${API_BASE}/api/reset-state`, projectId), { method: "POST" });
+      const response = await apiFetch(appendSessionId(`${API_BASE}/api/reset-state`, projectId), { method: "POST" });
       const data: BackendState = await response.json();
       const sessionId = rememberSessionFromResponse(data, projectId);
       if (!response.ok || data.success === false) throw new Error(data.error || "Reset failed.");
@@ -3027,7 +3028,7 @@ ${redlinePlacemarks.length > 0 ? buildEngFolder("As-Built Redlines", redlinePlac
     const lockJobId = String(selectedFieldJobDetail?.id || "test-job");
     setBusy(true);
     try {
-      const res = await fetch(appendSessionId(`${API_BASE}/api/jobs/${encodeURIComponent(lockJobId)}/lock-closeout`, projectId), {
+      const res = await apiFetch(appendSessionId(`${API_BASE}/api/jobs/${encodeURIComponent(lockJobId)}/lock-closeout`, projectId), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -3069,7 +3070,7 @@ ${redlinePlacemarks.length > 0 ? buildEngFolder("As-Built Redlines", redlinePlac
     const unlockRole = requestedRole === "admin" || requestedRole === "manager" ? requestedRole : "manager";
     setBusy(true);
     try {
-      const res = await fetch(appendSessionId(`${API_BASE}/api/jobs/${encodeURIComponent(unlockJobId)}/unlock-closeout`, projectId), {
+      const res = await apiFetch(appendSessionId(`${API_BASE}/api/jobs/${encodeURIComponent(unlockJobId)}/unlock-closeout`, projectId), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -3098,7 +3099,7 @@ ${redlinePlacemarks.length > 0 ? buildEngFolder("As-Built Redlines", redlinePlac
       appendSessionIdToForm(form, projectId);
       const scopedProject = projectId?.trim();
       if (scopedProject) form.append("project_id", scopedProject);
-      const response = await fetch(appendSessionId(`${API_BASE}/api/upload-design`, projectId), { method: "POST", body: form });
+      const response = await apiFetch(appendSessionId(`${API_BASE}/api/upload-design`, projectId), { method: "POST", body: form });
       const data: BackendState = await response.json();
       rememberSessionFromResponse(data, projectId);
       if (!response.ok || data.success === false) throw new Error(data.error || "Design upload failed.");
@@ -3134,7 +3135,7 @@ ${redlinePlacemarks.length > 0 ? buildEngFolder("As-Built Redlines", redlinePlac
       const form = new FormData();
       Array.from(files).forEach((file) => form.append("files", file));
       appendSessionIdToForm(form, projectId);
-      const response = await fetch(`${API_BASE}/api/upload-structured-bore-files`, { method: "POST", body: form });
+      const response = await apiFetch(`${API_BASE}/api/upload-structured-bore-files`, { method: "POST", body: form });
       const data: BackendState = await response.json();
       rememberSessionFromResponse(data, projectId);
       if (!response.ok || data.success === false) throw new Error(data.error || "Field data upload failed.");
@@ -3171,7 +3172,7 @@ ${redlinePlacemarks.length > 0 ? buildEngFolder("As-Built Redlines", redlinePlac
       const form = new FormData();
       appendSessionIdToForm(form, projectId);
       Array.from(files).forEach((f) => form.append("files", f));
-      const response = await fetch(`${API_BASE}/api/upload-engineering-plans`, { method: "POST", body: form });
+      const response = await apiFetch(`${API_BASE}/api/upload-engineering-plans`, { method: "POST", body: form });
       const data = await response.json();
       rememberSessionFromResponse(data, projectId);
       if (!response.ok || data.success === false) throw new Error(data.error || "Engineering plan upload failed.");
@@ -3208,7 +3209,7 @@ ${redlinePlacemarks.length > 0 ? buildEngFolder("As-Built Redlines", redlinePlac
           stationPointCount: (state?.station_points || []).length,
         },
       };
-      const response = await fetch(appendSessionId(`${API_BASE}/api/report-bug`, projectId), {
+      const response = await apiFetch(appendSessionId(`${API_BASE}/api/report-bug`, projectId), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
@@ -3247,7 +3248,7 @@ ${redlinePlacemarks.length > 0 ? buildEngFolder("As-Built Redlines", redlinePlac
     }
     setStationPhotosLoading(true);
     try {
-      const response = await fetch(
+      const response = await apiFetch(
         appendSessionId(`${API_BASE}/api/station-photos?station_identity=${encodeURIComponent(stationIdentity)}`, projectId)
       );
       const data = await response.json();
@@ -3292,7 +3293,7 @@ ${redlinePlacemarks.length > 0 ? buildEngFolder("As-Built Redlines", redlinePlac
       Array.from(files).forEach((file) => form.append("files", file));
       appendSessionIdToForm(form, projectId);
 
-      const response = await fetch(`${API_BASE}/api/station-photos/upload`, {
+      const response = await apiFetch(`${API_BASE}/api/station-photos/upload`, {
         method: "POST",
         body: form,
       });
