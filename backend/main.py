@@ -142,7 +142,7 @@ def _get_session_tenant_id(session_id: str) -> Optional[str]:
     return value.strip()
 
 
-def _require_tenant_owns_session(session_id: str) -> None:
+def _require_tenant_owns_session(session_id: str, request: Optional[Request] = None) -> None:
     """Raise 403 if a JWT caller does not own the given session. No-op outside auth context.
 
     Both sides of the comparison are pilot slugs. When Phase 2b resolve_caller is wired in,
@@ -155,6 +155,8 @@ def _require_tenant_owns_session(session_id: str) -> None:
     if stored is None:
         return
     if stored != caller.tenant_id:
+        if request is not None:
+            request.state.auth_outcome = "slug_mismatch"
         raise HTTPException(status_code=403, detail="Session does not belong to this tenant.")
 
 
@@ -16298,12 +16300,12 @@ def _load_walk_submissions_for_job(job_id: str) -> List[Dict[str, Any]]:
 
 
 @protected_router.post("/api/walk-sessions/{session_id}/archive")
-def archive_walk_session(session_id: str) -> JSONResponse:
+def archive_walk_session(session_id: str, request: Request) -> JSONResponse:
     """Mark a walk submission as archived (index-only). Does not delete JSON or photos."""
     sid = str(session_id or "").strip()
     if not sid:
         return JSONResponse({"ok": False, "error": "session_id is required"}, status_code=400)
-    _require_tenant_owns_session(sid)
+    _require_tenant_owns_session(sid, request)
     archived_at = datetime.now(timezone.utc).isoformat()
     idx = _load_walk_submissions_index()
     subs_raw = idx.get("submissions")
@@ -16408,7 +16410,7 @@ def _walk_bore_log_iso_from_ts(ts_value: Any) -> Optional[str]:
 
 
 @protected_router.get("/api/walk-sessions/{session_id}/bore-log")
-def get_walk_session_bore_log(session_id: str) -> List[Dict[str, Any]]:
+def get_walk_session_bore_log(session_id: str, request: Request) -> List[Dict[str, Any]]:
     """MVP: walk session → structured bore-log rows.
 
     Pure read; never mutates session state, walk submissions, or photo index.
@@ -16417,7 +16419,7 @@ def get_walk_session_bore_log(session_id: str) -> List[Dict[str, Any]]:
     sid = str(session_id or "").strip()
     if not sid:
         return []
-    _require_tenant_owns_session(sid)
+    _require_tenant_owns_session(sid, request)
     safe_sid = _walk_submission_sid(sid)
     if not safe_sid:
         return []
@@ -17113,11 +17115,11 @@ _engineered_segments_logger = _engineered_segments_logging.getLogger("engineered
 
 
 @protected_router.get("/api/engineered-segments")
-def get_engineered_segments(session_id: Optional[str] = Query(None)) -> Dict[str, Any]:
+def get_engineered_segments(session_id: Optional[str] = Query(None), request: Request = None) -> Dict[str, Any]:
     sid = str(session_id or "").strip()
     if not sid:
         return {"session_id": "", "segments": []}
-    _require_tenant_owns_session(sid)
+    _require_tenant_owns_session(sid, request)
     try:
         from app.services.engineered_segments import build_engineered_segments
         segments = build_engineered_segments(sid)

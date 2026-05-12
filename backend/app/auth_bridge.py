@@ -30,6 +30,8 @@ def resolve_caller(request: Request) -> CurrentTenant:
     """
     auth_header = request.headers.get("Authorization", "")
     if not auth_header.startswith("Bearer "):
+        request.state.auth_path = None
+        request.state.auth_outcome = "missing_header"
         raise HTTPException(
             status_code=401, detail="Missing or invalid Authorization header."
         )
@@ -42,6 +44,8 @@ def resolve_caller(request: Request) -> CurrentTenant:
         user_id = claims.get("sub")
         company_id = claims.get("company_id")
         if not user_id or not company_id:
+            request.state.auth_path = "realauth"
+            request.state.auth_outcome = "malformed_claims"
             raise HTTPException(status_code=401, detail="Malformed access token claims.")
 
         with auth_db() as conn:
@@ -49,17 +53,26 @@ def resolve_caller(request: Request) -> CurrentTenant:
                 "SELECT id, email FROM users WHERE id = ?", (user_id,)
             ).fetchone()
             if not user:
+                request.state.auth_path = "realauth"
+                request.state.auth_outcome = "user_not_found"
                 raise HTTPException(status_code=401, detail="user_not_found")
 
             membership = get_first_membership(conn, user_id)
             if not membership:
+                request.state.auth_path = "realauth"
+                request.state.auth_outcome = "no_company"
                 raise HTTPException(status_code=401, detail="no_company_assigned")
 
             company = get_company_by_id(conn, membership["company_id"])
             if not company:
+                request.state.auth_path = "realauth"
+                request.state.auth_outcome = "company_not_found"
                 raise HTTPException(status_code=401, detail="company_not_found")
 
         # Slug is the tenant namespace — NEVER use company UUID here.
+        request.state.auth_path = "realauth"
+        request.state.auth_outcome = "realauth_ok"
+        request.state.caller_tenant_slug = company["slug"]
         return CurrentTenant(
             tenant_id=company["slug"],
             user_id=user["id"],
@@ -72,6 +85,8 @@ def resolve_caller(request: Request) -> CurrentTenant:
     except jwt.ExpiredSignatureError:
         # Signature matched real-auth secret but token is expired.
         # Definitively a real-auth token — do NOT fall back to pilot path.
+        request.state.auth_path = "realauth"
+        request.state.auth_outcome = "expired_realauth"
         raise HTTPException(status_code=401, detail="Token expired.")
 
     except jwt.InvalidTokenError:
@@ -82,16 +97,25 @@ def resolve_caller(request: Request) -> CurrentTenant:
     try:
         payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
     except jwt.ExpiredSignatureError:
+        request.state.auth_path = "pilot"
+        request.state.auth_outcome = "token_expired"
         raise HTTPException(status_code=401, detail="Token expired.")
     except jwt.InvalidTokenError:
+        request.state.auth_path = "pilot"
+        request.state.auth_outcome = "invalid_token"
         raise HTTPException(status_code=401, detail="Invalid token.")
 
     tenant_id = payload.get("tenant_id")
     if not tenant_id or not isinstance(tenant_id, str) or not tenant_id.strip():
+        request.state.auth_path = "pilot"
+        request.state.auth_outcome = "pilot_no_tenant"
         raise HTTPException(
             status_code=401, detail="Token missing required tenant_id claim."
         )
 
+    request.state.auth_path = "pilot"
+    request.state.auth_outcome = "pilot_ok"
+    request.state.caller_tenant_slug = tenant_id.strip()
     return CurrentTenant(
         tenant_id=tenant_id.strip(),
         user_id=payload.get("user_id"),
