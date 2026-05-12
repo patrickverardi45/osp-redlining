@@ -51,7 +51,7 @@ export default function LandingPage() {
               <path d="M8 1L14 4.5V11.5L8 15L2 11.5V4.5L8 1Z" />
             </svg>
           </div>
-          <span className={styles.navLogoName}>{"\u00A0"}</span>
+          <span className={styles.navLogoName}>True<span>Line</span></span>
         </Link>
         <ul className={styles.navLinks}>
           <li>
@@ -1023,7 +1023,7 @@ export default function LandingPage() {
           <div className={`${styles.loginFormCard} ${styles.fadeIn}`}>
             <div className={styles.formLogo}>
               <div className={styles.formLogoMark} />
-              <span className={styles.formLogoName}>PORTAL</span>
+              <span className={styles.formLogoName}>TrueLine</span>
             </div>
             <div className={styles.formTitle}>Welcome</div>
             <div className={styles.formSubtitle}>
@@ -1110,10 +1110,10 @@ export default function LandingPage() {
         <div className={styles.footerInner}>
           <div className={styles.footerLogo}>
             <div className={styles.footerLogoMark} />
-            <span className={styles.footerLogoName}>{"\u00A0"}</span>
+            <span className={styles.footerLogoName}>TrueLine</span>
           </div>
           <div className={styles.footerCopy}>
-            © {new Date().getFullYear()} Field Operations Platform
+            © {new Date().getFullYear()} Midway Data Tech
           </div>
           <div className={styles.footerLinks}>
             <a href="#">Privacy</a>
