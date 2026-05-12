@@ -68,10 +68,10 @@ export default function LandingPage() {
           </li>
         </ul>
         <div className={styles.navCta}>
-          <Link href="/projects" className={styles.btnGhost}>
+          <Link href="/auth/login" className={styles.btnGhost}>
             Sign In
           </Link>
-          <Link href="/projects" className={styles.btnPrimary}>
+          <Link href="/auth/login" className={styles.btnPrimary}>
             Request Demo
           </Link>
         </div>
@@ -101,7 +101,7 @@ export default function LandingPage() {
               close jobs without chasing paperwork.
             </p>
             <div className={styles.heroActions}>
-              <Link href="/projects" className={styles.btnHero}>
+              <Link href="/auth/login" className={styles.btnHero}>
                 <svg
                   width="16"
                   height="16"
@@ -981,16 +981,8 @@ export default function LandingPage() {
               <em>YOUR JOBS.</em>
             </h2>
             <p className={styles.loginDesc}>
-              Sign in flows are being finalized. For this demo, continue straight
-              to the project dashboard — the same entry point will power real
-              accounts soon.
-            </p>
-            <p
-              className={styles.loginDesc}
-              style={{ fontSize: 14, opacity: 0.9 }}
-            >
-              Demo access routes directly to the project dashboard while account
-              access is being finalized.
+              Sign in to access your project dashboard, field operations data,
+              and job closeout workflows.
             </p>
             <ul className={styles.loginPerks}>
               <li className={styles.loginPerk}>
@@ -1027,11 +1019,11 @@ export default function LandingPage() {
             </div>
             <div className={styles.formTitle}>Welcome</div>
             <div className={styles.formSubtitle}>
-              Field Operations Platform — continue to explore the live demo
+              Field Operations Platform — sign in to access your workspace.
             </div>
 
             <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-              <Link href="/projects" className={styles.btnLogin}>
+              <Link href="/auth/login" className={styles.btnLogin}>
                 <svg
                   width="16"
                   height="16"
@@ -1046,7 +1038,7 @@ export default function LandingPage() {
                 Sign In
               </Link>
               <Link
-                href="/projects"
+                href="/auth/login"
                 className={styles.btnHeroOutline}
                 style={{
                   justifyContent: "center",
@@ -1057,10 +1049,6 @@ export default function LandingPage() {
               >
                 Request Demo
               </Link>
-            </div>
-
-            <div className={styles.formDivider}>
-              <span>Demo mode</span>
             </div>
 
             <div className={styles.formSecure}>
@@ -1096,10 +1084,10 @@ export default function LandingPage() {
             </p>
           </div>
           <div className={styles.ctaActions}>
-            <Link href="/projects" className={styles.btnHero}>
+            <Link href="/auth/login" className={styles.btnHero}>
               Get Started Today
             </Link>
-            <Link href="/projects" className={styles.btnHeroOutline}>
+            <Link href="/auth/login" className={styles.btnHeroOutline}>
               Request a Demo
             </Link>
           </div>

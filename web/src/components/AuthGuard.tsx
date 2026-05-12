@@ -15,8 +15,14 @@ export default function AuthGuard({ children }: { children: React.ReactNode }) {
     // Auth pages are always accessible — skip gate entirely.
     if (pathname.startsWith("/auth/")) {
       setStatus("ok");
+      redirected.current = false; // allow re-entry into protected pages after auth
       return;
     }
+
+    // Always reset to "checking" on protected-path entry so a stale "ok"
+    // from a prior /auth/* visit cannot bypass re-verification.
+    setStatus("checking");
+
     if (redirected.current) return;
 
     let cancelled = false;

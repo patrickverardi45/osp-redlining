@@ -23,7 +23,7 @@ export default function PilotTokenGatePage() {
       return;
     }
     savePilotToken(trimmed);
-    router.push("/");
+    router.push("/projects");
   }
 
   function handleClear() {
