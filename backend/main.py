@@ -26,7 +26,6 @@ from fastapi import APIRouter, Body, Depends, FastAPI, File, Form, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from app.auth import current_tenant, get_current_tenant
-from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -175,7 +174,6 @@ localhost_router = APIRouter(dependencies=[Depends(get_current_tenant)])
 app.include_router(protected_router)
 app.include_router(localhost_router)
 
-app.mount("/uploads", StaticFiles(directory=BASE_UPLOAD_DIR), name="uploads")
 
 # ─── Private beta security scaffolding: CORS with env-sourced origin list ───
 # Uses TRUELINE_ALLOWED_ORIGINS if provided; defaults to ["*"] for backward compat.
