@@ -17102,3 +17102,5 @@ def get_engineered_segments(session_id: Optional[str] = Query(None)) -> Dict[str
 # Routers are included after all route definitions so every decorated route is mounted.
 app.include_router(protected_router)
 app.include_router(localhost_router)
+from app.auth_routes import router as _auth_router
+app.include_router(_auth_router)
