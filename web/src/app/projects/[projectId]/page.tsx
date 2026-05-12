@@ -79,7 +79,7 @@ export default function ProjectPage({ params }: ProjectPageProps) {
         >
           <div style={{ minWidth: 0 }}>
             <Link
-              href="/"
+              href="/projects"
               className="tl-link"
               style={{ display: "inline-block", fontSize: 13, fontWeight: 600 }}
             >
@@ -133,7 +133,7 @@ export default function ProjectPage({ params }: ProjectPageProps) {
         >
           <span className="tl-pill tl-pill-info">Workspace</span>
           <span style={{ color: "var(--tl-text-muted)" }}>
-            <Link href="/" className="tl-link">
+            <Link href="/projects" className="tl-link">
               Projects
             </Link>
             <span

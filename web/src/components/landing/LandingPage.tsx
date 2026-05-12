@@ -2,7 +2,10 @@
 
 import Link from "next/link";
 import { useEffect } from "react";
+import { useRouter } from "next/navigation";
 import styles from "./landing.module.css";
+import { getAccessToken } from "@/lib/accessToken";
+import { getPilotToken } from "@/lib/pilotToken";
 
 const MARQUEE_ITEMS = [
   "Field Operations Platform",
@@ -17,6 +20,15 @@ const MARQUEE_ITEMS = [
 ];
 
 export default function LandingPage() {
+  const router = useRouter();
+
+  // Authenticated users have no business on the landing page — send them directly to the dashboard.
+  useEffect(() => {
+    if (getAccessToken() || getPilotToken()) {
+      router.replace("/projects");
+    }
+  }, [router]);
+
   useEffect(() => {
     const fadeEls = document.querySelectorAll<HTMLElement>(
       `.${styles.fadeIn}`,
