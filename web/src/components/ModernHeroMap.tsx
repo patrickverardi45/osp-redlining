@@ -996,7 +996,7 @@ export default function ModernHeroMap({
         }
         if (!cancelled) setState(data);
       } catch (e) {
-        if (!cancelled) setError(e instanceof Error ? e.message : String(e));
+        if (!cancelled && state === null) setError(e instanceof Error ? e.message : String(e));
       } finally {
         if (!cancelled) setLoading(false);
       }
