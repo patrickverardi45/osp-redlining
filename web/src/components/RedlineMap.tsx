@@ -17,6 +17,7 @@ import type {
   NoteTone,
   Bounds,
   ScreenPoint,
+  SemanticKmz,
   Viewport,
 } from "@/lib/types/backend";
 import {
@@ -937,6 +938,11 @@ type RedlineMapProps = {
    *  sanitized array (no File objects) for passing to sibling components like
    *  ModernHeroMap. Optional — omit to ignore. */
   onGpsPhotosChange?: (photos: BridgedGpsPhoto[]) => void;
+  /** Fires whenever the hydrated kmz_semantic changes (e.g. after KMZ upload or
+   *  state refresh). Forwards the already-parsed semantic object so a sibling
+   *  component like ModernHeroMap can pre-fetch the render payload without an
+   *  extra current-state round-trip. Optional — omit to ignore. */
+  onKmzSemanticChange?: (semantic: SemanticKmz | null) => void;
   /** Primary operational map (e.g. ModernHeroMap) rendered after uploads / geotagged
    *  tooling and before the legacy SVG surface. Optional — omit for legacy-only layout. */
   operationalMap?: React.ReactNode;
@@ -1033,6 +1039,7 @@ function OfficeRedlineMapInner({
   onFieldSelectionChange,
   onWorkspaceStateChanged,
   onGpsPhotosChange,
+  onKmzSemanticChange,
   operationalMap,
 }: RedlineMapProps) {
   const [activeWorkspaceTab, setActiveWorkspaceTab] = useState<WorkspaceTab>("workspace");
@@ -1137,6 +1144,7 @@ function OfficeRedlineMapInner({
   const [boreLogRows, setBoreLogRows] = useState<BoreLogRow[] | null>(null);
   const [boreLogLoading, setBoreLogLoading] = useState(false);
   const [boreLogError, setBoreLogError] = useState<string | null>(null);
+  const [engExportError, setEngExportError] = useState<string | null>(null);
   const [fieldReviewPhotosOpen, setFieldReviewPhotosOpen] = useState(false);
   const [fieldReviewBoreOpen, setFieldReviewBoreOpen] = useState(false);
   const [showFieldGpsEvidenceTrail, setShowFieldGpsEvidenceTrail] = useState(false);
@@ -2597,13 +2605,19 @@ ${fieldSubmissionPlacemarks.length > 0 ? buildFolder("Selected Field Submission"
   // Fetches the rich kmz-render-payload and emits full engineering context + redlines.
   // Does NOT modify handleExportKml; that closeout export is preserved unchanged.
   const handleExportEngineeringKml = useCallback(async () => {
+    setEngExportError(null);
     let payload: import("@/lib/types/backend").KmzRenderPayloadResponse | null = null;
     try {
       const res = await apiFetch(`${API_BASE}/api/observability/kmz-render-payload`, { cache: "no-store" });
-      if (!res.ok) { console.warn("[eng-kml-export] payload fetch failed:", res.status); return; }
+      if (!res.ok) {
+        console.warn("[eng-kml-export] payload fetch failed:", res.status);
+        setEngExportError(`Export failed — server returned ${res.status}. ${res.status === 401 ? "Ensure your pilot token is set." : "Check browser console for details."}`);
+        return;
+      }
       payload = (await res.json()) as import("@/lib/types/backend").KmzRenderPayloadResponse;
     } catch (e) {
       console.warn("[eng-kml-export] fetch error:", e);
+      setEngExportError("Export failed — could not reach the server. Check your connection and try again.");
       return;
     }
     if (!payload) return;
@@ -2741,6 +2755,7 @@ ${redlinePlacemarks.length > 0 ? buildEngFolder("As-Built Redlines", redlinePlac
     link.click();
     link.remove();
     URL.revokeObjectURL(url);
+    setEngExportError(null);
   }, [redlineSegments]);
 
   const fitToBounds = useCallback((targetBounds: Bounds | null) => {
@@ -3401,6 +3416,9 @@ ${redlinePlacemarks.length > 0 ? buildEngFolder("As-Built Redlines", redlinePlac
       })),
     );
   }, [gpsPhotos, onGpsPhotosChange]);
+  useEffect(() => {
+    onKmzSemanticChange?.(state?.kmz_semantic ?? null);
+  }, [state?.kmz_semantic, onKmzSemanticChange]);
   useEffect(() => {
     return () => {
       gpsPhotosRef.current.forEach((p) => {
@@ -7200,6 +7218,11 @@ ${redlinePlacemarks.length > 0 ? buildEngFolder("As-Built Redlines", redlinePlac
                       <button onClick={handleExportEngineeringKml} style={{ ...buttonStyle("#0f2a1a", "#86efac", "#22c55e", false), width: "100%" }}>
                         Export Engineering KMZ + Redlines
                       </button>
+                      {engExportError && (
+                        <div style={{ fontSize: 12, color: "#ef4444", padding: "6px 10px", borderRadius: 8, background: "#fef2f2", border: "1px solid #fecaca" }}>
+                          {engExportError}
+                        </div>
+                      )}
                       <button onClick={handlePrintReport} style={{ ...buttonStyle("#0f172a", "#ffffff", "#000000", false), width: "100%" }}>
                         Print / Export Report
                       </button>
