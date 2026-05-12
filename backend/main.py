@@ -22,10 +22,10 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import boto3
 import pandas as pd
-from fastapi import APIRouter, Body, Depends, FastAPI, File, Form, Query, Request, UploadFile
+from fastapi import APIRouter, Body, Depends, FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
-from app.auth import get_current_tenant
+from app.auth import current_tenant, get_current_tenant
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
 
@@ -474,10 +474,26 @@ class _session_scope:
 
     def __enter__(self) -> str:
         _SESSION_LOCK.acquire()
-        session = _get_session(self.session_id)
-        STATE.clear()
-        STATE.update(session)
-        STATE["_session_id_hint"] = self.session_id
+        try:
+            session = _get_session(self.session_id)
+            caller = current_tenant()
+            if caller is not None:
+                stored = session.get("tenant_id")
+                if isinstance(stored, str) and stored.strip():
+                    if stored.strip() != caller.tenant_id:
+                        raise HTTPException(
+                            status_code=403,
+                            detail="Session does not belong to this tenant.",
+                        )
+                else:
+                    session["tenant_id"] = caller.tenant_id
+                    session["tenant_bound_at"] = datetime.now(timezone.utc).isoformat()
+            STATE.clear()
+            STATE.update(session)
+            STATE["_session_id_hint"] = self.session_id
+        except Exception:
+            _SESSION_LOCK.release()
+            raise
         return self.session_id
 
     def __exit__(self, exc_type, exc_value, traceback) -> None:

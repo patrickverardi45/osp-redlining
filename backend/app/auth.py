@@ -1,4 +1,5 @@
 import os
+from contextvars import ContextVar
 from datetime import datetime, timezone, timedelta
 from dataclasses import dataclass
 from typing import Optional
@@ -11,6 +12,8 @@ JWT_SECRET = os.getenv("TRUELINE_JWT_SECRET")
 assert JWT_SECRET, "TRUELINE_JWT_SECRET must be set before starting the server."
 
 JWT_ALGORITHM = "HS256"
+
+_current_tenant_ctx: ContextVar[Optional["CurrentTenant"]] = ContextVar("current_tenant", default=None)
 
 
 @dataclass
@@ -34,11 +37,17 @@ def get_current_tenant(request: Request) -> CurrentTenant:
     tenant_id = payload.get("tenant_id")
     if not tenant_id or not isinstance(tenant_id, str) or not tenant_id.strip():
         raise HTTPException(status_code=401, detail="Token missing required tenant_id claim.")
-    return CurrentTenant(
+    tenant = CurrentTenant(
         tenant_id=tenant_id.strip(),
         user_id=payload.get("user_id"),
         email=payload.get("email"),
     )
+    _current_tenant_ctx.set(tenant)
+    return tenant
+
+
+def current_tenant() -> Optional[CurrentTenant]:
+    return _current_tenant_ctx.get()
 
 
 def issue_pilot_token(
