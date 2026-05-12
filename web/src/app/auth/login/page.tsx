@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { login } from "@/lib/authClient";
@@ -163,6 +164,13 @@ export default function LoginPage() {
             {loading ? "Signing in…" : "Sign in"}
           </button>
         </form>
+
+        <p style={{ margin: 0, textAlign: "center", fontSize: "0.8125rem", color: "#7a8fa6" }}>
+          Have a pilot access token?{" "}
+          <Link href="/auth/token" style={{ color: "#60a5fa", textDecoration: "none" }}>
+            Enter it here.
+          </Link>
+        </p>
       </div>
     </div>
   );

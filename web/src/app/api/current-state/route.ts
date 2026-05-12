@@ -14,9 +14,11 @@ export async function GET(request: Request) {
       backendUrl.searchParams.set("session_id", sessionId);
     }
 
+    const authHeader = request.headers.get("authorization");
     const response = await fetch(backendUrl.toString(), {
       method: "GET",
       cache: "no-store",
+      ...(authHeader ? { headers: { Authorization: authHeader } } : {}),
     });
 
     const text = await response.text();
