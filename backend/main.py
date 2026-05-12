@@ -105,7 +105,11 @@ def _load_persisted_session(session_id: str) -> Optional[Dict[str, Any]]:
 
 def _get_session_tenant_id(session_id: str) -> Optional[str]:
     """Read the tenant_id stamp from the persisted session record.
-    Returns None if the session is unknown or unbound."""
+    Returns None if the session is unknown or unbound.
+
+    NAMESPACE INVARIANT: tenant_id on disk is always a pilot slug (e.g. "acme-corp").
+    It is never a company UUID. Do not compare this value against companies.id.
+    """
     sid = str(session_id or "").strip()
     if not sid:
         return None
@@ -119,7 +123,11 @@ def _get_session_tenant_id(session_id: str) -> Optional[str]:
 
 
 def _require_tenant_owns_session(session_id: str) -> None:
-    """Raise 403 if a JWT caller does not own the given session. No-op outside auth context."""
+    """Raise 403 if a JWT caller does not own the given session. No-op outside auth context.
+
+    Both sides of the comparison are pilot slugs. When Phase 2b resolve_caller is wired in,
+    caller.tenant_id must still be a slug — never a company UUID — for this check to work.
+    """
     caller = current_tenant()
     if caller is None:
         return
@@ -498,6 +506,8 @@ class _session_scope:
                             detail="Session does not belong to this tenant.",
                         )
                 else:
+                    # Stamp must be a slug — never a UUID. resolve_caller must
+                    # translate company_id → company.slug before this point.
                     session["tenant_id"] = caller.tenant_id
                     session["tenant_bound_at"] = datetime.now(timezone.utc).isoformat()
             STATE.clear()

@@ -33,6 +33,10 @@ def create_access_token(user_row: sqlite3.Row, membership_row: sqlite3.Row) -> s
     payload = {
         "sub": user_row["id"],
         "email": user_row["email"],
+        # company_id is the companies.id UUID — a different namespace from the
+        # pilot slug used as tenant_id in session ownership checks.
+        # Phase 2b resolve_caller must look up companies.slug from this UUID;
+        # it must NOT use this UUID directly as CurrentTenant.tenant_id.
         "company_id": membership_row["company_id"],
         "role": membership_row["role"],
         "typ": "access",
