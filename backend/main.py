@@ -56,6 +56,7 @@ TRUELINE_ALLOWED_ORIGINS = [origin.strip() for origin in _ALLOWED_ORIGINS_RAW.sp
 # Rollback: unset or set to empty/0 to revert to pilot-only at next deploy.
 # Do NOT enable until Phase 2b go/no-go criteria are met (slug bridge verified).
 _DUAL_AUTH_ENABLED = os.getenv("TRUELINE_DUAL_AUTH", "").strip() == "1"
+logging.info("dual_auth_enabled=%s", _DUAL_AUTH_ENABLED)
 
 
 def _auth_dependency():
@@ -260,6 +261,10 @@ class RequestAuditMiddleware(BaseHTTPMiddleware):
                     "session_id": session_id,
                     "duration_ms": duration_ms,
                     "status_code": status_code,
+                    "auth_path": getattr(request.state, "auth_path", None),
+                    "auth_outcome": getattr(request.state, "auth_outcome", None),
+                    "caller_tenant_slug": getattr(request.state, "caller_tenant_slug", None),
+                    "dual_auth_enabled": _DUAL_AUTH_ENABLED,
                 }
                 try:
                     with open(str(REQUEST_AUDIT_PATH), "a", encoding="utf-8") as _fh:
