@@ -2934,7 +2934,18 @@ ${redlinePlacemarks.length > 0 ? buildEngFolder("As-Built Redlines", redlinePlac
     }
     try {
       const response = await apiFetch(appendSessionId(`${API_BASE}/api/current-state`, projectId));
-      const data: BackendState = await response.json();
+      // Read text first so a non-JSON body (e.g. Vercel edge 404 "The page
+      // could not be found") surfaces a readable snippet instead of a raw
+      // "Unexpected token 'T', 'The page c'..." JSON.parse error in the
+      // workspace status banner. Mirrors handleEngineeringPlansUpload below.
+      const responseText = await response.text();
+      let data: BackendState;
+      try {
+        data = (responseText ? JSON.parse(responseText) : {}) as BackendState;
+      } catch {
+        const snippet = responseText.slice(0, 200).trim() || `HTTP ${response.status}`;
+        throw new Error(`Current state load failed (${response.status}): ${snippet}`);
+      }
       const sessionId = rememberSessionFromResponse(data, projectId);
       if (!response.ok || data.success === false) throw new Error(data.error || "Unable to load current state.");
       setState(withoutClearedEngineeringPlans(data, projectId, sessionId));
