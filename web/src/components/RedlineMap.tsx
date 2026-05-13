@@ -7098,6 +7098,18 @@ ${redlinePlacemarks.length > 0 ? buildEngFolder("As-Built Redlines", redlinePlac
                           >
                             Submit for Approval
                           </button>
+                          {!billingChecklistComplete && !closeoutLocked && (
+                            <div style={{ fontSize: 12, color: "#92400e", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 8, padding: "8px 12px" }}>
+                              <strong>Required before submitting:</strong>
+                              <ul style={{ margin: "4px 0 0", paddingLeft: 18, lineHeight: 1.7 }}>
+                                {!hasDesign && <li>Design file (KMZ/KML) not loaded</li>}
+                                {!hasBoreFiles && <li>Field data files not loaded</li>}
+                                {stationPhotos.length === 0 && gpsPhotos.length === 0 && (
+                                  <li>Photo evidence required — upload geotagged photos or select a station to upload station photos</li>
+                                )}
+                              </ul>
+                            </div>
+                          )}
                         </>
                       ) : null}
                       {billingApprovalStatus === "pending" ? (
