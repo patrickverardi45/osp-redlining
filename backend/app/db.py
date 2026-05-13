@@ -80,9 +80,28 @@ def init_auth_db() -> None:
         conn.commit()
 
 
+_db_ready = False
+
+
+def _ensure_db() -> None:
+    """Guarantee uploads dir + schema exist before the first connection.
+
+    Uses a module-level flag so the overhead is one boolean check per call
+    after the first. init_auth_db() is idempotent (CREATE TABLE IF NOT EXISTS)
+    so concurrent first-requests race safely.
+    """
+    global _db_ready
+    if _db_ready:
+        return
+    init_auth_db()
+    print(f"[auth_db] initialized — path: {AUTH_DB_PATH}", flush=True)
+    _db_ready = True
+
+
 @contextmanager
 def auth_db():
     """Context manager yielding a sqlite3.Connection with row_factory set."""
+    _ensure_db()
     conn = sqlite3.connect(AUTH_DB_PATH)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
