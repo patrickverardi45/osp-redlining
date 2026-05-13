@@ -24,19 +24,19 @@ async function proxyToBackend(
   request: NextRequest,
   pathSegments: string[],
 ): Promise<NextResponse> {
-  const firstSegment = pathSegments[0] ?? "";
-  const joinedPath = pathSegments.join("/");
-
-  // Jobs and exceptions are at the backend root, not under /api/.
-  const backendPath = BACKEND_ROOT_SEGMENTS.has(firstSegment)
-    ? `/${joinedPath}`
-    : `/api/${joinedPath}`;
-
-  const incomingUrl = new URL(request.url);
-  const search = incomingUrl.search; // e.g. "?session_id=abc"
-  const backendUrl = `${BACKEND_BASE}${backendPath}${search}`;
-
   try {
+    const firstSegment = pathSegments[0] ?? "";
+    const joinedPath = pathSegments.join("/");
+
+    // Jobs and exceptions are at the backend root, not under /api/.
+    const backendPath = BACKEND_ROOT_SEGMENTS.has(firstSegment)
+      ? `/${joinedPath}`
+      : `/api/${joinedPath}`;
+
+    const incomingUrl = new URL(request.url);
+    const search = incomingUrl.search; // e.g. "?session_id=abc"
+    const backendUrl = `${BACKEND_BASE}${backendPath}${search}`;
+
     const forwardHeaders = new Headers();
 
     const contentType = request.headers.get("content-type");
