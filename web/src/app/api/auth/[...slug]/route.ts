@@ -10,6 +10,7 @@ export const runtime = "nodejs";
 // refresh cookie with a path that matches future /api/auth/refresh requests.
 
 const BACKEND_BASE =
+  process.env.API_BASE?.replace(/\/+$/, "") ||
   process.env.NEXT_PUBLIC_API_BASE?.replace(/\/+$/, "") ||
   process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/+$/, "") ||
   "http://127.0.0.1:8000";
