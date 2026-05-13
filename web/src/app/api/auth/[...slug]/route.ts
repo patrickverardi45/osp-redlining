@@ -24,17 +24,24 @@ async function handler(
   const { slug } = await context.params;
   const backendUrl = `${BACKEND_BASE}/auth/${slug.join("/")}`;
 
+  // TEMPORARY DIAGNOSTIC — remove after confirming env vars on Vercel.
+  return NextResponse.json({
+    backendBase: BACKEND_BASE,
+    apiBase: process.env.API_BASE,
+    publicApiBase: process.env.NEXT_PUBLIC_API_BASE,
+  });
+
   try {
     const forwardHeaders = new Headers();
 
-    const contentType = request.headers.get("content-type");
+    const contentType = request.headers.get("content-type") ?? "";
     if (contentType) forwardHeaders.set("content-type", contentType);
 
     // Forward the refresh cookie and any auth bearer token from the browser.
-    const cookie = request.headers.get("cookie");
+    const cookie = request.headers.get("cookie") ?? "";
     if (cookie) forwardHeaders.set("cookie", cookie);
 
-    const authorization = request.headers.get("authorization");
+    const authorization = request.headers.get("authorization") ?? "";
     if (authorization) forwardHeaders.set("authorization", authorization);
 
     const hasBody = request.method !== "GET" && request.method !== "HEAD";
@@ -49,13 +56,13 @@ async function handler(
 
     const responseHeaders = new Headers();
 
-    const ct = upstream.headers.get("content-type");
+    const ct = upstream.headers.get("content-type") ?? "";
     if (ct) responseHeaders.set("content-type", ct);
 
     // Forward the refresh cookie, rewriting its Path from /auth → /api/auth.
     // The backend sets Path=/auth; our proxy sits at /api/auth/*, so without
     // this rewrite the browser would never send the cookie back to us.
-    const setCookie = upstream.headers.get("set-cookie");
+    const setCookie = upstream.headers.get("set-cookie") ?? "";
     if (setCookie) {
       const rewritten = setCookie.replace(/\bPath=\/auth\b/gi, "Path=/api/auth");
       responseHeaders.set("set-cookie", rewritten);
@@ -72,7 +79,7 @@ async function handler(
     return NextResponse.json(
       {
         detail: "Auth backend unreachable",
-        error: error instanceof Error ? error.message : "Unknown error",
+        error: error instanceof Error ? (error as Error).message : "Unknown error",
       },
       { status: 502 },
     );
