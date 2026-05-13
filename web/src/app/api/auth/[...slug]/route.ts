@@ -1,5 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 
+export const dynamic = "force-dynamic";
+export const runtime = "nodejs";
+
 // Server-side proxy for all /auth/* calls.
 // Eliminates cross-origin CORS issues: browser speaks to Vercel (same-origin),
 // Next.js forwards to the Render backend server-side.
