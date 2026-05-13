@@ -40,26 +40,26 @@ export async function proxyAuthRoute(
       cache: "no-store",
     });
 
-    const responseHeaders = new Headers();
+    // 204 No Content has no body.
+    const responseBody = upstream.status === 204 ? null : await upstream.arrayBuffer();
+
+    // Construct the response first, then set headers directly on the object.
+    // Passing set-cookie through the NextResponse constructor is unreliable on
+    // Vercel — headers set post-construction are forwarded correctly.
+    const response = new NextResponse(responseBody, { status: upstream.status });
 
     const ct = upstream.headers.get("content-type");
-    if (ct) responseHeaders.set("content-type", ct);
+    if (ct) response.headers.set("content-type", ct);
 
     // Rewrite the refresh cookie path so the browser stores it under
     // /api/auth and resends it on future /api/auth/refresh requests.
     const setCookie = upstream.headers.get("set-cookie");
     if (setCookie) {
       const rewritten = setCookie.replace(/\bPath=\/auth\b/gi, "Path=/api/auth");
-      responseHeaders.set("set-cookie", rewritten);
+      response.headers.set("set-cookie", rewritten);
     }
 
-    // 204 No Content has no body.
-    const responseBody = upstream.status === 204 ? null : await upstream.arrayBuffer();
-
-    return new NextResponse(responseBody, {
-      status: upstream.status,
-      headers: responseHeaders,
-    });
+    return response;
   } catch (error) {
     return NextResponse.json(
       {

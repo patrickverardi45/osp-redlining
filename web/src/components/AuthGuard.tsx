@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { clearPilotToken, getPilotToken, isTokenExpired } from "@/lib/pilotToken";
 import { refresh } from "@/lib/authClient";
+import { getAccessToken } from "@/lib/accessToken";
 
 export default function AuthGuard({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
@@ -28,7 +29,13 @@ export default function AuthGuard({ children }: { children: React.ReactNode }) {
     let cancelled = false;
 
     async function boot() {
-      // a. Try silent refresh via httpOnly refresh cookie (real auth).
+      // a. In-memory access token already present — just logged in, no reload needed.
+      if (getAccessToken()) {
+        setStatus("ok");
+        return;
+      }
+
+      // b. Try silent refresh via httpOnly refresh cookie (real auth).
       const refreshed = await refresh();
       if (cancelled) return;
       if (refreshed) {
@@ -36,7 +43,7 @@ export default function AuthGuard({ children }: { children: React.ReactNode }) {
         return;
       }
 
-      // b. Fall back to pilot token in localStorage.
+      // c. Fall back to pilot token in localStorage.
       const pilotToken = getPilotToken();
       if (pilotToken) {
         if (isTokenExpired(pilotToken)) {
@@ -47,7 +54,7 @@ export default function AuthGuard({ children }: { children: React.ReactNode }) {
         }
       }
 
-      // c. Neither auth path succeeded — redirect to login.
+      // d. Neither auth path succeeded — redirect to login.
       redirected.current = true;
       router.replace("/auth/login");
     }
