@@ -31,10 +31,7 @@ type Props = {
   hideHeader?: boolean;
 };
 
-const API_BASE =
-  (process.env.NEXT_PUBLIC_API_BASE?.replace(/\/+$/, "") ||
-    process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/+$/, "")) ??
-  "";
+const API_BASE = "";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -631,7 +628,7 @@ export default function NovaSummaryCard({ summary, onFocusIssue, onOverrideSourc
   useEffect(() => {
     async function loadOverrides() {
       const sessionId = getStoredSessionId();
-      if (!sessionId || !API_BASE) { setOverridesLoaded(true); return; }
+      if (!sessionId) { setOverridesLoaded(true); return; }
       try {
         const res = await apiFetch(appendSessionId(`${API_BASE}/api/nova-overrides`));
         if (!res.ok) { setOverridesLoaded(true); return; }
@@ -656,7 +653,7 @@ export default function NovaSummaryCard({ summary, onFocusIssue, onOverrideSourc
   const handleSaveOverride = useCallback(async (record: NovaIssueOverride) => {
     setIssueOverrides((prev) => ({ ...prev, [record.id]: record }));
     const sessionId = getStoredSessionId();
-    if (!sessionId || !API_BASE) return;
+    if (!sessionId) return;
     try {
       const res = await apiFetch(`${API_BASE}/api/nova-overrides`, {
         method: "POST",

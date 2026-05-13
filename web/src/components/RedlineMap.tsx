@@ -52,10 +52,7 @@ import type { PipelineDiagEntry, EngineeringPlanSignal, QaFlagItem } from "@/lib
 import { buildNovaSummary } from "@/lib/nova/buildNovaSummary";
 import CloseoutPacket from "@/components/CloseoutPacket";
 
-const API_BASE =
-  process.env.NEXT_PUBLIC_API_BASE?.replace(/\/+$/, "") ||
-  process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/+$/, "") ||
-  "http://127.0.0.1:8000";
+const API_BASE = "";
 
 const CLEARED_ENGINEERING_PLANS_PREFIX = "osp_cleared_engineering_plans";
 
@@ -3030,8 +3027,8 @@ ${redlinePlacemarks.length > 0 ? buildEngFolder("As-Built Redlines", redlinePlac
 
   async function handleLockCloseout() {
     const sid = getStoredSessionId(projectId);
-    if (!sid || !API_BASE) {
-      setStatusText("Session or API not available for lock.");
+    if (!sid) {
+      setStatusText("No active session for lock.");
       setStatusTone("error");
       return;
     }
@@ -3064,8 +3061,8 @@ ${redlinePlacemarks.length > 0 ? buildEngFolder("As-Built Redlines", redlinePlac
 
   async function handleUnlockCloseout() {
     const sid = getStoredSessionId(projectId);
-    if (!sid || !API_BASE) {
-      setStatusText("Session or API not available for unlock.");
+    if (!sid) {
+      setStatusText("No active session for unlock.");
       setStatusTone("error");
       return;
     }

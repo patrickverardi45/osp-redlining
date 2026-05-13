@@ -3,8 +3,6 @@
 import { appendSessionId } from "@/lib/session";
 import { apiFetch } from "@/lib/apiFetch";
 
-const BASE_URL = process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8000";
-
 // ─── Allowed statuses ─────────────────────────────────────────────────────────
 
 export type JobStatus =
@@ -186,13 +184,13 @@ export interface GenerateReportResult {
 // ─── API calls ────────────────────────────────────────────────────────────────
 
 export async function getJobs(projectId?: string): Promise<Job[]> {
-  const res = await apiFetch(appendSessionId(`${BASE_URL}/jobs`, projectId), { cache: "no-store" });
+  const res = await apiFetch(appendSessionId(`/api/jobs`, projectId), { cache: "no-store" });
   if (!res.ok) throw new Error(`Failed to fetch jobs: ${res.status} ${res.statusText}`);
   return res.json();
 }
 
 export async function getJobById(jobId: string, projectId?: string): Promise<JobDetail> {
-  const res = await apiFetch(appendSessionId(`${BASE_URL}/jobs/${jobId}`, projectId), { cache: "no-store" });
+  const res = await apiFetch(appendSessionId(`/api/jobs/${jobId}`, projectId), { cache: "no-store" });
   if (!res.ok) throw new Error(`Failed to fetch job ${jobId}: ${res.status} ${res.statusText}`);
   return res.json();
 }
@@ -202,7 +200,7 @@ export async function archiveWalkSession(
   projectId?: string,
 ): Promise<{ ok: boolean; session_id?: string; archived_at?: string }> {
   const url = appendSessionId(
-    `${BASE_URL}/api/walk-sessions/${encodeURIComponent(sessionId)}/archive`,
+    `/api/walk-sessions/${encodeURIComponent(sessionId)}/archive`,
     projectId,
   );
   const res = await apiFetch(url, { method: "POST" });
@@ -230,7 +228,7 @@ export interface WalkRouteContextResponse {
 /** Project-scoped design routes for mobile walk (persisted KMZ), not session-local. */
 export async function getWalkRouteContext(projectId: string): Promise<WalkRouteContextResponse> {
   const q = encodeURIComponent(projectId.trim());
-  const res = await apiFetch(`${BASE_URL}/api/walk/route-context?projectId=${q}`, { cache: "no-store" });
+  const res = await apiFetch(`/api/walk/route-context?projectId=${q}`, { cache: "no-store" });
   if (!res.ok) throw new Error(`Failed to fetch walk route context: ${res.status} ${res.statusText}`);
   return res.json();
 }
@@ -239,7 +237,7 @@ export async function updateJobStatus(
   jobId: string,
   status: JobStatus
 ): Promise<void> {
-  const res = await apiFetch(appendSessionId(`${BASE_URL}/jobs/${jobId}`), {
+  const res = await apiFetch(appendSessionId(`/api/jobs/${jobId}`), {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ status }),
@@ -251,7 +249,7 @@ export async function updateExceptionStatus(
   exceptionId: string,
   status: "resolved" | "dismissed"
 ): Promise<void> {
-  const res = await apiFetch(appendSessionId(`${BASE_URL}/exceptions/${exceptionId}`), {
+  const res = await apiFetch(appendSessionId(`/api/exceptions/${exceptionId}`), {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ status }),
@@ -260,19 +258,19 @@ export async function updateExceptionStatus(
 }
 
 export async function generateQaSummary(jobId: string): Promise<GenerateReportResult> {
-  const res = await apiFetch(appendSessionId(`${BASE_URL}/jobs/${jobId}/reports/qa-summary`), { method: "POST" });
+  const res = await apiFetch(appendSessionId(`/api/jobs/${jobId}/reports/qa-summary`), { method: "POST" });
   if (!res.ok) throw new Error(`Failed to generate QA summary: ${res.status} ${res.statusText}`);
   return res.json();
 }
 
 export async function generateRedlineReport(jobId: string): Promise<GenerateReportResult> {
-  const res = await apiFetch(appendSessionId(`${BASE_URL}/jobs/${jobId}/reports/redline`), { method: "POST" });
+  const res = await apiFetch(appendSessionId(`/api/jobs/${jobId}/reports/redline`), { method: "POST" });
   if (!res.ok) throw new Error(`Failed to generate redline report: ${res.status} ${res.statusText}`);
   return res.json();
 }
 
 export async function generateCloseoutReport(jobId: string): Promise<GenerateReportResult> {
-  const res = await apiFetch(appendSessionId(`${BASE_URL}/jobs/${jobId}/reports/closeout`), { method: "POST" });
+  const res = await apiFetch(appendSessionId(`/api/jobs/${jobId}/reports/closeout`), { method: "POST" });
   if (!res.ok) throw new Error(`Failed to generate closeout report: ${res.status} ${res.statusText}`);
   return res.json();
 }

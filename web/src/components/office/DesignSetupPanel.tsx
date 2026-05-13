@@ -5,10 +5,7 @@ import type { BackendState } from "@/lib/types/backend";
 import { appendSessionId, appendSessionIdToForm, rememberSessionFromResponse } from "@/lib/session";
 import { apiFetch } from "@/lib/apiFetch";
 
-const API_BASE =
-  process.env.NEXT_PUBLIC_API_BASE?.replace(/\/+$/, "") ||
-  process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/+$/, "") ||
-  "http://127.0.0.1:8000";
+const API_BASE = "";
 
 interface DesignSetupPanelProps {
   onMutated?: () => void | Promise<void>;

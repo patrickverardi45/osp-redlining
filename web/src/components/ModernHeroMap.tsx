@@ -23,10 +23,7 @@ import type {
 } from "@/lib/types/backend";
 import { formatDisplayDate } from "@/lib/format/text";
 
-const API_BASE =
-  process.env.NEXT_PUBLIC_API_BASE?.replace(/\/+$/, "") ||
-  process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/+$/, "") ||
-  "http://127.0.0.1:8000";
+const API_BASE = "";
 
 const EMPTY_DEFAULT_CENTER: [number, number] = [39.8283, -98.5795];
 const EMPTY_DEFAULT_ZOOM = 4;

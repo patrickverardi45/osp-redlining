@@ -85,10 +85,7 @@ export type CloseoutPacketProps = {
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
-const API_BASE =
-  (process.env.NEXT_PUBLIC_API_BASE?.replace(/\/+$/, "") ||
-    process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/+$/, "")) ??
-  "";
+const API_BASE = "";
 
 // Client-safe status colours (same palette, no "Nova" label)
 const STATUS_COLOR: Record<string, string> = {
@@ -689,7 +686,7 @@ export default function CloseoutPacket(props: CloseoutPacketProps) {
     if ((!open && !billingApproved) || overridesLoaded) return;
     async function load() {
       const sessionId = getStoredSessionId();
-      if (!sessionId || !API_BASE) { setOverridesLoaded(true); return; }
+      if (!sessionId) { setOverridesLoaded(true); return; }
       try {
         const res = await apiFetch(appendSessionId(`${API_BASE}/api/nova-overrides`));
         if (!res.ok) { setOverridesLoaded(true); return; }
@@ -731,14 +728,14 @@ export default function CloseoutPacket(props: CloseoutPacketProps) {
       setOverrides((prev) => [...prev.filter((o) => o.issue_key !== issueId), record]);
 
       const sessionId = getStoredSessionId();
-      if (!sessionId || !API_BASE) {
+      if (!sessionId) {
         setOverrides((prev) => {
           const filtered = prev.filter((o) => o.issue_key !== issueId);
           return previousOverride ? [...filtered, previousOverride] : filtered;
         });
         setRowSaveErrors((prev) => ({
           ...prev,
-          [issueId]: !sessionId ? "No session — sign in again." : "API not configured.",
+          [issueId]: "No session — sign in again.",
         }));
         setSavingIssueId(null);
         return;

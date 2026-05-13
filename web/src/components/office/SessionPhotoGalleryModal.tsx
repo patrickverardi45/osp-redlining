@@ -7,11 +7,7 @@
 
 import type { Photo } from "@/lib/api";
 
-const API_BASE_URL = (
-  process.env.NEXT_PUBLIC_API_BASE ||
-  process.env.NEXT_PUBLIC_API_BASE_URL ||
-  "https://walkv1-backend.onrender.com"
-).replace(/\/+$/, "");
+const API_BASE_URL = "";
 
 function resolvePhotoUrl(photoUrl: string): string {
   if (/^https?:\/\//i.test(photoUrl)) {

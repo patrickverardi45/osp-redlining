@@ -8,10 +8,7 @@ import { getAccessToken } from "@/lib/accessToken";
 import { getPilotToken } from "@/lib/pilotToken";
 import LogoutButton from "@/components/LogoutButton";
 
-const API_BASE =
-  process.env.NEXT_PUBLIC_API_BASE?.replace(/\/+$/, "") ||
-  process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/+$/, "") ||
-  "http://127.0.0.1:8000";
+const API_BASE = "";
 
 type Project = {
   projectId: string;
