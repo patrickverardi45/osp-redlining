@@ -11,14 +11,14 @@ const BACKEND_BASE =
   process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/+$/, "") ||
   "http://127.0.0.1:8000";
 
-type Params = { path: string[] };
+type Params = { slug: string[] };
 
 async function handler(
   request: NextRequest,
   context: { params: Promise<Params> },
 ): Promise<NextResponse> {
-  const { path } = await context.params;
-  const backendUrl = `${BACKEND_BASE}/auth/${path.join("/")}`;
+  const { slug } = await context.params;
+  const backendUrl = `${BACKEND_BASE}/auth/${slug.join("/")}`;
 
   try {
     const forwardHeaders = new Headers();
