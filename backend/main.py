@@ -14623,15 +14623,15 @@ async def upload_engineering_plans(
 
     _save_engineering_plan_index(index_data)
 
-    # If bore logs are already loaded for this session, rebuild the pipeline so
-    # plan signals and plan-aware bias/ambiguity classification reflect the new plans.
-    # Non-fatal: a rebuild failure leaves bore log data intact.
-    with _session_scope(resolved_session_id):
-        if STATE.get("committed_rows"):
-            try:
-                _rebuild_field_data_outputs()
-            except Exception:
-                pass  # non-fatal — committed_rows and redline data remain unchanged
+    # Engineering plans are reference / closeout-evidence documents only — they
+    # do NOT participate in route matching, station mapping, or redline
+    # generation. The previous synchronous _rebuild_field_data_outputs() call
+    # here was heavy enough on real sessions (with KMZ + committed field data
+    # loaded) to exceed the Vercel function timeout, returning HTML 502/504
+    # instead of JSON and breaking the workspace UI. The rebuild is intentionally
+    # skipped on this route; plan signals refresh on the next /api/current-state
+    # or /api/debug/pipeline-diag fetch without needing a synchronous redline
+    # rebuild on the upload path.
 
     all_session_plans = _load_engineering_plan_index_for_session(resolved_session_id)
 
