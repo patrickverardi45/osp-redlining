@@ -43,6 +43,10 @@ export async function refresh(): Promise<boolean> {
     });
     if (!res.ok) return false;
     const data = await res.json();
+    // Guard: if the response is missing the token (wrong key, deploy mismatch,
+    // etc.) treat the refresh as failed so AuthGuard redirects to login rather
+    // than rendering the workspace with no credentials.
+    if (!data.access_token) return false;
     setAccessToken(data.access_token);
     return true;
   } catch {
