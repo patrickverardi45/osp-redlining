@@ -1,7 +1,8 @@
 // Phase 1 real auth client.
 // All /auth/* requests are proxied through Next.js (/api/auth/*) to avoid
-// cross-origin CORS issues with credentialed fetches. The proxy lives at
-// web/src/app/api/auth/[...path]/route.ts and forwards to the real backend.
+// cross-origin CORS issues with credentialed fetches. Explicit proxy routes
+// live at web/src/app/api/auth/{login,refresh,logout,me}/route.ts and
+// forward to the real backend via web/src/lib/server/authProxy.ts.
 
 import { clearAccessToken, getAccessToken, setAccessToken } from "@/lib/accessToken";
 
