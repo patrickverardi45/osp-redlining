@@ -1,10 +1,12 @@
 // Phase 1 real auth client.
-// All requests use credentials: "include" for httpOnly refresh cookie.
-// No retry logic here — apiFetch owns retry.
+// All /auth/* requests are proxied through Next.js (/api/auth/*) to avoid
+// cross-origin CORS issues with credentialed fetches. The proxy lives at
+// web/src/app/api/auth/[...path]/route.ts and forwards to the real backend.
 
 import { clearAccessToken, getAccessToken, setAccessToken } from "@/lib/accessToken";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8000";
+// Relative paths — always same-origin, no CORS, no env var needed here.
+const AUTH_PREFIX = "/api/auth";
 
 export interface AuthUser {
   id: string;
@@ -16,7 +18,7 @@ export interface AuthUser {
 }
 
 export async function login(email: string, password: string): Promise<AuthUser> {
-  const res = await fetch(`${API_BASE}/auth/login`, {
+  const res = await fetch(`${AUTH_PREFIX}/login`, {
     method: "POST",
     credentials: "include",
     headers: { "Content-Type": "application/json" },
@@ -34,7 +36,7 @@ export async function login(email: string, password: string): Promise<AuthUser> 
 // Returns true if a valid access token was obtained; false otherwise.
 export async function refresh(): Promise<boolean> {
   try {
-    const res = await fetch(`${API_BASE}/auth/refresh`, {
+    const res = await fetch(`${AUTH_PREFIX}/refresh`, {
       method: "POST",
       credentials: "include",
     });
@@ -49,7 +51,7 @@ export async function refresh(): Promise<boolean> {
 
 export async function logout(): Promise<void> {
   clearAccessToken();
-  await fetch(`${API_BASE}/auth/logout`, {
+  await fetch(`${AUTH_PREFIX}/logout`, {
     method: "POST",
     credentials: "include",
   }).catch(() => {});
@@ -59,7 +61,7 @@ export async function me(): Promise<AuthUser | null> {
   const token = getAccessToken();
   if (!token) return null;
   try {
-    const res = await fetch(`${API_BASE}/auth/me`, {
+    const res = await fetch(`${AUTH_PREFIX}/me`, {
       credentials: "include",
       headers: { Authorization: `Bearer ${token}` },
     });
