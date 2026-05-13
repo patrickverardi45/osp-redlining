@@ -2608,7 +2608,7 @@ ${fieldSubmissionPlacemarks.length > 0 ? buildFolder("Selected Field Submission"
       const res = await apiFetch(`${API_BASE}/api/observability/kmz-render-payload`, { cache: "no-store" });
       if (!res.ok) {
         console.warn("[eng-kml-export] payload fetch failed:", res.status);
-        setEngExportError(`Export failed — server returned ${res.status}. ${res.status === 401 ? "Ensure your pilot token is set." : "Check browser console for details."}`);
+        setEngExportError(`Export failed — server returned ${res.status}. ${res.status === 401 ? "Session may have expired — refresh the page to log in again." : "Check browser console for details."}`);
         return;
       }
       payload = (await res.json()) as import("@/lib/types/backend").KmzRenderPayloadResponse;
