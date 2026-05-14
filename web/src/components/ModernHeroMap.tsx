@@ -3462,6 +3462,56 @@ function fmtString(value: unknown): string {
   return trimmed;
 }
 
+// ─── Authenticated photo card ─────────────────────────────────────────────────
+// Station photo file routes require Authorization — browser-native image/href
+// requests cannot supply it. Fetches via apiFetch and renders a blob: URL.
+function StationPhotoCard({ photo }: { photo: StationPhoto }) {
+  const [blobSrc, setBlobSrc] = useState<string | null>(null);
+  useEffect(() => {
+    let active = true;
+    let objectUrl: string | null = null;
+    apiFetch(photo.relative_url)
+      .then((r) => (r.ok ? r.blob() : null))
+      .then((b) => {
+        if (active && b) {
+          objectUrl = URL.createObjectURL(b);
+          setBlobSrc(objectUrl);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [photo.relative_url]);
+
+  function handleOpen() {
+    apiFetch(photo.relative_url)
+      .then((r) => (r.ok ? r.blob() : null))
+      .then((b) => { if (b) window.open(URL.createObjectURL(b)); })
+      .catch(() => {});
+  }
+
+  return (
+    <button
+      type="button"
+      className="tl-modern-hero-map-inspector__photo"
+      title={photo.original_filename}
+      onClick={handleOpen}
+      style={{ background: "none", border: "none", padding: 0, cursor: "pointer", textAlign: "left", width: "100%", display: "block", font: "inherit" }}
+    >
+      <span
+        className="tl-modern-hero-map-inspector__photo-thumb"
+        style={{ backgroundImage: blobSrc ? `url(${blobSrc})` : undefined }}
+        aria-label={photo.original_filename}
+      />
+      <span className="tl-modern-hero-map-inspector__photo-name">
+        {photo.original_filename}
+      </span>
+    </button>
+  );
+}
+
 function StationInspectorPanel({
   station,
   identity,
@@ -3575,25 +3625,7 @@ function StationInspectorPanel({
           ) : photoCount > 0 ? (
             <div className="tl-modern-hero-map-inspector__photos-grid">
               {photos.map((photo) => (
-                <a
-                  key={photo.photo_id}
-                  className="tl-modern-hero-map-inspector__photo"
-                  href={`${apiBase}${photo.relative_url}`}
-                  target="_blank"
-                  rel="noreferrer"
-                  title={photo.original_filename}
-                >
-                  <span
-                    className="tl-modern-hero-map-inspector__photo-thumb"
-                    style={{
-                      backgroundImage: `url(${apiBase}${photo.relative_url})`,
-                    }}
-                    aria-label={photo.original_filename}
-                  />
-                  <span className="tl-modern-hero-map-inspector__photo-name">
-                    {photo.original_filename}
-                  </span>
-                </a>
+                <StationPhotoCard key={photo.photo_id} photo={photo} />
               ))}
             </div>
           ) : (
@@ -3739,6 +3771,26 @@ function FieldPhotoCardPanel({
   photo: Photo;
   onClose: () => void;
 }) {
+  const [blobSrc, setBlobSrc] = useState<string | null>(null);
+  useEffect(() => {
+    if (!photo.thumbnail_url) return;
+    let active = true;
+    let objectUrl: string | null = null;
+    apiFetch(photo.thumbnail_url)
+      .then((r) => (r.ok ? r.blob() : null))
+      .then((b) => {
+        if (active && b) {
+          objectUrl = URL.createObjectURL(b);
+          setBlobSrc(objectUrl);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [photo.thumbnail_url]);
+
   const rows: Array<{ label: string; value: string }> = [
     { label: "Station", value: fmtString(photo.station_label) },
     { label: "Lat", value: fmtNumber(photo.latitude, 6) },
@@ -3769,9 +3821,9 @@ function FieldPhotoCardPanel({
         </button>
       </div>
       <div className="tl-modern-hero-map-inspector__body">
-        {photo.thumbnail_url ? (
+        {blobSrc ? (
           <img
-            src={photo.thumbnail_url}
+            src={blobSrc}
             alt="Photo thumbnail"
             style={{
               width: "100%",

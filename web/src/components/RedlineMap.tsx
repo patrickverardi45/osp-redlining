@@ -6105,28 +6105,7 @@ ${redlinePlacemarks.length > 0 ? buildEngFolder("As-Built Redlines", redlinePlac
                         </div>
                         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
                           {stationPhotos.map((photo) => (
-                            <a
-                              key={photo.photo_id}
-                              href={`${API_BASE}${photo.relative_url}`}
-                              target="_blank"
-                              rel="noreferrer"
-                              style={{ textDecoration: "none", color: "inherit", borderRadius: 10, overflow: "hidden", border: "1px solid #e2e8f0", display: "block" }}
-                            >
-                              <div
-                                style={{
-                                  height: 72,
-                                  backgroundImage: `url(${API_BASE}${photo.relative_url})`,
-                                  backgroundSize: "cover",
-                                  backgroundPosition: "center",
-                                  backgroundColor: "#e5e7eb",
-                                }}
-                              />
-                              <div style={{ padding: "5px 7px" }}>
-                                <div style={{ fontSize: 10, fontWeight: 700, color: "#0f172a", wordBreak: "break-all", lineHeight: 1.3 }}>
-                                  {photo.original_filename}
-                                </div>
-                              </div>
-                            </a>
+                            <StationPhotoCard key={photo.photo_id} photo={photo} />
                           ))}
                         </div>
                       </div>
@@ -6387,33 +6366,14 @@ ${redlinePlacemarks.length > 0 ? buildEngFolder("As-Built Redlines", redlinePlac
                                     {sortPhotosByUploadedDesc(sessionPhotos)
                                       .slice(0, 8)
                                       .map((photo) => (
-                                        <button
+                                        <FieldSessionPhotoThumb
                                           key={photo.id}
-                                          type="button"
+                                          photo={photo}
                                           onClick={() =>
                                             setSelectedFieldGallery({
                                               kind: "list",
                                               photos: sortPhotosByUploadedDesc(sessionPhotos),
                                             })
-                                          }
-                                          title={photo.station_label || ""}
-                                          style={{
-                                            height: 64,
-                                            padding: 0,
-                                            borderRadius: 8,
-                                            border: "1px solid #e2e8f0",
-                                            backgroundColor: "#e5e7eb",
-                                            backgroundImage: photo.thumbnail_url
-                                              ? `url(${photo.thumbnail_url})`
-                                              : undefined,
-                                            backgroundSize: "cover",
-                                            backgroundPosition: "center",
-                                            cursor: "pointer",
-                                          }}
-                                          aria-label={
-                                            photo.station_label
-                                              ? `Photo at ${photo.station_label}`
-                                              : "Submission photo"
                                           }
                                         />
                                       ))}
@@ -7490,6 +7450,122 @@ ${redlinePlacemarks.length > 0 ? buildEngFolder("As-Built Redlines", redlinePlac
         </div>
       </div>
     </div>
+  );
+}
+
+// ─── Authenticated photo helpers ─────────────────────────────────────────────
+// Station photo file routes require an Authorization header that browser-native
+// image/navigation requests cannot supply. These components fetch via apiFetch
+// (which attaches the token) and render from a revocable blob: URL.
+
+function StationPhotoCard({ photo }: { photo: StationPhoto }) {
+  const [blobSrc, setBlobSrc] = useState<string | null>(null);
+  useEffect(() => {
+    let active = true;
+    let objectUrl: string | null = null;
+    apiFetch(photo.relative_url)
+      .then((r) => (r.ok ? r.blob() : null))
+      .then((b) => {
+        if (active && b) {
+          objectUrl = URL.createObjectURL(b);
+          setBlobSrc(objectUrl);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [photo.relative_url]);
+
+  function handleOpen() {
+    apiFetch(photo.relative_url)
+      .then((r) => (r.ok ? r.blob() : null))
+      .then((b) => { if (b) window.open(URL.createObjectURL(b)); })
+      .catch(() => {});
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={handleOpen}
+      style={{
+        color: "inherit",
+        borderRadius: 10,
+        overflow: "hidden",
+        border: "1px solid #e2e8f0",
+        display: "block",
+        padding: 0,
+        background: "none",
+        cursor: "pointer",
+        width: "100%",
+        textAlign: "left",
+        font: "inherit",
+      }}
+    >
+      <div
+        style={{
+          height: 72,
+          backgroundImage: blobSrc ? `url(${blobSrc})` : undefined,
+          backgroundSize: "cover",
+          backgroundPosition: "center",
+          backgroundColor: "#e5e7eb",
+        }}
+      />
+      <div style={{ padding: "5px 7px" }}>
+        <div style={{ fontSize: 10, fontWeight: 700, color: "#0f172a", wordBreak: "break-all", lineHeight: 1.3 }}>
+          {photo.original_filename}
+        </div>
+      </div>
+    </button>
+  );
+}
+
+function FieldSessionPhotoThumb({
+  photo,
+  onClick,
+}: {
+  photo: Pick<Photo, "id" | "thumbnail_url" | "station_label">;
+  onClick: () => void;
+}) {
+  const [blobSrc, setBlobSrc] = useState<string | null>(null);
+  useEffect(() => {
+    if (!photo.thumbnail_url) return;
+    let active = true;
+    let objectUrl: string | null = null;
+    apiFetch(photo.thumbnail_url)
+      .then((r) => (r.ok ? r.blob() : null))
+      .then((b) => {
+        if (active && b) {
+          objectUrl = URL.createObjectURL(b);
+          setBlobSrc(objectUrl);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [photo.thumbnail_url]);
+
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title={photo.station_label || ""}
+      style={{
+        height: 64,
+        padding: 0,
+        borderRadius: 8,
+        border: "1px solid #e2e8f0",
+        backgroundColor: "#e5e7eb",
+        backgroundImage: blobSrc ? `url(${blobSrc})` : undefined,
+        backgroundSize: "cover",
+        backgroundPosition: "center",
+        cursor: "pointer",
+      }}
+      aria-label={photo.station_label ? `Photo at ${photo.station_label}` : "Submission photo"}
+    />
   );
 }
 
