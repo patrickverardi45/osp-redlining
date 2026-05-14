@@ -8,6 +8,9 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ jobId: string }> },
 ) {
-  const { jobId } = await params;
-  return proxyAppRoute(request, `/api/jobs/${jobId}/unlock-closeout`);
+  // See lock-closeout/route.ts — forward to the stable /api/closeout/unlock
+  // backend path. Same handler `api_closeout_unlock`, same payload, just an
+  // older and definitely-deployed decorator.
+  await params;
+  return proxyAppRoute(request, `/api/closeout/unlock`);
 }

@@ -1,0 +1,4 @@
+# Local-only artifacts; the harness itself is checked in.
+node_modules/
+reports/*/
+!reports/.gitkeep

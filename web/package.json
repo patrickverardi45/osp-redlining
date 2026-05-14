@@ -6,7 +6,10 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "check:proxy-coverage": "node scripts/check-proxy-coverage.mjs",
+    "smoke:auth": "node scripts/auth-smoke.mjs",
+    "smoke:workflow": "node scripts/workflow-smoke.mjs"
   },
   "dependencies": {
     "class-variance-authority": "^0.7.1",

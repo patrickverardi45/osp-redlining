@@ -1,0 +1,174 @@
+{
+  "$schema": "./qa.config.schema.json",
+  "description": "TrueLine QA harness configuration. Override env-specific values via QA_* environment variables.",
+  "env": {
+    "frontendUrl": {
+      "default": "http://localhost:3000",
+      "envVar": "QA_FRONTEND_URL"
+    },
+    "backendUrl": {
+      "default": "http://127.0.0.1:8000",
+      "envVar": "QA_BACKEND_URL"
+    },
+    "credentials": {
+      "email": { "envVar": "QA_USER_EMAIL", "default": "" },
+      "password": { "envVar": "QA_USER_PASSWORD", "default": "" },
+      "pilotToken": { "envVar": "QA_PILOT_TOKEN", "default": "" },
+      "obsToken": { "envVar": "QA_OBS_TOKEN", "default": "" }
+    },
+    "allowMutation": { "envVar": "QA_ALLOW_MUTATION", "default": "false" }
+  },
+  "safety": {
+    "mutationGate": {
+      "envVar": "QA_ALLOW_MUTATION",
+      "description": "Workflow tests that mutate backend state (uploads, closeout lock, etc.) skip unless this is set to the string 'true' AND the required fixture files exist. Login and read-only checks are always exercised."
+    },
+    "readOnlyCategories": ["smoke", "auth-readonly", "api-contract-readonly"],
+    "productionGuidance": "Against production URLs, leave QA_ALLOW_MUTATION unset (or 'false') unless you intend to upload to a real tenant. Authenticated login + read-only GETs are safe."
+  },
+  "timeouts": {
+    "apiCheckMs": 15000,
+    "playwrightActionMs": 15000,
+    "playwrightNavigationMs": 30000,
+    "playwrightTestMs": 60000
+  },
+  "apiContracts": [
+    {
+      "id": "frontend-home",
+      "path": "/",
+      "target": "frontend",
+      "method": "GET",
+      "expect": { "status": [200, 302, 307], "contentType": "html", "jsonRequired": false },
+      "auth": "none",
+      "tags": ["smoke", "frontend"]
+    },
+    {
+      "id": "frontend-login",
+      "path": "/auth/login",
+      "target": "frontend",
+      "method": "GET",
+      "expect": { "status": [200], "contentType": "html", "jsonRequired": false },
+      "auth": "none",
+      "tags": ["smoke", "frontend", "auth"]
+    },
+    {
+      "id": "frontend-auth-refresh-unauthenticated",
+      "path": "/api/auth/refresh",
+      "target": "frontend",
+      "method": "POST",
+      "expect": { "status": [401, 400, 422], "contentType": "json", "jsonRequired": true },
+      "auth": "none",
+      "tags": ["api", "auth", "regression-known-bug"]
+    },
+    {
+      "id": "frontend-auth-me-unauthenticated",
+      "path": "/api/auth/me",
+      "target": "frontend",
+      "method": "GET",
+      "expect": { "status": [401, 422], "contentType": "json", "jsonRequired": true },
+      "auth": "none",
+      "tags": ["api", "auth"]
+    },
+    {
+      "id": "frontend-auth-login-bad-input",
+      "path": "/api/auth/login",
+      "target": "frontend",
+      "method": "POST",
+      "body": { "email": "qa-harness@invalid.example", "password": "definitely-wrong" },
+      "expect": { "status": [400, 401, 403, 422], "contentType": "json", "jsonRequired": true },
+      "auth": "none",
+      "tags": ["api", "auth", "regression-known-bug"],
+      "notes": "Known pain point: this used to return HTML/500. We assert clean JSON error."
+    },
+    {
+      "id": "frontend-current-state-unauthenticated",
+      "path": "/api/current-state",
+      "target": "frontend",
+      "method": "GET",
+      "expect": { "status": [401, 403, 200], "contentType": "json", "jsonRequired": true },
+      "auth": "none",
+      "tags": ["api"]
+    },
+    {
+      "id": "backend-auth-refresh-unauthenticated",
+      "path": "/auth/refresh",
+      "target": "backend",
+      "method": "POST",
+      "expect": { "status": [401, 400, 422], "contentType": "json", "jsonRequired": true },
+      "auth": "none",
+      "tags": ["api", "auth", "backend"]
+    },
+    {
+      "id": "backend-auth-login-bad-input",
+      "path": "/auth/login",
+      "target": "backend",
+      "method": "POST",
+      "body": { "email": "qa-harness@invalid.example", "password": "definitely-wrong" },
+      "expect": { "status": [400, 401, 403, 422], "contentType": "json", "jsonRequired": true },
+      "auth": "none",
+      "tags": ["api", "auth", "backend"]
+    },
+    {
+      "id": "backend-current-state-unauthenticated",
+      "path": "/api/current-state",
+      "target": "backend",
+      "method": "GET",
+      "expect": { "status": [401, 403], "contentType": "json", "jsonRequired": true },
+      "auth": "none",
+      "tags": ["api", "backend"]
+    },
+    {
+      "id": "backend-station-photos-unauthenticated",
+      "path": "/api/station-photos",
+      "target": "backend",
+      "method": "GET",
+      "expect": { "status": [401, 403], "contentType": "json", "jsonRequired": true },
+      "auth": "none",
+      "tags": ["api", "backend"]
+    },
+    {
+      "id": "backend-engineering-plans-list-unauthenticated",
+      "path": "/api/engineering-plans",
+      "target": "backend",
+      "method": "GET",
+      "expect": { "status": [401, 403], "contentType": "json", "jsonRequired": true },
+      "auth": "none",
+      "tags": ["api", "backend"]
+    },
+    {
+      "id": "backend-closeout-lock-unauthenticated",
+      "path": "/api/closeout/lock",
+      "target": "backend",
+      "method": "POST",
+      "body": {},
+      "expect": { "status": [401, 403, 422], "contentType": "json", "jsonRequired": true },
+      "auth": "none",
+      "tags": ["api", "backend", "closeout"]
+    },
+    {
+      "id": "backend-jobs-list-unauthenticated",
+      "path": "/jobs",
+      "target": "backend",
+      "method": "GET",
+      "expect": { "status": [401, 403], "contentType": "json", "jsonRequired": true },
+      "auth": "none",
+      "tags": ["api", "backend"]
+    }
+  ],
+  "workflowFixtures": {
+    "kmzFixture": "fixtures/sample-design.kmz",
+    "pdfFixture": "fixtures/sample-engineering-plan.pdf",
+    "photoFixture": "fixtures/sample-station-photo.jpg",
+    "boreLogFixture": "fixtures/sample-bore-log.csv"
+  },
+  "guardrails": {
+    "doNotTouch": [
+      "KMZ parsing / rendering",
+      "Topology sidecar logic",
+      "Auth token rotation / refresh cookie path rewrite",
+      "Pilot token lifecycle",
+      "Existing backend routes not under test"
+    ],
+    "preferAdditive": true
+  }
+}

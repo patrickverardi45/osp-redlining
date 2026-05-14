@@ -2607,8 +2607,16 @@ ${fieldSubmissionPlacemarks.length > 0 ? buildFolder("Selected Field Submission"
     try {
       const res = await apiFetch(`${API_BASE}/api/observability/kmz-render-payload`, { cache: "no-store" });
       if (!res.ok) {
-        console.warn("[eng-kml-export] payload fetch failed:", res.status);
-        setEngExportError(`Export failed — server returned ${res.status}. ${res.status === 401 ? "Session may have expired — refresh the page to log in again." : "Check browser console for details."}`);
+        // Read the actual response body so the operator sees the real backend
+        // error (e.g. "Token expired", "Missing or invalid Authorization header")
+        // instead of a generic hint. apiFetch already retried once on 401.
+        const bodyText = await res.text().catch(() => "");
+        const snippet = bodyText.slice(0, 200).trim();
+        console.warn("[eng-kml-export] payload fetch failed:", res.status, snippet);
+        const detail = res.status === 401
+          ? "Session may have expired — refresh the page to log in again."
+          : "Check browser console for details.";
+        setEngExportError(`Export failed — server returned ${res.status}. ${detail}${snippet ? ` (${snippet})` : ""}`);
         return;
       }
       payload = (await res.json()) as import("@/lib/types/backend").KmzRenderPayloadResponse;
@@ -3196,7 +3204,18 @@ ${redlinePlacemarks.length > 0 ? buildEngFolder("As-Built Redlines", redlinePlac
       appendSessionIdToForm(form, projectId);
       Array.from(files).forEach((f) => form.append("files", f));
       const response = await apiFetch(`${API_BASE}/api/upload-engineering-plans`, { method: "POST", body: form });
-      const data = await response.json();
+      // Read body once as text; backend always returns JSON via _ok()/_err(),
+      // so any non-JSON body means an upstream gateway error (Vercel timeout
+      // 504, payload-too-large 413, etc.). Surface that raw text instead of
+      // a generic "Unexpected token R..." JSON.parse failure.
+      const responseText = await response.text();
+      let data: { success?: boolean; error?: string; message?: string; engineering_plans?: EngineeringPlan[] } = {};
+      try {
+        data = responseText ? JSON.parse(responseText) : {};
+      } catch {
+        const snippet = responseText.slice(0, 200).trim() || `HTTP ${response.status}`;
+        throw new Error(`Engineering plan upload failed (${response.status}): ${snippet}`);
+      }
       rememberSessionFromResponse(data, projectId);
       if (!response.ok || data.success === false) throw new Error(data.error || "Engineering plan upload failed.");
       setState((prev) => {

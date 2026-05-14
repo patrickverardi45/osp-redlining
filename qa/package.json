@@ -1,0 +1,20 @@
+{
+  "name": "trueline-qa",
+  "version": "0.1.0",
+  "private": true,
+  "description": "TrueLine QA Agent System — internal automated QA harness. Captures API/UI/console errors, runs Playwright workflow tests, produces JSON + HTML + AI-readable diagnosis packets, and emits narrow fix prompts for Sonnet/Cursor.",
+  "type": "module",
+  "scripts": {
+    "qa:api": "node scripts/check-api-contracts.mjs",
+    "qa:smoke": "playwright test trueline-smoke.spec.ts --reporter=json --output=reports/_pw_artifacts_tmp",
+    "qa:workflow": "playwright test workflows --reporter=json --output=reports/_pw_artifacts_tmp",
+    "qa:report": "node scripts/build-html-report.mjs",
+    "qa:diagnose": "node scripts/make-ai-diagnosis-packet.mjs",
+    "qa:all": "node scripts/run-qa.mjs",
+    "qa:open-latest": "node scripts/open-latest-report.mjs",
+    "qa:install-browsers": "playwright install chromium"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.49.1"
+  }
+}
