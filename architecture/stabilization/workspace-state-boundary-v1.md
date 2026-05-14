@@ -234,3 +234,71 @@ DO:
 
 \- Nova/ChatGPT → stabilization coordination
 
+
+
+\---
+
+
+
+\# Implementation Status (Tasks 1–6 complete)
+
+
+
+\## What was done
+
+
+
+\- **Task 1:** Added peekSessionId, appendSessionIdReadOnly, acceptSessionFromMutation, and the
+
+session transition ring buffer to session.ts. Deprecated rememberSessionFromResponse.
+
+
+
+\- **Task 2:** Migrated read paths (fetchState, fetchCurrentState, fetchStationPhotos, submitBugNote)
+
+from appendSessionId + rememberSessionFromResponse to appendSessionIdReadOnly + peekSessionId.
+
+
+
+\- **Task 3:** Migrated write paths (handleReset, handleDesignUpload, handleBoreUpload,
+
+handleEngineeringPlansUpload, handleStationPhotoUpload, savePhotoAdjustment,
+
+handleConfirmActiveRoute) from rememberSessionFromResponse to acceptSessionFromMutation.
+
+
+
+\- **Task 4:** Pinned walk session. uploadStationPhotoFilesNonBlocking now guards adoption
+
+with peekSessionId === null so fire-and-forget photo uploads cannot rotate a walk session.
+
+
+
+\- **Task 5:** Added qa/tests/workflows/session-boundary.spec.ts with static grep tests
+
+(always run) and ring buffer browser tests (auth-gated). Static tests verify zero
+
+rememberSessionFromResponse callers, acceptSessionFromMutation only in write-path files,
+
+and read-path components export appendSessionIdReadOnly.
+
+
+
+\- **Task 6:** Codified the three caller tiers (read / write / telemetry) in a module-level
+
+JSDoc in session.ts and a read-only guard comment in CloseoutPacket.tsx.
+
+
+
+\## Final caller graph
+
+
+
+\- rememberSessionFromResponse: 0 callers in app code (definition only, deprecated)
+
+\- acceptSessionFromMutation: 10 callers — all confirmed write paths
+
+\- peekSessionId / appendSessionIdReadOnly: used on all read paths
+
+\- window.__truelineSessionLog: ring buffer exposed in dev builds for observability
+

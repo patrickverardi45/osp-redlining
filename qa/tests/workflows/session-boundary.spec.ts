@@ -97,7 +97,9 @@ test.describe("Session boundary — static enforcement", () => {
       ].map((rel) => path.resolve(path.join(SRC_ROOT, rel))),
     );
 
-    const callers = findFilesMatching(SRC_ROOT, /acceptSessionFromMutation/, [SESSION_FILE]);
+    // Match import statements only — comments that mention the name (e.g. guard notes)
+    // must not be counted as callers.
+    const callers = findFilesMatching(SRC_ROOT, /import\s+\{[^}]*acceptSessionFromMutation/, [SESSION_FILE]);
     const unexpected = callers.filter((f) => !EXPECTED.has(path.resolve(f)));
 
     expect(

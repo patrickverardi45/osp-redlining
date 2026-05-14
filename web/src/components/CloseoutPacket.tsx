@@ -12,6 +12,7 @@ import type { NovaSummary, PipelineDiagEntry, EngineeringPlanSignal, QaFlagItem 
 import type { BackendState, GroupMatch, ExceptionCost, StationPhoto } from "@/lib/types/backend";
 import { toMoney } from "@/lib/format/money";
 import { formatNumber } from "@/lib/format/text";
+// Export/read-only surface — must never call acceptSessionFromMutation.
 import { appendSessionId, getStoredSessionId } from "@/lib/session";
 import { apiFetch } from "@/lib/apiFetch";
 

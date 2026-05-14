@@ -1,3 +1,25 @@
+/**
+ * Workspace Session Module — TrueLine OSP
+ *
+ * Three permitted caller tiers. Do not mix them:
+ *
+ * READ callers (fetchState, fetchCurrentState, fetchStationPhotos, exports):
+ *   Use peekSessionId to read the stored id without minting a new session.
+ *   Use appendSessionIdReadOnly to append it to a URL — returns the URL unchanged
+ *   if no session is stored. Never pass a read response to acceptSessionFromMutation.
+ *
+ * WRITE callers (handleReset, upload handlers, route confirmation):
+ *   Use appendSessionId or appendSessionIdToForm to attach the session to the request.
+ *   Call acceptSessionFromMutation(data, projectId) once after the response to record
+ *   the session transition and update localStorage.
+ *
+ * TELEMETRY / DIAGNOSTIC callers (submitBugNote, pipeline diagnostics):
+ *   Must NOT adopt data.session_id. These paths observe state; they do not own it.
+ *   Use appendSessionIdReadOnly on request URLs; discard any session_id in the response.
+ *
+ * DEPRECATED:
+ *   rememberSessionFromResponse — zero legitimate callers in app code. Do not use it.
+ */
 const SESSION_STORAGE_KEY = "osp_session_id";
 
 function canUseLocalStorage(): boolean {
