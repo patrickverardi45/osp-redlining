@@ -4,11 +4,10 @@ import { proxyAppRoute } from "@/lib/server/appProxy";
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-export function GET(
+export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ photoId: string }> },
 ) {
-  return params.then(({ photoId }) =>
-    proxyAppRoute(request, `/api/station-photos/file/${encodeURIComponent(photoId)}`),
-  );
+  const { photoId } = await params;
+  return proxyAppRoute(request, `/api/station-photos/file/${encodeURIComponent(photoId)}`);
 }
