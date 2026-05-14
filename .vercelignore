@@ -1,0 +1,10 @@
+.gitnexus/
+tools/
+_junk_check/
+archive/
+backups/
+data/
+venv/
+*.db
+*.sqlite
+*.sqlite3
