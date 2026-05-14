@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>TrueLine Workflow Smoke</title>
+<style>
+  body{font-family:system-ui,sans-serif;margin:2rem;background:#f5f5f5;color:#2c3e50}
+  h1{margin:0 0 .5rem}
+  .meta{color:#555;font-size:13px;margin-bottom:1rem}
+  table{border-collapse:collapse;width:100%;background:#fff;border-radius:6px;overflow:hidden;box-shadow:0 1px 4px rgba(0,0,0,.1)}
+  th{background:#2c3e50;color:#fff;text-align:left;padding:8px 12px;font-size:13px}
+  td{padding:7px 12px;border-bottom:1px solid #eee;font-size:12px;vertical-align:top}
+  tr:last-child td{border-bottom:none}
+  .fail-box{background:#fdf0f0;border:1px solid #e74c3c;border-radius:6px;padding:1rem;margin-bottom:1.5rem}
+  .fail-box h3{margin:0 0 .5rem;color:#c0392b}
+  .fail-box code{display:block;font-size:12px;color:#555;margin:2px 0}
+  .ok-box{background:#eafaf1;border:1px solid #1a9e5c;border-radius:6px;padding:1rem;margin-bottom:1.5rem;color:#1a9e5c;font-weight:bold}
+</style>
+</head>
+<body>
+<h1>TrueLine Workflow Smoke Report</h1>
+<div class="meta">
+  <strong>Run at:</strong> 2026-05-13T17:24:13.380Z &nbsp;|&nbsp;
+  <strong>Base URL:</strong> https://osp-redlining.vercel.app &nbsp;|&nbsp;
+  <strong>Email:</strong> patrick@test.local &nbsp;|&nbsp;
+  <strong>Login:</strong> ok &nbsp;|&nbsp;
+  <strong>Project ID:</strong> (none)
+</div>
+<div class="ok-box">All critical routes passed.</div>
+<table>
+  <thead>
+    <tr><th>Classification</th><th>Method</th><th>Path</th><th>Status</th><th>JSON</th><th>Time</th><th>Body Preview</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td style="color:#1a9e5c;font-weight:bold">OK</td>
+      <td><code>POST</code></td>
+      <td><code>/api/auth/login</code></td>
+      <td>200</td>
+      <td style="color:#1a9e5c">yes</td>
+      <td>657ms</td>
+      <td style="font-size:11px;max-width:380px;word-break:break-all">{"access_token":"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMDZjNzVjYi0zYTVkLTQ1ZmQtODYxYy04MGRhZjk0YjhmYzQiLCJlbWFpbCI6InBhdHJpY2tAdGVzdC5sb2NhbCIsImNvbXBhbnlfaWQiOiI3ZDhhYjc3ZS0zMGViLTQwZjQtODA3Yi0xZWY3MWM3NmNiOTkiLCJyb2xlIjoib3duZXIiLCJ0eXAiOiJhY2Nlc3MiLCJqdGkiOiIxOGEwYjRlYi1lODczLTRkYWQtYjdhYy1hN2FmZDc2YTVmYTMiLCJpYXQiOjE3Nzg2OTMwNTQsImV4cCI6MTc3ODY5Mzk1NH0._Ag44Euz_RCU-8sEUfJFp1IAZhorIgRqIpDvX2uTv7E","token_type":"Bearer","expires_in":900,"user":{"id":"106c75cb-3a5d-45fd-861c-80daf94b</td>
+    </tr>
+    <tr>
+      <td style="color:#1a9e5c;font-weight:bold">OK</td>
+      <td><code>GET</code></td>
+      <td><code>/api/auth/me</code></td>
+      <td>200</td>
+      <td style="color:#1a9e5c">yes</td>
+      <td>106ms</td>
+      <td style="font-size:11px;max-width:380px;word-break:break-all">{"id":"106c75cb-3a5d-45fd-861c-80daf94b8fc4","email":"patrick@test.local","display_name":"Patrick Verardi","company_id":"7d8ab77e-30eb-40f4-807b-1ef71c76cb99","company_slug":"trueline-demo","role":"owner"}</td>
+    </tr>
+    <tr>
+      <td style="color:#1a9e5c;font-weight:bold">OK</td>
+      <td><code>GET</code></td>
+      <td><code>/api/current-state</code></td>
+      <td>200</td>
+      <td style="color:#1a9e5c">yes</td>
+      <td>111ms</td>
+      <td style="font-size:11px;max-width:380px;word-break:break-all">{"success":true,"session_id":"ecf91ecf6b1745b1870e5f4a1d55f944","route_id":null,"suggested_route_id":null,"selected_route_id":null,"route_name":null,"selected_route_name":null,"route_length_ft":0.0,"route_coords":[],"map_points":[],"kmz_reference":{"folder_summary":[],"line_role_summary":[],"point_role_summary":[],"line_layers":[],"explicit_redline_layers":[],"visual_reference":{},"line_features":[],"polygon_features":[],"point_features":[],"line_feature_count":0,"polygon_feature_count":0,"point</td>
+    </tr>
+    <tr>
+      <td style="color:#1a9e5c;font-weight:bold">OK</td>
+      <td><code>GET</code></td>
+      <td><code>/api/engineering-plans</code></td>
+      <td>200</td>
+      <td style="color:#1a9e5c">yes</td>
+      <td>103ms</td>
+      <td style="font-size:11px;max-width:380px;word-break:break-all">{"success":true,"session_id":"9981a69af71e466da84305bcb3b29f59","engineering_plans":[]}</td>
+    </tr>
+    <tr>
+      <td style="color:#7f8c8d;font-weight:bold">UNKNOWN</td>
+      <td><code>GET</code></td>
+      <td><code>/api/station-photos</code></td>
+      <td>422</td>
+      <td style="color:#1a9e5c">yes</td>
+      <td>223ms</td>
+      <td style="font-size:11px;max-width:380px;word-break:break-all">{"detail":[{"type":"missing","loc":["query","station_identity"],"msg":"Field required","input":null}]}</td>
+    </tr>
+    <tr>
+      <td style="color:#1a9e5c;font-weight:bold">OK</td>
+      <td><code>GET</code></td>
+      <td><code>/api/engineered-segments</code></td>
+      <td>200</td>
+      <td style="color:#1a9e5c">yes</td>
+      <td>165ms</td>
+      <td style="font-size:11px;max-width:380px;word-break:break-all">{"session_id":"","segments":[]}</td>
+    </tr>
+    <tr>
+      <td style="color:#1a9e5c;font-weight:bold">OK</td>
+      <td><code>GET</code></td>
+      <td><code>/api/walk/route-context</code></td>
+      <td>200</td>
+      <td style="color:#1a9e5c">yes</td>
+      <td>105ms</td>
+      <td style="font-size:11px;max-width:380px;word-break:break-all">{"routes":[],"route_count":0}</td>
+    </tr>
+    <tr>
+      <td style="color:#1a9e5c;font-weight:bold">OK</td>
+      <td><code>GET</code></td>
+      <td><code>/api/nova-overrides</code></td>
+      <td>200</td>
+      <td style="color:#1a9e5c">yes</td>
+      <td>116ms</td>
+      <td style="font-size:11px;max-width:380px;word-break:break-all">{"success":true,"session_id":null,"overrides":[]}</td>
+    </tr></tbody>
+</table>
+</body>
+</html>

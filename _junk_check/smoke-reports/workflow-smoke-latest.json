@@ -1,0 +1,123 @@
+{
+  "meta": {
+    "runAt": "2026-05-13T17:24:13.380Z",
+    "baseUrl": "https://osp-redlining.vercel.app",
+    "email": "patrick@test.local",
+    "loginStatus": "ok",
+    "projectId": null
+  },
+  "results": [
+    {
+      "label": "POST /api/auth/login",
+      "method": "POST",
+      "url": "https://osp-redlining.vercel.app/api/auth/login",
+      "path": "/api/auth/login",
+      "critical": true,
+      "status": 200,
+      "statusText": "OK",
+      "contentType": "application/json",
+      "isJson": true,
+      "bodyPreview": "{\"access_token\":\"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMDZjNzVjYi0zYTVkLTQ1ZmQtODYxYy04MGRhZjk0YjhmYzQiLCJlbWFpbCI6InBhdHJpY2tAdGVzdC5sb2NhbCIsImNvbXBhbnlfaWQiOiI3ZDhhYjc3ZS0zMGViLTQwZjQtODA3Yi0xZWY3MWM3NmNiOTkiLCJyb2xlIjoib3duZXIiLCJ0eXAiOiJhY2Nlc3MiLCJqdGkiOiIxOGEwYjRlYi1lODczLTRkYWQtYjdhYy1hN2FmZDc2YTVmYTMiLCJpYXQiOjE3Nzg2OTMwNTQsImV4cCI6MTc3ODY5Mzk1NH0._Ag44Euz_RCU-8sEUfJFp1IAZhorIgRqIpDvX2uTv7E\",\"token_type\":\"Bearer\",\"expires_in\":900,\"user\":{\"id\":\"106c75cb-3a5d-45fd-861c-80daf94b",
+      "classification": "OK",
+      "durationMs": 657
+    },
+    {
+      "label": "GET /api/auth/me",
+      "method": "GET",
+      "url": "https://osp-redlining.vercel.app/api/auth/me",
+      "path": "/api/auth/me",
+      "critical": true,
+      "status": 200,
+      "statusText": "OK",
+      "contentType": "application/json",
+      "isJson": true,
+      "bodyPreview": "{\"id\":\"106c75cb-3a5d-45fd-861c-80daf94b8fc4\",\"email\":\"patrick@test.local\",\"display_name\":\"Patrick Verardi\",\"company_id\":\"7d8ab77e-30eb-40f4-807b-1ef71c76cb99\",\"company_slug\":\"trueline-demo\",\"role\":\"owner\"}",
+      "classification": "OK",
+      "durationMs": 106
+    },
+    {
+      "label": "GET /api/current-state",
+      "method": "GET",
+      "url": "https://osp-redlining.vercel.app/api/current-state",
+      "path": "/api/current-state",
+      "critical": true,
+      "status": 200,
+      "statusText": "OK",
+      "contentType": "application/json",
+      "isJson": true,
+      "bodyPreview": "{\"success\":true,\"session_id\":\"ecf91ecf6b1745b1870e5f4a1d55f944\",\"route_id\":null,\"suggested_route_id\":null,\"selected_route_id\":null,\"route_name\":null,\"selected_route_name\":null,\"route_length_ft\":0.0,\"route_coords\":[],\"map_points\":[],\"kmz_reference\":{\"folder_summary\":[],\"line_role_summary\":[],\"point_role_summary\":[],\"line_layers\":[],\"explicit_redline_layers\":[],\"visual_reference\":{},\"line_features\":[],\"polygon_features\":[],\"point_features\":[],\"line_feature_count\":0,\"polygon_feature_count\":0,\"point",
+      "classification": "OK",
+      "durationMs": 111
+    },
+    {
+      "label": "GET /api/engineering-plans",
+      "method": "GET",
+      "url": "https://osp-redlining.vercel.app/api/engineering-plans",
+      "path": "/api/engineering-plans",
+      "critical": true,
+      "status": 200,
+      "statusText": "OK",
+      "contentType": "application/json",
+      "isJson": true,
+      "bodyPreview": "{\"success\":true,\"session_id\":\"9981a69af71e466da84305bcb3b29f59\",\"engineering_plans\":[]}",
+      "classification": "OK",
+      "durationMs": 103
+    },
+    {
+      "label": "GET /api/station-photos",
+      "method": "GET",
+      "url": "https://osp-redlining.vercel.app/api/station-photos",
+      "path": "/api/station-photos",
+      "critical": true,
+      "status": 422,
+      "statusText": "Unprocessable Entity",
+      "contentType": "application/json",
+      "isJson": true,
+      "bodyPreview": "{\"detail\":[{\"type\":\"missing\",\"loc\":[\"query\",\"station_identity\"],\"msg\":\"Field required\",\"input\":null}]}",
+      "classification": "UNKNOWN",
+      "durationMs": 223
+    },
+    {
+      "label": "GET /api/engineered-segments",
+      "method": "GET",
+      "url": "https://osp-redlining.vercel.app/api/engineered-segments",
+      "path": "/api/engineered-segments",
+      "critical": true,
+      "status": 200,
+      "statusText": "OK",
+      "contentType": "application/json",
+      "isJson": true,
+      "bodyPreview": "{\"session_id\":\"\",\"segments\":[]}",
+      "classification": "OK",
+      "durationMs": 165
+    },
+    {
+      "label": "GET /api/walk/route-context",
+      "method": "GET",
+      "url": "https://osp-redlining.vercel.app/api/walk/route-context",
+      "path": "/api/walk/route-context",
+      "critical": true,
+      "status": 200,
+      "statusText": "OK",
+      "contentType": "application/json",
+      "isJson": true,
+      "bodyPreview": "{\"routes\":[],\"route_count\":0}",
+      "classification": "OK",
+      "durationMs": 105
+    },
+    {
+      "label": "GET /api/nova-overrides",
+      "method": "GET",
+      "url": "https://osp-redlining.vercel.app/api/nova-overrides",
+      "path": "/api/nova-overrides",
+      "critical": true,
+      "status": 200,
+      "statusText": "OK",
+      "contentType": "application/json",
+      "isJson": true,
+      "bodyPreview": "{\"success\":true,\"session_id\":null,\"overrides\":[]}",
+      "classification": "OK",
+      "durationMs": 116
+    }
+  ]
+}

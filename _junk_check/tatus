@@ -1,0 +1,125 @@
+warning: in the working copy of 'web/src/components/AuthGuard.tsx', LF will be replaced by CRLF the next time Git touches it
+[1mdiff --git a/web/src/app/auth/token/page.tsx b/web/src/app/auth/token/page.tsx[m
+[1mindex 5afd2ad..504f028 100644[m
+[1m--- a/web/src/app/auth/token/page.tsx[m
+[1m+++ b/web/src/app/auth/token/page.tsx[m
+[36m@@ -23,7 +23,7 @@[m [mexport default function PilotTokenGatePage() {[m
+       return;[m
+     }[m
+     savePilotToken(trimmed);[m
+[31m-    router.push("/");[m
+[32m+[m[32m    router.push("/projects");[m
+   }[m
+ [m
+   function handleClear() {[m
+[1mdiff --git a/web/src/components/AuthGuard.tsx b/web/src/components/AuthGuard.tsx[m
+[1mindex 5b0b07a..2f45a50 100644[m
+[1m--- a/web/src/components/AuthGuard.tsx[m
+[1m+++ b/web/src/components/AuthGuard.tsx[m
+[36m@@ -15,8 +15,14 @@[m [mexport default function AuthGuard({ children }: { children: React.ReactNode }) {[m
+     // Auth pages are always accessible — skip gate entirely.[m
+     if (pathname.startsWith("/auth/")) {[m
+       setStatus("ok");[m
+[32m+[m[32m      redirected.current = false; // allow re-entry into protected pages after auth[m
+       return;[m
+     }[m
+[32m+[m
+[32m+[m[32m    // Always reset to "checking" on protected-path entry so a stale "ok"[m
+[32m+[m[32m    // from a prior /auth/* visit cannot bypass re-verification.[m
+[32m+[m[32m    setStatus("checking");[m
+[32m+[m
+     if (redirected.current) return;[m
+ [m
+     let cancelled = false;[m
+[1mdiff --git a/web/src/components/landing/LandingPage.tsx b/web/src/components/landing/LandingPage.tsx[m
+[1mindex 7bf63a3..f01418f 100644[m
+[1m--- a/web/src/components/landing/LandingPage.tsx[m
+[1m+++ b/web/src/components/landing/LandingPage.tsx[m
+[36m@@ -68,10 +68,10 @@[m [mexport default function LandingPage() {[m
+           </li>[m
+         </ul>[m
+         <div className={styles.navCta}>[m
+[31m-          <Link href="/projects" className={styles.btnGhost}>[m
+[32m+[m[32m          <Link href="/auth/login" className={styles.btnGhost}>[m
+             Sign In[m
+           </Link>[m
+[31m-          <Link href="/projects" className={styles.btnPrimary}>[m
+[32m+[m[32m          <Link href="/auth/login" className={styles.btnPrimary}>[m
+             Request Demo[m
+           </Link>[m
+         </div>[m
+[36m@@ -101,7 +101,7 @@[m [mexport default function LandingPage() {[m
+               close jobs without chasing paperwork.[m
+             </p>[m
+             <div className={styles.heroActions}>[m
+[31m-              <Link href="/projects" className={styles.btnHero}>[m
+[32m+[m[32m              <Link href="/auth/login" className={styles.btnHero}>[m
+                 <svg[m
+                   width="16"[m
+                   height="16"[m
+[36m@@ -981,16 +981,8 @@[m [mexport default function LandingPage() {[m
+               <em>YOUR JOBS.</em>[m
+             </h2>[m
+             <p className={styles.loginDesc}>[m
+[31m-              Sign in flows are being finalized. For this demo, continue straight[m
+[31m-              to the project dashboard — the same entry point will power real[m
+[31m-              accounts soon.[m
+[31m-            </p>[m
+[31m-            <p[m
+[31m-              className={styles.loginDesc}[m
+[31m-              style={{ fontSize: 14, opacity: 0.9 }}[m
+[31m-            >[m
+[31m-              Demo access routes directly to the project dashboard while account[m
+[31m-              access is being finalized.[m
+[32m+[m[32m              Sign in to access your project dashboard, field operations data,[m
+[32m+[m[32m              and job closeout workflows.[m
+             </p>[m
+             <ul className={styles.loginPerks}>[m
+               <li className={styles.loginPerk}>[m
+[36m@@ -1027,11 +1019,11 @@[m [mexport default function LandingPage() {[m
+             </div>[m
+             <div className={styles.formTitle}>Welcome</div>[m
+             <div className={styles.formSubtitle}>[m
+[31m-              Field Operations Platform — continue to explore the live demo[m
+[32m+[m[32m              Field Operations Platform — sign in to access your workspace.[m
+             </div>[m
+ [m
+             <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>[m
+[31m-              <Link href="/projects" className={styles.btnLogin}>[m
+[32m+[m[32m              <Link href="/auth/login" className={styles.btnLogin}>[m
+                 <svg[m
+                   width="16"[m
+                   height="16"[m
+[36m@@ -1046,7 +1038,7 @@[m [mexport default function LandingPage() {[m
+                 Sign In[m
+               </Link>[m
+               <Link[m
+[31m-                href="/projects"[m
+[32m+[m[32m                href="/auth/login"[m
+                 className={styles.btnHeroOutline}[m
+                 style={{[m
+                   justifyContent: "center",[m
+[36m@@ -1059,10 +1051,6 @@[m [mexport default function LandingPage() {[m
+               </Link>[m
+             </div>[m
+ [m
+[31m-            <div className={styles.formDivider}>[m
+[31m-              <span>Demo mode</span>[m
+[31m-            </div>[m
+[31m-[m
+             <div className={styles.formSecure}>[m
+               <svg[m
+                 width="12"[m
+[36m@@ -1096,10 +1084,10 @@[m [mexport default function LandingPage() {[m
+             </p>[m
+           </div>[m
+           <div className={styles.ctaActions}>[m
+[31m-            <Link href="/projects" className={styles.btnHero}>[m
+[32m+[m[32m            <Link href="/auth/login" className={styles.btnHero}>[m
+               Get Started Today[m
+             </Link>[m
+[31m-            <Link href="/projects" className={styles.btnHeroOutline}>[m
+[32m+[m[32m            <Link href="/auth/login" className={styles.btnHeroOutline}>[m
+               Request a Demo[m
+             </Link>[m
+           </div>[m
