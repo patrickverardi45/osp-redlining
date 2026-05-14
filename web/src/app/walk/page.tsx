@@ -12,7 +12,8 @@ import { useSearchParams } from "next/navigation";
 
 import { getJobs, getJobById, type Job, type Route } from "@/lib/api";
 import {
-  rememberSessionFromResponse,
+  acceptSessionFromMutation,
+  peekSessionId,
 } from "@/lib/session";
 import { apiFetch } from "@/lib/apiFetch";
 
@@ -748,8 +749,8 @@ function uploadStationPhotoFilesNonBlocking(
   })
     .then((res) => res.json().catch(() => null))
     .then((data) => {
-      if (data && typeof data === "object") {
-        rememberSessionFromResponse(data, opts.walkProjectScope);
+      if (data && typeof data === "object" && peekSessionId(opts.walkProjectScope) === null) {
+        acceptSessionFromMutation(data, opts.walkProjectScope);
       }
     })
     .catch(() => {});
