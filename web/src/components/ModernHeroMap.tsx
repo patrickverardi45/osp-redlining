@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
   appendSessionId,
+  appendSessionIdReadOnly,
   appendSessionIdToForm,
   rememberSessionFromResponse,
 } from "@/lib/session";
@@ -2346,14 +2347,13 @@ export default function ModernHeroMap({
       setStationPhotoError(null);
       try {
         const res = await apiFetch(
-          appendSessionId(
+          appendSessionIdReadOnly(
             `${API_BASE}/api/station-photos?station_identity=${encodeURIComponent(identity)}`,
             projectId,
           ),
           { cache: "no-store" },
         );
         const data = await res.json();
-        rememberSessionFromResponse(data, projectId);
         if (!res.ok || data.success === false) {
           throw new Error(data.error || "Unable to load station photos.");
         }

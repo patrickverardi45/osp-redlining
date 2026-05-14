@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { BackendState } from "@/lib/types/backend";
-import { appendSessionId, appendSessionIdToForm, rememberSessionFromResponse } from "@/lib/session";
+import { appendSessionId, appendSessionIdReadOnly, appendSessionIdToForm, rememberSessionFromResponse } from "@/lib/session";
 import { apiFetch } from "@/lib/apiFetch";
 
 const API_BASE = "";
@@ -36,9 +36,8 @@ export default function DesignSetupPanel({ onMutated }: DesignSetupPanelProps) {
         setStatusTone("neutral");
       }
       try {
-        const response = await apiFetch(appendSessionId(`${API_BASE}/api/current-state`), { cache: "no-store" });
+        const response = await apiFetch(appendSessionIdReadOnly(`${API_BASE}/api/current-state`), { cache: "no-store" });
         const data: BackendState = await response.json();
-        rememberSessionFromResponse(data);
         if (!response.ok || data.success === false) {
           throw new Error(data.error || "Unable to load current design state.");
         }

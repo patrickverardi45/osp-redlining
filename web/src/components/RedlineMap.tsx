@@ -46,7 +46,7 @@ import type { JobDetail, Photo } from "@/lib/api";
 import { clamp, formatNumber, cleanDisplayText, formatDisplayDate } from "@/lib/format/text";
 import { toMoney } from "@/lib/format/money";
 import { extractGps } from "@/lib/photos/exif";
-import { appendSessionId, appendSessionIdToForm, getStoredSessionId, rememberSessionFromResponse } from "@/lib/session";
+import { appendSessionId, appendSessionIdReadOnly, appendSessionIdToForm, getStoredSessionId, peekSessionId, rememberSessionFromResponse } from "@/lib/session";
 import { apiFetch } from "@/lib/apiFetch";
 import type { PipelineDiagEntry, EngineeringPlanSignal, QaFlagItem } from "@/lib/types/nova";
 import { buildNovaSummary } from "@/lib/nova/buildNovaSummary";
@@ -2941,7 +2941,7 @@ ${redlinePlacemarks.length > 0 ? buildEngFolder("As-Built Redlines", redlinePlac
       setStatusTone("neutral");
     }
     try {
-      const response = await apiFetch(appendSessionId(`${API_BASE}/api/current-state`, projectId));
+      const response = await apiFetch(appendSessionIdReadOnly(`${API_BASE}/api/current-state`, projectId));
       // Read text first so a non-JSON body (e.g. Vercel edge 404 "The page
       // could not be found") surfaces a readable snippet instead of a raw
       // "Unexpected token 'T', 'The page c'..." JSON.parse error in the
@@ -2954,7 +2954,7 @@ ${redlinePlacemarks.length > 0 ? buildEngFolder("As-Built Redlines", redlinePlac
         const snippet = responseText.slice(0, 200).trim() || `HTTP ${response.status}`;
         throw new Error(`Current state load failed (${response.status}): ${snippet}`);
       }
-      const sessionId = rememberSessionFromResponse(data, projectId);
+      const sessionId = peekSessionId(projectId);
       if (!response.ok || data.success === false) throw new Error(data.error || "Unable to load current state.");
       setState(withoutClearedEngineeringPlans(data, projectId, sessionId));
       onWorkspaceStateChanged?.();
@@ -3251,13 +3251,12 @@ ${redlinePlacemarks.length > 0 ? buildEngFolder("As-Built Redlines", redlinePlac
           stationPointCount: (state?.station_points || []).length,
         },
       };
-      const response = await apiFetch(appendSessionId(`${API_BASE}/api/report-bug`, projectId), {
+      const response = await apiFetch(appendSessionIdReadOnly(`${API_BASE}/api/report-bug`, projectId), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
       const data = await response.json();
-      rememberSessionFromResponse(data, projectId);
       if (!response.ok || data.success === false) throw new Error(data.error || "Note submission failed.");
       setStatusText(String(data.message || "Operator note submitted."));
       setStatusTone("success");
@@ -3291,10 +3290,9 @@ ${redlinePlacemarks.length > 0 ? buildEngFolder("As-Built Redlines", redlinePlac
     setStationPhotosLoading(true);
     try {
       const response = await apiFetch(
-        appendSessionId(`${API_BASE}/api/station-photos?station_identity=${encodeURIComponent(stationIdentity)}`, projectId)
+        appendSessionIdReadOnly(`${API_BASE}/api/station-photos?station_identity=${encodeURIComponent(stationIdentity)}`, projectId)
       );
       const data = await response.json();
-      rememberSessionFromResponse(data, projectId);
       if (!response.ok || data.success === false) {
         throw new Error(data.error || "Unable to load station photos.");
       }
