@@ -3196,6 +3196,15 @@ ${redlinePlacemarks.length > 0 ? buildEngFolder("As-Built Redlines", redlinePlac
 
   async function handleEngineeringPlansUpload(files: FileList | null) {
     if (!files || files.length === 0) return;
+    const totalBytes = Array.from(files).reduce((sum, f) => sum + f.size, 0);
+    const totalMB = totalBytes / (1024 * 1024);
+    if (totalMB > 4) {
+      setStatusText(
+        `Engineering plan files are too large (${totalMB.toFixed(1)} MB total). Compress the PDF or split into smaller uploads — maximum 4 MB per upload.`,
+      );
+      setStatusTone("error");
+      return;
+    }
     setEngPlansBusy(true);
     setStatusText(`Uploading ${files.length} engineering plan file${files.length > 1 ? "s" : ""}...`);
     setStatusTone("neutral");
