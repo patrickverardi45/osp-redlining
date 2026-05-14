@@ -46,7 +46,7 @@ import type { JobDetail, Photo } from "@/lib/api";
 import { clamp, formatNumber, cleanDisplayText, formatDisplayDate } from "@/lib/format/text";
 import { toMoney } from "@/lib/format/money";
 import { extractGps } from "@/lib/photos/exif";
-import { appendSessionId, appendSessionIdReadOnly, appendSessionIdToForm, getStoredSessionId, peekSessionId, rememberSessionFromResponse } from "@/lib/session";
+import { acceptSessionFromMutation, appendSessionId, appendSessionIdReadOnly, appendSessionIdToForm, getStoredSessionId, peekSessionId } from "@/lib/session";
 import { apiFetch } from "@/lib/apiFetch";
 import type { PipelineDiagEntry, EngineeringPlanSignal, QaFlagItem } from "@/lib/types/nova";
 import { buildNovaSummary } from "@/lib/nova/buildNovaSummary";
@@ -3001,7 +3001,7 @@ ${redlinePlacemarks.length > 0 ? buildEngFolder("As-Built Redlines", redlinePlac
     try {
       const response = await apiFetch(appendSessionId(`${API_BASE}/api/reset-state`, projectId), { method: "POST" });
       const data: BackendState = await response.json();
-      const sessionId = rememberSessionFromResponse(data, projectId);
+      const sessionId = acceptSessionFromMutation(data, projectId);
       if (!response.ok || data.success === false) throw new Error(data.error || "Reset failed.");
       rememberClearedEngineeringPlans([...(state?.engineering_plans ?? []), ...(data.engineering_plans ?? [])], projectId, sessionId);
       setState({ ...data, engineering_plans: [] });
@@ -3132,7 +3132,7 @@ ${redlinePlacemarks.length > 0 ? buildEngFolder("As-Built Redlines", redlinePlac
       if (scopedProject) form.append("project_id", scopedProject);
       const response = await apiFetch(appendSessionId(`${API_BASE}/api/upload-design`, projectId), { method: "POST", body: form });
       const data: BackendState = await response.json();
-      rememberSessionFromResponse(data, projectId);
+      acceptSessionFromMutation(data, projectId);
       if (!response.ok || data.success === false) throw new Error(data.error || "Design upload failed.");
       setState(data);
       onWorkspaceStateChanged?.();
@@ -3168,7 +3168,7 @@ ${redlinePlacemarks.length > 0 ? buildEngFolder("As-Built Redlines", redlinePlac
       appendSessionIdToForm(form, projectId);
       const response = await apiFetch(`${API_BASE}/api/upload-structured-bore-files`, { method: "POST", body: form });
       const data: BackendState = await response.json();
-      rememberSessionFromResponse(data, projectId);
+      acceptSessionFromMutation(data, projectId);
       if (!response.ok || data.success === false) throw new Error(data.error || "Field data upload failed.");
       setState(data);
       onWorkspaceStateChanged?.();
@@ -3216,7 +3216,7 @@ ${redlinePlacemarks.length > 0 ? buildEngFolder("As-Built Redlines", redlinePlac
         const snippet = responseText.slice(0, 200).trim() || `HTTP ${response.status}`;
         throw new Error(`Engineering plan upload failed (${response.status}): ${snippet}`);
       }
-      rememberSessionFromResponse(data, projectId);
+      acceptSessionFromMutation(data, projectId);
       if (!response.ok || data.success === false) throw new Error(data.error || "Engineering plan upload failed.");
       setState((prev) => {
         if (!prev) return prev;
@@ -3338,7 +3338,7 @@ ${redlinePlacemarks.length > 0 ? buildEngFolder("As-Built Redlines", redlinePlac
         body: form,
       });
       const data = await response.json();
-      rememberSessionFromResponse(data, projectId);
+      acceptSessionFromMutation(data, projectId);
       if (!response.ok || data.success === false) {
         throw new Error(data.error || "Station photo upload failed.");
       }

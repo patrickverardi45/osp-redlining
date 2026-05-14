@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { BackendState } from "@/lib/types/backend";
-import { appendSessionId, appendSessionIdReadOnly, appendSessionIdToForm, rememberSessionFromResponse } from "@/lib/session";
+import { acceptSessionFromMutation, appendSessionId, appendSessionIdReadOnly, appendSessionIdToForm } from "@/lib/session";
 import { apiFetch } from "@/lib/apiFetch";
 
 const API_BASE = "";
@@ -82,7 +82,7 @@ export default function DesignSetupPanel({ onMutated }: DesignSetupPanelProps) {
           body: form,
         });
         const data: BackendState = await response.json();
-        rememberSessionFromResponse(data);
+        acceptSessionFromMutation(data);
         if (!response.ok || data.success === false) {
           throw new Error(data.error || "Design upload failed.");
         }
@@ -113,7 +113,7 @@ export default function DesignSetupPanel({ onMutated }: DesignSetupPanelProps) {
         body: form,
       });
       const data: BackendState = await response.json();
-        rememberSessionFromResponse(data);
+        acceptSessionFromMutation(data);
       if (!response.ok || data.success === false) {
         throw new Error(data.error || "Unable to confirm active route.");
       }

@@ -4,10 +4,10 @@ import type { CSSProperties } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
+  acceptSessionFromMutation,
   appendSessionId,
   appendSessionIdReadOnly,
   appendSessionIdToForm,
-  rememberSessionFromResponse,
 } from "@/lib/session";
 import { apiFetch } from "@/lib/apiFetch";
 import type { BridgedGpsPhoto } from "@/components/RedlineMap";
@@ -2201,7 +2201,7 @@ export default function ModernHeroMap({
             is_adjusted?: boolean;
           };
         };
-        rememberSessionFromResponse(data, projectId);
+        acceptSessionFromMutation(data, projectId);
         if (!res.ok || data.success === false) {
           throw new Error(data.error || "Unable to save displayed position.");
         }
@@ -2399,7 +2399,7 @@ export default function ModernHeroMap({
           body: form,
         });
         const data = await res.json();
-        rememberSessionFromResponse(data, projectId);
+        acceptSessionFromMutation(data, projectId);
         if (!res.ok || data.success === false) {
           throw new Error(data.error || "Station photo upload failed.");
         }
