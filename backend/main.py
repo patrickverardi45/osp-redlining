@@ -10104,18 +10104,22 @@ def get_sessions_observability(limit: int = 50) -> JSONResponse:
 # Protected internal endpoint to label persisted sessions with metadata.
 # Updates only company_id, workspace_label, and updated_at.
 @localhost_router.post("/api/observability/session-label")
-def post_session_label(body: Dict[str, Any]) -> JSONResponse:
+def post_session_label(body: Dict[str, Any], request: Request) -> JSONResponse:
     """Private beta — update session metadata labels.
 
-    Request body: {"session_id": "...", "company_id": "...", "workspace_label": "..."}
+    Request body: {"session_id": "...", "workspace_label": "..."}
+    company_id is derived from the verified JWT caller — body value is ignored.
     Updates persisted session with new labels and current timestamp.
     If session exists in memory, updates there too. Returns updated metadata.
     """
     session_id = body.get("session_id")
     if not session_id or not isinstance(session_id, str):
         return JSONResponse(status_code=400, content={"error": "Valid session_id required"})
-    
-    company_id = body.get("company_id")
+
+    _require_tenant_owns_session(session_id, request)
+
+    caller = current_tenant()
+    company_id = caller.tenant_id if caller else None
     workspace_label = body.get("workspace_label")
     
     try:
