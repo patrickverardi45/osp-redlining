@@ -101,6 +101,10 @@ class ResetPasswordRequest(BaseModel):
     new_password: str
 
 
+class UpdateUserRequest(BaseModel):
+    display_name: Optional[str] = None
+
+
 # ---------------------------------------------------------------------------
 # Companies — owner only
 # ---------------------------------------------------------------------------
@@ -183,6 +187,23 @@ def list_users(claims: dict = Depends(require_admin)):
                 "memberships": [dict(m) for m in memberships],
             })
     return result
+
+
+@router.patch("/users/{user_id}")
+def update_user(user_id: str, body: UpdateUserRequest, claims: dict = Depends(require_admin)):
+    """Update mutable user fields (currently display_name). Never touches password hashes."""
+    with auth_db() as conn:
+        user = conn.execute("SELECT id FROM users WHERE id = ?", (user_id,)).fetchone()
+        if not user:
+            raise HTTPException(status_code=404, detail="user_not_found")
+        _assert_user_in_scope(conn, user_id, claims)
+        if body.display_name is not None:
+            dn = body.display_name.strip() or None
+            conn.execute(
+                "UPDATE users SET display_name = ?, updated_at = ? WHERE id = ?",
+                (dn, _now(), user_id),
+            )
+    return {"ok": True}
 
 
 @router.post("/users", status_code=201)
