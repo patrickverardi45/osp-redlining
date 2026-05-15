@@ -18,7 +18,9 @@ const __dirname = path.dirname(__filename);
 
 const ALLOW_MUTATION = (process.env.QA_ALLOW_MUTATION ?? "").toLowerCase() === "true";
 const FRONTEND_URL = process.env.QA_FRONTEND_URL || "http://localhost:3000";
-const PROJECT_ID = (process.env.QA_DEMO_PROJECT_ID || "ph-5").trim();
+// QA_DEMO_PROJECT_ID must be set explicitly — no default. The old "ph-5" default
+// caused tests to silently mutate a real pilot project when the env var was unset.
+const PROJECT_ID = (process.env.QA_DEMO_PROJECT_ID ?? "").trim();
 const RUN_DIR = process.env.QA_RUN_DIR || path.resolve(__dirname, "..", "..", "reports", "_adhoc");
 const SHOT_DIR = path.join(RUN_DIR, "screenshots", "demo-walkthrough");
 const REPORT_PATH = path.join(RUN_DIR, "demo-walkthrough.json");
@@ -54,6 +56,11 @@ type StepRecord = {
 test.describe("Production demo workflow (UI only)", () => {
   test("walk through login → project → uploads → closeout", async ({ qaPage, qaSignal }) => {
     test.skip(!ALLOW_MUTATION, "QA_ALLOW_MUTATION!=true — demo walkthrough requires explicit opt-in");
+    test.skip(
+      !PROJECT_ID,
+      "QA_DEMO_PROJECT_ID not set — skipping demo walkthrough to avoid mutating an unintended project. " +
+        "Set QA_DEMO_PROJECT_ID to a dedicated QA session ID to enable.",
+    );
     test.setTimeout(180_000);
 
     const { email, password } = resolveCreds();

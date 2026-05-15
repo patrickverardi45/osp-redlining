@@ -153,6 +153,43 @@
       "expect": { "status": [401, 403], "contentType": "json", "jsonRequired": true },
       "auth": "none",
       "tags": ["api", "backend"]
+    },
+    {
+      "id": "backend-admin-users-unauthenticated",
+      "path": "/admin/users",
+      "target": "backend",
+      "method": "GET",
+      "expect": { "status": [401, 403], "contentType": "json", "jsonRequired": true },
+      "auth": "none",
+      "tags": ["api", "backend", "admin"]
+    },
+    {
+      "id": "backend-admin-companies-unauthenticated",
+      "path": "/admin/companies",
+      "target": "backend",
+      "method": "GET",
+      "expect": { "status": [401, 403], "contentType": "json", "jsonRequired": true },
+      "auth": "none",
+      "tags": ["api", "backend", "admin"]
+    },
+    {
+      "id": "backend-observability-error-events-unauthenticated",
+      "path": "/api/observability/error-events",
+      "target": "backend",
+      "method": "GET",
+      "expect": { "status": [401, 403], "contentType": "json", "jsonRequired": true },
+      "auth": "none",
+      "tags": ["api", "backend", "observability"]
+    },
+    {
+      "id": "backend-bore-upload-unauthenticated",
+      "path": "/api/upload-structured-bore-files",
+      "target": "backend",
+      "method": "POST",
+      "body": {},
+      "expect": { "status": [401, 403, 422], "contentType": "json", "jsonRequired": true },
+      "auth": "none",
+      "tags": ["api", "backend", "upload"]
     }
   ],
   "workflowFixtures": {

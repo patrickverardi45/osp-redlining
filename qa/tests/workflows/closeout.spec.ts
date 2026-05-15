@@ -10,6 +10,9 @@ const BACKEND_URL = process.env.QA_BACKEND_URL || "http://127.0.0.1:8000";
 const ALLOW_MUTATION = (process.env.QA_ALLOW_MUTATION ?? "").toLowerCase() === "true";
 const MUTATION_SKIP_REASON =
   "QA_ALLOW_MUTATION!=true — skipping authenticated closeout lock probe";
+// QA_PROJECT_URL: full URL to an open project workspace (e.g. http://localhost:3000/redline-map?session_id=xxx).
+// Required for browser-level closeout tab tests. Safe to leave unset — test skips gracefully.
+const QA_PROJECT_URL = (process.env.QA_PROJECT_URL ?? "").trim();
 
 test.describe("Closeout workflow", () => {
   test("closeout lock endpoint returns JSON, never HTML (unauthenticated)", async ({ qaSignal }) => {
@@ -95,5 +98,45 @@ test.describe("Closeout workflow", () => {
     expect(attempt.status, `closeout lock returned 5xx: ${attempt.status}`).toBeLessThan(500);
     expect((attempt.contentType ?? "").toLowerCase()).toContain("application/json");
     expect(attempt.isJson, `closeout lock body must be JSON, got: ${(attempt.bodyPreview ?? "").slice(0, 200)}`).toBe(true);
+  });
+
+  test("closeout tab renders and export button is visible", async ({ qaPage, qaSignal }) => {
+    test.skip(
+      !QA_PROJECT_URL,
+      "QA_PROJECT_URL not set — skipping closeout tab browser test. " +
+        "Set QA_PROJECT_URL to a workspace URL (e.g. http://localhost:3000/redline-map?session_id=xxx).",
+    );
+    const { email, password } = resolveCreds();
+    test.skip(!email || !password, "credentials missing — closeout tab test requires login");
+
+    // Log in through the UI so the browser session is established.
+    await qaPage.goto("/auth/login", { waitUntil: "domcontentloaded" });
+    await qaPage.waitForLoadState("networkidle");
+    await qaPage.locator("#email").fill(email);
+    await qaPage.locator("#password").fill(password);
+    const navPromise = qaPage.waitForURL(/\/projects/, { timeout: 20000 }).then(() => true).catch(() => false);
+    await qaPage.locator("button[type='submit']").click();
+    const loggedIn = await navPromise;
+    test.skip(!loggedIn, "login did not succeed — skipping closeout tab test");
+
+    // Navigate to the project workspace.
+    await qaPage.goto(QA_PROJECT_URL, { waitUntil: "domcontentloaded" });
+    // Wait for the workspace to settle (Workflow Controls panel signals full render).
+    await qaPage.waitForSelector("text=Workflow Controls", { timeout: 30000 }).catch(() => null);
+    qaSignal.notes.push(`workspace loaded: ${QA_PROJECT_URL}`);
+
+    // Click the Closeout tab.
+    const closeoutTab = qaPage.getByRole("button", { name: /closeout/i });
+    await expect(closeoutTab).toBeVisible({ timeout: 10000 });
+    await closeoutTab.click();
+    qaSignal.notes.push("clicked Closeout tab");
+
+    // The "Export Engineering KMZ + Redlines" button must be visible.
+    const exportBtn = qaPage.getByRole("button", { name: /export engineering kmz/i });
+    await expect(
+      exportBtn,
+      'Closeout tab must show "Export Engineering KMZ + Redlines" button',
+    ).toBeVisible({ timeout: 10000 });
+    qaSignal.notes.push("Export Engineering KMZ + Redlines button visible in Closeout tab");
   });
 });

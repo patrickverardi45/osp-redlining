@@ -93,4 +93,43 @@ test.describe("Export / download probe", () => {
       }
     });
   }
+
+  test("engineering KMZ payload endpoint requires auth (unauthenticated → 401/403 JSON)", async ({ qaSignal }) => {
+    const url = `${BACKEND_URL}/api/engineering-kmz-payload`;
+    const started = Date.now();
+    let response: Response | null = null;
+    try {
+      response = await fetch(url, { method: "GET" });
+    } catch (err) {
+      qaSignal.notes.push(`engineering-kmz fetch failed: ${(err as Error).message}`);
+    }
+    test.skip(!response, "Backend unreachable; engineering-kmz-payload contract not exercisable");
+
+    const status = response!.status;
+    const contentType = response!.headers.get("content-type") ?? "";
+    const body = await response!.text();
+    const trimmed = body.trim().toLowerCase();
+    const isHtml =
+      trimmed.startsWith("<!doctype html") || trimmed.startsWith("<html") || trimmed.includes("<body");
+    let isJson = false;
+    try { JSON.parse(body); isJson = true; } catch { isJson = false; }
+
+    qaSignal.attempts.push({
+      label: "engineering-kmz-unauth",
+      url,
+      method: "GET",
+      status,
+      contentType,
+      isJson,
+      isHtml,
+      bodyPreview: body.length > 500 ? body.slice(0, 500) + `…[+${body.length - 500} bytes]` : body,
+      durationMs: Date.now() - started,
+      timestamp: new Date().toISOString(),
+    });
+
+    expect([401, 403]).toContain(status);
+    expect(contentType.toLowerCase()).toContain("application/json");
+    expect(() => JSON.parse(body), `engineering-kmz body must be JSON, got: ${body.slice(0, 200)}`).not.toThrow();
+    expect(isHtml, "engineering-kmz response leaked HTML").toBe(false);
+  });
 });
