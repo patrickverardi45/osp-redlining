@@ -102,13 +102,6 @@ export default function ProjectPage({ params }: ProjectPageProps) {
           </div>
 
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-            <Link
-              href={`/walk?projectId=${encodeURIComponent(projectId)}`}
-              className="tl-btn tl-btn-ghost"
-              style={{ fontSize: 12, padding: "6px 12px" }}
-            >
-              Field walk (mobile) →
-            </Link>
             <LogoutButton />
           </div>
         </div>

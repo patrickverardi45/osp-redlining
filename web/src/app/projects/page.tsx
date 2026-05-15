@@ -205,6 +205,7 @@ function summarizeState(state: ProjectState, projectId: string): ProjectSummary 
 export default function ProjectsPage() {
   const router = useRouter();
   const [authReady, setAuthReady] = useState(false);
+  const [userRole, setUserRole] = useState<string | null>(null);
   const [projects, setProjects] = useState<Project[]>([]);
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [newName, setNewName] = useState("");
@@ -214,7 +215,16 @@ export default function ProjectsPage() {
   // Local auth gate — defense in depth independent of AuthGuard.
   // Must pass before any project data is read or rendered.
   useEffect(() => {
-    if (getAccessToken() || getPilotToken()) {
+    const token = getAccessToken();
+    if (token || getPilotToken()) {
+      if (token) {
+        try {
+          const payload = JSON.parse(atob(token.split(".")[1]));
+          setUserRole(payload.role ?? null);
+        } catch {
+          // malformed token — no role
+        }
+      }
       setAuthReady(true);
     } else {
       router.replace("/auth/login");
@@ -386,9 +396,11 @@ export default function ProjectsPage() {
             <Link href="/jobs/inbox" className="tl-btn tl-btn-ghost">
               Field Submissions Inbox
             </Link>
-            <Link href="/admin" className="tl-btn tl-btn-ghost">
-              Admin
-            </Link>
+            {(userRole === "owner" || userRole === "admin") && (
+              <Link href="/admin" className="tl-btn tl-btn-ghost">
+                Admin
+              </Link>
+            )}
           </div>
         </header>
 

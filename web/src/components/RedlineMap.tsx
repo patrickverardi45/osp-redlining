@@ -4020,39 +4020,6 @@ ${redlinePlacemarks.length > 0 ? buildEngFolder("As-Built Redlines", redlinePlac
                 </div>
               </label>
 
-              <label style={{
-                display: "block",
-                border: "2px solid #000000",
-                borderRadius: 16,
-                padding: 16,
-                background: engPlansBusy || closeoutLocked ? "#f3f4f6" : "#ffffff",
-                cursor: engPlansBusy || closeoutLocked ? "not-allowed" : "pointer",
-                opacity: engPlansBusy || closeoutLocked ? 0.7 : 1,
-              }}>
-                <input
-                  type="file"
-                  accept=".pdf,.png,.jpg,.jpeg"
-                  multiple
-                  style={{ display: "none" }}
-                  disabled={engPlansBusy || closeoutLocked}
-                  onChange={(e) => {
-                    handleEngineeringPlansUpload(e.target.files);
-                    e.currentTarget.value = "";
-                  }}
-                />
-                <div style={{ fontWeight: 800, fontSize: 16 }}>Upload Engineering Plans</div>
-                <div style={{ marginTop: 6, fontSize: 13, color: "#64748b", lineHeight: 1.55 }}>
-                  PDF, PNG, JPG or JPEG. Multiple files allowed. Reference plans / closeout evidence only.
-                </div>
-                <div style={{ marginTop: 14, fontSize: 12, fontWeight: 700, color: (state?.engineering_plans?.length ?? 0) > 0 ? "#166534" : "#64748b" }}>
-                  {engPlansBusy
-                    ? "Uploading..."
-                    : (state?.engineering_plans?.length ?? 0) > 0
-                      ? `${state!.engineering_plans!.length} plan file${state!.engineering_plans!.length !== 1 ? "s" : ""} uploaded.`
-                      : "No engineering plans uploaded yet."}
-                </div>
-              </label>
-
               <div style={{ border: "1px solid #dbe4ee", borderRadius: 16, background: "#fbfdff", padding: 16 }}>
                 <div style={{ fontWeight: 800, fontSize: 15 }}>File status</div>
                 <div style={{ marginTop: 12, display: "grid", gap: 10 }}>
@@ -4346,25 +4313,6 @@ ${redlinePlacemarks.length > 0 ? buildEngFolder("As-Built Redlines", redlinePlac
                         onChange={(e) => setLayerSnapPreview(e.target.checked)}
                       />
                       Preview
-                    </label>
-                    {/* Phase 2A — KMZ engineering context layer toggle. OFF by default. Advisory/display only. */}
-                    <label
-                      style={{
-                        display: "inline-flex",
-                        alignItems: "center",
-                        gap: 5,
-                        cursor: "pointer",
-                        userSelect: "none",
-                        color: layerKmzContext ? "rgba(251,191,36,0.95)" : undefined,
-                      }}
-                      title="Show uploaded KMZ engineering features (advisory context layer — beneath operational redlines)"
-                    >
-                      <input
-                        type="checkbox"
-                        checked={layerKmzContext}
-                        onChange={(e) => setLayerKmzContext(e.target.checked)}
-                      />
-                      KMZ context
                     </label>
                   </div>
                   {/* Phase 2E.1 — KMZ folder/category filter panel.

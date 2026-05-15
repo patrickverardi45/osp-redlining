@@ -81,6 +81,7 @@ export default function AdminPage() {
   const [cuBusy, setCuBusy] = useState(false);
   const [cuError, setCuError] = useState<string | null>(null);
   const [cuSuccess, setCuSuccess] = useState<string | null>(null);
+  const [cuShowPassword, setCuShowPassword] = useState(false);
 
   // Create company form
   const [ccSlug, setCcSlug] = useState("");
@@ -252,6 +253,53 @@ export default function AdminPage() {
           </div>
         )}
 
+        {/* ── Companies ───────────────────────────────────────────────────── */}
+        <section className="tl-card tl-card-padded" style={{ marginBottom: 20 }}>
+          <h2 className="tl-h2" style={{ marginBottom: 14 }}>Companies</h2>
+          {companies.length === 0 ? (
+            <p className="tl-subtle" style={{ marginBottom: 14 }}>No companies yet.</p>
+          ) : (
+            <table style={{ width: "100%", borderCollapse: "collapse", marginBottom: 20 }}>
+              <thead>
+                <tr>
+                  <th style={thStyle}>Name</th>
+                  <th style={thStyle}>Slug</th>
+                  <th style={thStyle}>ID</th>
+                </tr>
+              </thead>
+              <tbody>
+                {companies.map((c) => (
+                  <tr key={c.id}>
+                    <td style={cellStyle}>{c.name}</td>
+                    <td style={cellStyle}>{c.slug}</td>
+                    <td style={{ ...cellStyle, fontFamily: "monospace", fontSize: 11, color: "var(--tl-text-muted)" }}>{c.id}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+          <h3 style={{ fontSize: 14, fontWeight: 600, marginBottom: 10, color: "var(--tl-text)" }}>Create Company</h3>
+          <form onSubmit={handleCreateCompany} style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+              <div style={{ flex: "1 1 140px", display: "flex", flexDirection: "column", gap: 4 }}>
+                <label style={{ fontSize: 12, color: "var(--tl-text-muted)" }}>Slug (e.g. acme-corp) *</label>
+                <input type="text" required value={ccSlug} onChange={(e) => setCcSlug(e.target.value)} style={inputStyle} placeholder="acme-corp" />
+              </div>
+              <div style={{ flex: "1 1 180px", display: "flex", flexDirection: "column", gap: 4 }}>
+                <label style={{ fontSize: 12, color: "var(--tl-text-muted)" }}>Name *</label>
+                <input type="text" required value={ccName} onChange={(e) => setCcName(e.target.value)} style={inputStyle} placeholder="Acme Corp" />
+              </div>
+            </div>
+            {ccError && <p style={{ margin: 0, fontSize: 13, color: "#fca5a5" }}>{ccError}</p>}
+            {ccSuccess && <p style={{ margin: 0, fontSize: 13, color: "#86efac" }}>{ccSuccess}</p>}
+            <div>
+              <button type="submit" className="tl-btn tl-btn-primary" disabled={ccBusy}>
+                {ccBusy ? "Creating…" : "Create Company"}
+              </button>
+            </div>
+          </form>
+        </section>
+
         {/* ── Users table ─────────────────────────────────────────────────── */}
         <section className="tl-card tl-card-padded" style={{ marginBottom: 20 }}>
           <h2 className="tl-h2" style={{ marginBottom: 14 }}>Users</h2>
@@ -359,7 +407,27 @@ export default function AdminPage() {
             <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
               <div style={{ flex: "1 1 180px", display: "flex", flexDirection: "column", gap: 4 }}>
                 <label style={{ fontSize: 12, color: "var(--tl-text-muted)" }}>Temporary password *</label>
-                <input type="password" required minLength={8} value={cuPassword} onChange={(e) => setCuPassword(e.target.value)} style={inputStyle} placeholder="Min 8 characters" />
+                <div style={{ position: "relative" }}>
+                  <input type={cuShowPassword ? "text" : "password"} required minLength={8} value={cuPassword} onChange={(e) => setCuPassword(e.target.value)} style={{ ...inputStyle, paddingRight: 34 }} placeholder="Min 8 characters" />
+                  <button
+                    type="button"
+                    aria-label={cuShowPassword ? "Hide password" : "Show password"}
+                    onClick={() => setCuShowPassword((v) => !v)}
+                    style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", cursor: "pointer", padding: 2, color: "var(--tl-text-muted)", display: "flex", alignItems: "center" }}
+                  >
+                    {cuShowPassword ? (
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                        <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24" />
+                        <line x1="1" y1="1" x2="23" y2="23" />
+                      </svg>
+                    ) : (
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                        <circle cx="12" cy="12" r="3" />
+                      </svg>
+                    )}
+                  </button>
+                </div>
               </div>
               <div style={{ flex: "1 1 160px", display: "flex", flexDirection: "column", gap: 4 }}>
                 <label style={{ fontSize: 12, color: "var(--tl-text-muted)" }}>Company *</label>
@@ -387,52 +455,6 @@ export default function AdminPage() {
           </form>
         </section>
 
-        {/* ── Companies ───────────────────────────────────────────────────── */}
-        <section className="tl-card tl-card-padded" style={{ marginBottom: 20 }}>
-          <h2 className="tl-h2" style={{ marginBottom: 14 }}>Companies</h2>
-          {companies.length === 0 ? (
-            <p className="tl-subtle" style={{ marginBottom: 14 }}>No companies yet.</p>
-          ) : (
-            <table style={{ width: "100%", borderCollapse: "collapse", marginBottom: 20 }}>
-              <thead>
-                <tr>
-                  <th style={thStyle}>Name</th>
-                  <th style={thStyle}>Slug</th>
-                  <th style={thStyle}>ID</th>
-                </tr>
-              </thead>
-              <tbody>
-                {companies.map((c) => (
-                  <tr key={c.id}>
-                    <td style={cellStyle}>{c.name}</td>
-                    <td style={cellStyle}>{c.slug}</td>
-                    <td style={{ ...cellStyle, fontFamily: "monospace", fontSize: 11, color: "var(--tl-text-muted)" }}>{c.id}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-          <h3 style={{ fontSize: 14, fontWeight: 600, marginBottom: 10, color: "var(--tl-text)" }}>Create Company</h3>
-          <form onSubmit={handleCreateCompany} style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-            <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-              <div style={{ flex: "1 1 140px", display: "flex", flexDirection: "column", gap: 4 }}>
-                <label style={{ fontSize: 12, color: "var(--tl-text-muted)" }}>Slug (e.g. acme-corp) *</label>
-                <input type="text" required value={ccSlug} onChange={(e) => setCcSlug(e.target.value)} style={inputStyle} placeholder="acme-corp" />
-              </div>
-              <div style={{ flex: "1 1 180px", display: "flex", flexDirection: "column", gap: 4 }}>
-                <label style={{ fontSize: 12, color: "var(--tl-text-muted)" }}>Name *</label>
-                <input type="text" required value={ccName} onChange={(e) => setCcName(e.target.value)} style={inputStyle} placeholder="Acme Corp" />
-              </div>
-            </div>
-            {ccError && <p style={{ margin: 0, fontSize: 13, color: "#fca5a5" }}>{ccError}</p>}
-            {ccSuccess && <p style={{ margin: 0, fontSize: 13, color: "#86efac" }}>{ccSuccess}</p>}
-            <div>
-              <button type="submit" className="tl-btn tl-btn-primary" disabled={ccBusy}>
-                {ccBusy ? "Creating…" : "Create Company"}
-              </button>
-            </div>
-          </form>
-        </section>
 
       </div>
     </main>
