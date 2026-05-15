@@ -7166,9 +7166,6 @@ ${redlinePlacemarks.length > 0 ? buildEngFolder("As-Built Redlines", redlinePlac
                     description="Use browser print to create a clean printed report or Save as PDF from the browser print dialog."
                   >
                     <div className="no-print" style={{ display: "grid", gap: 10 }}>
-                      <button onClick={handleExportKml} style={{ ...buttonStyle("#ffffff", "#0f172a", "#cfd8e3", false), width: "100%" }}>
-                        Export to Google Earth (KML)
-                      </button>
                       <button onClick={handleExportEngineeringKml} style={{ ...buttonStyle("#0f2a1a", "#86efac", "#22c55e", false), width: "100%" }}>
                         Export Engineering KMZ + Redlines
                       </button>
