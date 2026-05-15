@@ -210,6 +210,7 @@ export default function ProjectsPage() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [showArchived, setShowArchived] = useState(false);
+  const [deleteProjectTarget, setDeleteProjectTarget] = useState<string | null>(null);
   const [newName, setNewName] = useState("");
   const [newLocation, setNewLocation] = useState("");
   const nameInputRef = useRef<HTMLInputElement>(null);
@@ -290,6 +291,16 @@ export default function ProjectsPage() {
         p.projectId === projectId ? { ...p, archived: false } : p,
       );
       setProjects(next);
+      try { window.localStorage.setItem(PROJECTS_STORAGE_KEY, JSON.stringify(next)); } catch { /* ignore */ }
+    },
+    [projects],
+  );
+
+  const handleDeleteProject = useCallback(
+    (projectId: string) => {
+      const next = projects.filter((p) => p.projectId !== projectId);
+      setProjects(next);
+      setDeleteProjectTarget(null);
       try { window.localStorage.setItem(PROJECTS_STORAGE_KEY, JSON.stringify(next)); } catch { /* ignore */ }
     },
     [projects],
@@ -470,6 +481,9 @@ export default function ProjectsPage() {
                 canManage={canManageProjects}
                 onArchive={handleArchive}
                 onRestore={handleRestore}
+                deleteTarget={deleteProjectTarget}
+                onDeleteRequest={setDeleteProjectTarget}
+                onDeleteConfirm={handleDeleteProject}
               />
             ))}
           </section>
@@ -487,11 +501,17 @@ function ProjectCard({
   canManage,
   onArchive,
   onRestore,
+  deleteTarget,
+  onDeleteRequest,
+  onDeleteConfirm,
 }: {
   project: Project;
   canManage: boolean;
   onArchive: (id: string) => void;
   onRestore: (id: string) => void;
+  deleteTarget: string | null;
+  onDeleteRequest: (id: string | null) => void;
+  onDeleteConfirm: (id: string) => void;
 }) {
   const [summary, setSummary] = useState<ProjectSummary>({
     status: "No data yet",
@@ -602,41 +622,90 @@ function ProjectCard({
         {summary.lastUpdated ? <Metric label="Last updated" value={summary.lastUpdated} /> : null}
       </div>
 
-      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-        {project.archived ? (
-          <>
-            <span style={{ padding: "2px 10px", borderRadius: 4, background: "#1c1917", border: "1px solid #57534e", color: "#a8a29e", fontSize: 12, fontWeight: 600 }}>
-              Archived
+      {deleteTarget === project.projectId ? (
+        <div style={{ padding: "10px 12px", borderRadius: 6, background: "#2a1212", border: "1px solid #7f1d1d", display: "flex", flexDirection: "column", gap: 8 }}>
+          <span style={{ fontSize: 13, color: "#fca5a5" }}>
+            Delete <strong>{project.name}</strong>?<br />
+            <span style={{ fontSize: 11, opacity: 0.8 }}>
+              Removes from dashboard. Server uploads are not deleted (localStorage-only project record).
             </span>
-            {canManage && (
-              <button
-                type="button"
-                className="tl-btn tl-btn-ghost"
-                style={{ fontSize: 13 }}
-                onClick={() => onRestore(project.projectId)}
-              >
-                Restore
-              </button>
-            )}
-          </>
-        ) : (
-          <>
-            <Link href={project.href} className="tl-btn tl-btn-primary" style={{ flex: 1, textAlign: "center" }}>
-              Open Project →
-            </Link>
-            {canManage && (
-              <button
-                type="button"
-                className="tl-btn tl-btn-ghost"
-                style={{ fontSize: 12, padding: "6px 10px", color: "var(--tl-text-muted)" }}
-                onClick={() => onArchive(project.projectId)}
-              >
-                Archive
-              </button>
-            )}
-          </>
-        )}
-      </div>
+          </span>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button
+              type="button"
+              className="tl-btn tl-btn-ghost"
+              style={{ fontSize: 12, padding: "5px 12px", color: "#fca5a5", borderColor: "#7f1d1d" }}
+              onClick={() => onDeleteConfirm(project.projectId)}
+            >
+              Yes, delete
+            </button>
+            <button
+              type="button"
+              className="tl-btn tl-btn-ghost"
+              style={{ fontSize: 12, padding: "5px 12px" }}
+              onClick={() => onDeleteRequest(null)}
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+          {project.archived ? (
+            <>
+              <span style={{ padding: "2px 10px", borderRadius: 4, background: "#1c1917", border: "1px solid #57534e", color: "#a8a29e", fontSize: 12, fontWeight: 600 }}>
+                Archived
+              </span>
+              {canManage && (
+                <button
+                  type="button"
+                  className="tl-btn tl-btn-ghost"
+                  style={{ fontSize: 13 }}
+                  onClick={() => onRestore(project.projectId)}
+                >
+                  Restore
+                </button>
+              )}
+              {canManage && (
+                <button
+                  type="button"
+                  className="tl-btn tl-btn-ghost"
+                  style={{ fontSize: 11, padding: "4px 8px", color: "#fca5a5", borderColor: "#7f1d1d" }}
+                  onClick={() => onDeleteRequest(project.projectId)}
+                >
+                  Delete
+                </button>
+              )}
+            </>
+          ) : (
+            <>
+              <Link href={project.href} className="tl-btn tl-btn-primary" style={{ flex: 1, textAlign: "center" }}>
+                Open Project →
+              </Link>
+              {canManage && (
+                <button
+                  type="button"
+                  className="tl-btn tl-btn-ghost"
+                  style={{ fontSize: 12, padding: "6px 10px", color: "var(--tl-text-muted)" }}
+                  onClick={() => onArchive(project.projectId)}
+                >
+                  Archive
+                </button>
+              )}
+              {canManage && (
+                <button
+                  type="button"
+                  className="tl-btn tl-btn-ghost"
+                  style={{ fontSize: 11, padding: "4px 8px", color: "#fca5a5", borderColor: "#7f1d1d" }}
+                  onClick={() => onDeleteRequest(project.projectId)}
+                >
+                  Delete
+                </button>
+              )}
+            </>
+          )}
+        </div>
+      )}
     </article>
   );
 }

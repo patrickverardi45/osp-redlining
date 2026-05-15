@@ -313,3 +313,87 @@ def enable_user(user_id: str, claims: dict = Depends(require_admin)):
             (_now(), user_id),
         )
     return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
+# Hard-delete endpoints — beta cleanup only
+# ---------------------------------------------------------------------------
+
+@router.delete("/users/{user_id}", status_code=200)
+def delete_user(user_id: str, claims: dict = Depends(require_admin)):
+    """
+    Permanently remove a user.
+    Cascades: refresh_tokens → memberships → user row.
+    Guards:
+      - Cannot delete yourself.
+      - Admin cannot delete a user that holds any 'owner' membership.
+      - Admin can only delete users in their own company.
+    """
+    if user_id == claims.get("sub"):
+        raise HTTPException(status_code=403, detail="cannot_delete_self")
+
+    with auth_db() as conn:
+        user = conn.execute(
+            "SELECT id, email FROM users WHERE id = ?", (user_id,)
+        ).fetchone()
+        if not user:
+            raise HTTPException(status_code=404, detail="user_not_found")
+
+        if claims["role"] != "owner":
+            # Must be in admin's company.
+            membership = conn.execute(
+                "SELECT id FROM memberships WHERE user_id = ? AND company_id = ?",
+                (user_id, claims["company_id"]),
+            ).fetchone()
+            if not membership:
+                raise HTTPException(status_code=403, detail="not_in_your_company")
+            # Admins cannot delete users with an owner role in any company.
+            owner_ms = conn.execute(
+                "SELECT id FROM memberships WHERE user_id = ? AND role = 'owner'",
+                (user_id,),
+            ).fetchone()
+            if owner_ms:
+                raise HTTPException(status_code=403, detail="admin_cannot_delete_owner_user")
+
+        conn.execute("DELETE FROM refresh_tokens WHERE user_id = ?", (user_id,))
+        conn.execute("DELETE FROM memberships WHERE user_id = ?", (user_id,))
+        conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
+
+    return {"ok": True, "deleted_user_id": user_id}
+
+
+@router.delete("/companies/{company_id}", status_code=200)
+def delete_company(company_id: str, _: dict = Depends(require_owner)):
+    """
+    Permanently remove a company.
+    Owner only. Blocked if any memberships or projects reference it.
+    Does NOT touch upload files — server-side evidence is never auto-cascaded.
+    """
+    with auth_db() as conn:
+        company = conn.execute(
+            "SELECT id, name FROM companies WHERE id = ?", (company_id,)
+        ).fetchone()
+        if not company:
+            raise HTTPException(status_code=404, detail="company_not_found")
+
+        membership_count = conn.execute(
+            "SELECT COUNT(*) FROM memberships WHERE company_id = ?", (company_id,)
+        ).fetchone()[0]
+        if membership_count > 0:
+            raise HTTPException(
+                status_code=409,
+                detail=f"company_has_users: remove {membership_count} user(s) first",
+            )
+
+        project_count = conn.execute(
+            "SELECT COUNT(*) FROM projects WHERE company_id = ?", (company_id,)
+        ).fetchone()[0]
+        if project_count > 0:
+            raise HTTPException(
+                status_code=409,
+                detail=f"company_has_projects: remove {project_count} project(s) first",
+            )
+
+        conn.execute("DELETE FROM companies WHERE id = ?", (company_id,))
+
+    return {"ok": True, "deleted_company_id": company_id}
