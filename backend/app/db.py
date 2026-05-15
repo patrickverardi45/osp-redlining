@@ -5,7 +5,8 @@ Manages the SQLite schema for companies, users, memberships, projects,
 and refresh tokens. Does NOT change any runtime behavior; the existing
 pilot-token auth path in auth.py is untouched.
 
-DB file: backend/uploads/auth.db (overridable via TRUELINE_AUTH_DB_PATH)
+DB file: $OSP_UPLOAD_DIR/auth.db when OSP_UPLOAD_DIR is set (Render persistent disk),
+otherwise backend/uploads/auth.db (local dev). Override either default via TRUELINE_AUTH_DB_PATH.
 """
 
 import os
@@ -17,7 +18,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
-_DEFAULT_DB_PATH = Path(__file__).parent.parent / "uploads" / "auth.db"
+_UPLOADS_ROOT = Path(os.getenv("OSP_UPLOAD_DIR") or str(Path(__file__).parent.parent / "uploads"))
+_DEFAULT_DB_PATH = _UPLOADS_ROOT / "auth.db"
 AUTH_DB_PATH = Path(os.getenv("TRUELINE_AUTH_DB_PATH", str(_DEFAULT_DB_PATH)))
 
 
