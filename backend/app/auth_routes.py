@@ -145,6 +145,10 @@ def login(body: LoginRequest, response: Response, request: Request):
             _write_auth_event(request, "login", "invalid_credentials", email_sha8=_email_sha8)
             raise _invalid
 
+        if user["disabled_at"]:
+            _write_auth_event(request, "login", "account_disabled", email_sha8=_email_sha8)
+            raise HTTPException(status_code=403, detail="account_disabled")
+
         membership = conn.execute(
             "SELECT * FROM memberships WHERE user_id = ? ORDER BY created_at ASC LIMIT 1",
             (user["id"],),
@@ -194,7 +198,7 @@ def refresh(
             "SELECT * FROM memberships WHERE user_id = ? ORDER BY created_at ASC LIMIT 1",
             (user_id,),
         ).fetchone()
-        if not user or not membership:
+        if not user or not membership or user["disabled_at"]:
             _write_auth_event(request, "refresh", "invalid_refresh_token")
             raise HTTPException(status_code=401, detail="invalid_refresh_token")
 

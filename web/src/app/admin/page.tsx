@@ -25,6 +25,7 @@ type AdminUser = {
   email: string;
   display_name: string | null;
   created_at: string;
+  disabled_at: string | null;
   memberships: Membership[];
 };
 
@@ -67,6 +68,8 @@ const thStyle: React.CSSProperties = {
 export default function AdminPage() {
   const router = useRouter();
   const [ready, setReady] = useState(false);
+  const [callerRole, setCallerRole] = useState<string>("member");
+  const [callerCompanyId, setCallerCompanyId] = useState<string>("");
 
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [companies, setCompanies] = useState<Company[]>([]);
@@ -95,6 +98,9 @@ export default function AdminPage() {
   const [resetBusy, setResetBusy] = useState(false);
   const [resetMsg, setResetMsg] = useState<Record<string, string>>({});
 
+  // Disable/enable busy state keyed by user_id
+  const [lifeBusy, setLifeBusy] = useState<Record<string, boolean>>({});
+
   // Auth gate — only owner/admin may access this page
   useEffect(() => {
     me().then((user) => {
@@ -102,9 +108,13 @@ export default function AdminPage() {
         router.replace("/projects");
         return;
       }
+      setCallerRole(user.role);
+      setCallerCompanyId(user.company_id);
       setReady(true);
     });
   }, [router]);
+
+  const isOwner = callerRole === "owner";
 
   const loadData = useCallback(async () => {
     setLoadError(null);
@@ -114,21 +124,32 @@ export default function AdminPage() {
         apiFetch("/api/admin/companies"),
       ]);
       if (!uRes.ok || !cRes.ok) {
-        setLoadError("Failed to load admin data. Are you logged in as owner?");
+        setLoadError("Failed to load admin data.");
         return;
       }
       const [uData, cData] = await Promise.all([uRes.json(), cRes.json()]);
       setUsers(uData);
       setCompanies(cData);
-      if (!cuCompany && cData.length > 0) setCuCompany(cData[0].id);
+      // Pre-select company: owners default to first, admins locked to their own.
+      setCuCompany((prev) => {
+        if (prev) return prev;
+        return cData.length > 0 ? cData[0].id : "";
+      });
     } catch {
       setLoadError("Network error — could not reach the server.");
     }
-  }, [cuCompany]);
+  }, []);
 
   useEffect(() => {
     if (ready) loadData();
   }, [ready, loadData]);
+
+  // For admins, always lock the company to their own.
+  useEffect(() => {
+    if (!isOwner && callerCompanyId) {
+      setCuCompany(callerCompanyId);
+    }
+  }, [isOwner, callerCompanyId]);
 
   // ── Create User ──────────────────────────────────────────────────────────
   const handleCreateUser = useCallback(
@@ -136,7 +157,8 @@ export default function AdminPage() {
       e.preventDefault();
       setCuError(null);
       setCuSuccess(null);
-      if (!cuCompany) { setCuError("Select a company first."); return; }
+      const effectiveCompany = isOwner ? cuCompany : callerCompanyId;
+      if (!effectiveCompany) { setCuError("No company available."); return; }
       setCuBusy(true);
       try {
         const createRes = await apiFetch("/api/admin/users", {
@@ -150,7 +172,7 @@ export default function AdminPage() {
         const assignRes = await apiFetch(`/api/admin/users/${createData.id}/assign`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ company_id: cuCompany, role: cuRole }),
+          body: JSON.stringify({ company_id: effectiveCompany, role: cuRole }),
         });
         if (!assignRes.ok) {
           const d = await assignRes.json();
@@ -166,7 +188,7 @@ export default function AdminPage() {
         setCuBusy(false);
       }
     },
-    [cuEmail, cuDisplay, cuPassword, cuCompany, cuRole, loadData],
+    [cuEmail, cuDisplay, cuPassword, cuCompany, cuRole, callerCompanyId, isOwner, loadData],
   );
 
   // ── Create Company ───────────────────────────────────────────────────────
@@ -224,7 +246,30 @@ export default function AdminPage() {
     [resetPw],
   );
 
+  // ── Disable / Enable ─────────────────────────────────────────────────────
+  const handleLifecycle = useCallback(
+    async (userId: string, action: "disable" | "enable") => {
+      setLifeBusy((prev) => ({ ...prev, [userId]: true }));
+      try {
+        const res = await apiFetch(`/api/admin/users/${userId}/${action}`, {
+          method: "POST",
+        });
+        if (res.ok) {
+          loadData();
+        }
+      } catch {
+        // silent — state reloads on next manual refresh
+      } finally {
+        setLifeBusy((prev) => ({ ...prev, [userId]: false }));
+      }
+    },
+    [loadData],
+  );
+
   if (!ready) return null;
+
+  // Roles available when creating a user — admins cannot grant owner.
+  const availableRoles = isOwner ? ROLES : ROLES.filter((r) => r !== "owner");
 
   return (
     <main className="tl-page">
@@ -237,7 +282,9 @@ export default function AdminPage() {
               <div className="tl-eyebrow">Administration</div>
               <h1 className="tl-h1">User Management</h1>
               <p className="tl-subtle" style={{ margin: 0 }}>
-                Create and manage users, companies, and role assignments.
+                {isOwner
+                  ? "Create and manage users, companies, and role assignments."
+                  : "Manage users within your company."}
               </p>
             </div>
             <Link href="/projects" className="tl-btn tl-btn-ghost" style={{ whiteSpace: "nowrap" }}>
@@ -252,48 +299,50 @@ export default function AdminPage() {
           </div>
         )}
 
-        {/* ── Companies ───────────────────────────────────────────────────── */}
-        <section className="tl-card tl-card-padded" style={{ marginBottom: 20 }}>
-          <h2 className="tl-h2" style={{ marginBottom: 14 }}>Companies</h2>
-          {companies.length === 0 ? (
-            <p className="tl-subtle" style={{ marginBottom: 14 }}>No companies yet.</p>
-          ) : (
-            <table style={{ width: "100%", borderCollapse: "collapse", marginBottom: 20 }}>
-              <thead>
-                <tr>
-                  <th style={thStyle}>Name</th>
-                  <th style={thStyle}>Slug</th>
-                  <th style={thStyle}>ID</th>
-                </tr>
-              </thead>
-              <tbody>
-                {companies.map((c) => (
-                  <tr key={c.id}>
-                    <td style={cellStyle}>{c.name}</td>
-                    <td style={cellStyle}>{c.slug}</td>
-                    <td style={{ ...cellStyle, fontFamily: "monospace", fontSize: 11, color: "var(--tl-text-muted)" }}>{c.id}</td>
+        {/* ── Companies (owners only) ──────────────────────────────────────── */}
+        {isOwner && (
+          <section className="tl-card tl-card-padded" style={{ marginBottom: 20 }}>
+            <h2 className="tl-h2" style={{ marginBottom: 14 }}>Companies</h2>
+            {companies.length === 0 ? (
+              <p className="tl-subtle" style={{ marginBottom: 14 }}>No companies yet.</p>
+            ) : (
+              <table style={{ width: "100%", borderCollapse: "collapse", marginBottom: 20 }}>
+                <thead>
+                  <tr>
+                    <th style={thStyle}>Name</th>
+                    <th style={thStyle}>Slug</th>
+                    <th style={thStyle}>ID</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-          <h3 style={{ fontSize: 14, fontWeight: 600, marginBottom: 10, color: "var(--tl-text)" }}>Create Company</h3>
-          <form onSubmit={handleCreateCompany} style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-            <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-              <div style={{ flex: "1 1 200px", display: "flex", flexDirection: "column", gap: 4 }}>
-                <label style={{ fontSize: 12, color: "var(--tl-text-muted)" }}>Company Name *</label>
-                <input type="text" required value={ccName} onChange={(e) => setCcName(e.target.value)} style={inputStyle} placeholder="Acme Corp" />
+                </thead>
+                <tbody>
+                  {companies.map((c) => (
+                    <tr key={c.id}>
+                      <td style={cellStyle}>{c.name}</td>
+                      <td style={cellStyle}>{c.slug}</td>
+                      <td style={{ ...cellStyle, fontFamily: "monospace", fontSize: 11, color: "var(--tl-text-muted)" }}>{c.id}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+            <h3 style={{ fontSize: 14, fontWeight: 600, marginBottom: 10, color: "var(--tl-text)" }}>Create Company</h3>
+            <form onSubmit={handleCreateCompany} style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+                <div style={{ flex: "1 1 200px", display: "flex", flexDirection: "column", gap: 4 }}>
+                  <label style={{ fontSize: 12, color: "var(--tl-text-muted)" }}>Company Name *</label>
+                  <input type="text" required value={ccName} onChange={(e) => setCcName(e.target.value)} style={inputStyle} placeholder="Acme Corp" />
+                </div>
               </div>
-            </div>
-            {ccError && <p style={{ margin: 0, fontSize: 13, color: "#fca5a5" }}>{ccError}</p>}
-            {ccSuccess && <p style={{ margin: 0, fontSize: 13, color: "#86efac" }}>{ccSuccess}</p>}
-            <div>
-              <button type="submit" className="tl-btn tl-btn-primary" disabled={ccBusy}>
-                {ccBusy ? "Creating…" : "Create Company"}
-              </button>
-            </div>
-          </form>
-        </section>
+              {ccError && <p style={{ margin: 0, fontSize: 13, color: "#fca5a5" }}>{ccError}</p>}
+              {ccSuccess && <p style={{ margin: 0, fontSize: 13, color: "#86efac" }}>{ccSuccess}</p>}
+              <div>
+                <button type="submit" className="tl-btn tl-btn-primary" disabled={ccBusy}>
+                  {ccBusy ? "Creating…" : "Create Company"}
+                </button>
+              </div>
+            </form>
+          </section>
+        )}
 
         {/* ── Users table ─────────────────────────────────────────────────── */}
         <section className="tl-card tl-card-padded" style={{ marginBottom: 20 }}>
@@ -308,12 +357,13 @@ export default function AdminPage() {
                     <th style={thStyle}>Email</th>
                     <th style={thStyle}>Display name</th>
                     <th style={thStyle}>Company / Role</th>
+                    <th style={thStyle}>Status</th>
                     <th style={thStyle}>Actions</th>
                   </tr>
                 </thead>
                 <tbody>
                   {users.map((u) => (
-                    <tr key={u.id}>
+                    <tr key={u.id} style={{ opacity: u.disabled_at ? 0.6 : 1 }}>
                       <td style={cellStyle}>{u.email}</td>
                       <td style={cellStyle}>{u.display_name ?? <span style={{ color: "var(--tl-text-muted)" }}>—</span>}</td>
                       <td style={cellStyle}>
@@ -326,6 +376,17 @@ export default function AdminPage() {
                               <span style={{ color: "var(--tl-text-muted)", marginLeft: 6, fontSize: 12 }}>{m.role}</span>
                             </div>
                           ))
+                        )}
+                      </td>
+                      <td style={cellStyle}>
+                        {u.disabled_at ? (
+                          <span style={{ display: "inline-block", padding: "2px 8px", borderRadius: 4, background: "#450a0a", border: "1px solid #7f1d1d", color: "#fca5a5", fontSize: 11, fontWeight: 600 }}>
+                            Disabled
+                          </span>
+                        ) : (
+                          <span style={{ display: "inline-block", padding: "2px 8px", borderRadius: 4, background: "#052e16", border: "1px solid #166534", color: "#86efac", fontSize: 11, fontWeight: 600 }}>
+                            Active
+                          </span>
                         )}
                       </td>
                       <td style={cellStyle}>
@@ -371,6 +432,25 @@ export default function AdminPage() {
                             >
                               Reset password
                             </button>
+                            {u.disabled_at ? (
+                              <button
+                                className="tl-btn tl-btn-ghost"
+                                style={{ fontSize: 12, padding: "4px 10px", color: "#86efac", borderColor: "#166534" }}
+                                disabled={lifeBusy[u.id]}
+                                onClick={() => handleLifecycle(u.id, "enable")}
+                              >
+                                {lifeBusy[u.id] ? "…" : "Enable"}
+                              </button>
+                            ) : (
+                              <button
+                                className="tl-btn tl-btn-ghost"
+                                style={{ fontSize: 12, padding: "4px 10px", color: "#fca5a5", borderColor: "#7f1d1d" }}
+                                disabled={lifeBusy[u.id]}
+                                onClick={() => handleLifecycle(u.id, "disable")}
+                              >
+                                {lifeBusy[u.id] ? "…" : "Disable"}
+                              </button>
+                            )}
                             {resetMsg[u.id] && (
                               <span style={{ fontSize: 12, color: "#86efac" }}>{resetMsg[u.id]}</span>
                             )}
@@ -424,32 +504,46 @@ export default function AdminPage() {
                   </button>
                 </div>
               </div>
-              <div style={{ flex: "1 1 160px", display: "flex", flexDirection: "column", gap: 4 }}>
-                <label style={{ fontSize: 12, color: "var(--tl-text-muted)" }}>Company *</label>
-                <select value={cuCompany} onChange={(e) => setCuCompany(e.target.value)} required style={inputStyle}>
-                  {companies.length === 0 && <option value="">— no companies yet —</option>}
-                  {companies.map((c) => (
-                    <option key={c.id} value={c.id}>{c.name}</option>
-                  ))}
-                </select>
-              </div>
+
+              {/* Company picker — owners can choose; admins are locked to their own company */}
+              {isOwner ? (
+                <div style={{ flex: "1 1 160px", display: "flex", flexDirection: "column", gap: 4 }}>
+                  <label style={{ fontSize: 12, color: "var(--tl-text-muted)" }}>Company *</label>
+                  <select value={cuCompany} onChange={(e) => setCuCompany(e.target.value)} required style={inputStyle}>
+                    {companies.length === 0 && <option value="">— no companies yet —</option>}
+                    {companies.map((c) => (
+                      <option key={c.id} value={c.id}>{c.name}</option>
+                    ))}
+                  </select>
+                </div>
+              ) : (
+                <div style={{ flex: "1 1 160px", display: "flex", flexDirection: "column", gap: 4 }}>
+                  <label style={{ fontSize: 12, color: "var(--tl-text-muted)" }}>Company</label>
+                  <input
+                    type="text"
+                    readOnly
+                    value={companies.find((c) => c.id === callerCompanyId)?.name ?? "—"}
+                    style={{ ...inputStyle, color: "var(--tl-text-muted)", cursor: "default" }}
+                  />
+                </div>
+              )}
+
               <div style={{ flex: "0 1 120px", display: "flex", flexDirection: "column", gap: 4 }}>
                 <label style={{ fontSize: 12, color: "var(--tl-text-muted)" }}>Role</label>
                 <select value={cuRole} onChange={(e) => setCuRole(e.target.value)} style={inputStyle}>
-                  {ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
+                  {availableRoles.map((r) => <option key={r} value={r}>{r}</option>)}
                 </select>
               </div>
             </div>
             {cuError && <p style={{ margin: 0, fontSize: 13, color: "#fca5a5" }}>{cuError}</p>}
             {cuSuccess && <p style={{ margin: 0, fontSize: 13, color: "#86efac" }}>{cuSuccess}</p>}
             <div>
-              <button type="submit" className="tl-btn tl-btn-primary" disabled={cuBusy || companies.length === 0}>
+              <button type="submit" className="tl-btn tl-btn-primary" disabled={cuBusy || (isOwner && companies.length === 0)}>
                 {cuBusy ? "Creating…" : "Create User"}
               </button>
             </div>
           </form>
         </section>
-
 
       </div>
     </main>

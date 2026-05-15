@@ -41,7 +41,8 @@ CREATE TABLE IF NOT EXISTS users (
     password_hash TEXT,
     display_name  TEXT,
     created_at    TEXT NOT NULL,
-    updated_at    TEXT NOT NULL
+    updated_at    TEXT NOT NULL,
+    disabled_at   TEXT
 );
 
 CREATE TABLE IF NOT EXISTS memberships (
@@ -74,11 +75,19 @@ CREATE TABLE IF NOT EXISTS refresh_tokens (
 """
 
 
+def _migrate_auth_db(conn: sqlite3.Connection) -> None:
+    """Add new columns to existing schema without data loss (idempotent)."""
+    existing_users = {row[1] for row in conn.execute("PRAGMA table_info(users)")}
+    if "disabled_at" not in existing_users:
+        conn.execute("ALTER TABLE users ADD COLUMN disabled_at TEXT")
+
+
 def init_auth_db() -> None:
     """Create tables if they don't exist. Safe to call multiple times."""
     AUTH_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     with sqlite3.connect(AUTH_DB_PATH) as conn:
         conn.executescript(_SCHEMA)
+        _migrate_auth_db(conn)
         conn.commit()
 
 

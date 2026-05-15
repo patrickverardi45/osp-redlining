@@ -15,6 +15,7 @@ type Project = {
   name: string;
   href: string;
   location: string;
+  archived?: boolean;
 };
 
 type ProjectState = {
@@ -208,6 +209,7 @@ export default function ProjectsPage() {
   const [userRole, setUserRole] = useState<string | null>(null);
   const [projects, setProjects] = useState<Project[]>([]);
   const [showCreateForm, setShowCreateForm] = useState(false);
+  const [showArchived, setShowArchived] = useState(false);
   const [newName, setNewName] = useState("");
   const [newLocation, setNewLocation] = useState("");
   const nameInputRef = useRef<HTMLInputElement>(null);
@@ -271,7 +273,32 @@ export default function ProjectsPage() {
     [newName, newLocation, projects, router]
   );
 
+  const handleArchive = useCallback(
+    (projectId: string) => {
+      const next = projects.map((p) =>
+        p.projectId === projectId ? { ...p, archived: true } : p,
+      );
+      setProjects(next);
+      try { window.localStorage.setItem(PROJECTS_STORAGE_KEY, JSON.stringify(next)); } catch { /* ignore */ }
+    },
+    [projects],
+  );
+
+  const handleRestore = useCallback(
+    (projectId: string) => {
+      const next = projects.map((p) =>
+        p.projectId === projectId ? { ...p, archived: false } : p,
+      );
+      setProjects(next);
+      try { window.localStorage.setItem(PROJECTS_STORAGE_KEY, JSON.stringify(next)); } catch { /* ignore */ }
+    },
+    [projects],
+  );
+
   if (!authReady) return null;
+
+  const canManageProjects = userRole === "owner" || userRole === "admin";
+  const visibleProjects = projects.filter((p) => showArchived || !p.archived);
 
   return (
     <main className="tl-page">
@@ -389,7 +416,7 @@ export default function ProjectsPage() {
             </form>
           )}
 
-          <div style={{ display: "flex", gap: 10, marginTop: 16, flexWrap: "wrap" }}>
+          <div style={{ display: "flex", gap: 10, marginTop: 16, flexWrap: "wrap", alignItems: "center" }}>
             <Link href="/jobs" className="tl-btn tl-btn-ghost">
               Office Jobs
             </Link>
@@ -401,10 +428,20 @@ export default function ProjectsPage() {
                 Admin
               </Link>
             )}
+            {projects.some((p) => p.archived) && (
+              <button
+                type="button"
+                className="tl-btn tl-btn-ghost"
+                onClick={() => setShowArchived((v) => !v)}
+                style={{ fontSize: 13 }}
+              >
+                {showArchived ? "Hide Archived" : "Show Archived"}
+              </button>
+            )}
           </div>
         </header>
 
-        {projects.length === 0 ? (
+        {visibleProjects.length === 0 ? (
           <div
             style={{
               textAlign: "center",
@@ -426,8 +463,14 @@ export default function ProjectsPage() {
               gap: 16,
             }}
           >
-            {projects.map((project) => (
-              <ProjectCard key={project.href} project={project} />
+            {visibleProjects.map((project) => (
+              <ProjectCard
+                key={project.href}
+                project={project}
+                canManage={canManageProjects}
+                onArchive={handleArchive}
+                onRestore={handleRestore}
+              />
             ))}
           </section>
         )}
@@ -439,7 +482,17 @@ export default function ProjectsPage() {
   );
 }
 
-function ProjectCard({ project }: { project: Project }) {
+function ProjectCard({
+  project,
+  canManage,
+  onArchive,
+  onRestore,
+}: {
+  project: Project;
+  canManage: boolean;
+  onArchive: (id: string) => void;
+  onRestore: (id: string) => void;
+}) {
   const [summary, setSummary] = useState<ProjectSummary>({
     status: "No data yet",
     hasSession: false,
@@ -549,9 +602,41 @@ function ProjectCard({ project }: { project: Project }) {
         {summary.lastUpdated ? <Metric label="Last updated" value={summary.lastUpdated} /> : null}
       </div>
 
-      <Link href={project.href} className="tl-btn tl-btn-primary">
-        Open Project →
-      </Link>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+        {project.archived ? (
+          <>
+            <span style={{ padding: "2px 10px", borderRadius: 4, background: "#1c1917", border: "1px solid #57534e", color: "#a8a29e", fontSize: 12, fontWeight: 600 }}>
+              Archived
+            </span>
+            {canManage && (
+              <button
+                type="button"
+                className="tl-btn tl-btn-ghost"
+                style={{ fontSize: 13 }}
+                onClick={() => onRestore(project.projectId)}
+              >
+                Restore
+              </button>
+            )}
+          </>
+        ) : (
+          <>
+            <Link href={project.href} className="tl-btn tl-btn-primary" style={{ flex: 1, textAlign: "center" }}>
+              Open Project →
+            </Link>
+            {canManage && (
+              <button
+                type="button"
+                className="tl-btn tl-btn-ghost"
+                style={{ fontSize: 12, padding: "6px 10px", color: "var(--tl-text-muted)" }}
+                onClick={() => onArchive(project.projectId)}
+              >
+                Archive
+              </button>
+            )}
+          </>
+        )}
+      </div>
     </article>
   );
 }

@@ -1,7 +1,13 @@
 """
 V1 admin / user-management endpoints.
 
-All routes require owner or admin role (require_admin dependency).
+Role model:
+  owner — global platform admin; all companies, all users
+  admin — company admin; own company's users only; cannot create companies
+  member — no admin access (blocked at auth layer)
+
+All routes require at least owner-or-admin role (require_admin dependency).
+Owner-only routes use require_owner.
 Never returns password hashes. Uses existing db.py helpers throughout.
 """
 
@@ -29,21 +35,39 @@ router = APIRouter(prefix="/admin", tags=["admin"])
 _bearer = HTTPBearer(auto_error=False)
 
 
-def require_admin(
-    credentials: Optional[HTTPAuthorizationCredentials] = Depends(_bearer),
-) -> dict:
-    """Validate JWT and enforce owner-or-admin role."""
+def _decode_claims(credentials: Optional[HTTPAuthorizationCredentials]) -> dict:
     if not credentials:
         raise HTTPException(status_code=401, detail="missing_token")
     try:
-        claims = decode_access_token(credentials.credentials)
+        return decode_access_token(credentials.credentials)
     except jwt.ExpiredSignatureError:
         raise HTTPException(status_code=401, detail="token_expired")
     except jwt.InvalidTokenError:
         raise HTTPException(status_code=401, detail="invalid_token")
+
+
+def require_admin(
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(_bearer),
+) -> dict:
+    """Validate JWT and enforce owner-or-admin role."""
+    claims = _decode_claims(credentials)
     if claims.get("role") not in ("owner", "admin"):
         raise HTTPException(status_code=403, detail="admin_required")
     return claims
+
+
+def require_owner(
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(_bearer),
+) -> dict:
+    """Validate JWT and enforce owner-only role."""
+    claims = _decode_claims(credentials)
+    if claims.get("role") != "owner":
+        raise HTTPException(status_code=403, detail="owner_required")
+    return claims
+
+
+def _now() -> str:
+    return datetime.now(timezone.utc).isoformat()
 
 
 # ---------------------------------------------------------------------------
@@ -78,20 +102,28 @@ class ResetPasswordRequest(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Companies
+# Companies — owner only
 # ---------------------------------------------------------------------------
 
 @router.get("/companies")
-def list_companies(_: dict = Depends(require_admin)):
+def list_companies(claims: dict = Depends(require_admin)):
+    """Owners see all companies; admins see only their own."""
     with auth_db() as conn:
-        rows = conn.execute(
-            "SELECT id, slug, name, created_at FROM companies ORDER BY created_at ASC"
-        ).fetchall()
+        if claims["role"] == "owner":
+            rows = conn.execute(
+                "SELECT id, slug, name, created_at FROM companies ORDER BY created_at ASC"
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT id, slug, name, created_at FROM companies WHERE id = ?",
+                (claims["company_id"],),
+            ).fetchall()
     return [dict(r) for r in rows]
 
 
 @router.post("/companies", status_code=201)
-def create_company_endpoint(body: CreateCompanyRequest, _: dict = Depends(require_admin)):
+def create_company_endpoint(body: CreateCompanyRequest, _: dict = Depends(require_owner)):
+    """Only platform owners may create companies."""
     name = body.name.strip()
     if not name:
         raise HTTPException(status_code=422, detail="name_required")
@@ -115,11 +147,24 @@ def create_company_endpoint(body: CreateCompanyRequest, _: dict = Depends(requir
 # ---------------------------------------------------------------------------
 
 @router.get("/users")
-def list_users(_: dict = Depends(require_admin)):
+def list_users(claims: dict = Depends(require_admin)):
+    """Owners see all users; admins see only users in their own company."""
     with auth_db() as conn:
-        users = conn.execute(
-            "SELECT id, email, display_name, created_at FROM users ORDER BY created_at ASC"
-        ).fetchall()
+        if claims["role"] == "owner":
+            users = conn.execute(
+                "SELECT id, email, display_name, created_at, disabled_at "
+                "FROM users ORDER BY created_at ASC"
+            ).fetchall()
+        else:
+            users = conn.execute(
+                """SELECT u.id, u.email, u.display_name, u.created_at, u.disabled_at
+                   FROM users u
+                   JOIN memberships m ON m.user_id = u.id
+                   WHERE m.company_id = ?
+                   ORDER BY u.created_at ASC""",
+                (claims["company_id"],),
+            ).fetchall()
+
         result = []
         for u in users:
             memberships = conn.execute(
@@ -134,6 +179,7 @@ def list_users(_: dict = Depends(require_admin)):
                 "email": u["email"],
                 "display_name": u["display_name"],
                 "created_at": u["created_at"],
+                "disabled_at": u["disabled_at"],
                 "memberships": [dict(m) for m in memberships],
             })
     return result
@@ -160,10 +206,18 @@ def create_user_endpoint(body: CreateUserRequest, _: dict = Depends(require_admi
 
 
 @router.post("/users/{user_id}/assign")
-def assign_user(user_id: str, body: AssignUserRequest, _: dict = Depends(require_admin)):
+def assign_user(user_id: str, body: AssignUserRequest, claims: dict = Depends(require_admin)):
     valid_roles = {"owner", "admin", "member"}
     if body.role not in valid_roles:
         raise HTTPException(status_code=422, detail=f"invalid_role; allowed: {sorted(valid_roles)}")
+
+    # Admins can only assign within their own company and cannot grant owner role.
+    if claims["role"] != "owner":
+        if body.company_id != claims["company_id"]:
+            raise HTTPException(status_code=403, detail="admin_can_only_assign_to_own_company")
+        if body.role == "owner":
+            raise HTTPException(status_code=403, detail="admin_cannot_grant_owner_role")
+
     with auth_db() as conn:
         user = conn.execute("SELECT id FROM users WHERE id = ?", (user_id,)).fetchone()
         if not user:
@@ -194,16 +248,68 @@ def assign_user(user_id: str, body: AssignUserRequest, _: dict = Depends(require
 
 
 @router.post("/users/{user_id}/reset-password")
-def reset_password(user_id: str, body: ResetPasswordRequest, _: dict = Depends(require_admin)):
+def reset_password(user_id: str, body: ResetPasswordRequest, claims: dict = Depends(require_admin)):
     if not body.new_password or len(body.new_password) < 8:
         raise HTTPException(status_code=422, detail="password_too_short")
     with auth_db() as conn:
         user = conn.execute("SELECT id FROM users WHERE id = ?", (user_id,)).fetchone()
         if not user:
             raise HTTPException(status_code=404, detail="user_not_found")
+        # Admins can only reset passwords for users in their company.
+        if claims["role"] != "owner":
+            membership = conn.execute(
+                "SELECT id FROM memberships WHERE user_id = ? AND company_id = ?",
+                (user_id, claims["company_id"]),
+            ).fetchone()
+            if not membership:
+                raise HTTPException(status_code=403, detail="not_in_your_company")
         new_hash = hash_password(body.new_password)
         conn.execute(
             "UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?",
-            (new_hash, datetime.now(timezone.utc).isoformat(), user_id),
+            (new_hash, _now(), user_id),
+        )
+    return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
+# User lifecycle — disable / enable
+# ---------------------------------------------------------------------------
+
+def _assert_user_in_scope(conn, user_id: str, claims: dict) -> None:
+    """Raise 403 if non-owner admin tries to act on a user outside their company."""
+    if claims["role"] == "owner":
+        return
+    membership = conn.execute(
+        "SELECT id FROM memberships WHERE user_id = ? AND company_id = ?",
+        (user_id, claims["company_id"]),
+    ).fetchone()
+    if not membership:
+        raise HTTPException(status_code=403, detail="not_in_your_company")
+
+
+@router.post("/users/{user_id}/disable")
+def disable_user(user_id: str, claims: dict = Depends(require_admin)):
+    with auth_db() as conn:
+        user = conn.execute("SELECT id FROM users WHERE id = ?", (user_id,)).fetchone()
+        if not user:
+            raise HTTPException(status_code=404, detail="user_not_found")
+        _assert_user_in_scope(conn, user_id, claims)
+        conn.execute(
+            "UPDATE users SET disabled_at = ?, updated_at = ? WHERE id = ?",
+            (_now(), _now(), user_id),
+        )
+    return {"ok": True}
+
+
+@router.post("/users/{user_id}/enable")
+def enable_user(user_id: str, claims: dict = Depends(require_admin)):
+    with auth_db() as conn:
+        user = conn.execute("SELECT id FROM users WHERE id = ?", (user_id,)).fetchone()
+        if not user:
+            raise HTTPException(status_code=404, detail="user_not_found")
+        _assert_user_in_scope(conn, user_id, claims)
+        conn.execute(
+            "UPDATE users SET disabled_at = NULL, updated_at = ? WHERE id = ?",
+            (_now(), user_id),
         )
     return {"ok": True}
