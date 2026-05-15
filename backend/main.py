@@ -9761,9 +9761,11 @@ async def upload_design(
             walk_project_id = _normalize_walk_project_id(project_id)
             if walk_project_id:
                 try:
+                    _kmz_caller = current_tenant()
                     _save_project_route_context(
                         walk_project_id,
                         list(STATE.get("route_catalog", []) or []),
+                        tenant_slug=_kmz_caller.tenant_id if _kmz_caller else None,
                     )
                 except Exception:
                     pass
@@ -16244,12 +16246,18 @@ def _normalize_walk_project_id(value: Optional[str]) -> Optional[str]:
     return raw
 
 
-def _project_route_context_path(project_id: str) -> Path:
+def _project_route_context_path(project_id: str, tenant_slug: Optional[str] = None) -> Path:
+    if tenant_slug:
+        return PROJECT_ROUTE_CONTEXT_DIR / tenant_slug / f"{project_id}.json"
     return PROJECT_ROUTE_CONTEXT_DIR / f"{project_id}.json"
 
 
-def _save_project_route_context(project_id: str, route_catalog: List[Dict[str, Any]]) -> None:
-    path = _project_route_context_path(project_id)
+def _save_project_route_context(
+    project_id: str,
+    route_catalog: List[Dict[str, Any]],
+    tenant_slug: Optional[str] = None,
+) -> None:
+    path = _project_route_context_path(project_id, tenant_slug)
     path.parent.mkdir(parents=True, exist_ok=True)
     doc = {
         "version": 1,
@@ -16259,8 +16267,10 @@ def _save_project_route_context(project_id: str, route_catalog: List[Dict[str, A
     path.write_text(json.dumps(doc, ensure_ascii=False), encoding="utf-8")
 
 
-def _load_project_route_context_doc(project_id: str) -> Optional[Dict[str, Any]]:
-    path = _project_route_context_path(project_id)
+def _load_project_route_context_doc(
+    project_id: str, tenant_slug: Optional[str] = None
+) -> Optional[Dict[str, Any]]:
+    path = _project_route_context_path(project_id, tenant_slug)
     if not path.is_file():
         return None
     try:
@@ -16304,11 +16314,13 @@ def _load_latest_project_route_context_doc() -> Optional[Dict[str, Any]]:
 
 @protected_router.get("/api/walk/route-context")
 def get_walk_route_context(projectId: Optional[str] = Query(None)) -> Dict[str, Any]:
+    caller = current_tenant()
+    tenant_slug = caller.tenant_id if caller else None
     normalized = _normalize_walk_project_id(projectId)
     doc: Optional[Dict[str, Any]] = None
     source = "project"
-    if normalized:
-        doc = _load_project_route_context_doc(normalized)
+    if normalized and tenant_slug:
+        doc = _load_project_route_context_doc(normalized, tenant_slug=tenant_slug)
     if not doc:
         return {"routes": [], "route_count": 0}
     catalog = doc.get("route_catalog")
