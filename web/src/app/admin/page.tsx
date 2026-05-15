@@ -84,7 +84,6 @@ export default function AdminPage() {
   const [cuShowPassword, setCuShowPassword] = useState(false);
 
   // Create company form
-  const [ccSlug, setCcSlug] = useState("");
   const [ccName, setCcName] = useState("");
   const [ccBusy, setCcBusy] = useState(false);
   const [ccError, setCcError] = useState<string | null>(null);
@@ -181,12 +180,12 @@ export default function AdminPage() {
         const res = await apiFetch("/api/admin/companies", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ slug: ccSlug, name: ccName }),
+          body: JSON.stringify({ name: ccName }),
         });
         const data = await res.json();
         if (!res.ok) { setCcError(data.detail ?? "Create failed."); return; }
-        setCcSuccess(`Company "${ccName}" created (slug: ${ccSlug}).`);
-        setCcSlug(""); setCcName("");
+        setCcSuccess(`Company "${data.name}" created (slug: ${data.slug}).`);
+        setCcName("");
         loadData();
       } catch {
         setCcError("Network error.");
@@ -194,7 +193,7 @@ export default function AdminPage() {
         setCcBusy(false);
       }
     },
-    [ccSlug, ccName, loadData],
+    [ccName, loadData],
   );
 
   // ── Reset Password ───────────────────────────────────────────────────────
@@ -281,12 +280,8 @@ export default function AdminPage() {
           <h3 style={{ fontSize: 14, fontWeight: 600, marginBottom: 10, color: "var(--tl-text)" }}>Create Company</h3>
           <form onSubmit={handleCreateCompany} style={{ display: "flex", flexDirection: "column", gap: 10 }}>
             <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-              <div style={{ flex: "1 1 140px", display: "flex", flexDirection: "column", gap: 4 }}>
-                <label style={{ fontSize: 12, color: "var(--tl-text-muted)" }}>Slug (e.g. acme-corp) *</label>
-                <input type="text" required value={ccSlug} onChange={(e) => setCcSlug(e.target.value)} style={inputStyle} placeholder="acme-corp" />
-              </div>
-              <div style={{ flex: "1 1 180px", display: "flex", flexDirection: "column", gap: 4 }}>
-                <label style={{ fontSize: 12, color: "var(--tl-text-muted)" }}>Name *</label>
+              <div style={{ flex: "1 1 200px", display: "flex", flexDirection: "column", gap: 4 }}>
+                <label style={{ fontSize: 12, color: "var(--tl-text-muted)" }}>Company Name *</label>
                 <input type="text" required value={ccName} onChange={(e) => setCcName(e.target.value)} style={inputStyle} placeholder="Acme Corp" />
               </div>
             </div>

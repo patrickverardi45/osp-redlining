@@ -5,6 +5,7 @@ All routes require owner or admin role (require_admin dependency).
 Never returns password hashes. Uses existing db.py helpers throughout.
 """
 
+import re
 import sqlite3
 from datetime import datetime, timezone
 from typing import Optional
@@ -49,8 +50,15 @@ def require_admin(
 # Request models
 # ---------------------------------------------------------------------------
 
+def _slugify(name: str) -> str:
+    s = name.strip().lower()
+    s = re.sub(r"\s+", "-", s)
+    s = re.sub(r"[^a-z0-9-]", "", s)
+    s = re.sub(r"-+", "-", s)
+    return s.strip("-")
+
+
 class CreateCompanyRequest(BaseModel):
-    slug: str
     name: str
 
 
@@ -84,16 +92,22 @@ def list_companies(_: dict = Depends(require_admin)):
 
 @router.post("/companies", status_code=201)
 def create_company_endpoint(body: CreateCompanyRequest, _: dict = Depends(require_admin)):
-    slug = body.slug.strip().lower()
     name = body.name.strip()
-    if not slug or not name:
-        raise HTTPException(status_code=422, detail="slug_and_name_required")
-    try:
-        with auth_db() as conn:
-            company_id = create_company(conn, slug, name)
-    except sqlite3.IntegrityError:
-        raise HTTPException(status_code=409, detail="company_slug_taken")
-    return {"id": company_id, "slug": slug, "name": name}
+    if not name:
+        raise HTTPException(status_code=422, detail="name_required")
+    base_slug = _slugify(name)
+    if not base_slug:
+        raise HTTPException(status_code=422, detail="name_produces_empty_slug")
+    with auth_db() as conn:
+        candidate = base_slug
+        for i in range(2, 12):
+            if not conn.execute("SELECT id FROM companies WHERE slug = ?", (candidate,)).fetchone():
+                break
+            candidate = f"{base_slug}-{i}"
+        else:
+            raise HTTPException(status_code=409, detail="company_slug_taken")
+        company_id = create_company(conn, candidate, name)
+    return {"id": company_id, "slug": candidate, "name": name}
 
 
 # ---------------------------------------------------------------------------
