@@ -67,6 +67,21 @@ const dangerDivider: React.CSSProperties = {
   borderTop: "1px solid #3f1515",
 };
 
+function friendlyAdminError(detail: string | undefined): string {
+  if (!detail) return "Delete failed.";
+  if (detail.startsWith("company_has_users"))
+    return "This company still has users. Remove or delete all users from the company first.";
+  if (detail.startsWith("company_has_projects"))
+    return "This company still has projects in the database. Remove all projects first.";
+  if (detail === "cannot_delete_self") return "You cannot delete your own account.";
+  if (detail === "not_in_your_company") return "That user is not in your company.";
+  if (detail === "admin_cannot_delete_owner_user") return "Admins cannot delete owner-role users.";
+  if (detail === "owner_required") return "Only platform owners can perform this action.";
+  if (detail === "company_not_found") return "Company not found.";
+  if (detail === "user_not_found") return "User not found.";
+  return detail;
+}
+
 // ---------------------------------------------------------------------------
 // Page
 // ---------------------------------------------------------------------------
@@ -270,7 +285,7 @@ export default function AdminPage() {
           loadData();
         } else {
           const data = await res.json().catch(() => ({}));
-          setDeleteUserError((prev) => ({ ...prev, [userId]: data.detail ?? "Delete failed." }));
+          setDeleteUserError((prev) => ({ ...prev, [userId]: friendlyAdminError(data.detail) }));
         }
       } catch {
         setDeleteUserError((prev) => ({ ...prev, [userId]: "Network error." }));
@@ -293,7 +308,7 @@ export default function AdminPage() {
           loadData();
         } else {
           const data = await res.json().catch(() => ({}));
-          setDeleteCompanyError((prev) => ({ ...prev, [companyId]: data.detail ?? "Delete failed." }));
+          setDeleteCompanyError((prev) => ({ ...prev, [companyId]: friendlyAdminError(data.detail) }));
         }
       } catch {
         setDeleteCompanyError((prev) => ({ ...prev, [companyId]: "Network error." }));

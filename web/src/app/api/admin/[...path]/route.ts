@@ -19,3 +19,11 @@ export async function POST(
   const { path } = await params;
   return proxyAppRoute(request, `/admin/${path.join("/")}`);
 }
+
+export async function DELETE(
+  request: NextRequest,
+  { params }: { params: Promise<{ path: string[] }> },
+) {
+  const { path } = await params;
+  return proxyAppRoute(request, `/admin/${path.join("/")}`);
+}
