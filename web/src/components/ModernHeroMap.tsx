@@ -2986,16 +2986,6 @@ export default function ModernHeroMap({
           >
             {showStations ? "Hide Stations" : "Show Stations"}
           </button>
-          {/* Phase 2F — KMZ context toggle */}
-          <button
-            type="button"
-            onClick={() => setLayerKmzContext((v) => !v)}
-            data-active={layerKmzContext ? "true" : "false"}
-            title="Show uploaded KMZ engineering features as an advisory context layer beneath operational redlines"
-            style={layerKmzContext ? { borderColor: "rgba(251,191,36,0.7)", color: "rgba(251,191,36,0.95)" } : {}}
-          >
-            KMZ context
-          </button>
         </div>
 
         {/* Phase 2F — Folder filter panel. Only when KMZ context ON and payload loaded. */}
