@@ -76,6 +76,8 @@ os.makedirs(PROJECT_ROUTE_CONTEXT_DIR, exist_ok=True)
 SESSION_DB_PATH = UPLOADS_DIR / "session_store.db"
 REQUEST_AUDIT_PATH = UPLOADS_DIR / "request_audit.jsonl"
 AUTH_EVENTS_PATH = UPLOADS_DIR / "auth_events.jsonl"
+ERROR_EVENTS_PATH = UPLOADS_DIR / "error_events.jsonl"
+ERROR_EVENTS_MAX_ROWS = 1000
 
 # ─── Private beta request audit foundation ─────────────────────────────────
 # Append-only JSONL of lightweight request traces. Failures are non-fatal.
@@ -248,6 +250,8 @@ class RequestAuditMiddleware(BaseHTTPMiddleware):
         request_id = uuid.uuid4().hex
         timestamp = datetime.now(timezone.utc).isoformat()
         session_id = request.query_params.get("session_id")
+        # Store on state so exception handler and routes can reference it.
+        request.state.request_id = request_id
         status_code = None
         try:
             response = await call_next(request)
@@ -259,6 +263,7 @@ class RequestAuditMiddleware(BaseHTTPMiddleware):
                 record = {
                     "timestamp": timestamp,
                     "request_id": request_id,
+                    "client_request_id": request.headers.get("x-tl-request-id"),
                     "method": request.method,
                     "path": request.url.path,
                     "session_id": session_id,
@@ -267,6 +272,9 @@ class RequestAuditMiddleware(BaseHTTPMiddleware):
                     "auth_path": getattr(request.state, "auth_path", None),
                     "auth_outcome": getattr(request.state, "auth_outcome", None),
                     "caller_tenant_slug": getattr(request.state, "caller_tenant_slug", None),
+                    "user_id": getattr(request.state, "user_id", None),
+                    "company_id": getattr(request.state, "company_id", None),
+                    "role": getattr(request.state, "role", None),
                     "dual_auth_enabled": _DUAL_AUTH_ENABLED,
                 }
                 try:
@@ -279,6 +287,64 @@ class RequestAuditMiddleware(BaseHTTPMiddleware):
                 pass
 
 app.add_middleware(RequestAuditMiddleware)
+
+
+def _write_error_event(request: Request, exc: Exception, status_code: int, duration_ms: int) -> None:
+    """Append one error event to error_events.jsonl. Never raises."""
+    try:
+        record = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "request_id": getattr(request.state, "request_id", None),
+            "client_request_id": request.headers.get("x-tl-request-id"),
+            "method": request.method,
+            "path": request.url.path,
+            "user_id": getattr(request.state, "user_id", None),
+            "company_id": getattr(request.state, "company_id", None),
+            "role": getattr(request.state, "role", None),
+            "caller_tenant_slug": getattr(request.state, "caller_tenant_slug", None),
+            "exception_type": type(exc).__name__,
+            "exception_message": str(exc)[:500],
+            "status_code": status_code,
+            "duration_ms": duration_ms,
+        }
+        try:
+            with open(str(ERROR_EVENTS_PATH), "a", encoding="utf-8") as _fh:
+                _fh.write(json.dumps(record, separators=(",", ":")) + "\n")
+            # Trim to most recent ERROR_EVENTS_MAX_ROWS rows.
+            with open(str(ERROR_EVENTS_PATH), "r", encoding="utf-8") as _fh:
+                _lines = _fh.readlines()
+            if len(_lines) > ERROR_EVENTS_MAX_ROWS:
+                with open(str(ERROR_EVENTS_PATH), "w", encoding="utf-8") as _fh:
+                    _fh.writelines(_lines[-ERROR_EVENTS_MAX_ROWS:])
+        except Exception:
+            logging.warning("Failed to write error event record")
+    except Exception:
+        pass
+
+
+@app.exception_handler(Exception)
+async def _global_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+    """Catch unhandled exceptions, log to error_events.jsonl, return clean 500."""
+    duration_ms = 0
+    try:
+        start = getattr(request.state, "_exc_start", None)
+        if start is not None:
+            duration_ms = int((time.perf_counter() - start) * 1000)
+    except Exception:
+        pass
+    logging.error(
+        "[exception] %s %s → %s: %s",
+        request.method,
+        request.url.path,
+        type(exc).__name__,
+        str(exc)[:200],
+    )
+    _write_error_event(request, exc, 500, duration_ms)
+    return JSONResponse(
+        status_code=500,
+        content={"success": False, "error": "internal_error"},
+    )
+
 
 KML_NS = {
     "kml": "http://www.opengis.net/kml/2.2",
@@ -10152,6 +10218,41 @@ def get_auth_events(limit: int = 100) -> JSONResponse:
         return JSONResponse({"records": records})
     except Exception as e:
         logging.warning(f"Failed to read auth events: {e}")
+        return JSONResponse({"records": []})
+
+
+@localhost_router.get("/api/observability/error-events")
+def get_error_events(limit: int = 100) -> JSONResponse:
+    """Error event observability — Phase 1 hardening.
+
+    Read-only view of recent unhandled exceptions written to
+    `uploads/error_events.jsonl`. Protected by JWT auth (same as all
+    localhost_router endpoints). No stack traces are stored or returned.
+
+    Query params: limit (default 100, max 500).
+    Returns newest-first records. Malformed JSON lines are skipped.
+    """
+    limit = max(1, min(limit or 100, 500))
+    try:
+        if not ERROR_EVENTS_PATH.exists():
+            return JSONResponse({"records": []})
+        with open(ERROR_EVENTS_PATH, "r", encoding="utf-8") as _fh:
+            raw_lines = _fh.readlines()
+        records: List[Dict[str, Any]] = []
+        for line in reversed(raw_lines):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                rec = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            records.append(rec)
+            if len(records) >= limit:
+                break
+        return JSONResponse({"records": records})
+    except Exception as e:
+        logging.warning(f"Failed to read error events: {e}")
         return JSONResponse({"records": []})
 
 

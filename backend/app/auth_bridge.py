@@ -73,6 +73,9 @@ def resolve_caller(request: Request) -> CurrentTenant:
         request.state.auth_path = "realauth"
         request.state.auth_outcome = "realauth_ok"
         request.state.caller_tenant_slug = company["slug"]
+        request.state.user_id = user["id"]
+        request.state.company_id = membership["company_id"]
+        request.state.role = membership["role"]
         return CurrentTenant(
             tenant_id=company["slug"],
             user_id=user["id"],
@@ -116,6 +119,9 @@ def resolve_caller(request: Request) -> CurrentTenant:
     request.state.auth_path = "pilot"
     request.state.auth_outcome = "pilot_ok"
     request.state.caller_tenant_slug = tenant_id.strip()
+    request.state.user_id = payload.get("user_id")
+    request.state.company_id = None
+    request.state.role = None
     return CurrentTenant(
         tenant_id=tenant_id.strip(),
         user_id=payload.get("user_id"),

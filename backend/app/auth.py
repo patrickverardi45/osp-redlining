@@ -47,6 +47,12 @@ def get_current_tenant(request: Request) -> CurrentTenant:
         email=payload.get("email"),
     )
     _current_tenant_ctx.set(tenant)
+    request.state.auth_path = "pilot"
+    request.state.auth_outcome = "pilot_ok"
+    request.state.caller_tenant_slug = tenant_id.strip()
+    request.state.user_id = payload.get("user_id")
+    request.state.company_id = None
+    request.state.role = None
     return tenant
 
 

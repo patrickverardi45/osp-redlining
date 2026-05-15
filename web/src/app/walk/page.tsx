@@ -743,17 +743,20 @@ function uploadStationPhotoFilesNonBlocking(
   form.append("session_id", walkSid);
   form.append("note", opts.note ?? "");
 
-  void apiFetch(`${base}/api/station-photos/upload`, {
-    method: "POST",
-    body: form,
-  })
+  void apiFetch(
+    `${base}/api/station-photos/upload`,
+    { method: "POST", body: form },
+    "walk-station-photo-upload",
+  )
     .then((res) => res.json().catch(() => null))
     .then((data) => {
       if (data && typeof data === "object" && peekSessionId(opts.walkProjectScope) === null) {
         acceptSessionFromMutation(data, opts.walkProjectScope);
       }
     })
-    .catch(() => {});
+    .catch((err: unknown) => {
+      console.warn("[walk-upload] station photo upload failed:", err);
+    });
 }
 
 function stationPhotoDedupKey(file: File): string {

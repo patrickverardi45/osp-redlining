@@ -1,6 +1,7 @@
 import "./globals.css";
 import "leaflet/dist/leaflet.css";
 import AuthGuard from "@/components/AuthGuard";
+import ErrorCapture from "@/components/ErrorCapture";
 
 export const metadata = {
   title: "TrueLine",
@@ -22,6 +23,7 @@ export default function RootLayout({
           color: "#e6ecf5",
         }}
       >
+        <ErrorCapture />
         <AuthGuard>{children}</AuthGuard>
       </body>
     </html>
