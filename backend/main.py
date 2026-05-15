@@ -17193,3 +17193,5 @@ app.include_router(protected_router)
 app.include_router(localhost_router)
 from app.auth_routes import router as _auth_router
 app.include_router(_auth_router)
+from app.admin_routes import router as _admin_router
+app.include_router(_admin_router)

@@ -386,6 +386,9 @@ export default function ProjectsPage() {
             <Link href="/jobs/inbox" className="tl-btn tl-btn-ghost">
               Field Submissions Inbox
             </Link>
+            <Link href="/admin" className="tl-btn tl-btn-ghost">
+              Admin
+            </Link>
           </div>
         </header>
 
