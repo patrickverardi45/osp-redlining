@@ -14315,8 +14315,13 @@ def _station_photo_public_record(record: Dict[str, Any]) -> Dict[str, Any]:
 
 
 @protected_router.get("/api/station-photos")
-async def get_station_photos(station_identity: str, session_id: Optional[str] = None) -> JSONResponse:
+async def get_station_photos(
+    station_identity: str,
+    session_id: Optional[str] = None,
+    request: Request = None,
+) -> JSONResponse:
     resolved_session_id = _resolve_session_id(session_id)
+    _require_tenant_owns_session(resolved_session_id, request)
     station_identity_raw = str(station_identity or "").strip()
     if not station_identity_raw:
         return _err("station_identity is required.", session_id=resolved_session_id)
@@ -14449,8 +14454,13 @@ async def upload_station_photos(
 
 
 @protected_router.get("/api/station-photos/file/{photo_id}")
-async def get_station_photo_file(photo_id: str, session_id: Optional[str] = None):
+async def get_station_photo_file(
+    photo_id: str,
+    session_id: Optional[str] = None,
+    request: Request = None,
+):
     resolved_session_id = _resolve_session_id(session_id)
+    _require_tenant_owns_session(resolved_session_id, request)
     target = str(photo_id or "").strip()
     if not target:
         return _err("photo_id is required.", session_id=resolved_session_id)
