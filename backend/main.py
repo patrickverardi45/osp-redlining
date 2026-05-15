@@ -13720,6 +13720,22 @@ def get_kmz_render_payload() -> JSONResponse:
         )
 
 
+@protected_router.get("/api/engineering-kmz-payload")
+def get_engineering_kmz_payload(session_id: Optional[str] = None) -> JSONResponse:
+    """Production export endpoint for Engineering KMZ + Redlines.
+
+    Serves the same kmz-render-payload data as the observability endpoint but
+    under protected_router (user JWT auth) so the browser export flow can call
+    it without requiring TRUELINE_OBS_TOKEN.  Read-only; no STATE writes.
+    """
+    resolved_session_id = _resolve_session_id(session_id)
+    with _session_scope(resolved_session_id):
+        _sem = STATE.get("kmz_semantic")
+        return JSONResponse(_build_kmz_render_payload(
+            _sem if isinstance(_sem, dict) else None
+        ))
+
+
 @localhost_router.get("/api/observability/reviewed-snap-preview")
 def get_reviewed_snap_preview() -> JSONResponse:
     """Phase 1W — reviewed snapped geometry preview (read-only, diagnostic).

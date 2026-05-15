@@ -2605,7 +2605,7 @@ ${fieldSubmissionPlacemarks.length > 0 ? buildFolder("Selected Field Submission"
     setEngExportError(null);
     let payload: import("@/lib/types/backend").KmzRenderPayloadResponse | null = null;
     try {
-      const res = await apiFetch(`${API_BASE}/api/observability/kmz-render-payload`, { cache: "no-store" });
+      const res = await apiFetch(appendSessionIdReadOnly(`${API_BASE}/api/engineering-kmz-payload`, projectId), { cache: "no-store" });
       if (!res.ok) {
         // Read the actual response body so the operator sees the real backend
         // error (e.g. "Token expired", "Missing or invalid Authorization header")
