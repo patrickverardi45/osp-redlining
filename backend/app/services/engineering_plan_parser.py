@@ -25,7 +25,7 @@ from __future__ import annotations
 import re
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Dict, Iterator, List, Optional, Union
+from typing import Any, Dict, Iterator, List, Mapping, Optional, Sequence, Union
 
 try:
     import pdfplumber  # type: ignore
@@ -792,3 +792,453 @@ def derive_sheet_station_origins(
             continue
 
     return output
+
+
+# ---------------------------------------------------------------------------
+# P5.2 — Footage range containment evaluation
+# ---------------------------------------------------------------------------
+# Pure, deterministic, safe-failure helper that compares a bore-log group's
+# measured stationing span against the expected plan-stationing extent of
+# the sheets it references.
+#
+# This helper is SPAN-CONSISTENCY only — NOT absolute coordinate containment.
+# Bore-log station_ft is generally NOT in the same coordinate system as plan
+# station callouts, so we compare LENGTHS (span_ft vs plan-sheet length sum),
+# not absolute ranges. This is a deliberate constraint of the P5 design.
+#
+# This helper is consumer-agnostic — no STATE, no FastAPI, no PDF I/O, no
+# imports from main.py — and is not wired into any pipeline by this commit.
+#
+# Anchors are evidence, NOT authority:
+#   - never picks a route
+#   - never modifies its input
+#   - never auto-resolves ambiguity
+#   - emits a `would_boost` flag for diagnostic use only; downstream code
+#     (a future P5.4) decides whether to convert evidence to a score boost.
+#
+# Input contracts:
+#
+#   normalized_group:
+#     - span_ft: int or float, > 0. The bore-log group's measured stationing
+#       extent. Required; absent or non-positive triggers no_data.
+#     - print_tokens: list of strings or ints. Bore-log print/sheet
+#       references. May be empty (treated as no_data).
+#
+#   sheet_origins:
+#     - The dict returned by derive_sheet_station_origins, keyed by
+#       integer sheet number. Each entry must carry length_ft, method,
+#       confidence, has_reset_boundary at minimum.
+#
+#   print_to_sheets (optional):
+#     - A mapping print_token -> iterable of int sheet numbers, e.g. the
+#       resolved view of CURRENT_PACKET_PRINT_SHEET_INDEX[token]["sheet"].
+#       When provided, each print token resolves through this mapping.
+#       When absent, each print token is treated as an int sheet number
+#       directly via best-effort coercion.
+#
+# Output:
+#
+#   {
+#     "classification":            str    # contained_consistent / partial_consistent
+#                                         # / out_of_range / uncertain / no_data
+#     "confidence":                str    # high / medium / low / uncertain
+#     "group_span_ft":             int
+#     "expected_plan_span_ft":     int    # 0 when topology unavailable
+#     "consistency_ratio":         float  # min/max, 0-1; 0.0 when expected is 0
+#     "referenced_sheets":         list[int]   # sorted dedup of group's sheets
+#     "missing_sheets":            list[int]   # referenced sheets with no topology
+#     "covered_sheets":            list[int]   # referenced sheets that had topology
+#     "sheet_confidence_levels":   dict[int, str]   # per-sheet confidence
+#     "sheet_methods":             dict[int, str]   # per-sheet method
+#     "has_reset_boundary":        bool   # any covered sheet has slash form
+#     "ambiguity_flags":           list[str]
+#     "reasons":                   list[str]
+#     "would_boost":               bool   # evidence-only; consumer decides
+#   }
+#
+# Classification thresholds (deterministic, explicit):
+#   - contained_consistent: consistency_ratio >= 0.85
+#   - partial_consistent:   0.60 <= ratio < 0.85
+#   - out_of_range:         ratio < 0.60
+#   - uncertain:            unable to compute (no covered sheets, etc.)
+#   - no_data:              insufficient input (no span, no prints)
+#
+# Confidence demotion rules:
+#   - Any missing referenced sheet -> never high
+#   - Any reset boundary on covered sheets -> never high
+#   - Worst per-sheet confidence flows up to the overall confidence
+#   - out_of_range with no missing sheets and high topology -> medium
+#     (the data is good, the result is just a clean negative)
+# ---------------------------------------------------------------------------
+
+_CLASS_CONTAINED = "contained_consistent"
+_CLASS_PARTIAL = "partial_consistent"
+_CLASS_OUT_OF_RANGE = "out_of_range"
+_CLASS_UNCERTAIN = "uncertain"
+_CLASS_NO_DATA = "no_data"
+
+_RATIO_CONTAINED_MIN = 0.85
+_RATIO_PARTIAL_MIN = 0.60
+
+_CONFIDENCE_RANK = {
+    _CONFIDENCE_HIGH: 3,
+    _CONFIDENCE_MEDIUM: 2,
+    _CONFIDENCE_LOW: 1,
+    _CONFIDENCE_UNCERTAIN: 0,
+}
+
+
+def _coerce_positive_number(value: Any) -> Optional[float]:
+    """Strict numeric coercion for span_ft. Returns None for None, booleans,
+    NaN, ±inf, non-numeric strings, or any non-positive value.
+    """
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        try:
+            if value != value:  # NaN
+                return None
+            if value in (float("inf"), float("-inf")):
+                return None
+            f = float(value)
+            return f if f > 0 else None
+        except Exception:
+            return None
+    if isinstance(value, str):
+        s = value.strip()
+        if not s:
+            return None
+        try:
+            f = float(s)
+            if f != f:
+                return None
+            return f if f > 0 else None
+        except Exception:
+            return None
+    return None
+
+
+def _resolve_referenced_sheets(
+    print_tokens: List[Any],
+    print_to_sheets: Optional[Mapping[Any, Any]],
+) -> List[int]:
+    """Resolve a group's print tokens to a sorted, deduplicated list of
+    sheet numbers. Never raises on malformed input.
+    """
+    sheets: set = set()
+    for tok in print_tokens or []:
+        try:
+            if tok is None:
+                continue
+            tok_key = tok
+            if print_to_sheets is not None:
+                # Try the token as-is, then as a string.
+                mapped = None
+                if tok_key in print_to_sheets:
+                    mapped = print_to_sheets[tok_key]
+                else:
+                    try:
+                        s_key = str(tok).strip()
+                        if s_key and s_key in print_to_sheets:
+                            mapped = print_to_sheets[s_key]
+                    except Exception:
+                        mapped = None
+                if mapped is not None:
+                    try:
+                        for s in mapped:
+                            n = _coerce_nonneg_int(s)
+                            if n is not None and n >= 0:
+                                sheets.add(int(n))
+                    except TypeError:
+                        # mapped wasn't iterable
+                        n = _coerce_nonneg_int(mapped)
+                        if n is not None and n >= 0:
+                            sheets.add(int(n))
+                    continue
+                # Fall through: token wasn't in the mapping; try direct coerce.
+            n = _coerce_nonneg_int(tok)
+            if n is not None and n >= 0:
+                sheets.add(int(n))
+        except Exception:
+            continue
+    return sorted(sheets)
+
+
+def _empty_containment_result(
+    classification: str = _CLASS_NO_DATA,
+    confidence: str = _CONFIDENCE_UNCERTAIN,
+    reasons: Optional[List[str]] = None,
+    ambiguity_flags: Optional[List[str]] = None,
+    group_span_ft: int = 0,
+) -> Dict[str, Any]:
+    return {
+        "classification": classification,
+        "confidence": confidence,
+        "group_span_ft": int(group_span_ft),
+        "expected_plan_span_ft": 0,
+        "consistency_ratio": 0.0,
+        "referenced_sheets": [],
+        "missing_sheets": [],
+        "covered_sheets": [],
+        "sheet_confidence_levels": {},
+        "sheet_methods": {},
+        "has_reset_boundary": False,
+        "ambiguity_flags": list(ambiguity_flags or []),
+        "reasons": list(reasons or []),
+        "would_boost": False,
+    }
+
+
+def evaluate_footage_range_containment(
+    normalized_group: Optional[Dict[str, Any]],
+    sheet_origins: Optional[Dict[int, Dict[str, Any]]],
+    print_to_sheets: Optional[Mapping[Any, Any]] = None,
+) -> Dict[str, Any]:
+    """Span-consistency evaluation between a bore-log group and the
+    engineering-plan sheets it references.
+
+    See the section header for full input/output contracts. Returns a
+    populated result dict on every input — never raises. Does NOT mutate
+    its inputs.
+
+    This is evidence-emission only; the `would_boost` flag is a hint and
+    has no authority over route selection.
+    """
+    # ── Step 0: defensive input validation ───────────────────────────────────
+    if not isinstance(normalized_group, dict):
+        return _empty_containment_result(
+            reasons=["normalized_group is not a dict"]
+        )
+
+    span_raw = normalized_group.get("span_ft")
+    span_ft_val = _coerce_positive_number(span_raw)
+    if span_ft_val is None:
+        return _empty_containment_result(
+            reasons=["normalized_group.span_ft missing, non-positive, or non-numeric"]
+        )
+    group_span_ft = int(round(span_ft_val))
+
+    print_tokens_raw = normalized_group.get("print_tokens")
+    if not isinstance(print_tokens_raw, list):
+        print_tokens_raw = []
+    # Read-only snapshot — never mutate caller's list.
+    print_tokens = list(print_tokens_raw)
+
+    if not isinstance(sheet_origins, dict):
+        sheet_origins_local: Dict[int, Dict[str, Any]] = {}
+    else:
+        # Build a shallow normalized view keyed by int. Caller's dict is
+        # not mutated; we copy keys we trust.
+        sheet_origins_local = {}
+        for k, v in sheet_origins.items():
+            try:
+                n = _coerce_nonneg_int(k)
+                if n is None or n < 0:
+                    continue
+                if not isinstance(v, dict):
+                    continue
+                sheet_origins_local[int(n)] = v
+            except Exception:
+                continue
+
+    # ── Step 1: resolve referenced sheets ────────────────────────────────────
+    referenced_sheets = _resolve_referenced_sheets(print_tokens, print_to_sheets)
+    if not referenced_sheets:
+        return _empty_containment_result(
+            group_span_ft=group_span_ft,
+            reasons=["no referenced sheets resolvable from print_tokens"],
+        )
+
+    # ── Step 2: gather per-sheet evidence ────────────────────────────────────
+    covered: List[int] = []
+    missing: List[int] = []
+    sheet_lengths: List[int] = []
+    sheet_confidence_levels: Dict[int, str] = {}
+    sheet_methods: Dict[int, str] = {}
+    has_reset_boundary = False
+    invalid_lengths: List[int] = []
+
+    for sheet_no in referenced_sheets:
+        entry = sheet_origins_local.get(sheet_no)
+        if entry is None:
+            missing.append(sheet_no)
+            continue
+        try:
+            length_raw = entry.get("length_ft")
+            length_val = _coerce_nonneg_int(length_raw)
+            if length_val is None or length_val < 0:
+                invalid_lengths.append(sheet_no)
+                missing.append(sheet_no)
+                continue
+            covered.append(sheet_no)
+            sheet_lengths.append(int(length_val))
+            conf = str(entry.get("confidence") or _CONFIDENCE_UNCERTAIN)
+            method = str(entry.get("method") or _METHOD_UNCERTAIN)
+            sheet_confidence_levels[sheet_no] = conf
+            sheet_methods[sheet_no] = method
+            if bool(entry.get("has_reset_boundary")):
+                has_reset_boundary = True
+        except Exception:
+            invalid_lengths.append(sheet_no)
+            missing.append(sheet_no)
+            continue
+
+    reasons: List[str] = []
+    ambiguity_flags: List[str] = []
+
+    if missing:
+        ambiguity_flags.append("missing_topology")
+        reasons.append(
+            f"No topology for referenced sheets: {sorted(missing)}"
+        )
+    if invalid_lengths:
+        reasons.append(
+            f"Sheets with invalid length_ft skipped: {sorted(invalid_lengths)}"
+        )
+
+    # ── Step 3: handle no-coverage case ──────────────────────────────────────
+    if not covered:
+        return {
+            **_empty_containment_result(
+                classification=_CLASS_UNCERTAIN,
+                confidence=_CONFIDENCE_UNCERTAIN,
+                group_span_ft=group_span_ft,
+                ambiguity_flags=ambiguity_flags,
+                reasons=reasons + ["no covered sheets — cannot derive expected span"],
+            ),
+            "referenced_sheets": referenced_sheets,
+            "missing_sheets": sorted(missing),
+            "covered_sheets": [],
+            "sheet_confidence_levels": {},
+            "sheet_methods": {},
+            "has_reset_boundary": False,
+        }
+
+    # ── Step 4: compute expected span + ratio ────────────────────────────────
+    expected_plan_span_ft = int(sum(sheet_lengths))
+
+    # Multi-print groups whose sheets are non-contiguous deserve a flag.
+    if len(covered) >= 2:
+        gaps = [
+            covered[i + 1] - covered[i]
+            for i in range(len(covered) - 1)
+        ]
+        if any(g > 1 for g in gaps):
+            ambiguity_flags.append("non_contiguous_sheet_references")
+            reasons.append(
+                f"Referenced sheets are non-contiguous: {covered}"
+            )
+
+    if expected_plan_span_ft <= 0:
+        consistency_ratio = 0.0
+        classification = _CLASS_UNCERTAIN
+        reasons.append("expected_plan_span_ft is zero — sheet lengths sum to 0")
+    else:
+        ratio = (
+            min(group_span_ft, expected_plan_span_ft)
+            / max(group_span_ft, expected_plan_span_ft)
+        )
+        # Stable rounding for deterministic comparison and output.
+        consistency_ratio = round(ratio, 6)
+        if consistency_ratio >= _RATIO_CONTAINED_MIN:
+            classification = _CLASS_CONTAINED
+            reasons.append(
+                f"Group span {group_span_ft} ft consistent with plan "
+                f"sheet length sum {expected_plan_span_ft} ft "
+                f"(ratio {consistency_ratio:.3f} >= {_RATIO_CONTAINED_MIN})."
+            )
+        elif consistency_ratio >= _RATIO_PARTIAL_MIN:
+            classification = _CLASS_PARTIAL
+            reasons.append(
+                f"Group span {group_span_ft} ft partially consistent with "
+                f"plan sheet length sum {expected_plan_span_ft} ft "
+                f"(ratio {consistency_ratio:.3f})."
+            )
+        else:
+            classification = _CLASS_OUT_OF_RANGE
+            reasons.append(
+                f"Group span {group_span_ft} ft is out of range vs plan "
+                f"sheet length sum {expected_plan_span_ft} ft "
+                f"(ratio {consistency_ratio:.3f} < {_RATIO_PARTIAL_MIN})."
+            )
+
+    # ── Step 5: derive overall confidence ────────────────────────────────────
+    if classification == _CLASS_UNCERTAIN:
+        overall_confidence = _CONFIDENCE_UNCERTAIN
+    else:
+        # Start from the worst per-sheet confidence among covered sheets.
+        per_sheet_ranks = [
+            _CONFIDENCE_RANK.get(sheet_confidence_levels[s], 0)
+            for s in covered
+        ]
+        worst_rank = min(per_sheet_ranks) if per_sheet_ranks else 0
+        rank_to_label = {v: k for k, v in _CONFIDENCE_RANK.items()}
+        overall_confidence = rank_to_label.get(worst_rank, _CONFIDENCE_UNCERTAIN)
+
+        # Demotions:
+        if missing:
+            # Any missing topology -> never high.
+            if overall_confidence == _CONFIDENCE_HIGH:
+                overall_confidence = _CONFIDENCE_MEDIUM
+                reasons.append(
+                    "Confidence demoted to medium: at least one referenced "
+                    "sheet had no topology data."
+                )
+
+        if has_reset_boundary:
+            # Reset boundaries lower confidence by one step (never lower
+            # than low).
+            if overall_confidence == _CONFIDENCE_HIGH:
+                overall_confidence = _CONFIDENCE_MEDIUM
+                reasons.append(
+                    "Confidence demoted to medium: covered sheets include a "
+                    "slash-form (stationing reset) boundary."
+                )
+            elif overall_confidence == _CONFIDENCE_MEDIUM:
+                overall_confidence = _CONFIDENCE_LOW
+                reasons.append(
+                    "Confidence demoted to low: covered sheets include a "
+                    "slash-form (stationing reset) boundary."
+                )
+
+        if "non_contiguous_sheet_references" in ambiguity_flags:
+            if overall_confidence == _CONFIDENCE_HIGH:
+                overall_confidence = _CONFIDENCE_MEDIUM
+                reasons.append(
+                    "Confidence demoted to medium: referenced sheets are "
+                    "non-contiguous."
+                )
+
+    # ── Step 6: derive `would_boost` evidence flag ───────────────────────────
+    # Strictly evidence-emission. A future consumer (P5.4) decides whether
+    # to convert evidence to score. The flag is true only when:
+    #   - classification is contained_consistent or partial_consistent
+    #   - confidence is high or medium
+    #   - no missing sheets
+    #   - no reset boundaries
+    #   - reference set is contiguous
+    would_boost = (
+        classification in (_CLASS_CONTAINED, _CLASS_PARTIAL)
+        and overall_confidence in (_CONFIDENCE_HIGH, _CONFIDENCE_MEDIUM)
+        and not missing
+        and not has_reset_boundary
+        and "non_contiguous_sheet_references" not in ambiguity_flags
+    )
+
+    # ── Step 7: emit deterministic result ────────────────────────────────────
+    return {
+        "classification": classification,
+        "confidence": overall_confidence,
+        "group_span_ft": int(group_span_ft),
+        "expected_plan_span_ft": int(expected_plan_span_ft),
+        "consistency_ratio": float(consistency_ratio),
+        "referenced_sheets": list(referenced_sheets),
+        "missing_sheets": sorted(missing),
+        "covered_sheets": sorted(covered),
+        "sheet_confidence_levels": dict(sheet_confidence_levels),
+        "sheet_methods": dict(sheet_methods),
+        "has_reset_boundary": bool(has_reset_boundary),
+        "ambiguity_flags": sorted(set(ambiguity_flags)),
+        "reasons": list(reasons),
+        "would_boost": bool(would_boost),
+    }
