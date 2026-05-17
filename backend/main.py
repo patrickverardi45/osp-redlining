@@ -2022,6 +2022,11 @@ def _kmz_semantic_parse_styles(root: ET.Element) -> Dict[str, Dict[str, Any]]:
         sid = (style.get("id") or "").strip()
         if not sid:
             continue
+        # First-declared wins on duplicate <Style id="..."> to match Google
+        # Earth's tolerance for invalid-but-renderable KML (e.g. the Brenham
+        # Phase 5 source has two <Style id="i46"> blocks; GE binds the first).
+        if sid in raw_styles:
+            continue
         try:
             raw_styles[sid] = _kmz_semantic_extract_style_props(style)
         except Exception:

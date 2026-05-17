@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { strToU8, unzipSync, zipSync } from "fflate";
 import type {
   CandidateRanking,
   VerificationInfo,
@@ -1129,6 +1130,10 @@ function OfficeRedlineMapInner({
   const initialFitTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const focusedNovaIssueTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const focusStatusTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // F7b — non-KML assets (icons, images) extracted from the most recently
+  // uploaded source KMZ. Populated in handleDesignUpload, consumed in
+  // handleExportEngineeringKml. In-memory only; lost on reload.
+  const kmzAssetsRef = useRef<Map<string, Uint8Array>>(new Map());
   const fieldInboxRefreshRef = useRef<(() => void) | null>(null);
 
   const [selectedFieldSessionId, setSelectedFieldSessionId] = useState<string | null>(null);
@@ -2627,12 +2632,28 @@ ${fieldSubmissionPlacemarks.length > 0 ? buildFolder("Selected Field Submission"
     }
     if (!payload) return;
 
+    const mappedPhotos = gpsPhotos.filter((p) => p.reason === "mapped" && p.file);
+    const photoDataUrlMap = new Map<string, string>();
+    if (mappedPhotos.length > 0) {
+      await Promise.all(
+        mappedPhotos.map((p) =>
+          new Promise<void>((resolve) => {
+            const reader = new FileReader();
+            reader.onload = () => { photoDataUrlMap.set(p.id, reader.result as string); resolve(); };
+            reader.onerror = () => resolve();
+            reader.readAsDataURL(p.file);
+          })
+        ),
+      );
+    }
+
     const buildEngFolder = (name: string, marks: string[]) =>
       `    <Folder>\n      <name>${escapeXml(name)}</name>\n${marks.join("\n")}\n    </Folder>`;
 
     // Build metadata description table for any engineering feature.
     const engMeta = (f: {
       description: string;
+      description_raw: string;
       classification: string;
       folder_path: string[];
       chainage_ft: number | null;
@@ -2641,6 +2662,9 @@ ${fieldSubmissionPlacemarks.length > 0 ? buildFolder("Selected Field Submission"
       lifecycle: { label: string; confidence: string; reason: string } | null;
       extended_data: Record<string, string>;
     }) => {
+      if (f.description_raw) {
+        return `<![CDATA[${f.description_raw.replaceAll("]]>", "]]]]><![CDATA[>")}]]>`;
+      }
       const rows: Array<{ label: string; value: string }> = [];
       if (f.description) rows.push({ label: "Description", value: f.description });
       rows.push({ label: "Classification", value: f.classification });
@@ -2649,11 +2673,8 @@ ${fieldSubmissionPlacemarks.length > 0 ? buildFolder("Selected Field Submission"
       if (f.sequence_number) rows.push({ label: "Sequence #", value: f.sequence_number });
       if (f.sequence_kind) rows.push({ label: "Sequence kind", value: f.sequence_kind });
       if (f.lifecycle) rows.push({ label: "Lifecycle", value: `${f.lifecycle.label} (${f.lifecycle.confidence})` });
-      let extCount = 0;
       for (const [k, v] of Object.entries(f.extended_data ?? {})) {
-        if (extCount >= 8) break;
         rows.push({ label: k, value: String(v) });
-        extCount++;
       }
       return kmlDescriptionTable(rows);
     };
@@ -2666,30 +2687,61 @@ ${fieldSubmissionPlacemarks.length > 0 ? buildFolder("Selected Field Submission"
       return folderMap.get(key)!;
     };
 
+    // F3 helpers — scoped to export path, no external side effects
+    const hexToKmlColor = (hex: string, alphaHex = "ff"): string => {
+      const m = /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hex);
+      if (!m) return `${alphaHex}ffffff`;
+      return `${alphaHex}${m[3]}${m[2]}${m[1]}`; // aabbggrr
+    };
+    const sanitizeFeatId = (id: string): string =>
+      (id || "f").replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 48);
+    const featureStyles: string[] = [];
+    // F7c — track icon_href values referenced by per-feature styles so the
+    // KMZ packager can include matching asset bytes from kmzAssetsRef.
+    const referencedHrefs = new Set<string>();
+
     // Points
+    let _ptStyleIdx = 0;
     for (const pt of (payload.points ?? [])) {
       const [lat, lon] = pt.coord ?? [];
       const coord = kmlCoordinateFromLatLon(lat, lon);
       if (!coord) continue;
       const name = pt.name || pt.classification || "Unnamed Point";
+      let ptStyleUrl = "#engPointStyle";
+      if (pt.icon_href) {
+        const ptStyleId = `pt_${sanitizeFeatId(pt.feature_id)}_${_ptStyleIdx++}`;
+        featureStyles.push(
+          `    <Style id="${ptStyleId}">\n      <IconStyle><scale>0.8</scale><Icon><href>${pt.icon_href}</href></Icon></IconStyle>\n      <LabelStyle><scale>0.7</scale></LabelStyle>\n    </Style>`,
+        );
+        ptStyleUrl = `#${ptStyleId}`;
+        referencedHrefs.add(pt.icon_href);
+      }
       getFolderBucket(pt.folder_path).push(
-        `      <Placemark>\n        <name>${escapeXml(name)}</name>\n        <description>${engMeta(pt)}</description>\n        <styleUrl>#engPointStyle</styleUrl>\n        <Point><coordinates>${coord}</coordinates></Point>\n      </Placemark>`,
+        `      <Placemark>\n        <name>${escapeXml(name)}</name>\n        <description>${engMeta(pt)}</description>\n        <styleUrl>${ptStyleUrl}</styleUrl>\n        <Point><coordinates>${coord}</coordinates></Point>\n      </Placemark>`,
       );
     }
 
     // Lines
+    let _lineStyleIdx = 0;
     for (const line of (payload.lines ?? [])) {
       const coords = (line.coords ?? [])
         .map((p) => kmlCoordinateFromLatLon(p[0], p[1]))
         .filter((c): c is string => Boolean(c));
       if (coords.length < 2) continue;
       const name = line.name || "Unnamed Line";
+      const lineKmlColor = hexToKmlColor(line.color || "#94a3b8", line.dash ? "88" : "ff");
+      const lineWidth = typeof line.width === "number" ? Math.max(0.5, line.width) : 2;
+      const lineStyleId = `fl_${sanitizeFeatId(line.feature_id)}_${_lineStyleIdx++}`;
+      featureStyles.push(
+        `    <Style id="${lineStyleId}">\n      <LineStyle><color>${lineKmlColor}</color><width>${lineWidth}</width></LineStyle>\n    </Style>`,
+      );
       getFolderBucket(line.folder_path).push(
-        `      <Placemark>\n        <name>${escapeXml(name)}</name>\n        <description>${engMeta(line)}</description>\n        <styleUrl>#engLineStyle</styleUrl>\n        <LineString><tessellate>1</tessellate><coordinates>${coords.join(" ")}</coordinates></LineString>\n      </Placemark>`,
+        `      <Placemark>\n        <name>${escapeXml(name)}</name>\n        <description>${engMeta(line)}</description>\n        <styleUrl>#${lineStyleId}</styleUrl>\n        <LineString><tessellate>1</tessellate><coordinates>${coords.join(" ")}</coordinates></LineString>\n      </Placemark>`,
       );
     }
 
     // Polygons
+    let _polyStyleIdx = 0;
     for (const poly of (payload.polygons ?? [])) {
       const outer = (poly.outer ?? [])
         .map((p) => kmlCoordinateFromLatLon(p[0], p[1]))
@@ -2704,9 +2756,261 @@ ${fieldSubmissionPlacemarks.length > 0 ? buildFolder("Selected Field Submission"
         })
         .filter(Boolean)
         .join("\n");
-      getFolderBucket(poly.folder_path).push(
-        `      <Placemark>\n        <name>${escapeXml(name)}</name>\n        <description>${engMeta(poly)}</description>\n        <styleUrl>#engPolyStyle</styleUrl>\n        <Polygon><tessellate>1</tessellate><outerBoundaryIs><LinearRing><coordinates>${outer.join(" ")}</coordinates></LinearRing></outerBoundaryIs>${innerRingsXml ? "\n" + innerRingsXml : ""}\n        </Polygon>\n      </Placemark>`,
+      const polyOutlineColor = hexToKmlColor(poly.fill_color || "#94a3b8", "ff");
+      const polyFillColor = hexToKmlColor(poly.fill_color || "#94a3b8", "33");
+      const polyStyleId = `fp_${sanitizeFeatId(poly.feature_id)}_${_polyStyleIdx++}`;
+      featureStyles.push(
+        `    <Style id="${polyStyleId}">\n      <LineStyle><color>${polyOutlineColor}</color><width>1</width></LineStyle>\n      <PolyStyle><color>${polyFillColor}</color><fill>1</fill><outline>1</outline></PolyStyle>\n    </Style>`,
       );
+      getFolderBucket(poly.folder_path).push(
+        `      <Placemark>\n        <name>${escapeXml(name)}</name>\n        <description>${engMeta(poly)}</description>\n        <styleUrl>#${polyStyleId}</styleUrl>\n        <Polygon><tessellate>1</tessellate><outerBoundaryIs><LinearRing><coordinates>${outer.join(" ")}</coordinates></LinearRing></outerBoundaryIs>${innerRingsXml ? "\n" + innerRingsXml : ""}\n        </Polygon>\n      </Placemark>`,
+      );
+    }
+
+    const photoPlacemarks: string[] = [];
+    gpsPhotos.forEach((p) => {
+      if (p.reason !== "mapped") return;
+      const markerLat = typeof p.displayLat === "number" ? p.displayLat : p.lat;
+      const markerLon = typeof p.displayLon === "number" ? p.displayLon : p.lon;
+      const coordinate = kmlCoordinateFromLatLon(markerLat, markerLon);
+      if (!coordinate) return;
+      const dataUrl = photoDataUrlMap.get(p.id);
+      const descriptionHtml = `\n  <div style="font-family: Arial; font-size: 12px;">\n    <strong>${p.filename || "Photo"}</strong><br/><br/>\n    ${dataUrl ? `<img src="${dataUrl}" style="max-width:300px; border:1px solid #ccc;" /><br/><br/>` : `<i>No preview available</i><br/><br/>`}\n    <b>Original GPS:</b> ${typeof p.lat === "number" ? p.lat.toFixed(6) : "--"}, ${typeof p.lon === "number" ? p.lon.toFixed(6) : "--"}<br/>\n    <b>Adjusted:</b> ${typeof p.displayLat === "number" && typeof p.displayLon === "number" ? `${p.displayLat.toFixed(6)}, ${p.displayLon.toFixed(6)}` : "none"}\n  </div>\n`;
+      photoPlacemarks.push(
+        `      <Placemark>\n        <name>${escapeXml(p.filename)}</name>\n        <description><![CDATA[${descriptionHtml.replaceAll("]]>", "]]]]><![CDATA[>")}]]></description>\n        <styleUrl>#engPhotoStyle</styleUrl>\n        <Point><coordinates>${coordinate}</coordinates></Point>\n      </Placemark>`,
+      );
+    });
+
+    const officeRouteJob = cleanDisplayText(
+      (state?.selected_route_name && state.selected_route_name.trim()) ||
+        (state?.route_name && state.route_name.trim()) ||
+        (activeJob !== "--" ? String(activeJob) : ""),
+    );
+
+    const stationPlacemarks: string[] = [];
+    stationPoints.forEach((point, idx) => {
+      const coordinate = kmlCoordinateFromLatLon(point.lat, point.lon);
+      if (!coordinate) return;
+      const stationLabel = cleanDisplayText(point.station);
+      const ll = kmlLatLonCells(point.lat, point.lon);
+      const stationFtCell = formatNumber(point.station_ft, 3);
+      const mappedFtCell = formatNumber(point.mapped_station_ft, 3);
+      stationPlacemarks.push(`      <Placemark>
+        <name>${escapeXml(`Station ${stationLabel !== "--" ? stationLabel : idx + 1}`)}</name>
+        <description>${kmlDescriptionTable([
+          { label: "Station", value: stationLabel },
+          { label: "Station FT / mapped footage", value: kmlStationFtSlashMapped(stationFtCell, mappedFtCell) },
+          { label: "Source file", value: cleanDisplayText(point.source_file) },
+          { label: "Route / job", value: officeRouteJob },
+          { label: "Session ID", value: "--" },
+          { label: "Crew", value: cleanDisplayText(point.crew) },
+          { label: "Date / timestamp", value: cleanDisplayText(point.date) },
+          { label: "Depth FT", value: formatNumber(point.depth_ft, 3) },
+          { label: "BOC FT", value: formatNumber(point.boc_ft, 3) },
+          { label: "Notes", value: cleanDisplayText(point.notes) },
+          { label: "Photo count", value: "--" },
+          { label: "Latitude", value: ll.lat },
+          { label: "Longitude", value: ll.lon },
+        ])}</description>
+        <styleUrl>#engStationStyle</styleUrl>
+        <Point>
+          <coordinates>${coordinate}</coordinates>
+        </Point>
+      </Placemark>`);
+    });
+
+    const fieldSubmissionPlacemarks: string[] = [];
+    if (
+      selectedFieldSessionId?.trim() &&
+      layerRoutes &&
+      projectedFieldStations.length >= 2
+    ) {
+      const finiteFts = projectedFieldStations
+        .map(({ st }) => fieldStationFtFromRow(st))
+        .filter((ft): ft is number => Number.isFinite(ft));
+      let pathCoords: number[][] = [];
+      if (finiteFts.length >= 2 && kmzSnapPolylines.length > 0) {
+        const startFt = Math.min(...finiteFts);
+        const endFt = Math.max(...finiteFts);
+        pathCoords = kmzSubpathCoordsByDistanceRangeFt(kmzSnapPolylines, startFt, endFt);
+      }
+      if (pathCoords.length < 2) {
+        pathCoords = projectedFieldStations.map(({ displayLat, displayLon }) => [displayLat, displayLon]);
+      }
+      const coordinates = pathCoords
+        .map((pt) => kmlCoordinateFromLatLon(pt[0], pt[1]))
+        .filter((coord): coord is string => Boolean(coord));
+      if (coordinates.length >= 2) {
+        const sessionId = selectedFieldSessionId.trim();
+        const crew = selectedFieldSession?.crew_name ? cleanDisplayText(selectedFieldSession.crew_name) : "";
+        const rawStarted = selectedFieldSession?.started_at;
+        const rawEnded = selectedFieldSession?.ended_at;
+        const sessionPhotos = selectedFieldJobDetail?.photos ?? [];
+        const fieldRouteJob = kmlFieldJobRouteJob(selectedFieldJobDetail ?? null);
+        const sessionTsRaw = rawStarted || rawEnded || "";
+        const sessionDateCell = sessionTsRaw
+          ? `${formatDisplayDate(sessionTsRaw)} (${sessionTsRaw})`
+          : "--";
+        const sessionPhotoTotal = sessionPhotos.filter((p) => String(p.session_id ?? "") === sessionId).length;
+        const crewCell = crew && crew !== "--" ? crew : "--";
+        const withFt = projectedFieldStations.map((row) => ({ row, ft: fieldStationFtFromRow(row.st) }));
+        const sortedByFt = withFt.filter((x) => Number.isFinite(x.ft)).sort((a, b) => a.ft - b.ft);
+        const sortedAllByFt = [...withFt].sort((a, b) => {
+          const fa = Number.isFinite(a.ft) ? a.ft : Number.POSITIVE_INFINITY;
+          const fb = Number.isFinite(b.ft) ? b.ft : Number.POSITIVE_INFINITY;
+          if (fa !== fb) return fa - fb;
+          return String(a.row.st.id).localeCompare(String(b.row.st.id));
+        });
+        const startStationLabel =
+          sortedByFt.length > 0 ? cleanDisplayText(sortedByFt[0].row.st.station_number) : "--";
+        const endStationLabel =
+          sortedByFt.length > 0
+            ? cleanDisplayText(sortedByFt[sortedByFt.length - 1].row.st.station_number)
+            : "--";
+        const lineOverviewNote =
+          startStationLabel !== "--" && endStationLabel !== "--"
+            ? `Path from ${startStationLabel} through ${endStationLabel}`
+            : startStationLabel !== "--"
+              ? `Path from ${startStationLabel}`
+              : endStationLabel !== "--"
+                ? `Path through ${endStationLabel}`
+                : "--";
+        fieldSubmissionPlacemarks.push(`      <Placemark>
+        <name>${escapeXml(`Field Submission ${sessionId}`)}</name>
+        <description>${kmlDescriptionTable([
+          { label: "Station", value: "Field submission path" },
+          { label: "Station FT / mapped footage", value: "--" },
+          { label: "Source file", value: "--" },
+          { label: "Route / job", value: fieldRouteJob },
+          { label: "Session ID", value: sessionId },
+          { label: "Crew", value: crewCell },
+          { label: "Date / timestamp", value: sessionDateCell },
+          { label: "Depth FT", value: "--" },
+          { label: "BOC FT", value: "--" },
+          { label: "Notes", value: lineOverviewNote },
+          { label: "Photo count", value: String(sessionPhotoTotal) },
+          { label: "Latitude", value: "--" },
+          { label: "Longitude", value: "--" },
+        ])}</description>
+        <styleUrl>#engFieldSubmissionStyle</styleUrl>
+        <LineString>
+          <tessellate>1</tessellate>
+          <coordinates>
+            ${coordinates.join("\n            ")}
+          </coordinates>
+        </LineString>
+      </Placemark>`);
+
+        if (sortedByFt.length > 0) {
+          const firstEntry = sortedByFt[0];
+          const lastEntry = sortedByFt[sortedByFt.length - 1];
+          const startCoord = kmlCoordinateFromLatLon(firstEntry.row.displayLat, firstEntry.row.displayLon);
+          if (startCoord) {
+            const startNum = cleanDisplayText(firstEntry.row.st.station_number);
+            const stationKeyStart = String(firstEntry.row.st.station_number ?? "").trim();
+            const mapStartRaw = (firstEntry.row.st as { mapped_station_ft?: number }).mapped_station_ft;
+            const mappedStart =
+              typeof mapStartRaw === "number" && Number.isFinite(mapStartRaw)
+                ? formatNumber(mapStartRaw, 3)
+                : "--";
+            const ftStart = Number.isFinite(firstEntry.ft) ? formatNumber(firstEntry.ft, 3) : "--";
+            const llS = kmlLatLonCells(firstEntry.row.displayLat, firstEntry.row.displayLon);
+            fieldSubmissionPlacemarks.push(`      <Placemark>
+        <name>${escapeXml(`Start ${startNum}`)}</name>
+        <description>${kmlDescriptionTable([
+          { label: "Station", value: `${startNum} (start)` },
+          { label: "Station FT / mapped footage", value: kmlStationFtSlashMapped(ftStart, mappedStart) },
+          { label: "Source file", value: "--" },
+          { label: "Route / job", value: fieldRouteJob },
+          { label: "Session ID", value: sessionId },
+          { label: "Crew", value: crewCell },
+          { label: "Date / timestamp", value: sessionDateCell },
+          { label: "Depth FT", value: formatNumber(firstEntry.row.st.depth_ft, 3) },
+          { label: "BOC FT", value: formatNumber(firstEntry.row.st.boc_ft, 3) },
+          { label: "Notes", value: kmlSessionPhotoNotesForStation(sessionPhotos, sessionId, stationKeyStart) },
+          { label: "Photo count", value: kmlSessionPhotoCountForStation(sessionPhotos, sessionId, stationKeyStart) },
+          { label: "Latitude", value: llS.lat },
+          { label: "Longitude", value: llS.lon },
+        ])}</description>
+        <styleUrl>#engStationStyle</styleUrl>
+        <Point>
+          <coordinates>${startCoord}</coordinates>
+        </Point>
+      </Placemark>`);
+          }
+          const endCoord = kmlCoordinateFromLatLon(lastEntry.row.displayLat, lastEntry.row.displayLon);
+          if (endCoord) {
+            const endNum = cleanDisplayText(lastEntry.row.st.station_number);
+            const stationKeyEnd = String(lastEntry.row.st.station_number ?? "").trim();
+            const mapEndRaw = (lastEntry.row.st as { mapped_station_ft?: number }).mapped_station_ft;
+            const mappedEnd =
+              typeof mapEndRaw === "number" && Number.isFinite(mapEndRaw)
+                ? formatNumber(mapEndRaw, 3)
+                : "--";
+            const ftEnd = Number.isFinite(lastEntry.ft) ? formatNumber(lastEntry.ft, 3) : "--";
+            const llE = kmlLatLonCells(lastEntry.row.displayLat, lastEntry.row.displayLon);
+            fieldSubmissionPlacemarks.push(`      <Placemark>
+        <name>${escapeXml(`End ${endNum}`)}</name>
+        <description>${kmlDescriptionTable([
+          { label: "Station", value: `${endNum} (end)` },
+          { label: "Station FT / mapped footage", value: kmlStationFtSlashMapped(ftEnd, mappedEnd) },
+          { label: "Source file", value: "--" },
+          { label: "Route / job", value: fieldRouteJob },
+          { label: "Session ID", value: sessionId },
+          { label: "Crew", value: crewCell },
+          { label: "Date / timestamp", value: sessionDateCell },
+          { label: "Depth FT", value: formatNumber(lastEntry.row.st.depth_ft, 3) },
+          { label: "BOC FT", value: formatNumber(lastEntry.row.st.boc_ft, 3) },
+          { label: "Notes", value: kmlSessionPhotoNotesForStation(sessionPhotos, sessionId, stationKeyEnd) },
+          { label: "Photo count", value: kmlSessionPhotoCountForStation(sessionPhotos, sessionId, stationKeyEnd) },
+          { label: "Latitude", value: llE.lat },
+          { label: "Longitude", value: llE.lon },
+        ])}</description>
+        <styleUrl>#engStationStyle</styleUrl>
+        <Point>
+          <coordinates>${endCoord}</coordinates>
+        </Point>
+      </Placemark>`);
+          }
+        }
+
+        for (const { row, ft } of sortedAllByFt) {
+          const coord = kmlCoordinateFromLatLon(row.displayLat, row.displayLon);
+          if (!coord) continue;
+          const st = row.st;
+          const sn = cleanDisplayText(st.station_number);
+          const stationKey = String(st.station_number ?? "").trim();
+          const mapRowRaw = (st as { mapped_station_ft?: number }).mapped_station_ft;
+          const mappedSt =
+            typeof mapRowRaw === "number" && Number.isFinite(mapRowRaw)
+              ? formatNumber(mapRowRaw, 3)
+              : "--";
+          const ftCell = Number.isFinite(ft) ? formatNumber(ft, 3) : "--";
+          const ll = kmlLatLonCells(row.displayLat, row.displayLon);
+          fieldSubmissionPlacemarks.push(`      <Placemark>
+        <name>${escapeXml(`Station ${sn}`)}</name>
+        <description>${kmlDescriptionTable([
+          { label: "Station", value: sn },
+          { label: "Station FT / mapped footage", value: kmlStationFtSlashMapped(ftCell, mappedSt) },
+          { label: "Source file", value: "--" },
+          { label: "Route / job", value: fieldRouteJob },
+          { label: "Session ID", value: sessionId },
+          { label: "Crew", value: crewCell },
+          { label: "Date / timestamp", value: sessionDateCell },
+          { label: "Depth FT", value: formatNumber(st.depth_ft, 3) },
+          { label: "BOC FT", value: formatNumber(st.boc_ft, 3) },
+          { label: "Notes", value: kmlSessionPhotoNotesForStation(sessionPhotos, sessionId, stationKey) },
+          { label: "Photo count", value: kmlSessionPhotoCountForStation(sessionPhotos, sessionId, stationKey) },
+          { label: "Latitude", value: ll.lat },
+          { label: "Longitude", value: ll.lon },
+        ])}</description>
+        <styleUrl>#engStationStyle</styleUrl>
+        <Point>
+          <coordinates>${coord}</coordinates>
+        </Point>
+      </Placemark>`);
+        }
+      }
     }
 
     // Engineering context folders
@@ -2746,22 +3050,49 @@ ${fieldSubmissionPlacemarks.length > 0 ? buildFolder("Selected Field Submission"
     <Style id="engRedlineStyle">
       <LineStyle><color>ff0000ff</color><width>5</width></LineStyle>
     </Style>
-${engFolderBlocks}
+    <Style id="engPhotoStyle">
+      <IconStyle><scale>0.9</scale></IconStyle>
+    </Style>
+    <Style id="engStationStyle">
+      <IconStyle><scale>0.7</scale></IconStyle>
+    </Style>
+    <Style id="engFieldSubmissionStyle">
+      <LineStyle><color>ff0000ff</color><width>7</width></LineStyle>
+    </Style>
+${featureStyles.length > 0 ? featureStyles.join("\n") + "\n" : ""}${engFolderBlocks}
+${photoPlacemarks.length > 0 ? buildEngFolder("Photos", photoPlacemarks) : ""}
+${stationPlacemarks.length > 0 ? buildEngFolder("Stations", stationPlacemarks) : ""}
+${fieldSubmissionPlacemarks.length > 0 ? buildEngFolder("Selected Field Submission", fieldSubmissionPlacemarks) : ""}
 ${redlinePlacemarks.length > 0 ? buildEngFolder("As-Built Redlines", redlinePlacemarks) : ""}
   </Document>
 </kml>`;
 
-    const blob = new Blob([kml], { type: "application/vnd.google-earth.kml+xml" });
+    // F7a + F7c — wrap KML in a real KMZ ZIP archive with doc.kml at the root,
+    // and embed referenced icon assets at their original relative paths so
+    // Google Earth resolves them inside the archive. Absolute URLs and data
+    // URIs pass through the KML unchanged and require no archive entry.
+    const zipEntries: Record<string, Uint8Array> = {
+      "doc.kml": strToU8(kml),
+    };
+    for (const href of referencedHrefs) {
+      if (/^(https?:|data:|file:)/i.test(href)) continue;
+      const bytes = kmzAssetsRef.current.get(href);
+      if (bytes) zipEntries[href] = bytes;
+    }
+    const zipBytes = zipSync(zipEntries);
+    // Copy into a fresh ArrayBuffer so the Blob owns standalone bytes
+    // independent of any pooled buffer fflate may share.
+    const blob = new Blob([new Uint8Array(zipBytes)], { type: "application/vnd.google-earth.kmz" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
-    link.download = "engineering_kmz_context_plus_redlines.kml";
+    link.download = "engineering_kmz_context_plus_redlines.kmz";
     document.body.appendChild(link);
     link.click();
     link.remove();
     URL.revokeObjectURL(url);
     setEngExportError(null);
-  }, [redlineSegments]);
+  }, [activeJob, gpsPhotos, kmzSnapPolylines, layerRoutes, projectedFieldStations, redlineSegments, selectedFieldJobDetail, selectedFieldSession, selectedFieldSessionId, state, stationPoints]);
 
   const fitToBounds = useCallback((targetBounds: Bounds | null) => {
     const container = mapContainerRef.current;
@@ -3135,6 +3466,26 @@ ${redlinePlacemarks.length > 0 ? buildEngFolder("As-Built Redlines", redlinePlac
       acceptSessionFromMutation(data, projectId);
       if (!response.ok || data.success === false) throw new Error(data.error || "Design upload failed.");
       setState(data);
+      // F7b — capture non-KML assets (icons, images) from the source KMZ so
+      // they can be repackaged into the engineering KMZ export. Silent failure:
+      // any error here MUST NOT break the upload UX.
+      if (file.name.toLowerCase().endsWith(".kmz")) {
+        try {
+          const buf = new Uint8Array(await file.arrayBuffer());
+          const entries = unzipSync(buf);
+          const assets = new Map<string, Uint8Array>();
+          for (const [path, bytes] of Object.entries(entries)) {
+            if (!path.toLowerCase().endsWith(".kml")) {
+              assets.set(path, bytes);
+            }
+          }
+          kmzAssetsRef.current = assets;
+        } catch {
+          kmzAssetsRef.current = new Map();
+        }
+      } else {
+        kmzAssetsRef.current = new Map();
+      }
       onWorkspaceStateChanged?.();
       setDidInitialFit(false);
       userHasAdjustedViewportRef.current = false;
