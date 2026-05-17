@@ -27,6 +27,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from app.auth import current_tenant, get_current_tenant
 from app.auth_bridge import resolve_caller
+from app.services import engineering_plan_parser as _engineering_plan_parser
 from starlette.middleware.base import BaseHTTPMiddleware
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -7950,6 +7951,132 @@ def _plan_aware_ranking_boost(
     }
 
 
+# ---------------------------------------------------------------------------
+# Phase P5.3 — diagnostic-only engineering-plan containment emission
+# ---------------------------------------------------------------------------
+# Observability layer over the P4 parser + P5.1 topology + P5.2 containment
+# helpers. Flag-gated and strictly diagnostic:
+#
+#   - controls nothing in the ranking / validation / render pipeline
+#   - writes only to _diag["footage_range_check"] inside pipeline_diag
+#   - never persists state outside the rebuild local scope
+#   - safe-failure everywhere; never raises into the rebuild
+#
+# Flag: TRUELINE_PLAN_PDF_PARSE. Default off.
+# Truthy values (case-insensitive): "1", "true", "yes", "on".
+# Read at runtime (per rebuild), not import-time, so dev toggling does not
+# require a process restart (avoids the B-AUTH-3 antipattern).
+# ---------------------------------------------------------------------------
+
+def _trueline_plan_pdf_parse_enabled() -> bool:
+    raw = os.environ.get("TRUELINE_PLAN_PDF_PARSE", "").strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
+def _resolve_engineering_plan_pdf_paths(session_id: str) -> List[Path]:
+    """Reconstruct on-disk PDF paths for a session's engineering plans.
+    Uses only public_record fields (stored_filename + file_type) and the
+    session_folder = ENGINEERING_PLAN_ROOT / safe(session_id) convention.
+    Safe-failure: returns [] on any error.
+    """
+    if not session_id:
+        return []
+    try:
+        plans = _load_engineering_plan_index_for_session(session_id)
+    except Exception:
+        return []
+    out: List[Path] = []
+    try:
+        session_folder = ENGINEERING_PLAN_ROOT / _safe_filename(session_id)
+    except Exception:
+        return []
+    for plan in plans or []:
+        try:
+            stored_filename = str(plan.get("stored_filename") or "").strip()
+            file_type = str(plan.get("file_type") or "").lower()
+            if not stored_filename or "pdf" not in file_type:
+                continue
+            p = session_folder / stored_filename
+            if p.is_file():
+                out.append(p)
+        except Exception:
+            continue
+    return out
+
+
+def _build_plan_topology_for_session(session_id: str) -> Dict[int, Dict[str, Any]]:
+    """Parse session PDFs (PDF-only; other file types ignored) and derive a
+    merged sheet-origin map. Safe-failure: returns {} on any error.
+    """
+    if _engineering_plan_parser is None:
+        return {}
+    paths = _resolve_engineering_plan_pdf_paths(session_id)
+    if not paths:
+        return {}
+    all_matchlines: List[Dict[str, Any]] = []
+    all_callouts: List[Dict[str, Any]] = []
+    for p in paths:
+        try:
+            ml = _engineering_plan_parser.extract_matchlines(p) or []
+            cl = _engineering_plan_parser.extract_station_callouts(p) or []
+            all_matchlines.extend(ml)
+            all_callouts.extend(cl)
+        except Exception:
+            continue
+    try:
+        return _engineering_plan_parser.derive_sheet_station_origins(
+            all_matchlines, all_callouts
+        )
+    except Exception:
+        return {}
+
+
+def _print_to_sheets_from_packet_index() -> Dict[str, List[int]]:
+    """Project CURRENT_PACKET_PRINT_SHEET_INDEX into a print_to_sheets
+    mapping suitable for evaluate_footage_range_containment. Safe-failure:
+    returns {} on any error.
+    """
+    out: Dict[str, List[int]] = {}
+    try:
+        for token, entry in CURRENT_PACKET_PRINT_SHEET_INDEX.items():
+            try:
+                sheet = entry.get("sheet")
+                if isinstance(sheet, int):
+                    out[str(token)] = [sheet]
+            except Exception:
+                continue
+    except Exception:
+        return {}
+    return out
+
+
+def _evaluate_footage_range_for_group_safe(
+    normalized_group: Dict[str, Any],
+    sheet_origins: Dict[int, Dict[str, Any]],
+) -> Dict[str, Any]:
+    """Flag-gated wrapper around evaluate_footage_range_containment.
+
+    Always returns a dict with at minimum {"emitted": <bool>}. The
+    `emitted` field is False when no useful evaluation could be produced
+    (empty topology, parser unavailable, evaluation error). When True the
+    rest of the P5.2 result schema is merged into the dict.
+
+    Never raises. Never mutates inputs.
+    """
+    if _engineering_plan_parser is None:
+        return {"emitted": False, "reason": "parser_module_unavailable"}
+    if not sheet_origins:
+        return {"emitted": False, "reason": "no_topology_available"}
+    try:
+        print_to_sheets = _print_to_sheets_from_packet_index()
+        result = _engineering_plan_parser.evaluate_footage_range_containment(
+            normalized_group, sheet_origins, print_to_sheets
+        )
+        return {"emitted": True, **result}
+    except Exception:
+        return {"emitted": False, "reason": "evaluation_error"}
+
+
 def _rebuild_field_data_outputs() -> None:
     rows = STATE.get("committed_rows", []) or []
     groups = _group_rows_for_matching(rows)
@@ -7971,6 +8098,18 @@ def _rebuild_field_data_outputs() -> None:
     except Exception:
         _plan_signals = []
     STATE["engineering_plan_signals"] = _plan_signals
+
+    # Phase P5.3 (diagnostic-only) — parse session PDFs and derive sheet
+    # topology when the TRUELINE_PLAN_PDF_PARSE flag is on. Otherwise leave
+    # the variables empty and skip the per-group emission below entirely.
+    # No scoring / validation / render path consumes these.
+    _p53_pdf_parse_enabled = _trueline_plan_pdf_parse_enabled()
+    _plan_sheet_origins: Dict[int, Dict[str, Any]] = {}
+    if _p53_pdf_parse_enabled:
+        try:
+            _plan_sheet_origins = _build_plan_topology_for_session(_session_id_hint)
+        except Exception:
+            _plan_sheet_origins = {}
 
     group_matches: List[Dict[str, Any]] = []
     matching_debug: List[Dict[str, Any]] = []
@@ -8397,6 +8536,15 @@ def _rebuild_field_data_outputs() -> None:
         )
         _diag["ambiguity_resolution_status"] = _amb_status
         _diag["ambiguity_resolution_meta"] = _amb_meta
+
+        # ── Diagnostic checkpoint H (P5.3, flag-gated) ───────────────────────
+        # Footage-range containment evidence. Strictly diagnostic — never
+        # consumed by scoring, validation, render, or batch-conflict logic.
+        # Field is only added to _diag when the flag is on.
+        if _p53_pdf_parse_enabled:
+            _diag["footage_range_check"] = _evaluate_footage_range_for_group_safe(
+                normalized_group, _plan_sheet_origins
+            )
 
         pipeline_diag.append(_diag)
 
