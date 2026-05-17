@@ -1,0 +1,32 @@
+{
+  "_note": "Candidate-ranking lists modelled on the output of _candidate_rankings_for_group_v2 — the function whose result _plan_aware_ranking_boost (main.py:7775) re-orders. Each scenario is keyed by group_id from normalized_groups.json. Scenarios exercise: (1) wide top-2 gap that should NOT reorder, (2) single-candidate path, (3) narrow top-2 gap among three candidates that IS reorder-eligible, (4) empty token group.",
+  "scenarios": [
+    {
+      "group_id": "group_1_unique_print3",
+      "rankings": [
+        {"route_id": "route_476", "route_name": "E Stone St", "combined_score": 0.85, "length_gap_ft": 30.0, "route_length_ft": 1500.0},
+        {"route_id": "route_478", "route_name": "E Mansfield St", "combined_score": 0.45, "length_gap_ft": 200.0, "route_length_ft": 1800.0}
+      ]
+    },
+    {
+      "group_id": "group_2_paired_print7_15",
+      "rankings": [
+        {"route_id": "route_476", "route_name": "E Stone St", "combined_score": 0.75, "length_gap_ft": 50.0, "route_length_ft": 1600.0}
+      ]
+    },
+    {
+      "group_id": "group_3_ambiguous_print18",
+      "rankings": [
+        {"route_id": "route_477", "route_name": "E Tom Green St", "combined_score": 0.62, "length_gap_ft": 50.0, "route_length_ft": 850.0},
+        {"route_id": "route_479", "route_name": "Niebuhr St (north leg)", "combined_score": 0.58, "length_gap_ft": 80.0, "route_length_ft": 880.0},
+        {"route_id": "route_480", "route_name": "Niebuhr St (south leg)", "combined_score": 0.55, "length_gap_ft": 100.0, "route_length_ft": 900.0}
+      ]
+    },
+    {
+      "group_id": "group_4_no_print_tokens",
+      "rankings": [
+        {"route_id": "route_475", "route_name": "Glenda Blvd", "combined_score": 0.50, "length_gap_ft": 100.0, "route_length_ft": 700.0}
+      ]
+    }
+  ]
+}

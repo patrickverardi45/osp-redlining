@@ -1,0 +1,65 @@
+{
+  "_note": "Bore-log groups modelled on the shape _normalize_bore_group (main.py:4286) emits. Print tokens are calibrated against the existing CURRENT_PACKET_PRINT_SHEET_INDEX (main.py:686) so the lock-down exercises the live route-hint mapping (route_475..route_480) and the ambiguous sheet-18 case (three candidate routes).",
+  "groups": [
+    {
+      "group_id": "group_1_unique_print3",
+      "group_index": 0,
+      "source_file": "brenham_bore_log_e_stone_st_print3.pdf",
+      "print_tokens": ["3"],
+      "row_count": 6,
+      "min_station_ft": 1200.0,
+      "max_station_ft": 1500.0,
+      "span_ft": 300.0,
+      "station_rows": [],
+      "normalization_warnings": [],
+      "evidence_layer_id": "ldnbore3aaaaaaaa",
+      "evidence_layer_source_file": "brenham_bore_log_e_stone_st_print3.pdf",
+      "evidence_layer_date": "2025-08-12"
+    },
+    {
+      "group_id": "group_2_paired_print7_15",
+      "group_index": 1,
+      "source_file": "brenham_bore_log_e_stone_st_print7_15.pdf",
+      "print_tokens": ["7", "15"],
+      "row_count": 12,
+      "min_station_ft": 800.0,
+      "max_station_ft": 2400.0,
+      "span_ft": 1600.0,
+      "station_rows": [],
+      "normalization_warnings": [],
+      "evidence_layer_id": "ldnbore715aaaaaa",
+      "evidence_layer_source_file": "brenham_bore_log_e_stone_st_print7_15.pdf",
+      "evidence_layer_date": "2025-09-04"
+    },
+    {
+      "group_id": "group_3_ambiguous_print18",
+      "group_index": 2,
+      "source_file": "brenham_bore_log_print18.pdf",
+      "print_tokens": ["18"],
+      "row_count": 8,
+      "min_station_ft": 500.0,
+      "max_station_ft": 1100.0,
+      "span_ft": 600.0,
+      "station_rows": [],
+      "normalization_warnings": [],
+      "evidence_layer_id": "ldnbore18aaaaaaa",
+      "evidence_layer_source_file": "brenham_bore_log_print18.pdf",
+      "evidence_layer_date": "2025-10-22"
+    },
+    {
+      "group_id": "group_4_no_print_tokens",
+      "group_index": 3,
+      "source_file": "brenham_bore_log_no_print.pdf",
+      "print_tokens": [],
+      "row_count": 4,
+      "min_station_ft": 200.0,
+      "max_station_ft": 600.0,
+      "span_ft": 400.0,
+      "station_rows": [],
+      "normalization_warnings": [],
+      "evidence_layer_id": "ldnboreNoneaaaaa",
+      "evidence_layer_source_file": "brenham_bore_log_no_print.pdf",
+      "evidence_layer_date": "2025-11-03"
+    }
+  ]
+}

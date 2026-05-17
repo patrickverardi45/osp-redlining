@@ -1,0 +1,47 @@
+{
+  "_note": "Three plan records modelled on the real Brenham Phase 5 engineering-plan PDFs at C:/Nova/knowledge/TrueLine-Wiki/raw/trueline/engineering-plans/brenham/. Fixture shape mirrors _engineering_plan_public_record (main.py:14654). PDF bytes are NOT required for this lock-down — _extract_engineering_plan_signals reads only filename + user-supplied metadata.",
+  "plans": [
+    {
+      "plan_id": "lockdown_plan_a_filename_only",
+      "session_id": "lockdown_session",
+      "original_filename": "BRENHAM_PHASE_5_New_report_2026-03-23_1774300147.pdf",
+      "stored_filename": "lockdown_a.pdf",
+      "file_type": "application/pdf",
+      "size_bytes": 0,
+      "uploaded_at": "2026-05-16T00:00:00Z",
+      "plan_date": null,
+      "print_numbers": null,
+      "sheet_numbers": null,
+      "street_hints": null,
+      "notes": null
+    },
+    {
+      "plan_id": "lockdown_plan_b_with_user_metadata",
+      "session_id": "lockdown_session",
+      "original_filename": "Brenham - Phase 5_07-15-25.pdf",
+      "stored_filename": "lockdown_b.pdf",
+      "file_type": "application/pdf",
+      "size_bytes": 0,
+      "uploaded_at": "2026-05-16T00:00:00Z",
+      "plan_date": "2025-07-15",
+      "print_numbers": "1,2,3,4,5,6",
+      "sheet_numbers": null,
+      "street_hints": "E STONE ST, NIEBUHR ST",
+      "notes": null
+    },
+    {
+      "plan_id": "lockdown_plan_c_revision_with_sheets",
+      "session_id": "lockdown_session",
+      "original_filename": "BRENHAM PH5 - 18-02-2026.pdf",
+      "stored_filename": "lockdown_c.pdf",
+      "file_type": "application/pdf",
+      "size_bytes": 0,
+      "uploaded_at": "2026-05-16T00:00:00Z",
+      "plan_date": "2026-02-18",
+      "print_numbers": null,
+      "sheet_numbers": "7,15",
+      "street_hints": null,
+      "notes": "Revision 2 - underground fiber install"
+    }
+  ]
+}

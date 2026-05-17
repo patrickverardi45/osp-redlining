@@ -1,0 +1,58 @@
+{
+  "_note": "Input bundles for _classify_group_ambiguity (main.py:7589). Scenarios exercise the five return states plus validation-gate-driven detection. group_ref points to a group_id in normalized_groups.json. matched_route shape mirrors what the engine selects (route_id only; the function reads no other fields).",
+  "scenarios": [
+    {
+      "scenario_id": "s1_not_ambiguous_no_target_reasons",
+      "render_block_reasons": [],
+      "group_ref": "group_1_unique_print3",
+      "validation": {},
+      "matched_route": {"route_id": "route_476"}
+    },
+    {
+      "scenario_id": "s2_not_applicable_no_selected_route",
+      "render_block_reasons": ["multiple_possible_chain_links"],
+      "group_ref": "group_3_ambiguous_print18",
+      "validation": {},
+      "matched_route": {}
+    },
+    {
+      "scenario_id": "s3_not_enough_plan_evidence_group_has_no_numeric_tokens",
+      "render_block_reasons": ["multiple_possible_chain_links"],
+      "group_ref": "group_4_no_print_tokens",
+      "validation": {},
+      "matched_route": {"route_id": "route_475"}
+    },
+    {
+      "scenario_id": "s4_resolved_unique_print3_confirms_route_476",
+      "render_block_reasons": ["multiple_possible_chain_links"],
+      "group_ref": "group_1_unique_print3",
+      "validation": {},
+      "matched_route": {"route_id": "route_476"}
+    },
+    {
+      "scenario_id": "s5_still_review_required_print_does_not_confirm",
+      "render_block_reasons": ["multiple_possible_chain_links"],
+      "group_ref": "group_3_ambiguous_print18",
+      "validation": {},
+      "matched_route": {"route_id": "route_999_not_in_hint_set"}
+    },
+    {
+      "scenario_id": "s6_validation_chain_gate_failed_detected",
+      "render_block_reasons": [],
+      "group_ref": "group_3_ambiguous_print18",
+      "validation": {
+        "chain_gate": {"passed": false, "reason": "multiple_possible_chain_links"}
+      },
+      "matched_route": {"route_id": "route_477"}
+    },
+    {
+      "scenario_id": "s7_validation_route_uniqueness_gate_failed_detected",
+      "render_block_reasons": [],
+      "group_ref": "group_2_paired_print7_15",
+      "validation": {
+        "route_uniqueness_gate": {"passed": false, "reason": "route_uniqueness_gate:multiple_billable_routes"}
+      },
+      "matched_route": {"route_id": "route_476"}
+    }
+  ]
+}

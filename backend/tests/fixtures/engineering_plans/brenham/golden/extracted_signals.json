@@ -1,0 +1,79 @@
+{
+  "lockdown_plan_a_filename_only": {
+    "date": "2026-03-23",
+    "phase_hints": [],
+    "plan_id": "lockdown_plan_a_filename_only",
+    "print_tokens": [
+      "3"
+    ],
+    "raw_text_tokens": [
+      "03",
+      "1774300147",
+      "2026",
+      "23",
+      "brenham",
+      "new",
+      "phase",
+      "report"
+    ],
+    "revision": null,
+    "route_hints": [],
+    "source_file": "BRENHAM_PHASE_5_New_report_2026-03-23_1774300147.pdf"
+  },
+  "lockdown_plan_b_with_user_metadata": {
+    "date": "2025-07-15",
+    "phase_hints": [],
+    "plan_id": "lockdown_plan_b_with_user_metadata",
+    "print_tokens": [
+      "1",
+      "2",
+      "3",
+      "4",
+      "5",
+      "6"
+    ],
+    "raw_text_tokens": [
+      "07",
+      "15",
+      "25",
+      "brenham",
+      "niebuhr",
+      "phase",
+      "st",
+      "stone"
+    ],
+    "revision": null,
+    "route_hints": [
+      "street:E STONE ST, NIEBUHR ST"
+    ],
+    "source_file": "Brenham - Phase 5_07-15-25.pdf"
+  },
+  "lockdown_plan_c_revision_with_sheets": {
+    "date": "2026-02-18",
+    "phase_hints": [
+      "revision"
+    ],
+    "plan_id": "lockdown_plan_c_revision_with_sheets",
+    "print_tokens": [
+      "7",
+      "15"
+    ],
+    "raw_text_tokens": [
+      "02",
+      "18",
+      "2026",
+      "brenham",
+      "fiber",
+      "install",
+      "ph5",
+      "revision",
+      "underground"
+    ],
+    "revision": null,
+    "route_hints": [
+      "underground",
+      "fiber"
+    ],
+    "source_file": "BRENHAM PH5 - 18-02-2026.pdf"
+  }
+}

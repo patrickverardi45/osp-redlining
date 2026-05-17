@@ -1,0 +1,179 @@
+{
+  "group_1_unique_print3": {
+    "boosted_rankings": [
+      {
+        "combined_score": 0.86,
+        "length_gap_ft": 30.0,
+        "original_score": 0.85,
+        "plan_adjusted_score": 0.86,
+        "plan_bias": {
+          "applied": true,
+          "boost": 0.01,
+          "reasons": [
+            "plan:lockdown|tokens:['3']|boost:+0.010"
+          ]
+        },
+        "route_id": "route_476",
+        "route_length_ft": 1500.0,
+        "route_name": "E Stone St",
+        "score": 0.86
+      },
+      {
+        "combined_score": 0.45,
+        "length_gap_ft": 200.0,
+        "plan_bias": {
+          "applied": false
+        },
+        "route_id": "route_478",
+        "route_length_ft": 1800.0,
+        "route_name": "E Mansfield St"
+      }
+    ],
+    "plan_bias_meta": {
+      "allowed_to_reorder": false,
+      "applied": true,
+      "association_reasons": [
+        "numeric_print_overlap:['3']"
+      ],
+      "best_plan_id": "lockdown_plan_a_filename_only",
+      "best_plan_name": "BRENHAM_PHASE_5_New_report_2026-03-23_1774300147.pdf",
+      "matched_tokens": [
+        "3"
+      ],
+      "max_boost": 0.03,
+      "plans_associated": 2,
+      "plans_checked": 3,
+      "reason_if_not_applied": null,
+      "top_score_gap_before_bias": 0.4
+    }
+  },
+  "group_2_paired_print7_15": {
+    "boosted_rankings": [
+      {
+        "combined_score": 0.77,
+        "length_gap_ft": 50.0,
+        "original_score": 0.75,
+        "plan_adjusted_score": 0.77,
+        "plan_bias": {
+          "applied": true,
+          "boost": 0.02,
+          "reasons": [
+            "plan:lockdown|tokens:['15']|boost:+0.010",
+            "plan:lockdown|tokens:['15', '7']|boost:+0.020"
+          ]
+        },
+        "route_id": "route_476",
+        "route_length_ft": 1600.0,
+        "route_name": "E Stone St",
+        "score": 0.77
+      }
+    ],
+    "plan_bias_meta": {
+      "allowed_to_reorder": false,
+      "applied": true,
+      "association_reasons": [
+        "numeric_print_overlap:['15', '7']"
+      ],
+      "best_plan_id": "lockdown_plan_c_revision_with_sheets",
+      "best_plan_name": "BRENHAM PH5 - 18-02-2026.pdf",
+      "matched_tokens": [
+        "15",
+        "7"
+      ],
+      "max_boost": 0.03,
+      "plans_associated": 2,
+      "plans_checked": 3,
+      "reason_if_not_applied": null,
+      "top_score_gap_before_bias": 0.0
+    }
+  },
+  "group_3_ambiguous_print18": {
+    "boosted_rankings": [
+      {
+        "combined_score": 0.63,
+        "length_gap_ft": 50.0,
+        "original_score": 0.62,
+        "plan_adjusted_score": 0.63,
+        "plan_bias": {
+          "applied": true,
+          "boost": 0.01,
+          "reasons": [
+            "plan:lockdown|tokens:['18']|boost:+0.010"
+          ]
+        },
+        "route_id": "route_477",
+        "route_length_ft": 850.0,
+        "route_name": "E Tom Green St",
+        "score": 0.63
+      },
+      {
+        "combined_score": 0.59,
+        "length_gap_ft": 80.0,
+        "original_score": 0.58,
+        "plan_adjusted_score": 0.59,
+        "plan_bias": {
+          "applied": true,
+          "boost": 0.01,
+          "reasons": [
+            "plan:lockdown|tokens:['18']|boost:+0.010"
+          ]
+        },
+        "route_id": "route_479",
+        "route_length_ft": 880.0,
+        "route_name": "Niebuhr St (north leg)",
+        "score": 0.59
+      },
+      {
+        "combined_score": 0.56,
+        "length_gap_ft": 100.0,
+        "original_score": 0.55,
+        "plan_adjusted_score": 0.56,
+        "plan_bias": {
+          "applied": true,
+          "boost": 0.01,
+          "reasons": [
+            "plan:lockdown|tokens:['18']|boost:+0.010"
+          ]
+        },
+        "route_id": "route_480",
+        "route_length_ft": 900.0,
+        "route_name": "Niebuhr St (south leg)",
+        "score": 0.56
+      }
+    ],
+    "plan_bias_meta": {
+      "allowed_to_reorder": true,
+      "applied": true,
+      "association_reasons": [
+        "numeric_print_overlap:['18']"
+      ],
+      "best_plan_id": "lockdown_plan_c_revision_with_sheets",
+      "best_plan_name": "BRENHAM PH5 - 18-02-2026.pdf",
+      "matched_tokens": [
+        "18"
+      ],
+      "max_boost": 0.03,
+      "plans_associated": 1,
+      "plans_checked": 3,
+      "reason_if_not_applied": null,
+      "top_score_gap_before_bias": 0.04
+    }
+  },
+  "group_4_no_print_tokens": {
+    "boosted_rankings": [
+      {
+        "combined_score": 0.5,
+        "length_gap_ft": 100.0,
+        "route_id": "route_475",
+        "route_length_ft": 700.0,
+        "route_name": "Glenda Blvd"
+      }
+    ],
+    "plan_bias_meta": {
+      "applied": false,
+      "group_print_tokens": [],
+      "plans_checked": 3,
+      "reason_if_not_applied": "no_numeric_print_tokens_in_group"
+    }
+  }
+}

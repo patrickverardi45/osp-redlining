@@ -1,0 +1,139 @@
+{
+  "s1_not_ambiguous_no_target_reasons": {
+    "meta": {
+      "ambiguous_reasons_detected": [],
+      "plan_signal_used": false,
+      "reason": "no_target_ambiguity_reasons_present"
+    },
+    "status": "not_ambiguous"
+  },
+  "s2_not_applicable_no_selected_route": {
+    "meta": {
+      "ambiguous_reasons_detected": [
+        "multiple_possible_chain_links"
+      ],
+      "candidate_route_ids_considered": [],
+      "confidence_note": "cannot_evaluate_without_selected_route",
+      "matched_plan_id": null,
+      "matched_plan_name": null,
+      "matched_tokens": [],
+      "plan_signal_used": false,
+      "reason": "no_selected_route_available",
+      "route_changed": false,
+      "selected_route_id_after": null,
+      "selected_route_id_before": null
+    },
+    "status": "not_applicable"
+  },
+  "s3_not_enough_plan_evidence_group_has_no_numeric_tokens": {
+    "meta": {
+      "ambiguous_reasons_detected": [
+        "multiple_possible_chain_links"
+      ],
+      "candidate_route_ids_considered": [],
+      "confidence_note": "group_has_no_numeric_tokens_to_match_plans",
+      "matched_plan_id": null,
+      "matched_plan_name": null,
+      "matched_tokens": [],
+      "plan_signal_used": false,
+      "reason": "no_numeric_print_tokens_in_group",
+      "route_changed": false,
+      "selected_route_id_after": "route_475",
+      "selected_route_id_before": "route_475"
+    },
+    "status": "not_enough_plan_evidence"
+  },
+  "s4_resolved_unique_print3_confirms_route_476": {
+    "meta": {
+      "ambiguous_reasons_detected": [
+        "multiple_possible_chain_links"
+      ],
+      "candidate_route_ids_considered": [
+        "route_476"
+      ],
+      "confidence_note": "plan_uniquely_confirms_selected_route",
+      "matched_plan_id": "lockdown_plan_a_filename_only",
+      "matched_plan_name": "BRENHAM_PHASE_5_New_report_2026-03-23_1774300147.pdf",
+      "matched_tokens": [
+        "3"
+      ],
+      "plan_signal_used": true,
+      "reason": "plan_numeric_tokens_confirm_selected_route",
+      "route_changed": false,
+      "selected_route_id_after": "route_476",
+      "selected_route_id_before": "route_476"
+    },
+    "status": "resolved_by_plan_signal"
+  },
+  "s5_still_review_required_print_does_not_confirm": {
+    "meta": {
+      "ambiguous_reasons_detected": [
+        "multiple_possible_chain_links"
+      ],
+      "candidate_route_ids_considered": [
+        "route_477",
+        "route_479",
+        "route_480"
+      ],
+      "confidence_note": "plan_tokens_point_to_different_route_than_selected",
+      "matched_plan_id": "lockdown_plan_c_revision_with_sheets",
+      "matched_plan_name": "BRENHAM PH5 - 18-02-2026.pdf",
+      "matched_tokens": [
+        "18"
+      ],
+      "plan_signal_used": true,
+      "reason": "plan_does_not_confirm_selected_route_manual_review_needed",
+      "route_changed": false,
+      "selected_route_id_after": "route_999_not_in_hint_set",
+      "selected_route_id_before": "route_999_not_in_hint_set"
+    },
+    "status": "still_review_required"
+  },
+  "s6_validation_chain_gate_failed_detected": {
+    "meta": {
+      "ambiguous_reasons_detected": [
+        "multiple_possible_chain_links"
+      ],
+      "candidate_route_ids_considered": [
+        "route_477",
+        "route_479",
+        "route_480"
+      ],
+      "confidence_note": "plan_supports_selected_route_among_multiple_candidates",
+      "matched_plan_id": "lockdown_plan_c_revision_with_sheets",
+      "matched_plan_name": "BRENHAM PH5 - 18-02-2026.pdf",
+      "matched_tokens": [
+        "18"
+      ],
+      "plan_signal_used": true,
+      "reason": "plan_numeric_tokens_confirm_selected_route",
+      "route_changed": false,
+      "selected_route_id_after": "route_477",
+      "selected_route_id_before": "route_477"
+    },
+    "status": "resolved_by_plan_signal"
+  },
+  "s7_validation_route_uniqueness_gate_failed_detected": {
+    "meta": {
+      "ambiguous_reasons_detected": [
+        "route_uniqueness_gate:multiple_billable_routes"
+      ],
+      "candidate_route_ids_considered": [
+        "route_476"
+      ],
+      "confidence_note": "plan_uniquely_confirms_selected_route",
+      "matched_plan_id": "lockdown_plan_c_revision_with_sheets",
+      "matched_plan_name": "BRENHAM PH5 - 18-02-2026.pdf",
+      "matched_tokens": [
+        "15",
+        "7"
+      ],
+      "plan_signal_used": true,
+      "reason": "plan_numeric_tokens_confirm_selected_route",
+      "route_changed": false,
+      "selected_route_id_after": "route_476",
+      "selected_route_id_before": "route_476"
+    },
+    "status": "resolved_by_plan_signal"
+  }
+}
