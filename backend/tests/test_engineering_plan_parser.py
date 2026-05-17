@@ -411,6 +411,47 @@ class _PdfExtractionMixin:
                      f"{r.get('file_name')!r} on page {r.get('page')!r}"),
             )
 
+    # PI.2 anchor-station co-location contract — inherited by every Brenham
+    # fixture class. Verifies the new additive fields are present and well-
+    # typed without locking specific per-anchor station values (fixture
+    # replay is the source of truth for those).
+
+    def test_pi2_station_fields_present_on_ap_and_splice_records(self) -> None:  # type: ignore[no-untyped-def]
+        for label, records in (
+            ("ap_ids", self.ap_ids),
+            ("splice_ids", self.splice_ids),
+        ):
+            for r in records:
+                for key in (
+                    "station_ft", "station_source", "station_confidence",
+                    "station_reason", "station_distance_chars",
+                ):
+                    self.assertIn(  # type: ignore[attr-defined]
+                        key, r,
+                        msg=f"{label} record missing {key}: {r!r}",
+                    )
+
+    def test_pi2_station_ft_when_present_is_non_negative_int(self) -> None:  # type: ignore[no-untyped-def]
+        # Station 0+00 is a valid real-world station value (start of
+        # plan stationing). Allow station_ft == 0; only reject negatives
+        # and non-int types.
+        for records in (self.ap_ids, self.splice_ids):
+            for r in records:
+                v = r.get("station_ft")
+                if v is None:
+                    continue
+                self.assertIsInstance(v, int)  # type: ignore[attr-defined]
+                self.assertGreaterEqual(v, 0)  # type: ignore[attr-defined]
+
+    def test_pi2_station_confidence_value_in_enum(self) -> None:  # type: ignore[no-untyped-def]
+        allowed = {"high", "medium", "low", "uncertain"}
+        for records in (self.ap_ids, self.splice_ids):
+            for r in records:
+                self.assertIn(  # type: ignore[attr-defined]
+                    r.get("station_confidence"), allowed,
+                    msg=f"unexpected station_confidence: {r!r}",
+                )
+
 
 @unittest.skipUnless(_BRENHAM_AVAILABLE, _SKIP_REASON)
 class TestBrenhamRevisionExtraction(_PdfExtractionMixin, unittest.TestCase):

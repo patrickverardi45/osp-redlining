@@ -723,10 +723,15 @@ def extract_all(pdf_path: Union[str, Path]) -> Dict[str, Any]:
     """Convenience: run every extractor. Each is independently safe-fail.
 
     Records in the six list-valued sections are enriched with a
-    `source_sheet` field derived via derive_page_to_sheet_index. Records
-    in the original extractor calls remain byte-identical when the
-    extractors are invoked individually; the enrichment is applied only
-    here, at the orchestration layer.
+    `source_sheet` field derived via derive_page_to_sheet_index. AP and
+    splice records additionally carry the PI.2 co-location fields
+    (`station_ft`, `station_source`, `station_confidence`,
+    `station_reason`, `station_distance_chars`) derived via
+    extract_anchor_positions + derive_anchor_station_colocations.
+
+    Records in the original extractor calls remain byte-identical when
+    the extractors are invoked individually; the enrichment is applied
+    only here, at the orchestration layer.
     """
     metadata = extract_metadata(pdf_path)
     title_block = extract_title_block(pdf_path)
@@ -746,16 +751,541 @@ def extract_all(pdf_path: Union[str, Path]) -> Dict[str, Any]:
     except Exception:
         page_to_sheet = {}
 
+    # PI.1: page → sheet enrichment on every list record.
+    ap_ids_pi1 = _apply_source_sheet(ap_ids, page_to_sheet)
+    splice_ids_pi1 = _apply_source_sheet(splice_ids, page_to_sheet)
+
+    # PI.2: anchor → station co-location on ap and splice records only.
+    anchor_positions = extract_anchor_positions(pdf_path)
+    try:
+        colocations = derive_anchor_station_colocations(anchor_positions)
+    except Exception:
+        colocations = []
+    ap_ids_pi2 = _apply_station_colocation(
+        ap_ids_pi1, colocations, "ap", "ap_id_canonical",
+    )
+    splice_ids_pi2 = _apply_station_colocation(
+        splice_ids_pi1, colocations, "splice", "splice_id_canonical",
+    )
+
     return {
         "metadata":         metadata,
         "title_block":      title_block,
         "matchlines":       _apply_source_sheet(matchlines, page_to_sheet),
         "station_callouts": _apply_source_sheet(station_callouts, page_to_sheet),
-        "ap_ids":           _apply_source_sheet(ap_ids, page_to_sheet),
-        "splice_ids":       _apply_source_sheet(splice_ids, page_to_sheet),
+        "ap_ids":           ap_ids_pi2,
+        "splice_ids":       splice_ids_pi2,
         "drawing_index":    _apply_source_sheet(drawing_index, page_to_sheet),
         "fieldwire_table":  _apply_source_sheet(fieldwire_table, page_to_sheet),
     }
+
+
+# ---------------------------------------------------------------------------
+# PI.2 — Anchor → station co-location
+# ---------------------------------------------------------------------------
+# Pure, deterministic, safe-failure helpers that associate AP and splice
+# anchor records with nearby station callouts on the same engineering
+# sheet/page when the PDF text supports it. The signal class is strictly
+# same-page text-character distance; cross-page reasoning is refused.
+#
+# Public surface:
+#   - extract_anchor_positions(pdf_path)
+#     Re-scans each PDF page and emits positional anchor + station
+#     records (carrying text_start / text_end alongside the canonical
+#     id / station_ft). The existing extractors strip positional
+#     metadata on purpose; this one preserves it for co-location use.
+#
+#   - derive_anchor_station_colocations(anchor_positions)
+#     Pure function. For each ap/splice anchor in the input, finds the
+#     nearest qualifying station on the same page by text-character
+#     distance. Equation-kind stations are skipped (foreign stationing
+#     system). Ties with disagreeing station_ft are refused.
+#
+#   - _apply_station_colocation(records, colocations, anchor_type,
+#                                canonical_key)
+#     Pure function. Enriches a list of AP or splice records with the
+#     five PI.2 fields by joining on (page, canonical) keys.
+#
+# Distance bands (deterministic, inclusive upper bounds):
+#   - tight:     [0, _COLOCATION_TIGHT_MAX]    -> confidence high
+#   - proximity: (TIGHT_MAX, _COLOCATION_MEDIUM_MAX]  -> confidence medium
+#   - loose:     (MEDIUM_MAX, _COLOCATION_LOOSE_MAX]  -> confidence low
+#   - refusal:   > _COLOCATION_LOOSE_MAX
+#
+# Refusal cascade emits station_ft=None, station_source="none",
+# station_confidence="uncertain", with an attributable station_reason.
+# See the design and implementation plan in
+# wiki/pi-2-anchor-station-colocation-design.md and
+# wiki/pi-2-implementation-plan.md.
+#
+# This module remains consumer-agnostic. No STATE, no FastAPI, no
+# imports from main.py. The PI.2 enrichment fields appear only on
+# records returned by extract_all; individual extractors stay
+# byte-identical to pre-PI.2.
+# ---------------------------------------------------------------------------
+
+_COLOCATION_TIGHT_MAX: int = 30
+_COLOCATION_MEDIUM_MAX: int = 80
+_COLOCATION_LOOSE_MAX: int = 150
+
+_COLOCATION_KIND_AP: str = "ap"
+_COLOCATION_KIND_SPLICE: str = "splice"
+_COLOCATION_KIND_STATION_SINGLE: str = "station_single"
+_COLOCATION_KIND_STATION_RANGE: str = "station_range"
+_COLOCATION_KIND_STATION_EQUATION: str = "station_equation"
+
+_COLOCATION_SOURCE_TIGHT: str = "same_page_text_proximity_tight"
+_COLOCATION_SOURCE_PROXIMITY: str = "same_page_text_proximity"
+_COLOCATION_SOURCE_LOOSE: str = "same_page_text_proximity_loose"
+_COLOCATION_SOURCE_NONE: str = "none"
+_COLOCATION_SOURCE_UPSTREAM: str = "upstream_provided"
+
+_COLOCATION_CONF_HIGH: str = "high"
+_COLOCATION_CONF_MEDIUM: str = "medium"
+_COLOCATION_CONF_LOW: str = "low"
+_COLOCATION_CONF_UNCERTAIN: str = "uncertain"
+
+_COLOCATION_AMBIGUITY_TIED_DISTANCE: str = "tied_nearest_station_distance"
+_COLOCATION_AMBIGUITY_ALL_EQUATIONS: str = "page_has_only_equation_stations"
+_COLOCATION_AMBIGUITY_NO_STATIONS: str = "page_has_no_station_callouts"
+_COLOCATION_AMBIGUITY_OUT_OF_WINDOW: str = "nearest_station_out_of_window"
+
+_COLOCATION_STATION_KIND_NAME: Dict[str, str] = {
+    _COLOCATION_KIND_STATION_SINGLE: "single",
+    _COLOCATION_KIND_STATION_RANGE: "range",
+}
+
+
+def extract_anchor_positions(
+    pdf_path: Union[str, Path],
+) -> List[Dict[str, Any]]:
+    """Re-scan each PDF page and emit positional anchor + station records.
+
+    See section header for the full output contract. Returns [] on any
+    failure; never raises.
+    """
+    results: List[Dict[str, Any]] = []
+    with _safe_pdf(pdf_path) as pdf:
+        if pdf is None:
+            return results
+        try:
+            for page_idx, page in enumerate(pdf.pages, 1):
+                text = _safe_page_text(page)
+                if not text:
+                    continue
+
+                # Stations first, so the station-single pass can avoid
+                # double-counting ranges and equations via `consumed`.
+                consumed: List[tuple] = []
+
+                for m in _STATION_RANGE_RE.finditer(text):
+                    s1n, s1p, s2n, s2p = (int(g) for g in m.groups())
+                    results.append({
+                        "page": page_idx,
+                        "kind": _COLOCATION_KIND_STATION_RANGE,
+                        "canonical": None,
+                        "station_ft": _station_to_ft(s1n, s1p),
+                        "second_station_ft": _station_to_ft(s2n, s2p),
+                        "text_start": m.start(),
+                        "text_end": m.end(),
+                        "raw_text": m.group(0),
+                    })
+                    consumed.append((m.start(), m.end()))
+
+                for m in _STATION_EQ_RE.finditer(text):
+                    s1n, s1p, s2n, s2p = (int(g) for g in m.groups())
+                    results.append({
+                        "page": page_idx,
+                        "kind": _COLOCATION_KIND_STATION_EQUATION,
+                        "canonical": None,
+                        "station_ft": _station_to_ft(s1n, s1p),
+                        "second_station_ft": _station_to_ft(s2n, s2p),
+                        "text_start": m.start(),
+                        "text_end": m.end(),
+                        "raw_text": m.group(0),
+                    })
+                    consumed.append((m.start(), m.end()))
+
+                for m in _STATION_RE.finditer(text):
+                    if any(s <= m.start() < e for s, e in consumed):
+                        continue
+                    sn, sp = int(m.group(1)), int(m.group(2))
+                    results.append({
+                        "page": page_idx,
+                        "kind": _COLOCATION_KIND_STATION_SINGLE,
+                        "canonical": None,
+                        "station_ft": _station_to_ft(sn, sp),
+                        "second_station_ft": None,
+                        "text_start": m.start(),
+                        "text_end": m.end(),
+                        "raw_text": m.group(0),
+                    })
+
+                for m in _AP_ID_RE.finditer(text):
+                    raw = m.group(0)
+                    canonical = _canonicalize_ap(raw)
+                    if not canonical:
+                        continue
+                    results.append({
+                        "page": page_idx,
+                        "kind": _COLOCATION_KIND_AP,
+                        "canonical": canonical,
+                        "station_ft": None,
+                        "second_station_ft": None,
+                        "text_start": m.start(),
+                        "text_end": m.end(),
+                        "raw_text": raw,
+                    })
+
+                for m in _SPLICE_RE.finditer(text):
+                    raw = m.group(0)
+                    canonical = _canonicalize_splice(raw)
+                    if not canonical:
+                        continue
+                    results.append({
+                        "page": page_idx,
+                        "kind": _COLOCATION_KIND_SPLICE,
+                        "canonical": canonical,
+                        "station_ft": None,
+                        "second_station_ft": None,
+                        "text_start": m.start(),
+                        "text_end": m.end(),
+                        "raw_text": raw,
+                    })
+        except Exception:
+            return results
+    return results
+
+
+def _colocation_distance(anchor: Dict[str, Any], station: Dict[str, Any]) -> Optional[int]:
+    """Gap between the closest edges of two text matches. Returns None
+    on any malformed positional fields. Floors at zero so touching or
+    overlapping matches map to distance 0.
+    """
+    try:
+        ats = anchor.get("text_start")
+        ate = anchor.get("text_end")
+        sts = station.get("text_start")
+        ste = station.get("text_end")
+        if not (isinstance(ats, int) and isinstance(ate, int)
+                and isinstance(sts, int) and isinstance(ste, int)):
+            return None
+        return max(0, min(abs(ats - ste), abs(sts - ate)))
+    except Exception:
+        return None
+
+
+def _colocation_refusal(
+    *,
+    page: int,
+    anchor_type: str,
+    canonical: str,
+    anchor_ts: int,
+    anchor_te: int,
+    reason: str,
+    ambiguity_flag: str,
+    distance: Optional[int] = None,
+) -> Dict[str, Any]:
+    """Build a refusal-shaped co-location record. Attributable and
+    deterministic; never raises.
+    """
+    return {
+        "page": int(page),
+        "anchor_type": str(anchor_type),
+        "anchor_canonical": str(canonical),
+        "anchor_text_start": int(anchor_ts),
+        "anchor_text_end": int(anchor_te),
+        "station_ft": None,
+        "station_kind": None,
+        "station_source": _COLOCATION_SOURCE_NONE,
+        "station_confidence": _COLOCATION_CONF_UNCERTAIN,
+        "station_reason": str(reason),
+        "station_distance_chars": int(distance) if distance is not None else None,
+        "ambiguity_flags": [str(ambiguity_flag)],
+    }
+
+
+def derive_anchor_station_colocations(
+    anchor_positions: Optional[List[Dict[str, Any]]],
+) -> List[Dict[str, Any]]:
+    """For each ap/splice anchor, find the nearest qualifying station on
+    the same page by text-character distance.
+
+    Pure function. Never raises. Never mutates inputs.
+    """
+    if not isinstance(anchor_positions, list):
+        return []
+
+    by_page: Dict[int, List[Dict[str, Any]]] = {}
+    for rec in anchor_positions:
+        try:
+            if not isinstance(rec, dict):
+                continue
+            page = _coerce_nonneg_int(rec.get("page"))
+            if page is None:
+                continue
+            by_page.setdefault(int(page), []).append(rec)
+        except Exception:
+            continue
+
+    results: List[Dict[str, Any]] = []
+
+    for rec in anchor_positions:
+        try:
+            if not isinstance(rec, dict):
+                continue
+            kind = rec.get("kind")
+            if kind not in (_COLOCATION_KIND_AP, _COLOCATION_KIND_SPLICE):
+                continue
+
+            ts = rec.get("text_start")
+            te = rec.get("text_end")
+            page = _coerce_nonneg_int(rec.get("page"))
+            canonical = rec.get("canonical")
+            if not isinstance(ts, int) or not isinstance(te, int):
+                continue
+            if page is None or not isinstance(canonical, str) or not canonical:
+                continue
+
+            anchor_type = "ap" if kind == _COLOCATION_KIND_AP else "splice"
+
+            same_page = by_page.get(int(page), [])
+            non_equation: List[Dict[str, Any]] = []
+            equation: List[Dict[str, Any]] = []
+            for s in same_page:
+                s_kind = s.get("kind")
+                if s_kind in (_COLOCATION_KIND_STATION_SINGLE, _COLOCATION_KIND_STATION_RANGE):
+                    non_equation.append(s)
+                elif s_kind == _COLOCATION_KIND_STATION_EQUATION:
+                    equation.append(s)
+
+            if not non_equation and not equation:
+                results.append(_colocation_refusal(
+                    page=int(page), anchor_type=anchor_type, canonical=canonical,
+                    anchor_ts=ts, anchor_te=te,
+                    reason="page has no station callouts",
+                    ambiguity_flag=_COLOCATION_AMBIGUITY_NO_STATIONS,
+                ))
+                continue
+
+            if not non_equation:
+                results.append(_colocation_refusal(
+                    page=int(page), anchor_type=anchor_type, canonical=canonical,
+                    anchor_ts=ts, anchor_te=te,
+                    reason="page has only equation-kind stations (foreign stationing system)",
+                    ambiguity_flag=_COLOCATION_AMBIGUITY_ALL_EQUATIONS,
+                ))
+                continue
+
+            best: Optional[int] = None
+            candidates: List[Dict[str, Any]] = []
+            for s in non_equation:
+                d = _colocation_distance(rec, s)
+                if d is None:
+                    continue
+                if best is None or d < best:
+                    best = d
+                    candidates = [s]
+                elif d == best:
+                    candidates.append(s)
+
+            if best is None:
+                results.append(_colocation_refusal(
+                    page=int(page), anchor_type=anchor_type, canonical=canonical,
+                    anchor_ts=ts, anchor_te=te,
+                    reason="no usable station candidates (malformed positions)",
+                    ambiguity_flag=_COLOCATION_AMBIGUITY_NO_STATIONS,
+                ))
+                continue
+
+            if best > _COLOCATION_LOOSE_MAX:
+                results.append(_colocation_refusal(
+                    page=int(page), anchor_type=anchor_type, canonical=canonical,
+                    anchor_ts=ts, anchor_te=te,
+                    reason=(f"nearest station out of window "
+                            f"(distance {best} > {_COLOCATION_LOOSE_MAX})"),
+                    ambiguity_flag=_COLOCATION_AMBIGUITY_OUT_OF_WINDOW,
+                    distance=best,
+                ))
+                continue
+
+            # Tied: refuse if candidates disagree on station_ft; accept
+            # if they agree (pick deterministically by text_start, then
+            # text_end).
+            station_fts: set = set()
+            for s in candidates:
+                sft = _coerce_nonneg_int(s.get("station_ft"))
+                if sft is not None:
+                    station_fts.add(int(sft))
+
+            if not station_fts:
+                results.append(_colocation_refusal(
+                    page=int(page), anchor_type=anchor_type, canonical=canonical,
+                    anchor_ts=ts, anchor_te=te,
+                    reason="nearest candidates lack a usable station_ft",
+                    ambiguity_flag=_COLOCATION_AMBIGUITY_NO_STATIONS,
+                    distance=best,
+                ))
+                continue
+
+            if len(station_fts) >= 2:
+                results.append(_colocation_refusal(
+                    page=int(page), anchor_type=anchor_type, canonical=canonical,
+                    anchor_ts=ts, anchor_te=te,
+                    reason=(f"tied nearest stations disagree on station_ft "
+                            f"(distance {best}, values {sorted(station_fts)})"),
+                    ambiguity_flag=_COLOCATION_AMBIGUITY_TIED_DISTANCE,
+                    distance=best,
+                ))
+                continue
+
+            winner = sorted(
+                candidates,
+                key=lambda s: (
+                    int(s.get("text_start") or 0),
+                    int(s.get("text_end") or 0),
+                ),
+            )[0]
+            winner_station_ft = _coerce_nonneg_int(winner.get("station_ft"))
+            winner_kind = winner.get("kind")
+            station_kind_name = _COLOCATION_STATION_KIND_NAME.get(
+                winner_kind, "single",
+            )
+
+            if best <= _COLOCATION_TIGHT_MAX:
+                source = _COLOCATION_SOURCE_TIGHT
+                confidence = _COLOCATION_CONF_HIGH
+            elif best <= _COLOCATION_MEDIUM_MAX:
+                source = _COLOCATION_SOURCE_PROXIMITY
+                confidence = _COLOCATION_CONF_MEDIUM
+            else:
+                source = _COLOCATION_SOURCE_LOOSE
+                confidence = _COLOCATION_CONF_LOW
+
+            station_token = str(winner.get("raw_text") or f"STA {winner_station_ft}")
+            if station_kind_name == "range":
+                reason = (
+                    f"matched {station_token} at {best} chars text distance "
+                    f"(range; using start)"
+                )
+            else:
+                reason = (
+                    f"matched {station_token} at {best} chars text distance"
+                )
+
+            results.append({
+                "page": int(page),
+                "anchor_type": anchor_type,
+                "anchor_canonical": canonical,
+                "anchor_text_start": int(ts),
+                "anchor_text_end": int(te),
+                "station_ft": int(winner_station_ft),
+                "station_kind": station_kind_name,
+                "station_source": source,
+                "station_confidence": confidence,
+                "station_reason": reason,
+                "station_distance_chars": int(best),
+                "ambiguity_flags": [],
+            })
+        except Exception:
+            continue
+
+    return results
+
+
+def _apply_station_colocation(
+    records: Optional[List[Dict[str, Any]]],
+    colocations: Optional[List[Dict[str, Any]]],
+    anchor_type: str,
+    canonical_key: str,
+) -> List[Dict[str, Any]]:
+    """Return a fresh list of records, each enriched with the five PI.2
+    station_* fields. Pure. Never raises. Never mutates inputs.
+
+    Match join: (record.page, record[canonical_key]) against
+    (colocation.page, colocation.anchor_canonical) filtered by
+    colocation.anchor_type == anchor_type.
+
+    Records carrying a pre-existing station_ft (upstream-provided) are
+    preserved; PI.2 does NOT overwrite them. The metadata fields are
+    set to upstream-indicator defaults so downstream consumers can tell
+    the value came from outside PI.2.
+    """
+    if not isinstance(records, list):
+        return []
+
+    lookup: Dict[tuple, Dict[str, Any]] = {}
+    if isinstance(colocations, list):
+        for c in colocations:
+            try:
+                if not isinstance(c, dict):
+                    continue
+                if c.get("anchor_type") != anchor_type:
+                    continue
+                page = _coerce_nonneg_int(c.get("page"))
+                canon = c.get("anchor_canonical")
+                if page is None or not isinstance(canon, str):
+                    continue
+                lookup[(int(page), canon)] = c
+            except Exception:
+                continue
+
+    out: List[Dict[str, Any]] = []
+    for rec in records:
+        if not isinstance(rec, dict):
+            out.append(rec)
+            continue
+        new_rec = dict(rec)
+
+        existing_station_ft = _coerce_nonneg_int(new_rec.get("station_ft"))
+        if existing_station_ft is not None:
+            new_rec["station_ft"] = int(existing_station_ft)
+            new_rec.setdefault("station_source", _COLOCATION_SOURCE_UPSTREAM)
+            new_rec.setdefault("station_confidence", _COLOCATION_CONF_UNCERTAIN)
+            new_rec.setdefault(
+                "station_reason",
+                "station_ft pre-set upstream; co-location not applied",
+            )
+            new_rec.setdefault("station_distance_chars", None)
+            out.append(new_rec)
+            continue
+
+        try:
+            page = _coerce_nonneg_int(new_rec.get("page"))
+            canonical_val = new_rec.get(canonical_key)
+        except Exception:
+            page = None
+            canonical_val = None
+
+        if page is None or not isinstance(canonical_val, str) or not canonical_val:
+            new_rec["station_ft"] = None
+            new_rec["station_source"] = _COLOCATION_SOURCE_NONE
+            new_rec["station_confidence"] = _COLOCATION_CONF_UNCERTAIN
+            new_rec["station_reason"] = "no co-location (missing page or canonical)"
+            new_rec["station_distance_chars"] = None
+            out.append(new_rec)
+            continue
+
+        c = lookup.get((int(page), canonical_val))
+        if c is None:
+            new_rec["station_ft"] = None
+            new_rec["station_source"] = _COLOCATION_SOURCE_NONE
+            new_rec["station_confidence"] = _COLOCATION_CONF_UNCERTAIN
+            new_rec["station_reason"] = "no co-location"
+            new_rec["station_distance_chars"] = None
+            out.append(new_rec)
+            continue
+
+        sft = c.get("station_ft")
+        new_rec["station_ft"] = int(sft) if isinstance(sft, int) else None
+        new_rec["station_source"] = str(c.get("station_source") or _COLOCATION_SOURCE_NONE)
+        new_rec["station_confidence"] = str(c.get("station_confidence") or _COLOCATION_CONF_UNCERTAIN)
+        new_rec["station_reason"] = str(c.get("station_reason") or "")
+        dc = c.get("station_distance_chars")
+        new_rec["station_distance_chars"] = int(dc) if isinstance(dc, int) else None
+        out.append(new_rec)
+
+    return out
 
 
 # ---------------------------------------------------------------------------
