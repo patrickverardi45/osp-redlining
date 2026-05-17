@@ -1539,3 +1539,633 @@ def compute_plan_aware_footage_boost(
         "per_ranking_deltas": deltas,
     }
     return boosted, meta
+
+
+# ---------------------------------------------------------------------------
+# P5.2B — Localized sub-extent plausibility evaluation
+# ---------------------------------------------------------------------------
+# Pure, deterministic, safe-failure helper that evaluates whether a bore-log
+# group's measured span plausibly fits inside SOME contiguous sub-window of
+# the engineering-plan region the group references.
+#
+# This is the SUB-EXTENT counterpart to evaluate_footage_range_containment
+# (P5.2). P5.2 asks "does the span equal the full plan-sheet extent?";
+# P5.2B asks "does the span fit inside some deterministic sub-extent?" —
+# a strictly weaker question, intentionally.
+#
+# This helper is consumer-agnostic — no STATE, no FastAPI, no PDF I/O, no
+# imports from main.py — and is NOT wired into any pipeline by this commit.
+#
+# Anchors are evidence, NOT authority:
+#   - never picks a route
+#   - never modifies its inputs
+#   - never auto-resolves ambiguity
+#   - emits a `would_boost` flag for diagnostic use only; a future P5.4B
+#     consumer decides whether to convert evidence to a score boost.
+#
+# Sub-extents are plausibility, NOT certainty:
+#   - a plausible fit is bounded evidence, not engineering truth
+#   - corroborating anchors (matchline crossings on covered sheets) are
+#     required for the strongest classification
+#   - lack of corroboration demotes to weak, never to refusal
+#
+# Input contracts:
+#
+#   normalized_group:
+#     - span_ft: int or float, > 0. Required; absent triggers no_data.
+#     - print_tokens: list of strings or ints. May be empty.
+#
+#   sheet_origins:
+#     - The dict returned by derive_sheet_station_origins, keyed by
+#       integer sheet number.
+#
+#   print_to_sheets (optional):
+#     - Mapping print_token -> iterable of int sheet numbers.
+#
+#   chain_adjacency (optional):
+#     - Mapping int sheet -> iterable of int adjacent sheets.
+#     - When absent, contiguity falls back to a numeric-consecutive
+#       heuristic AND multi-sheet candidates carry the
+#       chain_adjacency_unverified flag (cannot achieve fit_strong).
+#
+#   anchor_hints (optional):
+#     - Dict with the following inspected keys (all optional):
+#       - matchline_crossings: iterable[int sheet]
+#       - ap_tokens: iterable[str]       (accepted; not used for corroboration)
+#       - splice_ids: iterable[str]      (accepted; not used for corroboration)
+#       - structure_ids: iterable[str]   (accepted; not used for corroboration)
+#     - Only matchline_crossings is sheet-attributable in this flat
+#       schema; other anchor types are reserved for a future sheet-tagged
+#       schema and are not consulted by the current implementation.
+#     - Unknown keys are ignored safely.
+#
+# Output:
+#
+#   {
+#     "classification":          str,    # subextent_fit_strong / fit_weak /
+#                                        # fit_ambiguous / subextent_overflow /
+#                                        # subextent_uncertain / no_data
+#     "confidence":              str,    # high / medium / low / uncertain
+#     "group_span_ft":           int,
+#     "candidate_subextents":    list[dict],
+#     "best_candidate_index":    int | None,
+#     "covered_sheets":          list[int],
+#     "missing_sheets":          list[int],
+#     "has_reset_boundary":      bool,
+#     "ambiguity_flags":         list[str],   # sorted unique
+#     "reasons":                 list[str],   # emission order
+#     "would_boost":             bool,
+#   }
+#
+# Candidate sub-extent shape:
+#
+#   {
+#     "sheet_set":              list[int],   # sorted ascending
+#     "max_subextent_ft":       int,
+#     "fit_ratio":              float,       # rounded to 6 dp
+#     "corroborating_anchors":  list[str],   # e.g. "matchline_crossing:3"
+#     "chain_method":           str,         # single_sheet | contiguous_chain
+#     "demotion_reasons":       list[str],
+#   }
+#
+# Ratio bands (deterministic, explicit):
+#   - eligible for fit_strong:  _RATIO_SUBEXTENT_MIN <= ratio <= _RATIO_SUBEXTENT_MAX
+#   - weak (below subextent):   _RATIO_TRIVIAL_MIN <= ratio < _RATIO_SUBEXTENT_MIN
+#   - weak (trivial floor):     0 < ratio < _RATIO_TRIVIAL_MIN
+#   - overflow:                 ratio > _RATIO_SUBEXTENT_MAX
+#
+# Demotion (lifts preliminary_strong to fit_weak, never the reverse):
+#   - reset boundary inside candidate sheet set
+#   - chain_adjacency_unverified (multi-sheet without explicit adjacency)
+#   - sheet confidence is low or uncertain on any sheet in the set
+#   - no corroborating anchor for the candidate
+#
+# Aggregate classification:
+#   - >= 2 fit_strong candidates  -> subextent_fit_ambiguous
+#   - exactly 1 fit_strong        -> subextent_fit_strong
+#   - >= 1 fit_weak candidate     -> subextent_fit_weak
+#   - all candidates overflow     -> subextent_overflow
+#   - no candidates / no usable   -> subextent_uncertain
+# ---------------------------------------------------------------------------
+
+_SUBEXTENT_CLASS_FIT_STRONG: str = "subextent_fit_strong"
+_SUBEXTENT_CLASS_FIT_WEAK: str = "subextent_fit_weak"
+_SUBEXTENT_CLASS_FIT_AMBIGUOUS: str = "subextent_fit_ambiguous"
+_SUBEXTENT_CLASS_OVERFLOW: str = "subextent_overflow"
+_SUBEXTENT_CLASS_UNCERTAIN: str = "subextent_uncertain"
+_SUBEXTENT_CLASS_NO_DATA: str = "no_data"
+
+_SUBEXTENT_CHAIN_SINGLE: str = "single_sheet"
+_SUBEXTENT_CHAIN_CONTIGUOUS: str = "contiguous_chain"
+
+_SUBEXTENT_AMBIGUITY_MISSING_TOPOLOGY: str = "missing_topology"
+_SUBEXTENT_AMBIGUITY_CHAIN_UNVERIFIED: str = "chain_adjacency_unverified"
+_SUBEXTENT_AMBIGUITY_RESET_BOUNDARY: str = "reset_boundary_in_candidate"
+_SUBEXTENT_AMBIGUITY_MULTIPLE_STRONG: str = "multiple_strong_candidates"
+_SUBEXTENT_AMBIGUITY_P52_DISAGREE: str = "p52_disagreement"
+
+_RATIO_TRIVIAL_MIN: float = 0.05
+_RATIO_SUBEXTENT_MIN: float = 0.15
+_RATIO_SUBEXTENT_MAX: float = 1.00
+_SUBEXTENT_BOOST_CAP: float = 0.01
+
+# Internal candidate classes — never exit the helper's output schema.
+_SUBEXTENT_INTERNAL_PRELIM_STRONG: str = "_prelim_strong"
+_SUBEXTENT_INTERNAL_WEAK: str = "_weak"
+_SUBEXTENT_INTERNAL_TRIVIAL: str = "_trivial"
+_SUBEXTENT_INTERNAL_OVERFLOW: str = "_overflow"
+
+
+def _subextent_matchline_crossings_set(
+    anchor_hints: Optional[Dict[str, Any]],
+) -> set:
+    """Normalize anchor_hints['matchline_crossings'] to a set of int
+    sheets. Returns empty set on any malformed input. Never raises.
+    """
+    out: set = set()
+    if not isinstance(anchor_hints, dict):
+        return out
+    try:
+        raw = anchor_hints.get("matchline_crossings")
+        if raw is None:
+            return out
+        try:
+            for entry in raw:
+                try:
+                    n = _coerce_nonneg_int(entry)
+                    if n is not None and n >= 0:
+                        out.add(int(n))
+                except Exception:
+                    continue
+        except TypeError:
+            return out
+    except Exception:
+        return out
+    return out
+
+
+def _subextent_has_any_id_anchor(
+    anchor_hints: Optional[Dict[str, Any]],
+) -> bool:
+    """True if anchor_hints carries any non-empty ID list. Used only to
+    distinguish 'no anchor hints at all' from 'anchor hints present but
+    no matchline corroboration'. Never raises.
+    """
+    if not isinstance(anchor_hints, dict):
+        return False
+    for key in ("ap_tokens", "splice_ids", "structure_ids"):
+        try:
+            raw = anchor_hints.get(key)
+            if raw is None:
+                continue
+            try:
+                for entry in raw:
+                    if entry is None:
+                        continue
+                    try:
+                        if str(entry).strip():
+                            return True
+                    except Exception:
+                        continue
+            except TypeError:
+                continue
+        except Exception:
+            continue
+    return False
+
+
+def _subextent_check_chain_validity(
+    sheets: Sequence[int],
+    chain_adjacency: Optional[Mapping[int, Sequence[int]]],
+) -> "tuple[bool, bool]":
+    """Decide whether a sorted sheet set forms a contiguous chain.
+
+    Returns (is_chain_valid, chain_adjacency_unverified).
+
+      - is_chain_valid: True if the sheets form an evaluatable chain.
+      - chain_adjacency_unverified: True iff we fell back to the numeric
+        heuristic (no authoritative adjacency data provided).
+
+    When chain_adjacency is provided, each adjacent pair in the sorted
+    set must have one in the other's adjacency list. When absent, we
+    fall back to consecutive-integer heuristic and flag as unverified.
+    """
+    if not sheets or len(sheets) < 2:
+        return (False, False)
+    ordered = list(sheets)
+
+    if chain_adjacency is not None:
+        try:
+            for a, b in zip(ordered[:-1], ordered[1:]):
+                a_has = False
+                b_has = False
+                try:
+                    a_adj = chain_adjacency.get(int(a))
+                except Exception:
+                    a_adj = None
+                try:
+                    b_adj = chain_adjacency.get(int(b))
+                except Exception:
+                    b_adj = None
+                if a_adj is not None:
+                    try:
+                        for x in a_adj:
+                            try:
+                                if _coerce_nonneg_int(x) == int(b):
+                                    a_has = True
+                                    break
+                            except Exception:
+                                continue
+                    except TypeError:
+                        pass
+                if b_adj is not None:
+                    try:
+                        for x in b_adj:
+                            try:
+                                if _coerce_nonneg_int(x) == int(a):
+                                    b_has = True
+                                    break
+                            except Exception:
+                                continue
+                    except TypeError:
+                        pass
+                if not (a_has or b_has):
+                    return (False, False)
+            return (True, False)
+        except Exception:
+            return (False, False)
+
+    # Fallback: numeric-consecutive heuristic, flagged as unverified.
+    try:
+        for a, b in zip(ordered[:-1], ordered[1:]):
+            if int(b) - int(a) != 1:
+                return (False, True)
+        return (True, True)
+    except Exception:
+        return (False, False)
+
+
+def _subextent_empty_result(
+    classification: str = _SUBEXTENT_CLASS_NO_DATA,
+    confidence: str = _CONFIDENCE_UNCERTAIN,
+    group_span_ft: int = 0,
+    reasons: Optional[List[str]] = None,
+    ambiguity_flags: Optional[List[str]] = None,
+    covered_sheets: Optional[List[int]] = None,
+    missing_sheets: Optional[List[int]] = None,
+    has_reset_boundary: bool = False,
+) -> Dict[str, Any]:
+    return {
+        "classification": classification,
+        "confidence": confidence,
+        "group_span_ft": int(group_span_ft),
+        "candidate_subextents": [],
+        "best_candidate_index": None,
+        "covered_sheets": list(covered_sheets or []),
+        "missing_sheets": list(missing_sheets or []),
+        "has_reset_boundary": bool(has_reset_boundary),
+        "ambiguity_flags": sorted(set(ambiguity_flags or [])),
+        "reasons": list(reasons or []),
+        "would_boost": False,
+    }
+
+
+def evaluate_localized_subextent_plausibility(
+    normalized_group: Optional[Dict[str, Any]],
+    sheet_origins: Optional[Dict[int, Dict[str, Any]]],
+    print_to_sheets: Optional[Mapping[Any, Any]] = None,
+    chain_adjacency: Optional[Mapping[int, Sequence[int]]] = None,
+    anchor_hints: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Sub-extent plausibility evaluation between a bore-log group and
+    the engineering-plan sheets it references.
+
+    Sibling to evaluate_footage_range_containment. Answers the strictly
+    weaker question of whether the span plausibly fits inside SOME
+    contiguous sub-window of the referenced sheets.
+
+    Pure function. Never raises. Never mutates inputs. Emits attributable
+    reasons for every classification.
+
+    Anchors are evidence, NOT authority.
+    Sub-extents are plausibility, NOT certainty.
+    """
+    # ── Step 0: defensive input validation ───────────────────────────────────
+    if not isinstance(normalized_group, dict):
+        return _subextent_empty_result(
+            reasons=["normalized_group is not a dict"],
+        )
+
+    span_raw = normalized_group.get("span_ft")
+    span_val = _coerce_positive_number(span_raw)
+    if span_val is None:
+        return _subextent_empty_result(
+            reasons=["normalized_group.span_ft missing, non-positive, or non-numeric"],
+        )
+    group_span_ft = int(round(span_val))
+
+    matchline_crossings_set = _subextent_matchline_crossings_set(anchor_hints)
+    has_any_anchor_hint = bool(matchline_crossings_set) or _subextent_has_any_id_anchor(anchor_hints)
+
+    # ── Step 1: resolve referenced sheets ────────────────────────────────────
+    print_tokens_raw = normalized_group.get("print_tokens")
+    if not isinstance(print_tokens_raw, list):
+        print_tokens_raw = []
+    # Read-only snapshot; never mutate caller's list.
+    print_tokens = list(print_tokens_raw)
+    referenced_sheets = _resolve_referenced_sheets(print_tokens, print_to_sheets)
+
+    if not referenced_sheets and not has_any_anchor_hint:
+        return _subextent_empty_result(
+            group_span_ft=group_span_ft,
+            reasons=["no referenced sheets and no anchor hints"],
+        )
+
+    # ── Step 2: normalize sheet_origins to local read-only view ──────────────
+    if not isinstance(sheet_origins, dict):
+        sheet_origins_local: Dict[int, Dict[str, Any]] = {}
+    else:
+        sheet_origins_local = {}
+        for k, v in sheet_origins.items():
+            try:
+                n = _coerce_nonneg_int(k)
+                if n is None or n < 0:
+                    continue
+                if not isinstance(v, dict):
+                    continue
+                sheet_origins_local[int(n)] = v
+            except Exception:
+                continue
+
+    # ── Step 3: classify each referenced sheet as usable / unusable / missing
+    reasons: List[str] = []
+    ambiguity_flags: set = set()
+
+    usable_sheets: List[int] = []
+    unusable_sheets: List[int] = []
+    missing_sheets: List[int] = []
+    sheet_lengths: Dict[int, int] = {}
+    sheet_confidences: Dict[int, str] = {}
+    sheet_methods: Dict[int, str] = {}
+    sheet_resets: Dict[int, bool] = {}
+
+    for sheet_no in referenced_sheets:
+        entry = sheet_origins_local.get(sheet_no)
+        if entry is None:
+            missing_sheets.append(sheet_no)
+            continue
+        try:
+            length_val = _coerce_nonneg_int(entry.get("length_ft"))
+            method = str(entry.get("method") or _METHOD_UNCERTAIN)
+            conf = str(entry.get("confidence") or _CONFIDENCE_UNCERTAIN)
+            has_reset = bool(entry.get("has_reset_boundary"))
+
+            if length_val is None or length_val <= 0:
+                unusable_sheets.append(sheet_no)
+                continue
+            if method in (_METHOD_SINGLE_SHEET_ISOLATED, _METHOD_UNCERTAIN):
+                unusable_sheets.append(sheet_no)
+                continue
+
+            usable_sheets.append(sheet_no)
+            sheet_lengths[sheet_no] = int(length_val)
+            sheet_confidences[sheet_no] = conf
+            sheet_methods[sheet_no] = method
+            sheet_resets[sheet_no] = has_reset
+        except Exception:
+            unusable_sheets.append(sheet_no)
+            continue
+
+    if missing_sheets:
+        ambiguity_flags.add(_SUBEXTENT_AMBIGUITY_MISSING_TOPOLOGY)
+        reasons.append(
+            f"No topology for referenced sheets: {sorted(missing_sheets)}"
+        )
+
+    covered_sheets_final = sorted(usable_sheets)
+
+    if not covered_sheets_final:
+        # All sheets either missing or unusable.
+        if unusable_sheets:
+            reasons.append("no covered sheet has usable extent method")
+        elif missing_sheets:
+            # Already accounted for above; emit a concise summary.
+            reasons.append("no usable sheet length among covered sheets")
+        else:
+            # anchor-hints-only path: no resolvable sheets.
+            reasons.append("no usable sheet length among covered sheets")
+        return _subextent_empty_result(
+            classification=_SUBEXTENT_CLASS_UNCERTAIN,
+            confidence=_CONFIDENCE_UNCERTAIN,
+            group_span_ft=group_span_ft,
+            reasons=reasons,
+            ambiguity_flags=list(ambiguity_flags),
+            covered_sheets=[],
+            missing_sheets=sorted(missing_sheets),
+            has_reset_boundary=False,
+        )
+
+    # ── Step 4: enumerate candidate sub-extents ──────────────────────────────
+    raw_candidates: List[Dict[str, Any]] = []
+
+    # Single-sheet candidate per usable sheet.
+    for s in covered_sheets_final:
+        raw_candidates.append({
+            "sheet_set": [s],
+            "max_subextent_ft": int(sheet_lengths[s]),
+            "chain_method": _SUBEXTENT_CHAIN_SINGLE,
+            "chain_unverified": False,
+        })
+
+    # Contiguous-chain candidate when >= 2 covered sheets.
+    if len(covered_sheets_final) >= 2:
+        is_chain_valid, chain_unverified = _subextent_check_chain_validity(
+            covered_sheets_final, chain_adjacency
+        )
+        if is_chain_valid:
+            raw_candidates.append({
+                "sheet_set": list(covered_sheets_final),
+                "max_subextent_ft": int(sum(sheet_lengths[s] for s in covered_sheets_final)),
+                "chain_method": _SUBEXTENT_CHAIN_CONTIGUOUS,
+                "chain_unverified": bool(chain_unverified),
+            })
+        else:
+            reasons.append(
+                f"non-contiguous sheet set {covered_sheets_final} rejected as candidate"
+            )
+
+    # ── Step 5: score and classify each candidate ────────────────────────────
+    has_reset_overall = False
+    scored: List[Dict[str, Any]] = []
+    rank_to_label = {v: k for k, v in _CONFIDENCE_RANK.items()}
+
+    for rc in raw_candidates:
+        sheet_set = list(rc["sheet_set"])
+        max_ft = int(rc["max_subextent_ft"])
+        chain_method = str(rc["chain_method"])
+        chain_unverified = bool(rc.get("chain_unverified"))
+
+        if max_ft > 0:
+            fit_ratio = round(float(group_span_ft) / float(max_ft), 6)
+        else:
+            fit_ratio = 0.0
+
+        candidate_has_reset = any(sheet_resets.get(s, False) for s in sheet_set)
+        if candidate_has_reset:
+            has_reset_overall = True
+
+        per_sheet_ranks = [
+            _CONFIDENCE_RANK.get(sheet_confidences.get(s, _CONFIDENCE_UNCERTAIN), 0)
+            for s in sheet_set
+        ]
+        worst_rank = min(per_sheet_ranks) if per_sheet_ranks else 0
+        worst_conf = rank_to_label.get(worst_rank, _CONFIDENCE_UNCERTAIN)
+
+        corroborating: List[str] = []
+        for s in sheet_set:
+            if int(s) in matchline_crossings_set:
+                corroborating.append(f"matchline_crossing:{int(s)}")
+
+        demotion_reasons: List[str] = []
+        if fit_ratio > _RATIO_SUBEXTENT_MAX:
+            internal_class = _SUBEXTENT_INTERNAL_OVERFLOW
+        elif fit_ratio < _RATIO_TRIVIAL_MIN:
+            internal_class = _SUBEXTENT_INTERNAL_TRIVIAL
+            demotion_reasons.append(
+                f"fit_ratio_below_trivial:{fit_ratio:.6f}<{_RATIO_TRIVIAL_MIN}"
+            )
+        elif fit_ratio < _RATIO_SUBEXTENT_MIN:
+            internal_class = _SUBEXTENT_INTERNAL_WEAK
+            demotion_reasons.append(
+                f"fit_ratio_below_subextent_min:{fit_ratio:.6f}<{_RATIO_SUBEXTENT_MIN}"
+            )
+        else:
+            internal_class = _SUBEXTENT_INTERNAL_PRELIM_STRONG
+
+        # Demotions: lift preliminary_strong DOWN to weak; never the reverse.
+        # All applicable demotion reasons accumulate so observers can see
+        # every gate that blocked fit_strong.
+        if internal_class == _SUBEXTENT_INTERNAL_PRELIM_STRONG:
+            if candidate_has_reset:
+                internal_class = _SUBEXTENT_INTERNAL_WEAK
+                demotion_reasons.append(_SUBEXTENT_AMBIGUITY_RESET_BOUNDARY)
+                ambiguity_flags.add(_SUBEXTENT_AMBIGUITY_RESET_BOUNDARY)
+            if chain_unverified:
+                internal_class = _SUBEXTENT_INTERNAL_WEAK
+                demotion_reasons.append(_SUBEXTENT_AMBIGUITY_CHAIN_UNVERIFIED)
+                ambiguity_flags.add(_SUBEXTENT_AMBIGUITY_CHAIN_UNVERIFIED)
+            if worst_conf == _CONFIDENCE_LOW:
+                internal_class = _SUBEXTENT_INTERNAL_WEAK
+                demotion_reasons.append("low_sheet_confidence")
+            elif worst_conf == _CONFIDENCE_UNCERTAIN:
+                internal_class = _SUBEXTENT_INTERNAL_WEAK
+                demotion_reasons.append("uncertain_sheet_confidence")
+            if not corroborating:
+                internal_class = _SUBEXTENT_INTERNAL_WEAK
+                demotion_reasons.append("no_corroborating_anchor")
+
+        scored.append({
+            "sheet_set": sheet_set,
+            "max_subextent_ft": int(max_ft),
+            "fit_ratio": float(fit_ratio),
+            "corroborating_anchors": list(corroborating),
+            "chain_method": chain_method,
+            "demotion_reasons": list(demotion_reasons),
+            "_class": internal_class,
+        })
+
+    # ── Step 6: deterministic sort — strongest first ─────────────────────────
+    class_priority = {
+        _SUBEXTENT_INTERNAL_PRELIM_STRONG: 3,
+        _SUBEXTENT_INTERNAL_WEAK: 2,
+        _SUBEXTENT_INTERNAL_TRIVIAL: 1,
+        _SUBEXTENT_INTERNAL_OVERFLOW: 0,
+    }
+    scored.sort(key=lambda c: (
+        -class_priority.get(c["_class"], 0),
+        -float(c["fit_ratio"]),
+        c["sheet_set"][0] if c["sheet_set"] else 0,
+    ))
+
+    # ── Step 7: aggregate classification ─────────────────────────────────────
+    strong_count = sum(1 for c in scored if c["_class"] == _SUBEXTENT_INTERNAL_PRELIM_STRONG)
+    weak_count = sum(1 for c in scored if c["_class"] == _SUBEXTENT_INTERNAL_WEAK)
+    trivial_count = sum(1 for c in scored if c["_class"] == _SUBEXTENT_INTERNAL_TRIVIAL)
+    overflow_count = sum(1 for c in scored if c["_class"] == _SUBEXTENT_INTERNAL_OVERFLOW)
+
+    best_candidate_index: Optional[int] = None
+    if strong_count >= 2:
+        classification = _SUBEXTENT_CLASS_FIT_AMBIGUOUS
+        ambiguity_flags.add(_SUBEXTENT_AMBIGUITY_MULTIPLE_STRONG)
+        reasons.append("multiple plausible sub-extents map to disjoint routes")
+    elif strong_count == 1:
+        classification = _SUBEXTENT_CLASS_FIT_STRONG
+        best_candidate_index = 0
+    elif weak_count >= 1:
+        classification = _SUBEXTENT_CLASS_FIT_WEAK
+        best_candidate_index = 0
+    elif trivial_count >= 1:
+        classification = _SUBEXTENT_CLASS_FIT_WEAK
+        best_candidate_index = 0
+        top = scored[0]
+        reasons.append(
+            f"fit ratio below trivial threshold "
+            f"({top['fit_ratio']:.6f} < {_RATIO_TRIVIAL_MIN})"
+        )
+    elif overflow_count >= 1:
+        classification = _SUBEXTENT_CLASS_OVERFLOW
+        reasons.append("group span exceeds every candidate sub-extent")
+    else:
+        classification = _SUBEXTENT_CLASS_UNCERTAIN
+
+    # ── Step 8: derive overall confidence ────────────────────────────────────
+    if classification == _SUBEXTENT_CLASS_FIT_STRONG:
+        top = scored[0]
+        per_sheet_ranks = [
+            _CONFIDENCE_RANK.get(sheet_confidences.get(s, _CONFIDENCE_UNCERTAIN), 0)
+            for s in top["sheet_set"]
+        ]
+        worst_rank = min(per_sheet_ranks) if per_sheet_ranks else 0
+        overall_confidence = rank_to_label.get(worst_rank, _CONFIDENCE_UNCERTAIN)
+        if missing_sheets and overall_confidence == _CONFIDENCE_HIGH:
+            overall_confidence = _CONFIDENCE_MEDIUM
+            reasons.append(
+                "Confidence demoted to medium: at least one referenced "
+                "sheet had no topology data."
+            )
+    elif classification == _SUBEXTENT_CLASS_FIT_AMBIGUOUS:
+        overall_confidence = _CONFIDENCE_MEDIUM
+    elif classification == _SUBEXTENT_CLASS_FIT_WEAK:
+        overall_confidence = _CONFIDENCE_LOW
+    elif classification == _SUBEXTENT_CLASS_OVERFLOW:
+        overall_confidence = _CONFIDENCE_MEDIUM
+    else:
+        overall_confidence = _CONFIDENCE_UNCERTAIN
+
+    # ── Step 9: emit deterministic output (strip internal class field) ───────
+    output_candidates: List[Dict[str, Any]] = []
+    for c in scored:
+        output_candidates.append({
+            "sheet_set": list(c["sheet_set"]),
+            "max_subextent_ft": int(c["max_subextent_ft"]),
+            "fit_ratio": float(c["fit_ratio"]),
+            "corroborating_anchors": list(c["corroborating_anchors"]),
+            "chain_method": str(c["chain_method"]),
+            "demotion_reasons": list(c["demotion_reasons"]),
+        })
+
+    would_boost = classification == _SUBEXTENT_CLASS_FIT_STRONG
+
+    return {
+        "classification": classification,
+        "confidence": overall_confidence,
+        "group_span_ft": int(group_span_ft),
+        "candidate_subextents": output_candidates,
+        "best_candidate_index": best_candidate_index,
+        "covered_sheets": list(covered_sheets_final),
+        "missing_sheets": sorted(missing_sheets),
+        "has_reset_boundary": bool(has_reset_overall),
+        "ambiguity_flags": sorted(set(ambiguity_flags)),
+        "reasons": list(reasons),
+        "would_boost": bool(would_boost),
+    }
