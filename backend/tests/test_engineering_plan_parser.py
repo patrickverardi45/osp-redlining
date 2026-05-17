@@ -331,7 +331,14 @@ _BRENHAM_FIELDWIRE: Dict[str, Any] = {
 
 
 class _PdfExtractionMixin:
-    """Shared setUpClass that runs every extractor once per PDF and caches."""
+    """Shared setUpClass that runs every extractor once per PDF and caches.
+
+    PI.1: switched from per-extractor calls to a single extract_all
+    orchestration so the cached lists carry the new `source_sheet`
+    enrichment. The per-extractor attribute names and their record
+    contracts are unchanged; only the new additive `source_sheet`
+    field appears on records.
+    """
 
     INVARIANTS: Dict[str, Any] = {}
 
@@ -344,14 +351,65 @@ class _PdfExtractionMixin:
                 f"{cls.INVARIANTS['filename']} not present in fixture directory"
             )
         cls.path = str(path)
-        cls.metadata = pp.extract_metadata(cls.path)
-        cls.title_block = pp.extract_title_block(cls.path)
-        cls.matchlines = pp.extract_matchlines(cls.path)
-        cls.station_callouts = pp.extract_station_callouts(cls.path)
-        cls.ap_ids = pp.extract_ap_ids(cls.path)
-        cls.splice_ids = pp.extract_splice_ids(cls.path)
-        cls.drawing_index = pp.extract_drawing_index(cls.path)
-        cls.fieldwire_table = pp.extract_fieldwire_table(cls.path)
+        cls.all_result = pp.extract_all(cls.path)
+        cls.metadata = cls.all_result["metadata"]
+        cls.title_block = cls.all_result["title_block"]
+        cls.matchlines = cls.all_result["matchlines"]
+        cls.station_callouts = cls.all_result["station_callouts"]
+        cls.ap_ids = cls.all_result["ap_ids"]
+        cls.splice_ids = cls.all_result["splice_ids"]
+        cls.drawing_index = cls.all_result["drawing_index"]
+        cls.fieldwire_table = cls.all_result["fieldwire_table"]
+
+    # PI.1 source_sheet enrichment contract — inherited by every Brenham
+    # fixture class. Verifies the new additive field is present and well-
+    # typed without assuming any specific page-to-sheet mapping (which is
+    # fixture-dependent and validated via the helper's unit tests).
+
+    def test_pi1_source_sheet_present_on_all_list_records(self) -> None:  # type: ignore[no-untyped-def]
+        for label, records in (
+            ("matchlines",       self.matchlines),
+            ("station_callouts", self.station_callouts),
+            ("ap_ids",           self.ap_ids),
+            ("splice_ids",       self.splice_ids),
+            ("drawing_index",    self.drawing_index),
+            ("fieldwire_table",  self.fieldwire_table),
+        ):
+            for r in records:
+                self.assertIn(  # type: ignore[attr-defined]
+                    "source_sheet", r,
+                    msg=f"{label} record missing source_sheet: {r!r}",
+                )
+
+    def test_pi1_source_sheet_is_int_or_none(self) -> None:  # type: ignore[no-untyped-def]
+        for records in (
+            self.matchlines, self.station_callouts, self.ap_ids,
+            self.splice_ids, self.drawing_index, self.fieldwire_table,
+        ):
+            for r in records:
+                v = r.get("source_sheet")
+                self.assertTrue(  # type: ignore[attr-defined]
+                    v is None or isinstance(v, int),
+                    msg=f"source_sheet must be int or None, got {v!r}",
+                )
+
+    def test_pi1_drawing_index_source_sheet_consistent_with_filename(self) -> None:  # type: ignore[no-untyped-def]
+        """For each drawing_index record whose filename parses to a sheet
+        number, the record's source_sheet must be either that number
+        (single-DWG-per-page case) or None (multi-DWG-per-page conflict).
+        Never a different number — that would indicate a derivation bug.
+        """
+        for r in self.drawing_index:
+            parsed = pp._parse_sheet_from_dwg_filename(r.get("file_name"))
+            if parsed is None:
+                continue
+            v = r.get("source_sheet")
+            self.assertTrue(  # type: ignore[attr-defined]
+                v is None or v == parsed,
+                msg=(f"drawing_index record source_sheet={v!r} does not "
+                     f"agree with parsed sheet {parsed} for filename "
+                     f"{r.get('file_name')!r} on page {r.get('page')!r}"),
+            )
 
 
 @unittest.skipUnless(_BRENHAM_AVAILABLE, _SKIP_REASON)

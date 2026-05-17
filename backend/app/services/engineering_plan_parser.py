@@ -110,6 +110,15 @@ _TB_SHEET_RE = re.compile(
     re.IGNORECASE,
 )
 
+# PI.1 — per-page sheet-label scan. More permissive than _TB_SHEET_RE because
+# many engineering sheets carry a bare "SHEET 5" tag without the "of N"
+# tail. Used by extract_sheet_labels to produce direct (page, sheet) evidence
+# that derive_page_to_sheet_index consumes.
+_SHEET_LABEL_RE = re.compile(
+    r'\bSHEET\s+(\d{1,4})(?:\s+OF\s+\d{1,4})?\b',
+    re.IGNORECASE,
+)
+
 
 # ---------------------------------------------------------------------------
 # Small pure helpers
@@ -148,6 +157,29 @@ def _dispatch_from_strings(*values: Optional[str]) -> str:
     if _AUTOCAD_HINT_RE.search(blob):
         return "autocad"
     return "unknown"
+
+
+def _parse_sheet_from_dwg_filename(fname: Optional[str]) -> Optional[int]:
+    """Extract the sheet number embedded in a *.DWG filename, if any.
+
+    Strategy: strip the .DWG suffix and return the LAST digit group as int.
+    Returns None when no digit group precedes .DWG, or on any failure.
+
+    Examples:
+      'BRENHAM-PH-5_P_3.DWG'  -> 3
+      'T-001.DWG'             -> 1
+      'MAIN-PLAN.DWG'         -> None
+    """
+    if not fname or not isinstance(fname, str):
+        return None
+    try:
+        base = re.sub(r"\.dwg\s*$", "", fname, flags=re.IGNORECASE)
+        groups = re.findall(r"\d+", base)
+        if not groups:
+            return None
+        return int(groups[-1])
+    except Exception:
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -512,17 +544,217 @@ def extract_fieldwire_table(pdf_path: Union[str, Path]) -> List[Dict[str, Any]]:
     return results
 
 
+def extract_sheet_labels(pdf_path: Union[str, Path]) -> List[Dict[str, Any]]:
+    """Extract `SHEET N` / `SHEET N OF M` labels from each PDF page.
+
+    Per record: page (1-indexed), sheet_label (int), raw_text.
+
+    This is per-page evidence — multiple matches per page are emitted as
+    separate records so derive_page_to_sheet_index can detect agreement
+    vs. conflict deterministically. Never raises; returns [] on failure.
+    """
+    results: List[Dict[str, Any]] = []
+    with _safe_pdf(pdf_path) as pdf:
+        if pdf is None:
+            return results
+        try:
+            for page_idx, page in enumerate(pdf.pages, 1):
+                text = _safe_page_text(page)
+                if not text:
+                    continue
+                for m in _SHEET_LABEL_RE.finditer(text):
+                    try:
+                        sheet = int(m.group(1))
+                    except (ValueError, TypeError):
+                        continue
+                    if sheet <= 0:
+                        continue
+                    results.append({
+                        "page": page_idx,
+                        "sheet_label": sheet,
+                        "raw_text": m.group(0),
+                    })
+        except Exception:
+            return results
+    return results
+
+
+# ---------------------------------------------------------------------------
+# PI.1 — Page-to-sheet index derivation
+# ---------------------------------------------------------------------------
+# Pure, deterministic, safe-failure helper that fuses pre-extracted PDF
+# evidence into a page -> engineering-sheet mapping. The output keys are
+# 1-indexed PDF page numbers; values are int sheet numbers when resolvable
+# or None when ambiguous / unresolved.
+#
+# This helper is consumer-agnostic — no STATE, no FastAPI, no PDF I/O — and
+# is NOT wired into any pipeline by this commit. Existing extractors retain
+# byte-identical output when called individually; extract_all uses the
+# helper internally to enrich records with `source_sheet`.
+#
+# Derivation rules (layered, deterministic, in evidence-gathering order):
+#
+#   1. title_block.sheet_number_first_seen — treated as page-1 evidence
+#      (best available anchor when no per-page scan is provided).
+#   2. sheet_labels — direct (page, sheet) evidence from per-page text scan.
+#   3. drawing_index — per-record file_name is parsed for its trailing
+#      sheet number; the record's `page` becomes evidence for that sheet.
+#      (Only useful when each page references its OWN drawing; an index
+#      page listing many drawings becomes a conflict cluster on that page
+#      and is correctly emitted as None.)
+#   4. matchline records — currently NOT used as page-to-sheet evidence
+#      because their extracted shape only carries the TARGET sheet
+#      (references_sheet), not the source. Reserved for a future phase.
+#   5. Conflict resolution: a page with multiple disagreeing candidates
+#      maps to None. A page with a single candidate maps to that sheet.
+#      Pages with no evidence are simply absent from the result.
+#
+# All inputs are tolerant: None / wrong-type / missing-keys never raise.
+# Inputs are not mutated.
+# ---------------------------------------------------------------------------
+
+def derive_page_to_sheet_index(
+    metadata: Optional[Dict[str, Any]],
+    title_block: Optional[Dict[str, Any]],
+    drawing_index: Optional[List[Dict[str, Any]]],
+    matchlines: Optional[List[Dict[str, Any]]],
+    sheet_labels: Optional[List[Dict[str, Any]]] = None,
+) -> Dict[int, Optional[int]]:
+    """Fuse pre-extracted evidence into a {page: sheet_or_None} index.
+
+    Pure function. Never raises. Never mutates inputs. See the section
+    header above for the full input contract and derivation rules.
+    """
+    evidence: Dict[int, set] = {}
+
+    # ── Rule 1: title_block anchor (best applied to page 1) ─────────────────
+    if isinstance(title_block, dict):
+        try:
+            anchor = _coerce_nonneg_int(title_block.get("sheet_number_first_seen"))
+            if anchor is not None and anchor > 0:
+                evidence.setdefault(1, set()).add(int(anchor))
+        except Exception:
+            pass
+
+    # ── Rule 2: explicit sheet labels per page ──────────────────────────────
+    if isinstance(sheet_labels, list):
+        for rec in sheet_labels:
+            try:
+                if not isinstance(rec, dict):
+                    continue
+                page = _coerce_nonneg_int(rec.get("page"))
+                sheet = _coerce_nonneg_int(rec.get("sheet_label"))
+                if page is None or page <= 0:
+                    continue
+                if sheet is None or sheet <= 0:
+                    continue
+                evidence.setdefault(int(page), set()).add(int(sheet))
+            except Exception:
+                continue
+
+    # ── Rule 3: drawing_index file_name parsing ─────────────────────────────
+    if isinstance(drawing_index, list):
+        for rec in drawing_index:
+            try:
+                if not isinstance(rec, dict):
+                    continue
+                page = _coerce_nonneg_int(rec.get("page"))
+                if page is None or page <= 0:
+                    continue
+                fname = rec.get("file_name")
+                sheet = _parse_sheet_from_dwg_filename(fname if isinstance(fname, str) else None)
+                if sheet is None or sheet <= 0:
+                    continue
+                evidence.setdefault(int(page), set()).add(int(sheet))
+            except Exception:
+                continue
+
+    # ── Rule 4: matchlines reserved (no source-sheet field today) ───────────
+    # Intentionally a no-op. metadata input is accepted for forward-compat.
+    _ = metadata
+    _ = matchlines
+
+    # ── Rule 5: resolve per-page evidence ───────────────────────────────────
+    result: Dict[int, Optional[int]] = {}
+    for page, candidates in evidence.items():
+        if len(candidates) == 1:
+            try:
+                result[int(page)] = int(next(iter(candidates)))
+            except Exception:
+                result[int(page)] = None
+        else:
+            # Conflicting candidates -> emit None deterministically.
+            result[int(page)] = None
+    return result
+
+
+def _apply_source_sheet(
+    records: List[Dict[str, Any]],
+    page_to_sheet: Dict[int, Optional[int]],
+) -> List[Dict[str, Any]]:
+    """Return a new list of records with `source_sheet` set from the
+    page-to-sheet map. Never mutates the input list or its dicts.
+
+    Records that already carry a `source_sheet` value are NOT overwritten —
+    the helper respects upstream-provided values. Records lacking a usable
+    `page` integer receive `source_sheet=None`.
+    """
+    out: List[Dict[str, Any]] = []
+    if not isinstance(records, list):
+        return out
+    safe_map = page_to_sheet if isinstance(page_to_sheet, dict) else {}
+    for rec in records:
+        if not isinstance(rec, dict):
+            out.append(rec)
+            continue
+        new_rec = dict(rec)
+        existing = _coerce_nonneg_int(new_rec.get("source_sheet"))
+        if existing is not None:
+            new_rec["source_sheet"] = int(existing)
+        else:
+            page = _coerce_nonneg_int(new_rec.get("page"))
+            sheet = safe_map.get(int(page)) if page is not None else None
+            new_rec["source_sheet"] = sheet if isinstance(sheet, int) else None
+        out.append(new_rec)
+    return out
+
+
 def extract_all(pdf_path: Union[str, Path]) -> Dict[str, Any]:
-    """Convenience: run every extractor. Each is independently safe-fail."""
+    """Convenience: run every extractor. Each is independently safe-fail.
+
+    Records in the six list-valued sections are enriched with a
+    `source_sheet` field derived via derive_page_to_sheet_index. Records
+    in the original extractor calls remain byte-identical when the
+    extractors are invoked individually; the enrichment is applied only
+    here, at the orchestration layer.
+    """
+    metadata = extract_metadata(pdf_path)
+    title_block = extract_title_block(pdf_path)
+    matchlines = extract_matchlines(pdf_path)
+    station_callouts = extract_station_callouts(pdf_path)
+    ap_ids = extract_ap_ids(pdf_path)
+    splice_ids = extract_splice_ids(pdf_path)
+    drawing_index = extract_drawing_index(pdf_path)
+    fieldwire_table = extract_fieldwire_table(pdf_path)
+    sheet_labels = extract_sheet_labels(pdf_path)
+
+    try:
+        page_to_sheet = derive_page_to_sheet_index(
+            metadata, title_block, drawing_index, matchlines,
+            sheet_labels=sheet_labels,
+        )
+    except Exception:
+        page_to_sheet = {}
+
     return {
-        "metadata":         extract_metadata(pdf_path),
-        "title_block":      extract_title_block(pdf_path),
-        "matchlines":       extract_matchlines(pdf_path),
-        "station_callouts": extract_station_callouts(pdf_path),
-        "ap_ids":           extract_ap_ids(pdf_path),
-        "splice_ids":       extract_splice_ids(pdf_path),
-        "drawing_index":    extract_drawing_index(pdf_path),
-        "fieldwire_table":  extract_fieldwire_table(pdf_path),
+        "metadata":         metadata,
+        "title_block":      title_block,
+        "matchlines":       _apply_source_sheet(matchlines, page_to_sheet),
+        "station_callouts": _apply_source_sheet(station_callouts, page_to_sheet),
+        "ap_ids":           _apply_source_sheet(ap_ids, page_to_sheet),
+        "splice_ids":       _apply_source_sheet(splice_ids, page_to_sheet),
+        "drawing_index":    _apply_source_sheet(drawing_index, page_to_sheet),
+        "fieldwire_table":  _apply_source_sheet(fieldwire_table, page_to_sheet),
     }
 
 
