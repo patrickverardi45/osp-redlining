@@ -8077,6 +8077,133 @@ def _evaluate_footage_range_for_group_safe(
         return {"emitted": False, "reason": "evaluation_error"}
 
 
+# ---------------------------------------------------------------------------
+# Phase P5.4 — shadow replay infrastructure
+# ---------------------------------------------------------------------------
+# Computes a HYPOTHETICAL A3 footage boost for diagnostic emission. Never
+# mutates rankings, validation, render gates, selection, or ambiguity
+# classification. The result lives only in _diag["plan_footage_boost_shadow"]
+# inside pipeline_diag.
+#
+# Two flags must align for the shadow diagnostic to emit:
+#   - TRUELINE_PLAN_PDF_PARSE       (P5.3 flag — data availability)
+#   - TRUELINE_PLAN_PDF_SIGNALS_A3_SHADOW (P5.4 flag — shadow emission)
+#
+# A3 active-boost flag (TRUELINE_PLAN_PDF_SIGNALS_A3) is NOT introduced by
+# P5.4. The shadow flag is independent of any future active toggle.
+# ---------------------------------------------------------------------------
+
+def _trueline_plan_pdf_signals_a3_shadow_enabled() -> bool:
+    """Runtime flag read for the P5.4 shadow replay diagnostic. Read every
+    rebuild; never captured at import-time.
+    """
+    raw = os.environ.get("TRUELINE_PLAN_PDF_SIGNALS_A3_SHADOW", "").strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
+def _sheet_to_route_ids_from_packet_index() -> Dict[int, List[str]]:
+    """Project CURRENT_PACKET_PRINT_SHEET_INDEX into a {sheet_int: [route_id]}
+    mapping. The print index is the deterministic source-of-truth for which
+    plan sheets reference which KMZ route_ids in the current packet. Safe-
+    failure: returns {} on any error.
+    """
+    out: Dict[int, List[str]] = {}
+    try:
+        for _token, entry in CURRENT_PACKET_PRINT_SHEET_INDEX.items():
+            try:
+                sheet = entry.get("sheet")
+                if not isinstance(sheet, int):
+                    continue
+                rids = entry.get("route_ids") or []
+                bucket = out.setdefault(int(sheet), [])
+                for rid in rids:
+                    s = str(rid or "").strip()
+                    if s and s not in bucket:
+                        bucket.append(s)
+            except Exception:
+                continue
+    except Exception:
+        return {}
+    return out
+
+
+def _emit_plan_footage_shadow_diagnostic(
+    rankings: List[Dict[str, Any]],
+    normalized_group: Dict[str, Any],
+    sheet_origins: Dict[int, Dict[str, Any]],
+    diag_so_far: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Build the per-group P5.4 shadow diagnostic dict.
+
+    Calls the pure compute helper on COPIES of the inputs (the helper
+    itself does not mutate). The hypothetical rankings are discarded; only
+    the meta + downstream validation snapshot are emitted.
+
+    Never raises. Returns a dict with at minimum {"emitted": <bool>}.
+    """
+    if _engineering_plan_parser is None:
+        return {"emitted": False, "reason": "parser_module_unavailable"}
+    if not sheet_origins or not rankings:
+        return {"emitted": False, "reason": "no_topology_or_no_rankings"}
+
+    try:
+        print_to_sheets = _print_to_sheets_from_packet_index()
+        sheet_to_route_ids = _sheet_to_route_ids_from_packet_index()
+        hypothetical, meta = (
+            _engineering_plan_parser.compute_plan_aware_footage_boost(
+                rankings, normalized_group, sheet_origins,
+                print_to_sheets=print_to_sheets,
+                sheet_to_route_ids=sheet_to_route_ids,
+            )
+        )
+    except Exception:
+        return {"emitted": False, "reason": "shadow_compute_exception"}
+
+    try:
+        actual_top = rankings[0] if rankings else {}
+        hypothetical_top = hypothetical[0] if hypothetical else {}
+
+        def _score_of(entry: Dict[str, Any]) -> float:
+            try:
+                v = entry.get("combined_score")
+                if v is None:
+                    v = entry.get("score")
+                return float(v or 0.0)
+            except Exception:
+                return 0.0
+
+        def _summary(entry: Dict[str, Any]) -> Dict[str, Any]:
+            return {
+                "route_id": str(entry.get("route_id") or ""),
+                "route_name": str(entry.get("route_name") or ""),
+                "score": _score_of(entry),
+            }
+
+        return {
+            "emitted":               True,
+            "applied_hypothetically": bool(meta.get("applied")),
+            "would_reorder":         bool(meta.get("would_reorder")),
+            "current_top":           _summary(actual_top),
+            "hypothetical_top":      _summary(hypothetical_top),
+            "evidence":              dict(meta.get("evidence") or {}),
+            "hint_route_ids":        list(meta.get("hint_route_ids") or []),
+            "boosted_route_ids":     list(meta.get("boosted_route_ids") or []),
+            "top_score_gap_before":  float(meta.get("top_score_gap_before") or 0.0),
+            "top_score_gap_after":   float(meta.get("top_score_gap_after") or 0.0),
+            "skipped_reason":        meta.get("skipped_reason"),
+            "per_ranking_deltas":    list(meta.get("per_ranking_deltas") or []),
+            "downstream_validation_snapshot": {
+                "selected_route_id":           diag_so_far.get("selected_route_id"),
+                "selected_route_name":         diag_so_far.get("selected_route_name"),
+                "render_allowed":              diag_so_far.get("render_allowed"),
+                "render_block_reasons":        list(diag_so_far.get("render_block_reasons") or []),
+                "ambiguity_resolution_status": diag_so_far.get("ambiguity_resolution_status"),
+            },
+        }
+    except Exception:
+        return {"emitted": False, "reason": "shadow_summary_error"}
+
+
 def _rebuild_field_data_outputs() -> None:
     rows = STATE.get("committed_rows", []) or []
     groups = _group_rows_for_matching(rows)
@@ -8104,6 +8231,10 @@ def _rebuild_field_data_outputs() -> None:
     # the variables empty and skip the per-group emission below entirely.
     # No scoring / validation / render path consumes these.
     _p53_pdf_parse_enabled = _trueline_plan_pdf_parse_enabled()
+    # Phase P5.4 (shadow replay) — read shadow flag at runtime. Shadow mode
+    # computes a hypothetical A3 boost but NEVER mutates rankings or
+    # selection. Activates only when topology is available.
+    _p54_a3_shadow_enabled = _trueline_plan_pdf_signals_a3_shadow_enabled()
     _plan_sheet_origins: Dict[int, Dict[str, Any]] = {}
     if _p53_pdf_parse_enabled:
         try:
@@ -8545,6 +8676,24 @@ def _rebuild_field_data_outputs() -> None:
             _diag["footage_range_check"] = _evaluate_footage_range_for_group_safe(
                 normalized_group, _plan_sheet_origins
             )
+
+        # ── Diagnostic checkpoint I (P5.4 shadow, flag-gated) ────────────────
+        # Compute hypothetical A3 footage boost and emit a comparison
+        # diagnostic. Shadow ONLY — rankings, selection, validation, and
+        # render are NEVER modified. Inputs to the compute function are
+        # treated read-only by the parser module.
+        if _p54_a3_shadow_enabled and _plan_sheet_origins:
+            try:
+                _diag["plan_footage_boost_shadow"] = (
+                    _emit_plan_footage_shadow_diagnostic(
+                        rankings, normalized_group, _plan_sheet_origins, _diag
+                    )
+                )
+            except Exception:
+                _diag["plan_footage_boost_shadow"] = {
+                    "emitted": False,
+                    "reason": "shadow_compute_error",
+                }
 
         pipeline_diag.append(_diag)
 

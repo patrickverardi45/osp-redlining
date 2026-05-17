@@ -1242,3 +1242,300 @@ def evaluate_footage_range_containment(
         "reasons": list(reasons),
         "would_boost": bool(would_boost),
     }
+
+
+# ---------------------------------------------------------------------------
+# P5.4 — Bounded footage-range boost computation
+# ---------------------------------------------------------------------------
+# Pure, deterministic helper that COMPUTES a hypothetical A3 footage boost
+# over a ranking list. Returns (new_rankings, meta) without mutating inputs.
+#
+# This function is consumer-agnostic — it does not import main.py, does not
+# read STATE, and is not wired into any pipeline by this commit.
+#
+# The compute function does NOT decide whether the boost is applied —
+# callers do. In SHADOW mode the caller discards new_rankings and uses
+# meta for diagnostic emission only. In a future ACTIVE mode (not P5.4
+# shadow) the caller would adopt new_rankings as the post-boost state.
+#
+# Anchors are evidence, NOT authority:
+#   - never selects a route
+#   - never modifies its inputs
+#   - never inflates evidence confidence
+#   - never bridges score gaps larger than the configured reorder_gap
+#   - boost magnitude is hard-capped per entry
+#
+# Conditions under which boost is NOT applied (meta.applied = False):
+#   - rankings is None / empty
+#   - sheet_origins is None / empty
+#   - len(rankings) <= 1 (no ambiguity to resolve)
+#   - evaluate_footage_range_containment.would_boost is False
+#   - covered_sheets resolves to no hint_route_ids via print_to_sheets
+#   - no ranking entry's route_id is in the resolved hint_route_ids
+#   - top-2 score gap > reorder_gap (gap too wide for bounded boost)
+#
+# All hard-stops emit an attributable `skipped_reason`.
+# ---------------------------------------------------------------------------
+
+_FOOTAGE_BOOST_MAX_PER_ENTRY: float = 0.02
+_FOOTAGE_BOOST_REORDER_GAP: float = 0.10
+
+
+def _ranking_score(entry: Dict[str, Any]) -> float:
+    """Read the score from a ranking entry, preferring combined_score
+    over score. Returns 0.0 on any failure.
+    """
+    try:
+        val = entry.get("combined_score")
+        if val is None:
+            val = entry.get("score")
+        if val is None:
+            return 0.0
+        return float(val)
+    except Exception:
+        return 0.0
+
+
+def _ranking_route_id(entry: Dict[str, Any]) -> str:
+    try:
+        return str(entry.get("route_id") or "").strip()
+    except Exception:
+        return ""
+
+
+def _resolve_hint_route_ids(
+    covered_sheets: Sequence[int],
+    sheet_to_route_ids: Optional[Mapping[Any, Any]],
+) -> List[str]:
+    """For each covered sheet, look up the route_ids that map to it via
+    `sheet_to_route_ids`. Deduplicated, preserves first-seen order.
+    Safe-failure: returns [] on any error.
+
+    Expected shape: {sheet_int: [route_id_str, ...]}.
+    """
+    if not covered_sheets or not sheet_to_route_ids:
+        return []
+    out: List[str] = []
+    try:
+        for sheet in covered_sheets:
+            try:
+                key = _coerce_nonneg_int(sheet)
+                if key is None:
+                    continue
+                rids = sheet_to_route_ids.get(int(key))
+                if not rids:
+                    continue
+                try:
+                    for rid in rids:
+                        s = str(rid or "").strip()
+                        if s and s not in out:
+                            out.append(s)
+                except TypeError:
+                    # rids isn't iterable — tolerate a single string value.
+                    s = str(rids or "").strip()
+                    if s and s not in out:
+                        out.append(s)
+            except Exception:
+                continue
+    except Exception:
+        return []
+    return out
+
+
+def compute_plan_aware_footage_boost(
+    rankings: Optional[List[Dict[str, Any]]],
+    normalized_group: Optional[Dict[str, Any]],
+    sheet_origins: Optional[Dict[int, Dict[str, Any]]],
+    print_to_sheets: Optional[Mapping[Any, Any]] = None,
+    sheet_to_route_ids: Optional[Mapping[Any, Any]] = None,
+    boost_per_entry: float = _FOOTAGE_BOOST_MAX_PER_ENTRY,
+    reorder_gap: float = _FOOTAGE_BOOST_REORDER_GAP,
+) -> "tuple[List[Dict[str, Any]], Dict[str, Any]]":
+    """Compute the hypothetical A3 footage boost over a ranking list.
+
+    Returns (new_rankings, meta). new_rankings is always a fresh list of
+    fresh dicts (no shared mutation with inputs). meta describes the
+    decision in full attributable detail.
+
+    Never raises on malformed input. Inputs are not mutated.
+    """
+    # ── Step 0: defensive input handling ─────────────────────────────────────
+    try:
+        rankings_in = list(rankings or [])
+    except Exception:
+        rankings_in = []
+    rankings_copy = [dict(entry) if isinstance(entry, dict) else {} for entry in rankings_in]
+
+    def _no_boost(reason: str, *, evidence: Optional[Dict[str, Any]] = None,
+                  extra: Optional[Dict[str, Any]] = None) -> "tuple[List[Dict[str, Any]], Dict[str, Any]]":
+        meta: Dict[str, Any] = {
+            "applied": False,
+            "skipped_reason": reason,
+            "boost_per_entry": float(boost_per_entry),
+            "reorder_gap": float(reorder_gap),
+            "evidence": dict(evidence or {}),
+            "hint_route_ids": [],
+            "boosted_route_ids": [],
+            "would_reorder": False,
+            "top_score_gap_before": 0.0,
+            "top_score_gap_after": 0.0,
+            "top_route_id_before": _ranking_route_id(rankings_copy[0]) if rankings_copy else "",
+            "top_route_id_after": _ranking_route_id(rankings_copy[0]) if rankings_copy else "",
+            "per_ranking_deltas": [
+                {
+                    "route_id": _ranking_route_id(e),
+                    "score_before": _ranking_score(e),
+                    "score_after": _ranking_score(e),
+                    "boost": 0.0,
+                    "was_eligible": False,
+                }
+                for e in rankings_copy
+            ],
+        }
+        if extra:
+            for k, v in extra.items():
+                meta.setdefault(k, v)
+        return rankings_copy, meta
+
+    if not rankings_copy:
+        return _no_boost("no_rankings")
+    if len(rankings_copy) <= 1:
+        return _no_boost("single_candidate_no_ambiguity")
+    if not isinstance(sheet_origins, dict) or not sheet_origins:
+        return _no_boost("no_topology_available")
+
+    # ── Step 1: evaluate P5.2 evidence ───────────────────────────────────────
+    try:
+        evidence = evaluate_footage_range_containment(
+            normalized_group, sheet_origins, print_to_sheets
+        )
+    except Exception:
+        return _no_boost("evidence_evaluation_error")
+
+    if not evidence.get("would_boost"):
+        return _no_boost("p52_would_boost_false", evidence=evidence)
+
+    # ── Step 2: resolve hint route_ids from covered_sheets ───────────────────
+    covered_sheets = list(evidence.get("covered_sheets") or [])
+    hint_route_ids = _resolve_hint_route_ids(covered_sheets, sheet_to_route_ids)
+    if not hint_route_ids:
+        return _no_boost("no_hint_route_ids_for_covered_sheets", evidence=evidence)
+
+    # ── Step 3: identify eligible rankings ───────────────────────────────────
+    hint_set = set(hint_route_ids)
+    eligible_indices: List[int] = []
+    for idx, entry in enumerate(rankings_copy):
+        if _ranking_route_id(entry) in hint_set:
+            eligible_indices.append(idx)
+    if not eligible_indices:
+        return _no_boost("no_eligible_route_in_rankings",
+                         evidence=evidence,
+                         extra={"hint_route_ids": list(hint_route_ids)})
+
+    # ── Step 4: gap-too-wide gate ────────────────────────────────────────────
+    top_score = _ranking_score(rankings_copy[0])
+    second_score = _ranking_score(rankings_copy[1])
+    gap_before = round(top_score - second_score, 6)
+
+    if gap_before > float(reorder_gap):
+        # Active mode would skip; shadow surfaces this as "would not fire".
+        meta = {
+            "applied": False,
+            "skipped_reason": "gap_too_wide_to_reorder",
+            "boost_per_entry": float(boost_per_entry),
+            "reorder_gap": float(reorder_gap),
+            "evidence": dict(evidence),
+            "hint_route_ids": list(hint_route_ids),
+            "boosted_route_ids": [],
+            "would_reorder": False,
+            "top_score_gap_before": gap_before,
+            "top_score_gap_after": gap_before,
+            "top_route_id_before": _ranking_route_id(rankings_copy[0]),
+            "top_route_id_after": _ranking_route_id(rankings_copy[0]),
+            "per_ranking_deltas": [
+                {
+                    "route_id": _ranking_route_id(e),
+                    "score_before": _ranking_score(e),
+                    "score_after": _ranking_score(e),
+                    "boost": 0.0,
+                    "was_eligible": _ranking_route_id(e) in hint_set,
+                }
+                for e in rankings_copy
+            ],
+        }
+        return rankings_copy, meta
+
+    # ── Step 5: apply bounded boost ──────────────────────────────────────────
+    bp = float(boost_per_entry)
+    if bp < 0.0:
+        bp = 0.0
+    boosted: List[Dict[str, Any]] = []
+    deltas: List[Dict[str, Any]] = []
+    boosted_route_ids: List[str] = []
+    for idx, entry in enumerate(rankings_copy):
+        rid = _ranking_route_id(entry)
+        score_before = _ranking_score(entry)
+        is_eligible = rid in hint_set
+        new_entry = dict(entry)
+        if is_eligible:
+            score_after = round(min(1.0, score_before + bp), 6)
+            applied_boost = round(score_after - score_before, 6)
+            new_entry["combined_score"] = score_after
+            new_entry["score"] = score_after
+            new_entry["plan_footage_pre_boost_score"] = round(score_before, 6)
+            new_entry["plan_footage_post_boost_score"] = score_after
+            new_entry["plan_footage_bias"] = {
+                "applied": True,
+                "boost": applied_boost,
+                "classification": str(evidence.get("classification") or ""),
+                "confidence": str(evidence.get("confidence") or ""),
+                "covered_sheets": list(covered_sheets),
+                "evidence_ratio": float(evidence.get("consistency_ratio") or 0.0),
+            }
+            if rid and rid not in boosted_route_ids:
+                boosted_route_ids.append(rid)
+        else:
+            score_after = score_before
+            applied_boost = 0.0
+            new_entry.setdefault("plan_footage_bias", {"applied": False, "boost": 0.0})
+        boosted.append(new_entry)
+        deltas.append({
+            "route_id": rid,
+            "score_before": round(score_before, 6),
+            "score_after": round(score_after, 6),
+            "boost": applied_boost,
+            "was_eligible": bool(is_eligible),
+        })
+
+    # Stable sort matching the existing _plan_aware_ranking_boost tie-break.
+    boosted.sort(key=lambda item: (
+        -_ranking_score(item),
+        float(item.get("length_gap_ft") or 0.0),
+        float(item.get("route_length_ft") or 0.0),
+        str(item.get("route_name") or ""),
+    ))
+
+    top_after = _ranking_score(boosted[0])
+    second_after = _ranking_score(boosted[1]) if len(boosted) > 1 else top_after
+    gap_after = round(top_after - second_after, 6)
+
+    top_before_rid = _ranking_route_id(rankings_copy[0])
+    top_after_rid = _ranking_route_id(boosted[0])
+    would_reorder = top_before_rid != top_after_rid
+
+    meta = {
+        "applied": True,
+        "skipped_reason": None,
+        "boost_per_entry": bp,
+        "reorder_gap": float(reorder_gap),
+        "evidence": dict(evidence),
+        "hint_route_ids": list(hint_route_ids),
+        "boosted_route_ids": list(boosted_route_ids),
+        "would_reorder": bool(would_reorder),
+        "top_score_gap_before": gap_before,
+        "top_score_gap_after": gap_after,
+        "top_route_id_before": top_before_rid,
+        "top_route_id_after": top_after_rid,
+        "per_ranking_deltas": deltas,
+    }
+    return boosted, meta
