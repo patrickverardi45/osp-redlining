@@ -452,6 +452,38 @@ class _PdfExtractionMixin:
                     msg=f"unexpected station_confidence: {r!r}",
                 )
 
+    # PI.3 drawing-index sheet_number contract — inherited by every Brenham
+    # fixture class. Verifies the new additive field is present and exactly
+    # tracks the standalone _parse_sheet_from_dwg_filename output, with
+    # `None` as the canonical refusal sentinel. Independent of source_sheet,
+    # which answers a different question (page→sheet attribution).
+
+    def test_pi3_drawing_index_sheet_number_consistent_with_filename(self) -> None:  # type: ignore[no-untyped-def]
+        """Every drawing_index record carries `sheet_number`. When the
+        filename parses to a positive int via
+        _parse_sheet_from_dwg_filename, sheet_number equals that int.
+        Otherwise sheet_number is None. Multiplicity is preserved — the
+        same parsed sheet on multiple records is fine."""
+        for r in self.drawing_index:
+            self.assertIn(  # type: ignore[attr-defined]
+                "sheet_number", r,
+                msg=f"drawing_index record missing sheet_number: {r!r}",
+            )
+            parsed = pp._parse_sheet_from_dwg_filename(r.get("file_name"))
+            v = r.get("sheet_number")
+            if isinstance(parsed, int) and parsed > 0:
+                self.assertEqual(  # type: ignore[attr-defined]
+                    v, parsed,
+                    msg=(f"sheet_number={v!r} disagrees with parsed sheet "
+                         f"{parsed} for filename {r.get('file_name')!r}"),
+                )
+            else:
+                self.assertIsNone(  # type: ignore[attr-defined]
+                    v,
+                    msg=(f"sheet_number={v!r} should be None for "
+                         f"unparseable filename {r.get('file_name')!r}"),
+                )
+
 
 @unittest.skipUnless(_BRENHAM_AVAILABLE, _SKIP_REASON)
 class TestBrenhamRevisionExtraction(_PdfExtractionMixin, unittest.TestCase):

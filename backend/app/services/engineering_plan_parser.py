@@ -719,6 +719,58 @@ def _apply_source_sheet(
     return out
 
 
+# ---------------------------------------------------------------------------
+# PI.3 — Drawing-index sheet_number enrichment
+# ---------------------------------------------------------------------------
+# Pure, deterministic, safe-failure enricher that surfaces the sheet number
+# embedded in each drawing_index record's `file_name` via the existing
+# _parse_sheet_from_dwg_filename helper. Unlike PI.1's `source_sheet`
+# (which answers "what sheet IS this page?" and collapses to None on
+# multi-DWG-per-page conflicts), `sheet_number` answers "what sheet does
+# this drawing-index entry REFER TO?" — a per-record question that is
+# preserved even when many DWG references share one PDF page.
+#
+# Refusal sentinel is None. Sheet 0 is not a valid plan sheet number
+# and is normalized to None on output. Pure: no PDF I/O, no STATE,
+# no cross-record reasoning, no page-order inference.
+# ---------------------------------------------------------------------------
+
+def _apply_drawing_sheet_number(
+    records: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """Return a new list of drawing_index records, each enriched with
+    `sheet_number` derived from `file_name` via
+    _parse_sheet_from_dwg_filename. Records carrying an upstream-provided
+    positive-int `sheet_number` are NOT overwritten. Records whose
+    filename is missing, non-string, or unparseable receive
+    `sheet_number=None`. Sheet 0 is not a valid plan sheet number and
+    is normalized to None. Pure. Never raises. Never mutates inputs.
+    Multiplicity preserved — same parsed sheet on multiple records is
+    emitted independently per record.
+    """
+    out: List[Dict[str, Any]] = []
+    if not isinstance(records, list):
+        return out
+    for rec in records:
+        if not isinstance(rec, dict):
+            out.append(rec)
+            continue
+        new_rec = dict(rec)
+        existing = _coerce_nonneg_int(new_rec.get("sheet_number"))
+        if existing is not None and existing > 0:
+            new_rec["sheet_number"] = int(existing)
+        else:
+            fname = new_rec.get("file_name")
+            parsed = _parse_sheet_from_dwg_filename(
+                fname if isinstance(fname, str) else None
+            )
+            new_rec["sheet_number"] = (
+                int(parsed) if isinstance(parsed, int) and parsed > 0 else None
+            )
+        out.append(new_rec)
+    return out
+
+
 def extract_all(pdf_path: Union[str, Path]) -> Dict[str, Any]:
     """Convenience: run every extractor. Each is independently safe-fail.
 
@@ -775,7 +827,9 @@ def extract_all(pdf_path: Union[str, Path]) -> Dict[str, Any]:
         "station_callouts": _apply_source_sheet(station_callouts, page_to_sheet),
         "ap_ids":           ap_ids_pi2,
         "splice_ids":       splice_ids_pi2,
-        "drawing_index":    _apply_source_sheet(drawing_index, page_to_sheet),
+        "drawing_index":    _apply_drawing_sheet_number(
+                                _apply_source_sheet(drawing_index, page_to_sheet),
+                            ),
         "fieldwire_table":  _apply_source_sheet(fieldwire_table, page_to_sheet),
     }
 
