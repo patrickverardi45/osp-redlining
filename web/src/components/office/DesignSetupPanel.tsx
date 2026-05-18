@@ -18,6 +18,10 @@ export default function DesignSetupPanel({ onMutated }: DesignSetupPanelProps) {
   const [confirmingRoute, setConfirmingRoute] = useState(false);
   const [statusMessage, setStatusMessage] = useState("Loading current design state...");
   const [statusTone, setStatusTone] = useState<"neutral" | "success" | "warning" | "error">("neutral");
+  // Engineering Plan PDF lane — separate from KMZ upload (diagnostic/signals only).
+  const [uploadingPdf, setUploadingPdf] = useState(false);
+  const [pdfStatusMessage, setPdfStatusMessage] = useState<string>("");
+  const [pdfStatusTone, setPdfStatusTone] = useState<"neutral" | "success" | "warning" | "error">("neutral");
 
   const hasDesign = useMemo(() => {
     const lineCount = state?.kmz_reference?.line_features?.length || 0;
@@ -94,6 +98,81 @@ export default function DesignSetupPanel({ onMutated }: DesignSetupPanelProps) {
         setStatusTone("error");
       } finally {
         setUploading(false);
+      }
+    },
+    [fetchCurrentState, onMutated]
+  );
+
+  const handleEngineeringPlanUpload = useCallback(
+    async (files: FileList) => {
+      // Filter client-side to PDFs only. Defense-in-depth: the backend already
+      // rejects non-allowed extensions, but the UI lane is declared PDF-only.
+      const pdfFiles: File[] = [];
+      const dropped: string[] = [];
+      for (let i = 0; i < files.length; i += 1) {
+        const f = files.item(i);
+        if (!f) continue;
+        const isPdf =
+          f.type === "application/pdf" ||
+          f.name.toLowerCase().endsWith(".pdf");
+        if (isPdf) {
+          pdfFiles.push(f);
+        } else {
+          dropped.push(f.name);
+        }
+      }
+
+      if (pdfFiles.length === 0) {
+        setPdfStatusMessage(
+          dropped.length > 0
+            ? `No PDF files selected (skipped ${dropped.length} non-PDF file${dropped.length === 1 ? "" : "s"}).`
+            : "No files selected."
+        );
+        setPdfStatusTone("warning");
+        return;
+      }
+
+      setUploadingPdf(true);
+      setPdfStatusMessage(
+        `Uploading ${pdfFiles.length} engineering plan PDF${pdfFiles.length === 1 ? "" : "s"}...`
+      );
+      setPdfStatusTone("neutral");
+      try {
+        const form = new FormData();
+        for (const f of pdfFiles) {
+          form.append("files", f);
+        }
+        appendSessionIdToForm(form);
+
+        const response = await apiFetch(`${API_BASE}/api/upload-engineering-plans`, {
+          method: "POST",
+          body: form,
+        });
+        const data = await response.json();
+        acceptSessionFromMutation(data);
+        if (!response.ok || data.success === false) {
+          throw new Error(data.error || "Engineering plan upload failed.");
+        }
+
+        const skippedNote =
+          dropped.length > 0
+            ? ` (skipped ${dropped.length} non-PDF file${dropped.length === 1 ? "" : "s"})`
+            : "";
+        setPdfStatusMessage(
+          (data.message || `Uploaded ${pdfFiles.length} engineering plan PDF${pdfFiles.length === 1 ? "" : "s"}.`) +
+            skippedNote
+        );
+        setPdfStatusTone("success");
+
+        await fetchCurrentState();
+        await onMutated?.();
+      } catch (error) {
+        setPdfStatusMessage(
+          error instanceof Error ? error.message : "Engineering plan upload failed."
+        );
+        setPdfStatusTone("error");
+      } finally {
+        setUploadingPdf(false);
       }
     },
     [fetchCurrentState, onMutated]
@@ -208,6 +287,74 @@ export default function DesignSetupPanel({ onMutated }: DesignSetupPanelProps) {
             <span className="text-xs text-gray-500">
               No active route selected yet.
             </span>
+          )}
+        </div>
+
+        {/*
+          Engineering Plan PDF lane — separate from KMZ design upload.
+          Engineering PDFs are diagnostic/signal-only and never feed route
+          matching or redline truth. Backend route /api/upload-engineering-plans
+          enforces session ownership via the protected router.
+        */}
+        <div className="border-t border-gray-100 pt-4">
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <div>
+              <h3 className="text-sm font-semibold text-gray-800">Engineering Plan PDFs</h3>
+              <p className="text-xs text-gray-500 mt-1">
+                Engineering PDFs are parsed for diagnostics/signals only.
+              </p>
+            </div>
+            <label className="inline-flex items-center">
+              <input
+                type="file"
+                accept=".pdf,application/pdf"
+                multiple
+                className="hidden"
+                disabled={uploadingPdf || loadingState || uploading || confirmingRoute}
+                onChange={(e) => {
+                  const files = e.target.files;
+                  if (files && files.length > 0) {
+                    handleEngineeringPlanUpload(files);
+                  }
+                  e.currentTarget.value = "";
+                }}
+              />
+              <span className="px-3 py-1.5 rounded text-sm font-medium bg-gray-800 text-white hover:bg-gray-700 cursor-pointer">
+                {uploadingPdf ? "Uploading..." : "Upload Engineering Plan PDFs"}
+              </span>
+            </label>
+          </div>
+
+          {pdfStatusMessage && (
+            <div
+              className={`mt-3 rounded-md border px-3 py-2 text-xs ${
+                pdfStatusTone === "success"
+                  ? "bg-green-50 border-green-200 text-green-700"
+                  : pdfStatusTone === "warning"
+                  ? "bg-yellow-50 border-yellow-200 text-yellow-800"
+                  : pdfStatusTone === "error"
+                  ? "bg-red-50 border-red-200 text-red-700"
+                  : "bg-gray-50 border-gray-200 text-gray-700"
+              }`}
+            >
+              {pdfStatusMessage}
+            </div>
+          )}
+
+          {(state?.engineering_plans?.length ?? 0) > 0 && (
+            <ul className="mt-3 space-y-1 text-xs text-gray-700">
+              {state!.engineering_plans!.map((p) => (
+                <li
+                  key={p.plan_id}
+                  className="flex items-center justify-between rounded border border-gray-100 bg-gray-50 px-2 py-1 gap-2"
+                >
+                  <span className="truncate">{p.original_filename}</span>
+                  <span className="text-gray-500 whitespace-nowrap">
+                    {Math.max(1, Math.round(p.size_bytes / 1024))} KB · {new Date(p.uploaded_at).toLocaleString()}
+                  </span>
+                </li>
+              ))}
+            </ul>
           )}
         </div>
       </div>
