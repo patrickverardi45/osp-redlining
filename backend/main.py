@@ -8198,23 +8198,272 @@ def _invalidate_confirmed_sheet_set_cache(
     _ = session_id
 
 
-def _print_to_sheets_from_packet_index() -> Dict[str, List[int]]:
-    """Project CURRENT_PACKET_PRINT_SHEET_INDEX into a print_to_sheets
-    mapping suitable for evaluate_footage_range_containment. Safe-failure:
-    returns {} on any error.
+# ---------------------------------------------------------------------------
+# PI.4B.2 — Feature-flagged derived-preferred activation seam
+# ---------------------------------------------------------------------------
+# Activates PI.4A's derived `print_token -> sheet_int` projection at the
+# single diagnostic-only seam `_print_to_sheets_from_packet_index()`, behind
+# a default-OFF feature flag with full constant fallback.
+#
+# Doctrine:
+#   - Constant wins every disagreement (conservative posture; doctrine flip
+#     is deferred to PI.4B.3).
+#   - Flag default OFF -> body byte-identical to pre-PI.4B.2; no STATE write.
+#   - When flag ON: derived view is preferred, every refusal falls back to
+#     constant, every disagreement falls back to constant, and an attribution
+#     snapshot is written to STATE[_PI4B_ATTRIBUTION_STATE_KEY].
+#   - The seam function signature is preserved
+#     (`() -> Dict[str, List[int]]`). No caller plumbing.
+#   - Attribution is emitted ONLY when the flag is ON (Option A: STATE
+#     snapshot only; the per-group pipeline_diag loop is NOT touched).
+#   - `attribution_per_token` is further gated by a verbose sub-flag.
+#
+# Blast radius (when flag is OFF):
+#   Zero. The activation branch is never entered; production behavior is
+#   bit-for-bit identical to today.
+#
+# Blast radius (when flag is ON):
+#   Both callers of the seam are diagnostic-only:
+#     - `_evaluate_footage_range_for_group_safe` (P5.2 wrapper)
+#     - `_emit_plan_footage_shadow_diagnostic` (P5.4 shadow)
+#   Both consume only the projection shape `Dict[str, List[int]]` and emit
+#   into per-group `_diag` (footage_range_check / plan_footage_boost_shadow).
+#   Neither modifies rankings, route selection, ambiguity classification,
+#   render gate, validation, or `/api/current-state`. PI.4B.1 proved the
+#   Brenham multi-fixture union byte-equivalence, so on the canonical
+#   workflow the derived path emits the same projection as the constant.
+# ---------------------------------------------------------------------------
+
+_PI4B_DERIVED_FLAG_ENV: str = "TRUELINE_PI4A_DERIVED_PRINT_INDEX"
+_PI4B_VERBOSE_FLAG_ENV: str = "TRUELINE_PI4B_VERBOSE_ATTRIBUTION"
+
+_PI4B_ATTRIBUTION_STATE_KEY: str = "_pi4b_print_to_sheets_attribution"
+_PI4B_DIAG_KEY: str = "pi4b_print_to_sheets_attribution"
+
+_PI4B_DISAGREEMENT_EXAMPLES_CAP: int = 10
+
+_PI4B_ATTR_DERIVED_BYTE_EQUIVALENT: str = "derived_byte_equivalent"
+_PI4B_ATTR_DERIVED_ONLY: str = "derived_only"
+_PI4B_ATTR_CONSTANT_FALLBACK: str = "constant_fallback"
+_PI4B_ATTR_DISAGREEMENT_CONSTANT_USED: str = "disagreement_constant_used"
+_PI4B_ATTR_REFUSED_BOTH: str = "refused_both"
+
+_PI4B_CATALOG_SOURCE_CACHE_HIT: str = "cache_hit"
+_PI4B_CATALOG_SOURCE_BUILT_PREFIX: str = "built_from_"  # rendered "built_from_<N>_pdfs"
+_PI4B_CATALOG_SOURCE_UNAVAILABLE: str = "unavailable"
+
+
+def _trueline_pi4a_derived_print_index_enabled() -> bool:
+    """Runtime flag read for PI.4B.2 derived-preferred activation. Read every
+    call; never captured at import-time. Mirrors P5.3 / P5.4 pattern.
+    """
+    raw = os.environ.get(_PI4B_DERIVED_FLAG_ENV, "").strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
+def _trueline_pi4b_verbose_attribution_enabled() -> bool:
+    """Sub-flag controlling whether `attribution_per_token` appears in the
+    PI.4B.2 attribution snapshot. Default OFF.
+    """
+    raw = os.environ.get(_PI4B_VERBOSE_FLAG_ENV, "").strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
+def _print_to_sheets_constant_projection() -> Dict[str, List[int]]:
+    """Byte-identical pre-PI.4B.2 projection. Iterates the constant and
+    returns `{token: [sheet]}` for every entry whose `sheet` is an int.
+    Safe-failure: returns `{}` on iteration error. No STATE write.
+
+    Extracted from the previous body of `_print_to_sheets_from_packet_index`.
+    The flag-OFF branch and the activation-branch's defensive fallback both
+    call this helper to guarantee the projection contract is preserved
+    regardless of which branch executes.
     """
     out: Dict[str, List[int]] = {}
     try:
         for token, entry in CURRENT_PACKET_PRINT_SHEET_INDEX.items():
             try:
                 sheet = entry.get("sheet")
-                if isinstance(sheet, int):
-                    out[str(token)] = [sheet]
+                if isinstance(sheet, int) and not isinstance(sheet, bool):
+                    out[str(token)] = [int(sheet)]
             except Exception:
                 continue
     except Exception:
         return {}
     return out
+
+
+def _print_to_sheets_with_derived_attribution() -> Dict[str, List[int]]:
+    """PI.4B.2 activation body. Called only when the derived-print-index
+    flag is ON.
+
+    Resolves the session's PI.4A derived confirmed-sheet catalog via the
+    PI.4B.0 cache primitive, applies the per-token fallback cascade (constant
+    wins every disagreement), and writes the attribution snapshot to
+    STATE[_PI4B_ATTRIBUTION_STATE_KEY]. Returns the resulting projection.
+
+    Per-token cascade (matches PI.4B design §5.1):
+      derived [N] + constant [N]              -> [N];  derived_byte_equivalent
+      derived [N] + constant absent/non-int   -> [N];  derived_only
+      derived [N] + constant [M], N != M      -> [M];  disagreement_constant_used
+      derived None + constant [M]             -> [M];  constant_fallback
+      derived None + constant absent/non-int  -> omit; refused_both
+
+    Never raises. The outer wrapper catches any exception and falls back to
+    the constant projection so that downstream consumers always receive a
+    valid `Dict[str, List[int]]`.
+    """
+    out: Dict[str, List[int]] = {}
+    session_id = str(STATE.get("_session_id_hint") or "").strip()
+    verbose = _trueline_pi4b_verbose_attribution_enabled()
+
+    # ----- Catalog resolution + source attribution -----
+    catalog: Set[int] = set()
+    catalog_source: str = _PI4B_CATALOG_SOURCE_UNAVAILABLE
+    if session_id:
+        expected_hash = _resolved_plan_paths_hash(session_id)
+        cached_hash = STATE.get(_PI4B_CACHE_HASH_STATE_KEY)
+        cached_value = STATE.get(_PI4B_CACHE_STATE_KEY)
+        was_cache_hit = (
+            isinstance(cached_hash, str)
+            and cached_hash == expected_hash
+            and expected_hash != ""
+            and isinstance(cached_value, list)
+        )
+        try:
+            catalog = _build_confirmed_sheet_set_for_session(session_id)
+        except Exception:
+            catalog = set()
+        if catalog or expected_hash:
+            if was_cache_hit:
+                catalog_source = _PI4B_CATALOG_SOURCE_CACHE_HIT
+            else:
+                try:
+                    n_pdfs = len(_resolve_engineering_plan_pdf_paths(session_id))
+                except Exception:
+                    n_pdfs = 0
+                catalog_source = (
+                    f"{_PI4B_CATALOG_SOURCE_BUILT_PREFIX}{n_pdfs}_pdfs"
+                )
+
+    # ----- Token universe (constant's keys) -----
+    token_universe: List[str] = []
+    try:
+        for token in CURRENT_PACKET_PRINT_SHEET_INDEX.keys():
+            token_universe.append(str(token))
+    except Exception:
+        token_universe = []
+
+    # ----- Derived map (one call for all tokens) -----
+    derived_map: Dict[str, Optional[List[int]]] = {}
+    if _engineering_plan_parser is not None and token_universe:
+        try:
+            derived_map = _engineering_plan_parser.derive_print_to_sheet_index(
+                catalog, token_universe
+            )
+        except Exception:
+            derived_map = {}
+
+    # ----- Per-token cascade -----
+    tokens_derived = 0
+    tokens_constant_fallback = 0
+    tokens_disagreement = 0
+    tokens_refused_both = 0
+    disagreement_examples: List[Dict[str, Any]] = []
+    attribution_per_token: Dict[str, str] = {}
+
+    for token_str in token_universe:
+        derived = derived_map.get(token_str)
+        constant_entry = CURRENT_PACKET_PRINT_SHEET_INDEX.get(token_str)
+        constant_sheet: Optional[int] = None
+        if isinstance(constant_entry, dict):
+            cs = constant_entry.get("sheet")
+            if isinstance(cs, int) and not isinstance(cs, bool):
+                constant_sheet = int(cs)
+
+        if derived is None and constant_sheet is None:
+            attr = _PI4B_ATTR_REFUSED_BOTH
+            tokens_refused_both += 1
+        elif derived is None and constant_sheet is not None:
+            out[token_str] = [constant_sheet]
+            attr = _PI4B_ATTR_CONSTANT_FALLBACK
+            tokens_constant_fallback += 1
+        elif derived is not None and constant_sheet is None:
+            out[token_str] = list(derived)
+            attr = _PI4B_ATTR_DERIVED_ONLY
+            tokens_derived += 1
+        elif derived == [constant_sheet]:
+            out[token_str] = list(derived)
+            attr = _PI4B_ATTR_DERIVED_BYTE_EQUIVALENT
+            tokens_derived += 1
+        else:
+            # Disagreement — constant wins; record up to N examples.
+            out[token_str] = [constant_sheet]  # type: ignore[list-item]
+            attr = _PI4B_ATTR_DISAGREEMENT_CONSTANT_USED
+            tokens_disagreement += 1
+            if len(disagreement_examples) < _PI4B_DISAGREEMENT_EXAMPLES_CAP:
+                derived_sheet: Optional[int] = None
+                if isinstance(derived, list) and derived:
+                    try:
+                        derived_sheet = int(derived[0])
+                    except Exception:
+                        derived_sheet = None
+                disagreement_examples.append({
+                    "token": token_str,
+                    "derived_sheet": derived_sheet,
+                    "constant_sheet": constant_sheet,
+                })
+        if verbose:
+            attribution_per_token[token_str] = attr
+
+    # ----- Attribution snapshot -----
+    diagnostic: Dict[str, Any] = {
+        "enabled":                  True,
+        "session_id":               session_id,
+        "catalog_size":             len(catalog),
+        "catalog_source":           catalog_source,
+        "tokens_total":             len(token_universe),
+        "tokens_derived":           tokens_derived,
+        "tokens_constant_fallback": tokens_constant_fallback,
+        "tokens_disagreement":      tokens_disagreement,
+        "tokens_refused_both":      tokens_refused_both,
+        "disagreement_examples":    disagreement_examples,
+    }
+    if verbose:
+        diagnostic["attribution_per_token"] = attribution_per_token
+
+    try:
+        STATE[_PI4B_ATTRIBUTION_STATE_KEY] = diagnostic
+    except Exception:
+        pass
+
+    return out
+
+
+def _print_to_sheets_from_packet_index() -> Dict[str, List[int]]:
+    """Project CURRENT_PACKET_PRINT_SHEET_INDEX into a print_to_sheets
+    mapping suitable for evaluate_footage_range_containment.
+
+    When `TRUELINE_PI4A_DERIVED_PRINT_INDEX` is OFF (default), the body is
+    byte-identical to the pre-PI.4B.2 implementation — see
+    `_print_to_sheets_constant_projection`. No STATE write occurs.
+
+    When the flag is ON, PI.4A's derived view is preferred with constant
+    fallback (see `_print_to_sheets_with_derived_attribution`). The
+    attribution snapshot is written to STATE under
+    `_PI4B_ATTRIBUTION_STATE_KEY`. Any internal failure in the activation
+    branch falls back to the constant projection so the return-type contract
+    is always honored.
+
+    Safe-failure: returns `{}` only when the constant itself cannot be
+    iterated.
+    """
+    if not _trueline_pi4a_derived_print_index_enabled():
+        return _print_to_sheets_constant_projection()
+    try:
+        return _print_to_sheets_with_derived_attribution()
+    except Exception:
+        return _print_to_sheets_constant_projection()
 
 
 def _evaluate_footage_range_for_group_safe(
