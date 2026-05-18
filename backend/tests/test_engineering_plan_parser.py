@@ -243,14 +243,18 @@ class TestSafeFailureContract(unittest.TestCase):
 
     def test_extract_all_schema_complete(self) -> None:
         result = pp.extract_all(self.NONEXISTENT)
+        # PI.4A Option A: sheet_labels surfaced as 9th top-level key.
+        # Exposure only — extract_sheet_labels was unchanged.
         expected_keys = {
             "metadata", "title_block", "matchlines", "station_callouts",
             "ap_ids", "splice_ids", "drawing_index", "fieldwire_table",
+            "sheet_labels",
         }
         self.assertEqual(set(result.keys()), expected_keys)
         for key in (
             "matchlines", "station_callouts", "ap_ids",
             "splice_ids", "drawing_index", "fieldwire_table",
+            "sheet_labels",
         ):
             self.assertEqual(
                 result[key], [],
@@ -360,6 +364,7 @@ class _PdfExtractionMixin:
         cls.splice_ids = cls.all_result["splice_ids"]
         cls.drawing_index = cls.all_result["drawing_index"]
         cls.fieldwire_table = cls.all_result["fieldwire_table"]
+        cls.sheet_labels = cls.all_result["sheet_labels"]
 
     # PI.1 source_sheet enrichment contract — inherited by every Brenham
     # fixture class. Verifies the new additive field is present and well-
@@ -483,6 +488,21 @@ class _PdfExtractionMixin:
                     msg=(f"sheet_number={v!r} should be None for "
                          f"unparseable filename {r.get('file_name')!r}"),
                 )
+
+    # PI.4A confirmed-sheet-set contract — inherited by every Brenham
+    # fixture class. Verifies derive_confirmed_sheet_set on the full
+    # extract_all output returns a set of positive ints. The set may be
+    # empty when no evidence channels carry sheet numbers; no fixture-
+    # specific catalog content lock (the byte-equivalence test in
+    # test_print_to_sheet_derivation.py locks the AutoCAD-fixture-specific
+    # 1..30 catalog separately).
+
+    def test_pi4a_confirmed_sheet_set_is_positive_int_set(self) -> None:  # type: ignore[no-untyped-def]
+        catalog = pp.derive_confirmed_sheet_set(self.all_result)
+        self.assertIsInstance(catalog, set)  # type: ignore[attr-defined]
+        for value in catalog:
+            self.assertIsInstance(value, int)  # type: ignore[attr-defined]
+            self.assertGreater(value, 0)  # type: ignore[attr-defined]
 
 
 @unittest.skipUnless(_BRENHAM_AVAILABLE, _SKIP_REASON)

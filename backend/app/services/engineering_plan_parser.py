@@ -25,7 +25,7 @@ from __future__ import annotations
 import re
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Dict, Iterator, List, Mapping, Optional, Sequence, Union
+from typing import Any, Dict, Iterator, List, Mapping, Optional, Sequence, Set, Union
 
 try:
     import pdfplumber  # type: ignore
@@ -831,6 +831,7 @@ def extract_all(pdf_path: Union[str, Path]) -> Dict[str, Any]:
                                 _apply_source_sheet(drawing_index, page_to_sheet),
                             ),
         "fieldwire_table":  _apply_source_sheet(fieldwire_table, page_to_sheet),
+        "sheet_labels":     sheet_labels,
     }
 
 
@@ -1340,6 +1341,209 @@ def _apply_station_colocation(
         out.append(new_rec)
 
     return out
+
+
+# ---------------------------------------------------------------------------
+# PI.4A — Print-to-sheet derivation primitives
+# ---------------------------------------------------------------------------
+# Pure, deterministic, safe-failure helpers that derive the
+# `print_token → sheet_int` projection of CURRENT_PACKET_PRINT_SHEET_INDEX
+# from existing surfaced ingestion evidence. Three helpers compose:
+#
+#   - derive_confirmed_sheet_set(extract_all_output)
+#     Per-PDF positive-int sheet catalog. Composes evidence from four
+#     already-landed channels surfaced by extract_all:
+#       * drawing_index[*].sheet_number       (PI.3)
+#       * sheet_labels[*].sheet_label         (PI.1, surfaced via Option A)
+#       * title_block.sheet_number_first_seen (P4 baseline)
+#       * matchlines[*].references_sheet      (P4 baseline)
+#
+#   - union_confirmed_sheet_sets(per_pdf_sets)
+#     Project-level union across per-PDF catalogs. Symmetric, idempotent,
+#     conservative — a sheet present in any one PDF counts.
+#
+#   - derive_print_to_sheet_index(confirmed_sheet_set, observed_print_tokens)
+#     For each observed bore-log print_token, emits {token: [int(token)]}
+#     when int(token) is positive AND in the catalog. Refuses with
+#     {token: None} otherwise. Identity is NOT assumed; presence in the
+#     catalog is the gate. The Optional[List[int]] output shape leaves
+#     room for future multi-sheet print refs.
+#
+# Architectural invariants (load-bearing doctrine):
+#   I-1  sheet_labels exposure is evidence exposure only — extract_all
+#        surfaces what extract_sheet_labels already produces. No new
+#        extractor, regex, constant, derivation, or inference is introduced.
+#   I-2  Helpers consume only surfaced deterministic evidence — they
+#        receive plain dicts / sets / lists, never open PDFs, never read
+#        STATE, never import main.py, never call any runtime function.
+#
+# Sheet 0 is not a valid plan sheet (mirrors PI.3 doctrine) and is
+# dropped at every layer. The canonical refusal sentinel for
+# derive_print_to_sheet_index is None.
+#
+# This module remains consumer-agnostic. No STATE, no FastAPI, no
+# imports from main.py. PI.4A helpers are inert — no runtime path
+# consumes any of their outputs. CURRENT_PACKET_PRINT_SHEET_INDEX
+# remains the authoritative production source until a future PI.4B
+# activation phase, gated on byte-equivalence proof.
+# ---------------------------------------------------------------------------
+
+
+def derive_confirmed_sheet_set(
+    extract_all_output: Optional[Dict[str, Any]],
+) -> Set[int]:
+    """Per-PDF positive-int sheet catalog derived from four surfaced
+    evidence channels of an extract_all output dict.
+
+    Channels (any one is sufficient; union, not intersection):
+      - drawing_index[*].sheet_number (PI.3)
+      - sheet_labels[*].sheet_label (PI.1; requires Option A)
+      - title_block.sheet_number_first_seen (P4 baseline)
+      - matchlines[*].references_sheet (P4 baseline)
+
+    Returns a fresh set of positive ints. Empty set when no evidence
+    is available. Sheet 0 is invalid and never included. Pure.
+    Never raises. Never mutates inputs.
+    """
+    result: Set[int] = set()
+    if not isinstance(extract_all_output, dict):
+        return result
+
+    drawing_index = extract_all_output.get("drawing_index")
+    if isinstance(drawing_index, list):
+        for rec in drawing_index:
+            if not isinstance(rec, dict):
+                continue
+            v = _coerce_nonneg_int(rec.get("sheet_number"))
+            if v is not None and v > 0:
+                result.add(int(v))
+
+    sheet_labels = extract_all_output.get("sheet_labels")
+    if isinstance(sheet_labels, list):
+        for rec in sheet_labels:
+            if not isinstance(rec, dict):
+                continue
+            v = _coerce_nonneg_int(rec.get("sheet_label"))
+            if v is not None and v > 0:
+                result.add(int(v))
+
+    title_block = extract_all_output.get("title_block")
+    if isinstance(title_block, dict):
+        v = _coerce_nonneg_int(title_block.get("sheet_number_first_seen"))
+        if v is not None and v > 0:
+            result.add(int(v))
+
+    matchlines = extract_all_output.get("matchlines")
+    if isinstance(matchlines, list):
+        for rec in matchlines:
+            if not isinstance(rec, dict):
+                continue
+            v = _coerce_nonneg_int(rec.get("references_sheet"))
+            if v is not None and v > 0:
+                result.add(int(v))
+
+    return result
+
+
+def union_confirmed_sheet_sets(
+    per_pdf_sets: Optional[Sequence[Set[int]]],
+) -> Set[int]:
+    """Project-level union across per-PDF catalogs.
+
+    Returns the union of positive ints across all supplied sets.
+    Non-positive ints are filtered. None / non-sequence inputs return
+    an empty set. Individual elements that are not iterables of ints
+    are silently skipped. Strings/bytes are explicitly rejected as
+    the outer sequence to avoid character-by-character iteration.
+
+    Symmetric and idempotent. Pure. Never raises. Never mutates inputs.
+    """
+    result: Set[int] = set()
+    if per_pdf_sets is None:
+        return result
+    if isinstance(per_pdf_sets, (str, bytes)):
+        return result
+    try:
+        outer = iter(per_pdf_sets)
+    except TypeError:
+        return result
+    for element in outer:
+        if element is None:
+            continue
+        if isinstance(element, (str, bytes)):
+            continue
+        try:
+            inner = iter(element)
+        except TypeError:
+            continue
+        for value in inner:
+            v = _coerce_nonneg_int(value)
+            if v is not None and v > 0:
+                result.add(int(v))
+    return result
+
+
+def derive_print_to_sheet_index(
+    confirmed_sheet_set: Optional[Set[int]],
+    observed_print_tokens: Optional[Sequence[str]],
+) -> Dict[str, Optional[List[int]]]:
+    """Per-token print → sheet mapping derived from a confirmed-sheet
+    catalog plus the observed bore-log print_tokens.
+
+    For each token:
+      - Not a string → silently skipped (no valid dict key available)
+      - Not str.isdigit(), int(token) <= 0 → {token: None}
+      - int(token) > 0 but NOT in catalog → {token: None}
+      - int(token) > 0 AND in catalog → {token: [int(token)]}
+
+    Refusal sentinel is None. Sheet 0 is invalid. Identity is NOT
+    assumed; presence in confirmed_sheet_set is the gate. The
+    Optional[List[int]] output shape leaves room for future
+    multi-sheet print refs; PI.4A always emits either None or a
+    single-element [int].
+
+    Pure. Never raises. Never mutates inputs.
+    """
+    result: Dict[str, Optional[List[int]]] = {}
+    if observed_print_tokens is None:
+        return result
+    if isinstance(observed_print_tokens, (str, bytes)):
+        return result
+    try:
+        token_iter = iter(observed_print_tokens)
+    except TypeError:
+        return result
+
+    catalog: Set[int] = set()
+    if confirmed_sheet_set is not None and not isinstance(confirmed_sheet_set, (str, bytes)):
+        try:
+            for value in confirmed_sheet_set:
+                if isinstance(value, bool):
+                    continue
+                if isinstance(value, int) and value > 0:
+                    catalog.add(int(value))
+        except TypeError:
+            catalog = set()
+
+    for token in token_iter:
+        if not isinstance(token, str):
+            continue
+        if not token.isdigit():
+            result[token] = None
+            continue
+        try:
+            value = int(token)
+        except (TypeError, ValueError):
+            result[token] = None
+            continue
+        if value <= 0:
+            result[token] = None
+            continue
+        if value in catalog:
+            result[token] = [value]
+        else:
+            result[token] = None
+    return result
 
 
 # ---------------------------------------------------------------------------
