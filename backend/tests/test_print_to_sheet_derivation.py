@@ -341,5 +341,177 @@ class TestBrenhamAutocadPrintIndexByteEquivalence(unittest.TestCase):
         self.assertEqual(derived, expected)
 
 
+# ===========================================================================
+# PI.4B.1 — Multi-fixture Brenham union byte-equivalence proof
+# ===========================================================================
+#
+# Authorization gate for PI.4B.2. Proves that the union across all three
+# Brenham Phase 5 fixtures (Revision summary + AutoCAD plan set + Fieldwire
+# tabular report), each passed through PI.4A's derive_confirmed_sheet_set,
+# then through union_confirmed_sheet_sets, produces the catalog {1..30}.
+# When that union is then fed to derive_print_to_sheet_index for tokens
+# "1".."30", the result must byte-equal the inline expected mapping
+# `{str(N): [N] for N in 1..30}` — which mirrors the
+# `print_token -> [sheet_int]` projection that
+# `_print_to_sheets_from_packet_index()` emits today from
+# `CURRENT_PACKET_PRINT_SHEET_INDEX`.
+#
+# The expected mapping is INLINE. No backend.main import. No
+# CURRENT_PACKET_PRINT_SHEET_INDEX reference. No runtime dependency.
+# No flag activation. No cache-primitive dependency — this test
+# exercises the PI.4A pure helpers directly against the same evidence
+# path used by PI.4A's byte-equivalence proof.
+# ===========================================================================
+
+
+@unittest.skipUnless(_BRENHAM_AVAILABLE, _SKIP_REASON)
+class TestBrenhamMultiFixtureUnionByteEquivalence(unittest.TestCase):
+    """PI.4B.1 — load-bearing multi-fixture union byte-equivalence proof.
+
+    setUpClass runs `pp.extract_all` + `pp.derive_confirmed_sheet_set`
+    once per fixture and caches the resulting three `Set[int]` on the
+    class. All six test methods consume the cached sets — no per-test
+    PDF parsing.
+
+    Skips the entire class when any of the three Brenham fixtures is
+    absent (the multi-fixture union claim is undefined otherwise).
+    """
+
+    REVISION_FILENAME = "BRENHAM PH5 - 18-02-2026.pdf"
+    AUTOCAD_FILENAME = "Brenham - Phase 5_07-15-25.pdf"
+    FIELDWIRE_FILENAME = "BRENHAM_PHASE_5_New_report_2026-03-23_1774300147.pdf"
+
+    EXPECTED_SHEET_RANGE: Set[int] = set(range(1, 31))
+
+    # Sheets that PI.3 must surface from the Revision PDF's three DWG
+    # entries (BRENHAM-PH-5_P_3.DWG, _P_23.DWG, _P_24.DWG). Revision is
+    # allowed to carry additional sheets via matchlines / sheet_labels;
+    # the test only asserts this set as the lower bound.
+    REVISION_REQUIRED_DWG_SHEETS: Set[int] = {3, 23, 24}
+
+    _revision_set: Set[int]
+    _autocad_set: Set[int]
+    _fieldwire_set: Set[int]
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        revision_path = _fixture_path(cls.REVISION_FILENAME)
+        autocad_path = _fixture_path(cls.AUTOCAD_FILENAME)
+        fieldwire_path = _fixture_path(cls.FIELDWIRE_FILENAME)
+        missing: List[str] = []
+        if revision_path is None:
+            missing.append(cls.REVISION_FILENAME)
+        if autocad_path is None:
+            missing.append(cls.AUTOCAD_FILENAME)
+        if fieldwire_path is None:
+            missing.append(cls.FIELDWIRE_FILENAME)
+        if missing:
+            raise unittest.SkipTest(
+                "PI.4B.1 requires all three Brenham fixtures; missing: "
+                + ", ".join(missing)
+            )
+        cls._revision_set = pp.derive_confirmed_sheet_set(
+            pp.extract_all(str(revision_path))
+        )
+        cls._autocad_set = pp.derive_confirmed_sheet_set(
+            pp.extract_all(str(autocad_path))
+        )
+        cls._fieldwire_set = pp.derive_confirmed_sheet_set(
+            pp.extract_all(str(fieldwire_path))
+        )
+
+    def test_revision_catalog_contains_required_dwg_sheets_and_subset_of_thirty(self) -> None:
+        self.assertTrue(
+            self.REVISION_REQUIRED_DWG_SHEETS.issubset(self._revision_set),
+            msg=(
+                f"Revision catalog {sorted(self._revision_set)} missing "
+                f"required DWG-derived sheets "
+                f"{sorted(self.REVISION_REQUIRED_DWG_SHEETS)}"
+            ),
+        )
+        self.assertTrue(
+            self._revision_set.issubset(self.EXPECTED_SHEET_RANGE),
+            msg=(
+                f"Revision catalog {sorted(self._revision_set)} contains "
+                f"value(s) outside {{1..30}}"
+            ),
+        )
+
+    def test_fieldwire_catalog_subset_of_thirty_with_positive_ints(self) -> None:
+        self.assertTrue(
+            self._fieldwire_set.issubset(self.EXPECTED_SHEET_RANGE),
+            msg=(
+                f"Fieldwire catalog {sorted(self._fieldwire_set)} contains "
+                f"value(s) outside {{1..30}}"
+            ),
+        )
+        for v in self._fieldwire_set:
+            self.assertIsInstance(v, int)
+            self.assertGreater(v, 0)
+
+    def test_autocad_catalog_equals_one_through_thirty(self) -> None:
+        self.assertEqual(
+            self._autocad_set,
+            self.EXPECTED_SHEET_RANGE,
+            msg=(
+                "AutoCAD catalog does not equal {1..30}; got "
+                f"{sorted(self._autocad_set)}"
+            ),
+        )
+
+    def test_three_fixture_union_equals_one_through_thirty(self) -> None:
+        union = pp.union_confirmed_sheet_sets([
+            self._revision_set,
+            self._autocad_set,
+            self._fieldwire_set,
+        ])
+        self.assertEqual(
+            union,
+            self.EXPECTED_SHEET_RANGE,
+            msg=(
+                "Multi-fixture union does not equal {1..30}; got "
+                f"{sorted(union)}"
+            ),
+        )
+
+    def test_union_is_order_independent_across_permutations(self) -> None:
+        forward = pp.union_confirmed_sheet_sets([
+            self._revision_set,
+            self._autocad_set,
+            self._fieldwire_set,
+        ])
+        reverse = pp.union_confirmed_sheet_sets([
+            self._fieldwire_set,
+            self._autocad_set,
+            self._revision_set,
+        ])
+        autocad_first = pp.union_confirmed_sheet_sets([
+            self._autocad_set,
+            self._revision_set,
+            self._fieldwire_set,
+        ])
+        self.assertEqual(forward, reverse)
+        self.assertEqual(forward, autocad_first)
+
+    def test_derive_print_to_sheet_index_over_union_byte_equals_inline_expected(self) -> None:
+        # THE PI.4B.2 AUTHORIZATION PROOF.
+        # The inline expected mapping mirrors the projection of
+        # CURRENT_PACKET_PRINT_SHEET_INDEX entries 1..30 today — but
+        # nothing here imports backend.main or references the constant.
+        union = pp.union_confirmed_sheet_sets([
+            self._revision_set,
+            self._autocad_set,
+            self._fieldwire_set,
+        ])
+        derived = pp.derive_print_to_sheet_index(
+            union,
+            [str(n) for n in range(1, 31)],
+        )
+        expected: Dict[str, Optional[List[int]]] = {
+            str(n): [n] for n in range(1, 31)
+        }
+        self.assertEqual(derived, expected)
+
+
 if __name__ == "__main__":
     unittest.main()
