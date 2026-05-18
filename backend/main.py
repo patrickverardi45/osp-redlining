@@ -7773,6 +7773,244 @@ _PLAN_BIAS_MAX_BOOST: float = 0.03     # hard cap per ranking entry
 _PLAN_BIAS_REORDER_GAP: float = 0.10  # max top-2 gap that permits reorder
 
 
+# ---------------------------------------------------------------------------
+# PT.1 — Print-to-sheet plausibility boost (additive, flag-gated default OFF)
+# ---------------------------------------------------------------------------
+# Composes the PI.4B.2 seam `_print_to_sheets_from_packet_index()`
+# (token -> [sheet_int]) with `_sheet_to_route_ids_from_packet_index()`
+# (sheet_int -> [route_id]) to produce per-route plausibility evidence
+# from the bore-log group's numeric print_tokens. Eligible candidates
+# receive an additive delta capped at _PLAN_BIAS_MAX_BOOST. Reorder
+# fires only when the pre-bias top-2 gap is within _PLAN_BIAS_REORDER_GAP.
+#
+# Doctrine:
+#   - Default OFF -> immediate no-op return; rankings reference preserved;
+#     meta carries `flag_off`. No STATE writes triggered from this layer.
+#   - Additive only. Never removes candidates. Never touches validation,
+#     anchoring, selection, or render gates. Never edits the parser.
+#   - Stacks on top of `_plan_aware_ranking_boost`; both layers respect
+#     the same per-layer cap, so combined boost is at most
+#     2 * _PLAN_BIAS_MAX_BOOST per entry.
+#   - Reuses the existing _PLAN_BIAS_* constants per the planned design;
+#     no new cap or gate is introduced.
+# ---------------------------------------------------------------------------
+
+_PRINT_TO_SHEET_BOOST_FLAG_ENV: str = "TRUELINE_PRINT_TO_SHEET_BOOST"
+_PRINT_TO_SHEET_BOOST_PER_TOKEN: float = 0.01
+_PRINT_TO_SHEET_BOOST_DIAG_KEY: str = "print_to_sheet_boost_meta"
+
+
+def _trueline_print_to_sheet_boost_enabled() -> bool:
+    """Runtime flag read for PT.1. Read every call; never captured at
+    import-time. Mirrors P5.3 / P5.4 / PI.4B.2 pattern.
+    """
+    raw = os.environ.get(_PRINT_TO_SHEET_BOOST_FLAG_ENV, "").strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
+def _apply_print_to_sheet_plausibility_boost(
+    rankings: List[Dict[str, Any]],
+    normalized_group: Dict[str, Any],
+) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+    """PT.1 — Print-to-sheet plausibility additive boost.
+
+    Walks the group's numeric print_tokens, consults the PI.4B.2 seam
+    for `token -> [sheet_int]`, then maps each sheet to route_ids via
+    `_sheet_to_route_ids_from_packet_index`. Candidates whose
+    `route_id` is in the evidence set receive a small additive delta
+    capped at `_PLAN_BIAS_MAX_BOOST` (0.03). Reorder only when the
+    pre-bias top-2 gap is within `_PLAN_BIAS_REORDER_GAP` (0.10).
+
+    Inputs:
+      - rankings: list of candidate ranking dicts (route_id,
+        combined_score, score, route_name, ...). Read-only by ref;
+        a fresh list of shallow-copied dicts is returned when applying.
+      - normalized_group: dict carrying `print_tokens`.
+
+    Returns (rankings, meta). Never raises. Never mutates inputs.
+
+    Default-OFF: returns the original rankings reference and
+    `meta.reason_if_not_applied == "flag_off"`. No seam invocation
+    occurs, so no STATE side-effects (PI.4B.2 attribution write) are
+    triggered from this layer when the boost is disabled.
+    """
+    flag_enabled = _trueline_print_to_sheet_boost_enabled()
+
+    base_meta: Dict[str, Any] = {
+        "applied":                    False,
+        "flag_enabled":               flag_enabled,
+        "reason_if_not_applied":      None,
+        "tokens_considered":          0,
+        "tokens_resolving_to_sheets": 0,
+        "routes_with_evidence":       0,
+        "boosted_entries":            0,
+        "max_delta_applied":          0.0,
+        "top2_gap_before_bias":       0.0,
+        "reordered":                  False,
+        "evidence_by_route_id":       {},
+        "evidence_by_sheet_int":      {},
+    }
+
+    if not flag_enabled:
+        return rankings, {**base_meta, "reason_if_not_applied": "flag_off"}
+
+    if not rankings:
+        return rankings, {**base_meta, "reason_if_not_applied": "no_rankings"}
+
+    # ── Step 1: collect numeric print_tokens from the group ───────────────────
+    try:
+        raw_tokens = normalized_group.get("print_tokens") if isinstance(normalized_group, dict) else None
+    except Exception:
+        raw_tokens = None
+    numeric_tokens: List[str] = []
+    if isinstance(raw_tokens, (list, tuple, set)):
+        for t in raw_tokens:
+            try:
+                s = str(t) if t is not None else ""
+            except Exception:
+                continue
+            if s.isdigit() and s not in numeric_tokens:
+                numeric_tokens.append(s)
+    base_meta["tokens_considered"] = len(numeric_tokens)
+    if not numeric_tokens:
+        return rankings, {**base_meta, "reason_if_not_applied": "no_numeric_print_tokens_in_group"}
+
+    # ── Step 2: token -> sheets via PI.4B.2 seam; sheet -> routes via helper ─
+    try:
+        seam_print_to_sheets = _print_to_sheets_from_packet_index() or {}
+    except Exception:
+        seam_print_to_sheets = {}
+    try:
+        sheet_to_route_ids = _sheet_to_route_ids_from_packet_index() or {}
+    except Exception:
+        sheet_to_route_ids = {}
+
+    # ── Step 3: accumulate evidence ───────────────────────────────────────────
+    evidence_by_route_id: Dict[str, set] = {}    # route_id -> set of matched tokens
+    evidence_by_sheet_int: Dict[str, set] = {}   # str(sheet_int) -> set of matched tokens
+    tokens_resolving_to_sheets = 0
+
+    for token in numeric_tokens:
+        sheets_for_token = seam_print_to_sheets.get(token)
+        if not isinstance(sheets_for_token, (list, tuple, set)):
+            continue
+        valid_sheets: List[int] = []
+        for s in sheets_for_token:
+            try:
+                if isinstance(s, bool):
+                    continue
+                sv = int(s)
+            except (TypeError, ValueError):
+                continue
+            if sv > 0:
+                valid_sheets.append(sv)
+        if not valid_sheets:
+            continue
+        tokens_resolving_to_sheets += 1
+        for sheet_int in valid_sheets:
+            evidence_by_sheet_int.setdefault(str(sheet_int), set()).add(token)
+            route_ids_for_sheet = sheet_to_route_ids.get(sheet_int)
+            if not isinstance(route_ids_for_sheet, (list, tuple, set)):
+                continue
+            for rid in route_ids_for_sheet:
+                rid_s = str(rid or "").strip()
+                if not rid_s:
+                    continue
+                evidence_by_route_id.setdefault(rid_s, set()).add(token)
+
+    base_meta["tokens_resolving_to_sheets"] = tokens_resolving_to_sheets
+    base_meta["routes_with_evidence"] = len(evidence_by_route_id)
+    base_meta["evidence_by_route_id"] = {k: sorted(v) for k, v in evidence_by_route_id.items()}
+    base_meta["evidence_by_sheet_int"] = {k: sorted(v) for k, v in evidence_by_sheet_int.items()}
+
+    if tokens_resolving_to_sheets == 0:
+        return rankings, {**base_meta, "reason_if_not_applied": "seam_empty"}
+    if not evidence_by_route_id:
+        return rankings, {**base_meta, "reason_if_not_applied": "no_sheet_to_route_evidence"}
+
+    # ── Step 4: pre-bias top-2 gap (against current combined_score state) ────
+    def _score_of(entry: Any) -> float:
+        if not isinstance(entry, dict):
+            return 0.0
+        v = entry.get("combined_score")
+        if v is None:
+            v = entry.get("score")
+        try:
+            return float(v) if v is not None else 0.0
+        except (TypeError, ValueError):
+            return 0.0
+
+    top_score = _score_of(rankings[0])
+    second_score = _score_of(rankings[1]) if len(rankings) > 1 else top_score
+    gap_before_bias = round(top_score - second_score, 6)
+    base_meta["top2_gap_before_bias"] = gap_before_bias
+
+    # ── Step 5: apply additive boost ──────────────────────────────────────────
+    boosted_rankings: List[Dict[str, Any]] = []
+    boosted_count = 0
+    max_delta = 0.0
+    any_eligible_match = False
+
+    for entry in rankings:
+        if not isinstance(entry, dict):
+            boosted_rankings.append(entry)
+            continue
+        rid = str(entry.get("route_id") or "").strip()
+        if rid and rid in evidence_by_route_id:
+            evidence_count = len(evidence_by_route_id[rid])
+            delta = min(_PLAN_BIAS_MAX_BOOST, evidence_count * _PRINT_TO_SHEET_BOOST_PER_TOKEN)
+            if delta > 0:
+                any_eligible_match = True
+                original = _score_of(entry)
+                new_score = original + delta
+                new_entry = dict(entry)
+                new_entry["print_to_sheet_boost_delta"] = delta
+                new_entry["print_to_sheet_boost_evidence"] = sorted(evidence_by_route_id[rid])
+                new_entry["combined_score"] = new_score
+                new_entry["score"] = new_score
+                boosted_rankings.append(new_entry)
+                boosted_count += 1
+                if delta > max_delta:
+                    max_delta = delta
+                continue
+        boosted_rankings.append(entry)
+
+    base_meta["boosted_entries"] = boosted_count
+    base_meta["max_delta_applied"] = max_delta
+
+    if not any_eligible_match:
+        return rankings, {**base_meta, "reason_if_not_applied": "no_eligible_route_matches"}
+
+    # ── Step 6: reorder gate ──────────────────────────────────────────────────
+    final_rankings = boosted_rankings
+    reordered = False
+    if len(boosted_rankings) > 1 and gap_before_bias <= _PLAN_BIAS_REORDER_GAP:
+        def _sort_key(r: Any) -> Tuple[float, float, str]:
+            if not isinstance(r, dict):
+                return (0.0, 0.0, "")
+            cs = r.get("combined_score")
+            rs = r.get("route_score")
+            try:
+                cs_f = float(cs) if cs is not None else 0.0
+            except (TypeError, ValueError):
+                cs_f = 0.0
+            try:
+                rs_f = float(rs) if rs is not None else 0.0
+            except (TypeError, ValueError):
+                rs_f = 0.0
+            return (-cs_f, -rs_f, str(r.get("route_name") or ""))
+        sorted_rankings = sorted(boosted_rankings, key=_sort_key)
+        for old, new in zip(boosted_rankings, sorted_rankings):
+            if old is not new:
+                reordered = True
+                break
+        final_rankings = sorted_rankings
+
+    base_meta["applied"] = True
+    base_meta["reordered"] = reordered
+    return final_rankings, base_meta
+
+
 def _plan_aware_ranking_boost(
     rankings: List[Dict[str, Any]],
     normalized_group: Dict[str, Any],
@@ -8749,6 +8987,16 @@ def _rebuild_field_data_outputs() -> None:
             else:
                 _diag["plan_bias_meta"] = _pb_meta  # always record diagnostics even when not applied
 
+        # ── PT.1: print-to-sheet plausibility boost (flag-gated default OFF) ──
+        # Stacks on top of _plan_aware_ranking_boost. Uses ONLY the PI.4B.2
+        # seam's print-to-sheet projection composed with the constant's
+        # sheet -> route_ids map. Additive only; no validation/selection
+        # gate edits. Meta is always recorded for observability.
+        rankings, _pts_meta = _apply_print_to_sheet_plausibility_boost(
+            rankings, normalized_group
+        )
+        _diag[_PRINT_TO_SHEET_BOOST_DIAG_KEY] = _pts_meta
+
         anchored_hypotheses: List[Dict[str, Any]] = []
         for ranking in rankings[:3]:
             matched_route = _find_route_by_id(ranking.get("route_id"))
@@ -8779,6 +9027,14 @@ def _rebuild_field_data_outputs() -> None:
                 if _pb_meta2.get("applied") and not _diag.get("plan_bias_applied"):
                     _diag["plan_bias_applied"] = True
                     _diag["plan_bias_meta"] = _pb_meta2
+
+            # ── PT.1: print-to-sheet plausibility boost (fallback pass 2) ────
+            rankings, _pts_meta2 = _apply_print_to_sheet_plausibility_boost(
+                rankings, normalized_group
+            )
+            if _PRINT_TO_SHEET_BOOST_DIAG_KEY not in _diag:
+                _diag[_PRINT_TO_SHEET_BOOST_DIAG_KEY] = _pts_meta2
+
             for ranking in rankings[:3]:
                 matched_route = _find_route_by_id(ranking.get("route_id"))
                 if not matched_route:
