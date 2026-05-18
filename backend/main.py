@@ -18,7 +18,7 @@ import xml.etree.ElementTree as ET
 from urllib.parse import quote
 from pathlib import Path
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
 import boto3
 import pandas as pd
@@ -8029,6 +8029,173 @@ def _build_plan_topology_for_session(session_id: str) -> Dict[int, Dict[str, Any
         )
     except Exception:
         return {}
+
+
+# ---------------------------------------------------------------------------
+# PI.4B.0 — Session-scoped confirmed-sheet catalog cache primitive
+# ---------------------------------------------------------------------------
+# Helper-only landing (sub-phase PI.4B.0). Inert. NO runtime consumer is
+# wired in by this sub-phase. CURRENT_PACKET_PRINT_SHEET_INDEX
+# (main.py:687) remains the authoritative production source. The
+# flag-gated activation seam is scheduled for sub-phase PI.4B.2 and is
+# explicitly out of scope here.
+#
+# Cache lifecycle (mirrors STATE["engineering_plan_signals"] semantics):
+#   - Session-scoped via STATE. _session_scope (m:587) clears + restores
+#     STATE on every session boundary, so cache fields travel with the
+#     session and are wiped automatically on session switch.
+#   - Tenant-isolated by inheritance — the existing _session_scope
+#     tenant_id check (m:596-603) gates STATE access; cache cannot leak
+#     across tenants because STATE itself is per-session.
+#   - Persisted across requests within a session via _SESSIONS snapshot
+#     at __exit__ (m:621-623).
+#   - Invalidated by path-hash discriminator: any change to the resolved
+#     engineering-plan PDF path set yields a different hash and triggers
+#     a rebuild on the next read.
+#   - Lazy build: cache is populated only when the helper is called, not
+#     eagerly at session entry. Since PI.4B.0 has no runtime consumer,
+#     the catalog build cost is paid only by tests.
+#
+# Architectural invariants (carry from PI.4A design):
+#   I-1  sheet_labels exposure is evidence exposure only — the helper
+#        consumes records already produced by the four established
+#        extractors. No new extractor / regex / constant / derivation.
+#   I-2  Helpers consume only surfaced deterministic evidence — the four
+#        extractors return surfaced records; the cache reads them and
+#        composes via the PI.4A pure helpers. No hidden inference.
+#
+# Storage shape: STATE stores a sorted list[int] (not a Set) so that
+# dict(STATE) -> JSON round-trip via _persist_session (m:623) survives
+# cleanly. The helper API returns Set[int] for ergonomic union/intersect
+# semantics consistent with PI.4A.
+# ---------------------------------------------------------------------------
+
+_PI4B_CACHE_STATE_KEY: str = "_pi4b_confirmed_sheet_set_cache"
+_PI4B_CACHE_HASH_STATE_KEY: str = "_pi4b_confirmed_sheet_set_cache_paths_hash"
+
+
+def _resolved_plan_paths_hash(session_id: Optional[str]) -> str:
+    """Stable hash of the sorted tuple of resolved engineering-plan PDF
+    path strings for a session. Used as the cache-validity discriminator.
+    Returns "" when no session_id, no paths, or on any error.
+    """
+    sid = str(session_id or "").strip()
+    if not sid:
+        return ""
+    try:
+        paths = _resolve_engineering_plan_pdf_paths(sid)
+    except Exception:
+        return ""
+    if not paths:
+        return ""
+    try:
+        joined = "\x00".join(sorted(str(p) for p in paths))
+        return hashlib.sha256(joined.encode("utf-8", errors="replace")).hexdigest()
+    except Exception:
+        return ""
+
+
+def _compute_confirmed_sheet_set_uncached(session_id: str) -> Set[int]:
+    """Build the per-session confirmed-sheet catalog by parsing the four
+    surfaced evidence channels of each engineering-plan PDF in the
+    session. Never raises. Returns a fresh Set[int] (possibly empty).
+
+    Channels:
+      - drawing_index[*].sheet_number (PI.3, applied here via
+        _apply_drawing_sheet_number since extract_drawing_index
+        individually does not surface the field)
+      - sheet_labels[*].sheet_label (PI.1)
+      - title_block.sheet_number_first_seen (P4 baseline)
+      - matchlines[*].references_sheet (P4 baseline)
+    """
+    if _engineering_plan_parser is None:
+        return set()
+    try:
+        paths = _resolve_engineering_plan_pdf_paths(session_id)
+    except Exception:
+        return set()
+    if not paths:
+        return set()
+    per_pdf_sets: List[Set[int]] = []
+    for p in paths:
+        try:
+            di_raw = _engineering_plan_parser.extract_drawing_index(p) or []
+            di = _engineering_plan_parser._apply_drawing_sheet_number(di_raw)
+            sl = _engineering_plan_parser.extract_sheet_labels(p) or []
+            tb = _engineering_plan_parser.extract_title_block(p) or {}
+            ml = _engineering_plan_parser.extract_matchlines(p) or []
+            synthetic = {
+                "drawing_index": di,
+                "sheet_labels":  sl,
+                "title_block":   tb,
+                "matchlines":    ml,
+            }
+            per_pdf_sets.append(
+                _engineering_plan_parser.derive_confirmed_sheet_set(synthetic)
+            )
+        except Exception:
+            continue
+    try:
+        return _engineering_plan_parser.union_confirmed_sheet_sets(per_pdf_sets)
+    except Exception:
+        return set()
+
+
+def _build_confirmed_sheet_set_for_session(
+    session_id: Optional[str],
+) -> Set[int]:
+    """Return the per-session confirmed-sheet catalog, building lazily
+    when the cache is empty or stale.
+
+    Cache validity:
+      - Cache HIT when STATE[_PI4B_CACHE_HASH_STATE_KEY] equals the
+        current _resolved_plan_paths_hash(session_id) AND the cached
+        value is a list AND the hash is non-empty.
+      - Cache MISS otherwise → rebuild via
+        _compute_confirmed_sheet_set_uncached + store sorted list[int]
+        + store current hash.
+
+    Returns a fresh Set[int] on every call. Never raises. Empty session_id
+    short-circuits to an empty set without touching STATE.
+    """
+    sid = str(session_id or "").strip()
+    if not sid:
+        return set()
+    current_hash = _resolved_plan_paths_hash(sid)
+    cached_hash = STATE.get(_PI4B_CACHE_HASH_STATE_KEY)
+    cached_value = STATE.get(_PI4B_CACHE_STATE_KEY)
+    if (
+        isinstance(cached_hash, str)
+        and cached_hash == current_hash
+        and current_hash != ""
+        and isinstance(cached_value, list)
+    ):
+        return {int(v) for v in cached_value if isinstance(v, int) and not isinstance(v, bool) and v > 0}
+    fresh = _compute_confirmed_sheet_set_uncached(sid)
+    STATE[_PI4B_CACHE_STATE_KEY] = sorted(
+        int(v) for v in fresh if isinstance(v, int) and not isinstance(v, bool) and v > 0
+    )
+    STATE[_PI4B_CACHE_HASH_STATE_KEY] = current_hash
+    return set(fresh)
+
+
+def _invalidate_confirmed_sheet_set_cache(
+    session_id: Optional[str] = None,
+) -> None:
+    """Clear the cache entries from STATE. Idempotent. Never raises.
+
+    Since STATE itself is session-scoped (any call inside a different
+    _session_scope sees a different STATE), this helper simply removes
+    the cache fields from the current STATE. The session_id parameter
+    is accepted for API stability with any future per-session-id-keyed
+    cache variant; today it is informational only.
+    """
+    try:
+        STATE.pop(_PI4B_CACHE_STATE_KEY, None)
+        STATE.pop(_PI4B_CACHE_HASH_STATE_KEY, None)
+    except Exception:
+        pass
+    _ = session_id
 
 
 def _print_to_sheets_from_packet_index() -> Dict[str, List[int]]:
