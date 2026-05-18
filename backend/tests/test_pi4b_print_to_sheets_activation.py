@@ -509,6 +509,20 @@ class TestBrenhamE2ECacheActivation(unittest.TestCase):
             # First call: builds catalog from 3 PDFs.
             got_first = M._print_to_sheets_from_packet_index()
             diag_first = M.STATE[M._PI4B_ATTRIBUTION_STATE_KEY]
+            # Defensive: if the seam reports a build happened, the catalog
+            # itself must be populated. An empty catalog under
+            # `built_from_*_pdfs` would still let the cascade pass via
+            # constant fallback (so `got_first == expected` would succeed)
+            # but every per-token tally collapses to constant_fallback and
+            # `tokens_derived` would be 0 — making the failure surface
+            # ambiguous. Assert catalog presence first so any transient
+            # PDF-parse silent failure surfaces here with a precise message.
+            self.assertGreater(
+                diag_first["catalog_size"],
+                0,
+                f"build reported catalog_source={diag_first['catalog_source']} but "
+                f"catalog_size=0; parser silently failed on all 3 PDFs"
+            )
             self.assertEqual(got_first, expected)
             self.assertEqual(
                 diag_first["catalog_source"],
