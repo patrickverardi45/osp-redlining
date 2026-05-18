@@ -8011,6 +8011,300 @@ def _apply_print_to_sheet_plausibility_boost(
     return final_rankings, base_meta
 
 
+# ---------------------------------------------------------------------------
+# PT.2.0 — Sheet adjacency plausibility boost (additive, flag-gated default OFF)
+# ---------------------------------------------------------------------------
+# Composes the PI.4B.2 seam `_print_to_sheets_from_packet_index()`
+# (token -> [sheet_int]) with `_route_sheet_sequence(route_id)` (route_id ->
+# ordered sheet list). For each candidate ranking, finds the longest
+# contiguous run of the route's deduped sheet sequence whose elements all
+# belong to the union of seam-resolved sheets for the group's numeric
+# print_tokens. Eligible candidates receive an additive delta proportional
+# to (matched_count / |seam_sheets|), capped at _PLAN_BIAS_MAX_BOOST.
+#
+# Doctrine (mirrors PT.1 exactly):
+#   - Default OFF -> immediate no-op return; rankings reference preserved;
+#     meta carries `flag_off`. Seam and route-sequence helpers NOT invoked.
+#   - Additive only. Never removes candidates. Never touches validation,
+#     anchoring, selection, render gates, parser, KMZ, or geometry.
+#   - Reuses _PLAN_BIAS_MAX_BOOST (0.03) and _PLAN_BIAS_REORDER_GAP (0.10).
+#     Stacks on PT.1; combined PT.1+PT.2.0 ceiling = 2 * cap = 0.06 per entry.
+#   - Strict contiguity. Non-contiguous overlaps yield only their longest
+#     contiguous-run length. Direction-invariant (set membership of slices).
+#   - Deduplicates `_route_sheet_sequence` outputs preserving first-occurrence
+#     order; the seam union is a set so token duplicates are absorbed.
+#
+# Blast radius (flag OFF):
+#   Zero. The activation branch is never entered; rankings returned by
+#   reference identity; no helper invocations; no STATE writes.
+#
+# Blast radius (flag ON):
+#   Score-additive delta to candidates whose route_id's plan-sheet sequence
+#   contains a contiguous run inside the seam-resolved sheet set. Diagnostic
+#   field `_diag["sheet_adjacency_meta"]` records full provenance per route.
+#   No mutation of validation, selection, anchoring, route_catalog, KMZ
+#   features, or geometry.
+# ---------------------------------------------------------------------------
+
+_SHEET_ADJACENCY_BOOST_FLAG_ENV: str = "TRUELINE_SHEET_ADJACENCY_BOOST"
+_SHEET_ADJACENCY_BOOST_DIAG_KEY: str = "sheet_adjacency_meta"
+
+
+def _trueline_sheet_adjacency_boost_enabled() -> bool:
+    """Runtime flag read for PT.2.0 sheet adjacency plausibility boost.
+    Read every call; never captured at import-time. Mirrors PT.1 / P5.3 /
+    P5.4 / PI.4B.2 pattern.
+    """
+    raw = os.environ.get(_SHEET_ADJACENCY_BOOST_FLAG_ENV, "").strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
+def _apply_sheet_adjacency_plausibility_boost(
+    rankings: List[Dict[str, Any]],
+    normalized_group: Dict[str, Any],
+) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+    """PT.2.0 — Sheet adjacency plausibility additive boost.
+
+    Inputs:
+      - rankings: list of candidate ranking dicts (route_id, combined_score,
+        score, route_name, ...). Read-only by reference identity when the
+        layer no-ops; a fresh list of shallow-copied dicts is returned when
+        any delta is applied.
+      - normalized_group: bore-log group dict carrying `print_tokens`.
+
+    Inputs NOT plumbed (resolved from module-level helpers):
+      - PI.4B.2 seam:           `_print_to_sheets_from_packet_index()`
+      - route-sheet sequence:   `_route_sheet_sequence(route_id)`
+
+    Returns (rankings, meta). Never raises. Never mutates inputs.
+
+    Default-OFF guarantee: returns input rankings by reference identity and
+    `meta.reason_if_not_applied == "flag_off"`. Neither helper is invoked,
+    so no STATE side-effects.
+    """
+    flag_enabled = _trueline_sheet_adjacency_boost_enabled()
+
+    base_meta: Dict[str, Any] = {
+        "applied":                    False,
+        "flag_enabled":               flag_enabled,
+        "reason_if_not_applied":      None,
+        "seam_sheets":                [],
+        "tokens_considered":          0,
+        "tokens_resolving_to_sheets": 0,
+        "routes_with_sequence":       0,
+        "boosted_entries":            0,
+        "max_delta_applied":          0.0,
+        "top2_gap_before_bias":       0.0,
+        "reordered":                  False,
+        "per_route_match":            {},
+    }
+
+    if not flag_enabled:
+        return rankings, {**base_meta, "reason_if_not_applied": "flag_off"}
+
+    if not rankings:
+        return rankings, {**base_meta, "reason_if_not_applied": "no_rankings"}
+
+    # ── Step 1: collect numeric print_tokens from the group ──────────────
+    try:
+        raw_tokens = normalized_group.get("print_tokens") if isinstance(normalized_group, dict) else None
+    except Exception:
+        raw_tokens = None
+    numeric_tokens: List[str] = []
+    if isinstance(raw_tokens, (list, tuple, set)):
+        for t in raw_tokens:
+            try:
+                s = str(t) if t is not None else ""
+            except Exception:
+                continue
+            if s.isdigit() and s not in numeric_tokens:
+                numeric_tokens.append(s)
+    base_meta["tokens_considered"] = len(numeric_tokens)
+    if not numeric_tokens:
+        return rankings, {**base_meta, "reason_if_not_applied": "no_numeric_print_tokens_in_group"}
+
+    # ── Step 2: seam resolution -> union of seam-resolved sheets ─────────
+    try:
+        seam_print_to_sheets = _print_to_sheets_from_packet_index() or {}
+    except Exception:
+        seam_print_to_sheets = {}
+
+    seam_sheets: Set[int] = set()
+    tokens_resolving = 0
+    for token in numeric_tokens:
+        mapped = seam_print_to_sheets.get(token)
+        if not isinstance(mapped, (list, tuple, set)):
+            continue
+        valid: List[int] = []
+        for s in mapped:
+            try:
+                if isinstance(s, bool):
+                    continue
+                sv = int(s)
+            except (TypeError, ValueError):
+                continue
+            if sv > 0:
+                valid.append(sv)
+        if not valid:
+            continue
+        tokens_resolving += 1
+        for sv in valid:
+            seam_sheets.add(sv)
+
+    base_meta["tokens_resolving_to_sheets"] = tokens_resolving
+    base_meta["seam_sheets"] = sorted(seam_sheets)
+
+    if not seam_sheets:
+        return rankings, {**base_meta, "reason_if_not_applied": "seam_empty"}
+
+    # ── Step 3: gather per-candidate deduped route_sheet_sequence ────────
+    per_route_sequences: Dict[str, List[int]] = {}
+    for entry in rankings:
+        if not isinstance(entry, dict):
+            continue
+        rid = str(entry.get("route_id") or "").strip()
+        if not rid or rid in per_route_sequences:
+            continue
+        try:
+            raw_seq = _route_sheet_sequence(rid) or []
+        except Exception:
+            raw_seq = []
+        deduped: List[int] = []
+        seen: Set[int] = set()
+        if isinstance(raw_seq, (list, tuple)):
+            for s in raw_seq:
+                try:
+                    if isinstance(s, bool):
+                        continue
+                    sv = int(s)
+                except (TypeError, ValueError):
+                    continue
+                if sv > 0 and sv not in seen:
+                    seen.add(sv)
+                    deduped.append(sv)
+        per_route_sequences[rid] = deduped
+
+    routes_with_seq = sum(1 for seq in per_route_sequences.values() if seq)
+    base_meta["routes_with_sequence"] = routes_with_seq
+
+    if routes_with_seq == 0:
+        return rankings, {**base_meta, "reason_if_not_applied": "no_route_sheet_sequences"}
+
+    # ── Step 4: longest contiguous run inside seam_sheets per candidate ──
+    per_route_match: Dict[str, Dict[str, Any]] = {}
+    seam_size = len(seam_sheets)
+
+    for rid, seq in per_route_sequences.items():
+        if not seq:
+            continue
+        best = 0
+        current = 0
+        for s in seq:
+            if s in seam_sheets:
+                current += 1
+                if current > best:
+                    best = current
+            else:
+                current = 0
+        coverage = (best / seam_size) if seam_size > 0 else 0.0
+        per_route_match[rid] = {
+            "route_sequence": list(seq),
+            "matched_count":  best,
+            "coverage":       coverage,
+            "delta_applied":  0.0,
+        }
+
+    # ── Step 5: pre-bias top-2 gap (against current combined_score) ──────
+    def _score_of(entry: Any) -> float:
+        if not isinstance(entry, dict):
+            return 0.0
+        v = entry.get("combined_score")
+        if v is None:
+            v = entry.get("score")
+        try:
+            return float(v) if v is not None else 0.0
+        except (TypeError, ValueError):
+            return 0.0
+
+    top_score = _score_of(rankings[0])
+    second_score = _score_of(rankings[1]) if len(rankings) > 1 else top_score
+    gap_before_bias = round(top_score - second_score, 6)
+    base_meta["top2_gap_before_bias"] = gap_before_bias
+
+    # ── Step 6: apply additive boost ─────────────────────────────────────
+    boosted_rankings: List[Dict[str, Any]] = []
+    boosted_count = 0
+    max_delta = 0.0
+    any_eligible_match = False
+
+    for entry in rankings:
+        if not isinstance(entry, dict):
+            boosted_rankings.append(entry)
+            continue
+        rid = str(entry.get("route_id") or "").strip()
+        match = per_route_match.get(rid) if rid else None
+        if match is None or match["matched_count"] == 0:
+            boosted_rankings.append(entry)
+            continue
+        delta = min(_PLAN_BIAS_MAX_BOOST, match["coverage"] * _PLAN_BIAS_MAX_BOOST)
+        if delta <= 0:
+            boosted_rankings.append(entry)
+            continue
+        any_eligible_match = True
+        original = _score_of(entry)
+        new_score = original + delta
+        new_entry = dict(entry)
+        new_entry["sheet_adjacency_boost_delta"] = delta
+        new_entry["sheet_adjacency_boost_evidence"] = {
+            "route_sequence": list(match["route_sequence"]),
+            "matched_count":  match["matched_count"],
+            "coverage":       match["coverage"],
+        }
+        new_entry["combined_score"] = new_score
+        new_entry["score"] = new_score
+        boosted_rankings.append(new_entry)
+        boosted_count += 1
+        if delta > max_delta:
+            max_delta = delta
+        per_route_match[rid]["delta_applied"] = delta
+
+    base_meta["boosted_entries"] = boosted_count
+    base_meta["max_delta_applied"] = max_delta
+    base_meta["per_route_match"] = per_route_match
+
+    if not any_eligible_match:
+        return rankings, {**base_meta, "reason_if_not_applied": "no_eligible_route_matches"}
+
+    # ── Step 7: reorder gate ─────────────────────────────────────────────
+    final_rankings = boosted_rankings
+    reordered = False
+    if len(boosted_rankings) > 1 and gap_before_bias <= _PLAN_BIAS_REORDER_GAP:
+        def _sort_key(r: Any) -> Tuple[float, float, str]:
+            if not isinstance(r, dict):
+                return (0.0, 0.0, "")
+            cs = r.get("combined_score")
+            rs = r.get("route_score")
+            try:
+                cs_f = float(cs) if cs is not None else 0.0
+            except (TypeError, ValueError):
+                cs_f = 0.0
+            try:
+                rs_f = float(rs) if rs is not None else 0.0
+            except (TypeError, ValueError):
+                rs_f = 0.0
+            return (-cs_f, -rs_f, str(r.get("route_name") or ""))
+        sorted_rankings = sorted(boosted_rankings, key=_sort_key)
+        for old, new in zip(boosted_rankings, sorted_rankings):
+            if old is not new:
+                reordered = True
+                break
+        final_rankings = sorted_rankings
+
+    base_meta["applied"] = True
+    base_meta["reordered"] = reordered
+    return final_rankings, base_meta
+
+
 def _plan_aware_ranking_boost(
     rankings: List[Dict[str, Any]],
     normalized_group: Dict[str, Any],
@@ -8997,6 +9291,17 @@ def _rebuild_field_data_outputs() -> None:
         )
         _diag[_PRINT_TO_SHEET_BOOST_DIAG_KEY] = _pts_meta
 
+        # ── PT.2.0: sheet adjacency plausibility boost (flag-gated default OFF) ─
+        # Stacks on PT.1. Composes the PI.4B.2 seam with _route_sheet_sequence
+        # to find the longest contiguous run of each candidate's plan-sheet
+        # sequence whose elements all belong to the seam-resolved sheet set.
+        # Additive only; same cap and reorder gate as PT.1. Meta is always
+        # recorded for observability.
+        rankings, _sa_meta = _apply_sheet_adjacency_plausibility_boost(
+            rankings, normalized_group
+        )
+        _diag[_SHEET_ADJACENCY_BOOST_DIAG_KEY] = _sa_meta
+
         anchored_hypotheses: List[Dict[str, Any]] = []
         for ranking in rankings[:3]:
             matched_route = _find_route_by_id(ranking.get("route_id"))
@@ -9034,6 +9339,13 @@ def _rebuild_field_data_outputs() -> None:
             )
             if _PRINT_TO_SHEET_BOOST_DIAG_KEY not in _diag:
                 _diag[_PRINT_TO_SHEET_BOOST_DIAG_KEY] = _pts_meta2
+
+            # ── PT.2.0: sheet adjacency plausibility boost (fallback pass 2) ─
+            rankings, _sa_meta2 = _apply_sheet_adjacency_plausibility_boost(
+                rankings, normalized_group
+            )
+            if _SHEET_ADJACENCY_BOOST_DIAG_KEY not in _diag:
+                _diag[_SHEET_ADJACENCY_BOOST_DIAG_KEY] = _sa_meta2
 
             for ranking in rankings[:3]:
                 matched_route = _find_route_by_id(ranking.get("route_id"))
