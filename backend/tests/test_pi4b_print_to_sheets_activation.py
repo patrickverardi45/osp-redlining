@@ -461,6 +461,27 @@ class TestBrenhamE2ECacheActivation(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls) -> None:
+        # Defensive guards. The class decorator
+        # `@skipUnless(_BRENHAM_AVAILABLE)` already skips when the resolved
+        # fixture directory does not exist. The two checks below additionally
+        # skip when the directory exists but does not contain usable PDFs —
+        # for example, a checkout where only the JSON lockdown fixtures are
+        # present under backend/tests/fixtures/engineering_plans/brenham and
+        # no real *.pdf files are available. Without these guards the test
+        # would still run, derive 0 tokens, and fail on the
+        # `tokens_derived == len(expected)` assertion even though the
+        # constant-fallback projection itself would be byte-correct.
+        pdf_files = (
+            sorted(_BRENHAM_DIR.glob("*.pdf"))
+            if _BRENHAM_DIR is not None
+            else []
+        )
+        if not pdf_files:
+            raise unittest.SkipTest(
+                "PI.4B.2 E2E requires PDF fixtures; resolved directory "
+                f"{_BRENHAM_DIR!r} contains 0 PDF files."
+            )
+
         revision_path = _fixture_path(cls.REVISION_FILENAME)
         autocad_path = _fixture_path(cls.AUTOCAD_FILENAME)
         fieldwire_path = _fixture_path(cls.FIELDWIRE_FILENAME)
