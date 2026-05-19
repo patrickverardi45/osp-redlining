@@ -100,6 +100,7 @@ def _pt20_meta(*, mode: str = "off", applied: bool = False,
 
 
 REQUIRED_ENVELOPE_KEYS = {
+    # v1 fields (preserved byte-compatible in v2)
     "schema_version", "generated_at_step",
     "layers_present", "layers_applied", "modes_by_layer",
     "total_boost_delta_by_route_id", "max_total_delta",
@@ -107,6 +108,12 @@ REQUIRED_ENVELOPE_KEYS = {
     "any_reorder_attempted", "any_reordered",
     "selection_impact_stack", "selection_changed_by_layers",
     "cap_governance",
+    # R3.f v2 additions (shadow aggregation)
+    "shadow_layers", "selection_impact_shadow_stack",
+    "total_shadow_boost_delta_by_route_id", "max_total_shadow_delta",
+    "cross_layer_top1_agreement",
+    "any_layer_shadow_error", "any_would_have_changed_top1",
+    "any_shadow_layer_would_have_applied",
 }
 
 REQUIRED_CAP_GOVERNANCE_KEYS = {"violations", "cap_per_layer", "ceiling"}
@@ -124,7 +131,7 @@ class TestShape(unittest.TestCase):
             [("PT.1", _pt1_meta()), ("PT.2.0", _pt20_meta())],
         )
         self.assertEqual(set(env.keys()), REQUIRED_ENVELOPE_KEYS)
-        self.assertEqual(env["schema_version"], "plausibility-cumulative-1")
+        self.assertEqual(env["schema_version"], "plausibility-cumulative-2")
         self.assertEqual(env["layers_present"], ["PT.1", "PT.2.0"])
         self.assertEqual(env["layers_applied"], [])
         self.assertEqual(env["modes_by_layer"], {"PT.1": "off", "PT.2.0": "off"})
@@ -159,9 +166,9 @@ class TestShape(unittest.TestCase):
             self.assertEqual(set(env.keys()), REQUIRED_ENVELOPE_KEYS)
             self.assertEqual(set(env["cap_governance"].keys()), REQUIRED_CAP_GOVERNANCE_KEYS)
 
-    def test_schema_version_is_v1(self) -> None:
+    def test_schema_version_is_v2(self) -> None:
         env = M._build_plausibility_cumulative_meta([], [])
-        self.assertEqual(env["schema_version"], "plausibility-cumulative-1")
+        self.assertEqual(env["schema_version"], "plausibility-cumulative-2")
         self.assertEqual(env["schema_version"],
                          M._PLAUSIBILITY_CUMULATIVE_SCHEMA_VERSION)
 
@@ -603,6 +610,398 @@ class TestPipelineIntegration(unittest.TestCase):
         env = _diag[M._PLAUSIBILITY_CUMULATIVE_DIAG_KEY]
         self.assertEqual(env["generated_at_step"], "post_ranking_boosts")
         self.assertEqual(set(env.keys()), REQUIRED_ENVELOPE_KEYS)
+
+
+# ===========================================================================
+# 9. PT.ACT R3.f — schema v2: shadow aggregation
+# ===========================================================================
+
+
+REQUIRED_SHADOW_STACK_ENTRY_KEYS = {
+    "layer", "pre_layer_top1", "post_layer_top1",
+    "changed", "would_have_applied", "would_have_reordered",
+}
+
+
+def _shadow_block(
+    *,
+    computed: bool = True,
+    would_have_applied: bool = False,
+    would_have_top1: str = "",
+    top1_unchanged_vs_actual: bool = True,
+    would_have_reordered: bool = False,
+    deltas: Dict[str, float] = None,
+    error: Any = None,
+    **extra: Any,
+) -> Dict[str, Any]:
+    block: Dict[str, Any] = {
+        "computed":                          computed,
+        "would_have_applied":                would_have_applied,
+        "would_have_boosted_entries":        1 if would_have_applied else 0,
+        "would_have_max_delta":              0.0,
+        "would_have_top2_gap":               0.0,
+        "would_have_reorder_attempted":      would_have_reordered,
+        "would_have_reordered":              would_have_reordered,
+        "would_have_reorder_blocked_reason": None,
+        "would_have_top1_route_id":          would_have_top1,
+        "top1_unchanged_vs_actual":          top1_unchanged_vs_actual,
+        "would_have_delta_by_route_id":      dict(deltas or {}),
+        "would_have_evidence":               {},
+        "error":                             error,
+    }
+    block.update(extra)
+    return block
+
+
+def _meta_with_mode(meta_builder, *, mode: str, shadow: Any = None) -> Dict[str, Any]:
+    """Augment a v1-style meta with a `mode` field and optional shadow block."""
+    m = meta_builder(mode=mode)
+    if shadow is not None:
+        m["shadow"] = shadow
+    return m
+
+
+class TestEnvelopeV2Schema(unittest.TestCase):
+    """R3.f — schema-v2 shadow aggregation tests. v1 fields stay byte-compat
+    (covered by the existing test classes above); these tests focus on the
+    8 new fields and the defensive parsing of `meta["shadow"]`.
+    """
+
+    def _pt1_off(self) -> Dict[str, Any]:
+        return _pt1_meta()
+
+    def _pt2_off(self) -> Dict[str, Any]:
+        return _pt20_meta()
+
+    def _pt1_shadow(self, **kwargs: Any) -> Dict[str, Any]:
+        m = _pt1_meta(mode="shadow", applied=False, reason="shadow_mode")
+        m["shadow"] = _shadow_block(**kwargs)
+        return m
+
+    def _pt2_shadow(self, **kwargs: Any) -> Dict[str, Any]:
+        m = _pt20_meta(mode="shadow", applied=False, reason="shadow_mode")
+        m["shadow"] = _shadow_block(**kwargs)
+        return m
+
+    # ── shadow_layers ──────────────────────────────────────────────────────
+    def test_shadow_layers_lists_shadow_mode_layers(self) -> None:
+        env = M._build_plausibility_cumulative_meta(
+            [],
+            [("PT.1", self._pt1_shadow()), ("PT.2.0", self._pt2_shadow())],
+        )
+        self.assertEqual(env["shadow_layers"], ["PT.1", "PT.2.0"])
+
+    def test_shadow_layers_empty_when_no_shadow_mode(self) -> None:
+        env = M._build_plausibility_cumulative_meta(
+            [], [("PT.1", self._pt1_off()), ("PT.2.0", self._pt2_off())],
+        )
+        self.assertEqual(env["shadow_layers"], [])
+
+    def test_shadow_layers_excludes_off_and_live_layers(self) -> None:
+        live = _pt1_meta(mode="live", applied=True, reason=None)
+        env = M._build_plausibility_cumulative_meta(
+            [], [("PT.1", live), ("PT.2.0", self._pt2_shadow())],
+        )
+        self.assertEqual(env["shadow_layers"], ["PT.2.0"])
+
+    # ── selection_impact_shadow_stack ──────────────────────────────────────
+    def test_selection_impact_shadow_stack_includes_shadow_layers_only(self) -> None:
+        rankings = [_ranking("rA", 0.6)]
+        env = M._build_plausibility_cumulative_meta(
+            rankings,
+            [("PT.1", self._pt1_shadow(would_have_top1="rB",
+                                       top1_unchanged_vs_actual=False)),
+             ("PT.2.0", self._pt2_off())],
+        )
+        self.assertEqual(len(env["selection_impact_shadow_stack"]), 1)
+        entry = env["selection_impact_shadow_stack"][0]
+        self.assertEqual(set(entry.keys()), REQUIRED_SHADOW_STACK_ENTRY_KEYS)
+        self.assertEqual(entry["layer"], "PT.1")
+        self.assertEqual(entry["pre_layer_top1"], "rA")
+        self.assertEqual(entry["post_layer_top1"], "rB")
+        self.assertTrue(entry["changed"])
+
+    def test_selection_impact_shadow_stack_preserves_registry_order(self) -> None:
+        env = M._build_plausibility_cumulative_meta(
+            [_ranking("rA", 0.6)],
+            [("PT.1", self._pt1_shadow(would_have_top1="rA")),
+             ("PT.2.0", self._pt2_shadow(would_have_top1="rB"))],
+        )
+        names = [e["layer"] for e in env["selection_impact_shadow_stack"]]
+        self.assertEqual(names, ["PT.1", "PT.2.0"])
+
+    # ── total_shadow_boost_delta_by_route_id ───────────────────────────────
+    def test_total_shadow_boost_delta_aggregates_sum_across_shadow_layers(self) -> None:
+        env = M._build_plausibility_cumulative_meta(
+            [],
+            [("PT.1", self._pt1_shadow(deltas={"rA": 0.02, "rB": 0.01})),
+             ("PT.2.0", self._pt2_shadow(deltas={"rA": 0.03}))],
+        )
+        self.assertAlmostEqual(env["total_shadow_boost_delta_by_route_id"]["rA"],
+                               0.05, places=9)
+        self.assertAlmostEqual(env["total_shadow_boost_delta_by_route_id"]["rB"],
+                               0.01, places=9)
+
+    def test_total_shadow_boost_delta_empty_when_no_shadow(self) -> None:
+        env = M._build_plausibility_cumulative_meta(
+            [], [("PT.1", self._pt1_off()), ("PT.2.0", self._pt2_off())],
+        )
+        self.assertEqual(env["total_shadow_boost_delta_by_route_id"], {})
+        self.assertEqual(env["max_total_shadow_delta"], 0.0)
+
+    def test_max_total_shadow_delta_reflects_largest_sum(self) -> None:
+        env = M._build_plausibility_cumulative_meta(
+            [],
+            [("PT.1", self._pt1_shadow(deltas={"rA": 0.02, "rB": 0.01})),
+             ("PT.2.0", self._pt2_shadow(deltas={"rA": 0.03}))],
+        )
+        self.assertAlmostEqual(env["max_total_shadow_delta"], 0.05, places=9)
+
+    # ── cross_layer_top1_agreement ─────────────────────────────────────────
+    def test_cross_layer_top1_agreement_true_when_both_shadow_agree(self) -> None:
+        env = M._build_plausibility_cumulative_meta(
+            [],
+            [("PT.1", self._pt1_shadow(would_have_top1="rZ")),
+             ("PT.2.0", self._pt2_shadow(would_have_top1="rZ"))],
+        )
+        self.assertIs(env["cross_layer_top1_agreement"], True)
+
+    def test_cross_layer_top1_agreement_false_when_disagree(self) -> None:
+        env = M._build_plausibility_cumulative_meta(
+            [],
+            [("PT.1", self._pt1_shadow(would_have_top1="rA")),
+             ("PT.2.0", self._pt2_shadow(would_have_top1="rB"))],
+        )
+        self.assertIs(env["cross_layer_top1_agreement"], False)
+
+    def test_cross_layer_top1_agreement_none_with_one_shadow_layer(self) -> None:
+        env = M._build_plausibility_cumulative_meta(
+            [],
+            [("PT.1", self._pt1_shadow(would_have_top1="rA")),
+             ("PT.2.0", self._pt2_off())],
+        )
+        self.assertIsNone(env["cross_layer_top1_agreement"])
+
+    def test_cross_layer_top1_agreement_none_when_one_shadow_errored(self) -> None:
+        env = M._build_plausibility_cumulative_meta(
+            [],
+            [("PT.1", self._pt1_shadow(would_have_top1="rA")),
+             ("PT.2.0", self._pt2_shadow(computed=False, error="RuntimeError"))],
+        )
+        self.assertIsNone(env["cross_layer_top1_agreement"])
+
+    def test_cross_layer_top1_agreement_none_when_top1_empty(self) -> None:
+        # both shadow blocks have empty would_have_top1_route_id -> < 2 candidates
+        env = M._build_plausibility_cumulative_meta(
+            [],
+            [("PT.1", self._pt1_shadow(would_have_top1="")),
+             ("PT.2.0", self._pt2_shadow(would_have_top1=""))],
+        )
+        self.assertIsNone(env["cross_layer_top1_agreement"])
+
+    # ── any_* OR aggregations ──────────────────────────────────────────────
+    def test_any_layer_shadow_error_true_when_one_layer_errored(self) -> None:
+        env = M._build_plausibility_cumulative_meta(
+            [],
+            [("PT.1", self._pt1_shadow(computed=False, error="RuntimeError")),
+             ("PT.2.0", self._pt2_shadow())],
+        )
+        self.assertTrue(env["any_layer_shadow_error"])
+
+    def test_any_layer_shadow_error_false_when_no_errors(self) -> None:
+        env = M._build_plausibility_cumulative_meta(
+            [], [("PT.1", self._pt1_shadow()), ("PT.2.0", self._pt2_shadow())],
+        )
+        self.assertFalse(env["any_layer_shadow_error"])
+
+    def test_any_would_have_changed_top1_oring(self) -> None:
+        env = M._build_plausibility_cumulative_meta(
+            [_ranking("rA", 0.6)],
+            [("PT.1", self._pt1_shadow(would_have_top1="rB",
+                                       top1_unchanged_vs_actual=False)),
+             ("PT.2.0", self._pt2_shadow(would_have_top1="rA",
+                                         top1_unchanged_vs_actual=True))],
+        )
+        self.assertTrue(env["any_would_have_changed_top1"])
+
+    def test_any_would_have_changed_top1_false_when_all_unchanged(self) -> None:
+        env = M._build_plausibility_cumulative_meta(
+            [_ranking("rA", 0.6)],
+            [("PT.1", self._pt1_shadow(would_have_top1="rA",
+                                       top1_unchanged_vs_actual=True)),
+             ("PT.2.0", self._pt2_shadow(would_have_top1="rA",
+                                         top1_unchanged_vs_actual=True))],
+        )
+        self.assertFalse(env["any_would_have_changed_top1"])
+
+    def test_any_shadow_layer_would_have_applied_oring(self) -> None:
+        env = M._build_plausibility_cumulative_meta(
+            [],
+            [("PT.1", self._pt1_shadow(would_have_applied=True)),
+             ("PT.2.0", self._pt2_shadow(would_have_applied=False))],
+        )
+        self.assertTrue(env["any_shadow_layer_would_have_applied"])
+
+    def test_any_shadow_layer_would_have_applied_false_when_none_would_apply(self) -> None:
+        env = M._build_plausibility_cumulative_meta(
+            [],
+            [("PT.1", self._pt1_shadow(would_have_applied=False)),
+             ("PT.2.0", self._pt2_shadow(would_have_applied=False))],
+        )
+        self.assertFalse(env["any_shadow_layer_would_have_applied"])
+
+    # ── v1 byte-compat (semantic preservation) ─────────────────────────────
+    def test_v2_includes_all_v1_fields_with_unchanged_semantics_off_off(self) -> None:
+        env = M._build_plausibility_cumulative_meta(
+            [], [("PT.1", self._pt1_off()), ("PT.2.0", self._pt2_off())],
+        )
+        # v1 fields zero-state
+        self.assertEqual(env["layers_present"], ["PT.1", "PT.2.0"])
+        self.assertEqual(env["layers_applied"], [])
+        self.assertEqual(env["modes_by_layer"], {"PT.1": "off", "PT.2.0": "off"})
+        self.assertEqual(env["total_boost_delta_by_route_id"], {})
+        self.assertEqual(env["max_total_delta"], 0.0)
+        self.assertFalse(env["any_reorder_attempted"])
+        self.assertFalse(env["any_reordered"])
+        self.assertEqual(env["selection_impact_stack"], [])
+        self.assertEqual(env["selection_changed_by_layers"], [])
+        self.assertEqual(env["cap_governance"]["violations"], [])
+
+    def test_v2_includes_all_v1_fields_with_unchanged_semantics_live_live(self) -> None:
+        rankings = [_ranking("rA", 0.6, p2s_delta=0.02, sa_delta=0.03)]
+        pt1_live = _pt1_meta(
+            mode="live", applied=True, reason=None,
+            selection_impact={"pre_layer_top1": "rA", "post_layer_top1": "rA",
+                              "changed": False},
+        )
+        pt2_live = _pt20_meta(
+            mode="live", applied=True, reason=None,
+            selection_impact={"pre_layer_top1": "rA", "post_layer_top1": "rA",
+                              "changed": False},
+        )
+        env = M._build_plausibility_cumulative_meta(
+            rankings, [("PT.1", pt1_live), ("PT.2.0", pt2_live)],
+        )
+        self.assertEqual(env["layers_applied"], ["PT.1", "PT.2.0"])
+        self.assertEqual(env["modes_by_layer"], {"PT.1": "live", "PT.2.0": "live"})
+        self.assertAlmostEqual(env["total_boost_delta_by_route_id"]["rA"],
+                               0.05, places=9)
+        self.assertEqual(len(env["selection_impact_stack"]), 2)
+        # v2-specific: no shadow data when nothing in shadow mode
+        self.assertEqual(env["shadow_layers"], [])
+        self.assertEqual(env["selection_impact_shadow_stack"], [])
+        self.assertEqual(env["total_shadow_boost_delta_by_route_id"], {})
+        self.assertIsNone(env["cross_layer_top1_agreement"])
+
+    # ── mixed-mode (live + shadow) ─────────────────────────────────────────
+    def test_mixed_live_shadow_separates_real_and_hypothetical(self) -> None:
+        rankings = [_ranking("rA", 0.62, p2s_delta=0.02)]
+        pt1_live = _pt1_meta(
+            mode="live", applied=True, reason=None,
+            selection_impact={"pre_layer_top1": "rA", "post_layer_top1": "rA",
+                              "changed": False},
+        )
+        pt2_sh = self._pt2_shadow(would_have_applied=True, would_have_top1="rA",
+                                   deltas={"rA": 0.03})
+        env = M._build_plausibility_cumulative_meta(
+            rankings, [("PT.1", pt1_live), ("PT.2.0", pt2_sh)],
+        )
+        # live counts in layers_applied, shadow in shadow_layers
+        self.assertEqual(env["layers_applied"], ["PT.1"])
+        self.assertEqual(env["shadow_layers"], ["PT.2.0"])
+        # live stack has 1 entry (PT.1), shadow stack has 1 entry (PT.2.0)
+        self.assertEqual(len(env["selection_impact_stack"]), 1)
+        self.assertEqual(env["selection_impact_stack"][0]["layer"], "PT.1")
+        self.assertEqual(len(env["selection_impact_shadow_stack"]), 1)
+        self.assertEqual(env["selection_impact_shadow_stack"][0]["layer"], "PT.2.0")
+        # live total + shadow total separate
+        self.assertAlmostEqual(env["total_boost_delta_by_route_id"]["rA"],
+                               0.02, places=9)
+        self.assertAlmostEqual(env["total_shadow_boost_delta_by_route_id"]["rA"],
+                               0.03, places=9)
+
+    # ── defensive parsing ──────────────────────────────────────────────────
+    def test_layer_with_missing_shadow_block_safely_handled(self) -> None:
+        m = _pt1_meta(mode="shadow", reason="shadow_mode")
+        # no shadow key
+        env = M._build_plausibility_cumulative_meta(
+            [], [("PT.1", m), ("PT.2.0", self._pt2_off())],
+        )
+        # mode is "shadow" so layer joins shadow_layers, but no shadow data
+        self.assertEqual(env["shadow_layers"], ["PT.1"])
+        self.assertEqual(env["selection_impact_shadow_stack"], [])
+        self.assertFalse(env["any_layer_shadow_error"])
+
+    def test_layer_with_non_dict_shadow_block_safely_handled(self) -> None:
+        m = _pt1_meta(mode="shadow", reason="shadow_mode")
+        m["shadow"] = "not-a-dict"
+        env = M._build_plausibility_cumulative_meta(
+            [], [("PT.1", m), ("PT.2.0", self._pt2_off())],
+        )
+        self.assertEqual(env["shadow_layers"], ["PT.1"])
+        self.assertEqual(env["selection_impact_shadow_stack"], [])
+        self.assertFalse(env["any_layer_shadow_error"])
+
+    def test_shadow_computed_false_excluded_from_aggregation_but_error_counted(self) -> None:
+        env = M._build_plausibility_cumulative_meta(
+            [],
+            [("PT.1", self._pt1_shadow(computed=False, error="RuntimeError",
+                                       deltas={"rA": 0.10},
+                                       would_have_top1="rZ")),
+             ("PT.2.0", self._pt2_off())],
+        )
+        self.assertTrue(env["any_layer_shadow_error"])
+        # computed=False -> no stack entry, no delta contribution
+        self.assertEqual(env["selection_impact_shadow_stack"], [])
+        self.assertEqual(env["total_shadow_boost_delta_by_route_id"], {})
+
+    def test_non_numeric_shadow_deltas_coerced_to_zero(self) -> None:
+        env = M._build_plausibility_cumulative_meta(
+            [],
+            [("PT.1", self._pt1_shadow(deltas={
+                "rA": "0.02",   # str -> coerced
+                "rB": True,     # bool -> skipped
+                "rC": None,     # None -> skipped
+                "rD": "nope",   # bad str -> skipped
+            })),
+             ("PT.2.0", self._pt2_off())],
+        )
+        self.assertAlmostEqual(env["total_shadow_boost_delta_by_route_id"]["rA"],
+                               0.02, places=9)
+        for bad in ("rB", "rC", "rD"):
+            self.assertNotIn(bad, env["total_shadow_boost_delta_by_route_id"])
+
+    def test_helper_never_raises_on_pathological_shadow_blocks(self) -> None:
+        # totally malformed metas with various pathological shadow shapes
+        cases: List[Any] = [
+            [("PT.1", {}), ("PT.2.0", {})],
+            [("PT.1", {"mode": "shadow", "shadow": None}),
+             ("PT.2.0", {"mode": "shadow", "shadow": []})],
+            [("PT.1", {"mode": "shadow", "shadow": {"computed": "yes"}}),
+             ("PT.2.0", {"mode": "shadow", "shadow": {"computed": True}})],
+        ]
+        for layer_metas in cases:
+            try:
+                env = M._build_plausibility_cumulative_meta([], layer_metas)
+            except Exception as e:  # pragma: no cover
+                self.fail(f"helper raised on {layer_metas!r}: {e!r}")
+            self.assertEqual(set(env.keys()), REQUIRED_ENVELOPE_KEYS)
+
+    def test_helper_does_not_mutate_layer_metas_with_shadow(self) -> None:
+        pt1 = self._pt1_shadow(would_have_top1="rB",
+                                top1_unchanged_vs_actual=False,
+                                deltas={"rA": 0.02})
+        pt2 = self._pt2_shadow(would_have_top1="rB",
+                                top1_unchanged_vs_actual=False,
+                                deltas={"rA": 0.03})
+        pt1_snap = copy.deepcopy(pt1)
+        pt2_snap = copy.deepcopy(pt2)
+        _ = M._build_plausibility_cumulative_meta(
+            [_ranking("rA", 0.60)],
+            [("PT.1", pt1), ("PT.2.0", pt2)],
+        )
+        self.assertEqual(pt1, pt1_snap)
+        self.assertEqual(pt2, pt2_snap)
 
 
 if __name__ == "__main__":

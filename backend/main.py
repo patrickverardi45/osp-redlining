@@ -8708,7 +8708,7 @@ _PLAUSIBILITY_LAYER_REGISTRY: Tuple[Tuple[str, float], ...] = (
     ("PT.2.0", _PLAN_BIAS_MAX_BOOST),
 )
 _PLAUSIBILITY_CUMULATIVE_DIAG_KEY: str = "plausibility_cumulative_meta"
-_PLAUSIBILITY_CUMULATIVE_SCHEMA_VERSION: str = "plausibility-cumulative-1"
+_PLAUSIBILITY_CUMULATIVE_SCHEMA_VERSION: str = "plausibility-cumulative-2"
 
 
 def _build_plausibility_cumulative_meta(
@@ -8828,6 +8828,93 @@ def _build_plausibility_cumulative_meta(
         "ceiling":       static_ceiling,
     }
 
+    # ── R3.f — schema v2: shadow aggregation ────────────────────────────────
+    # Scans each layer's `meta["shadow"]` block (R3.e contract) and aggregates
+    # would-be facts in parallel with the v1 fields above. v1 fields are
+    # byte-identical regardless of shadow content. `cap_governance` is NOT
+    # extended: the same registered caps (0.03 + 0.03 = 0.06) bound both
+    # live and shadow deltas; a parallel `shadow_cap_governance` block is
+    # explicitly out of scope for R3.f.
+    actual_top1 = ""
+    if isinstance(rankings, (list, tuple)) and rankings:
+        first = rankings[0]
+        if isinstance(first, dict):
+            actual_top1 = str(first.get("route_id") or "")
+
+    shadow_layers: List[str] = []
+    selection_impact_shadow_stack: List[Dict[str, Any]] = []
+    total_shadow_boost_delta_by_route_id: Dict[str, float] = {}
+    any_layer_shadow_error: bool = False
+    any_would_have_changed_top1: bool = False
+    any_shadow_layer_would_have_applied: bool = False
+    _shadow_top1_candidates: List[str] = []  # only valid (computed=True) entries
+
+    for name in layers_present:
+        meta = metas_by_name.get(name) or {}
+        if str(meta.get("mode") or "off") != "shadow":
+            continue
+        shadow_layers.append(name)
+        sb = meta.get("shadow")
+        if not isinstance(sb, dict):
+            continue
+        # `error` is counted even when computed=False (the layer attempted shadow).
+        if sb.get("error") is not None:
+            any_layer_shadow_error = True
+        if not bool(sb.get("computed")):
+            continue
+        would_have_top1 = str(sb.get("would_have_top1_route_id") or "")
+        # Conservative default: missing `top1_unchanged_vs_actual` -> True (no
+        # false-positive "would-have-changed" trigger).
+        top1_unchanged_vs_actual = bool(sb.get("top1_unchanged_vs_actual", True))
+        changed = not top1_unchanged_vs_actual
+        selection_impact_shadow_stack.append({
+            "layer":                name,
+            "pre_layer_top1":       actual_top1,
+            "post_layer_top1":      would_have_top1,
+            "changed":              changed,
+            "would_have_applied":   bool(sb.get("would_have_applied")),
+            "would_have_reordered": bool(sb.get("would_have_reordered")),
+        })
+        if changed:
+            any_would_have_changed_top1 = True
+        if bool(sb.get("would_have_applied")):
+            any_shadow_layer_would_have_applied = True
+        # Per-route would-be deltas — SUM across shadow layers, mirroring how
+        # two live layers' real deltas would stack on the same route.
+        shadow_deltas = sb.get("would_have_delta_by_route_id")
+        if isinstance(shadow_deltas, dict):
+            for rid, v in shadow_deltas.items():
+                if not isinstance(rid, str):
+                    continue
+                rid_s = rid.strip()
+                if not rid_s:
+                    continue
+                if v is None or isinstance(v, bool):
+                    continue
+                try:
+                    d = float(v)
+                except (TypeError, ValueError):
+                    continue
+                if d > 0:
+                    total_shadow_boost_delta_by_route_id[rid_s] = (
+                        total_shadow_boost_delta_by_route_id.get(rid_s, 0.0) + d
+                    )
+        if would_have_top1:
+            _shadow_top1_candidates.append(would_have_top1)
+
+    max_total_shadow_delta: float = max(
+        total_shadow_boost_delta_by_route_id.values(), default=0.0
+    )
+
+    # cross_layer_top1_agreement — None unless >= 2 shadow layers have valid
+    # (computed=True AND non-empty would_have_top1_route_id) blocks. Compares
+    # would-be top-1 values across them.
+    cross_layer_top1_agreement: Any = None
+    if len(_shadow_top1_candidates) >= 2:
+        cross_layer_top1_agreement = all(
+            c == _shadow_top1_candidates[0] for c in _shadow_top1_candidates
+        )
+
     return {
         "schema_version":                _PLAUSIBILITY_CUMULATIVE_SCHEMA_VERSION,
         "generated_at_step":             str(step),
@@ -8844,6 +8931,15 @@ def _build_plausibility_cumulative_meta(
         "selection_impact_stack":        selection_impact_stack,
         "selection_changed_by_layers":   selection_changed_by_layers,
         "cap_governance":                cap_governance,
+        # ── R3.f v2 additions (shadow aggregation) ──────────────────────────
+        "shadow_layers":                        shadow_layers,
+        "selection_impact_shadow_stack":        selection_impact_shadow_stack,
+        "total_shadow_boost_delta_by_route_id": total_shadow_boost_delta_by_route_id,
+        "max_total_shadow_delta":               max_total_shadow_delta,
+        "cross_layer_top1_agreement":           cross_layer_top1_agreement,
+        "any_layer_shadow_error":               any_layer_shadow_error,
+        "any_would_have_changed_top1":          any_would_have_changed_top1,
+        "any_shadow_layer_would_have_applied":  any_shadow_layer_would_have_applied,
     }
 
 
