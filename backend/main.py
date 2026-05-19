@@ -183,6 +183,18 @@ MATCH_AUDIT_GROUPS_MAX_ROWS = 5000
 MATCH_SHADOW_COMPARE_PATH = UPLOADS_DIR / "match_shadow_compare.jsonl"
 MATCH_SHADOW_COMPARE_MAX_ROWS = 5000
 
+# PT.ACT R3.g — append-only plausibility shadow telemetry (JSONL, observability-only).
+# Engineering-side activation-readiness telemetry. Never influences scoring,
+# selection, anchoring, validation, ranking, or geometry. Emits only when at
+# least one plausibility layer ran in shadow mode for the pass.
+PLAUSIBILITY_SHADOW_PATH = UPLOADS_DIR / "plausibility_shadow.jsonl"
+PLAUSIBILITY_SHADOW_MAX_ROWS = 5000
+# Size-trigger trim threshold. After each append, the helper performs a single
+# read+truncate cycle ONLY when the file exceeds this many bytes. Avoids the
+# per-append read+rewrite churn pattern (R3.g review mandate). Sized so the
+# trigger fires only when the row count meaningfully exceeds the cap.
+PLAUSIBILITY_SHADOW_TRIM_TRIGGER_BYTES = 8 * 1024 * 1024
+
 # Phase 1K — append-only review-label telemetry (JSONL, observability-only).
 # Labels are human-review telemetry ONLY.  They never influence matching,
 # scoring, rendering, or any operational system.  See LABEL_USAGE_POLICY.md.
@@ -8943,6 +8955,151 @@ def _build_plausibility_cumulative_meta(
     }
 
 
+def _append_plausibility_shadow_row(
+    envelope: Dict[str, Any],
+    layer_metas: List[Tuple[str, Dict[str, Any]]],
+    *,
+    group_id: Optional[str] = None,
+) -> None:
+    """PT.ACT R3.g — persist one shadow telemetry row per shadow-active pass.
+
+    Schema version: "plausibility-shadow-1".  Engineering-side activation-readiness
+    telemetry.  Never raises; logs a warning on any failure.  Pure read of the
+    finalized envelope, finalized layer_metas, and STATE.  No mutation of any
+    argument.  Strictly transcribes already-finalized observation state into a
+    JSONL row — never invokes compute, ranking, selection, scoring, anchoring,
+    or route-evaluator helpers.
+
+    Emission gate: SHADOW-only.  Writes iff ``envelope["shadow_layers"]`` is a
+    non-empty list.  No write under OFF.  No write under LIVE.
+
+    Trim strategy: size-trigger.  After append, the helper stats the file and
+    performs a single read+rewrite trim cycle ONLY when the file exceeds
+    ``PLAUSIBILITY_SHADOW_TRIM_TRIGGER_BYTES``.  Avoids per-append rewrite
+    churn (R3.g review mandate).
+    """
+    try:
+        if not isinstance(envelope, dict):
+            return
+        shadow_layers = envelope.get("shadow_layers")
+        if not isinstance(shadow_layers, list) or not shadow_layers:
+            return
+
+        def _trunc(value: Any, limit: int) -> Optional[str]:
+            if value is None:
+                return None
+            s = str(value)
+            return s if len(s) <= limit else s[:limit]
+
+        # Bound per-route delta map to top-32 by |delta|.  Mandated by review.
+        deltas_raw = envelope.get("total_shadow_boost_delta_by_route_id")
+        bounded_deltas: Dict[str, float] = {}
+        if isinstance(deltas_raw, dict):
+            _pairs: List[Tuple[str, float]] = []
+            for _rid, _v in deltas_raw.items():
+                if not isinstance(_rid, str):
+                    continue
+                _rid_s = _rid.strip()
+                if not _rid_s:
+                    continue
+                if _v is None or isinstance(_v, bool):
+                    continue
+                try:
+                    _fv = float(_v)
+                except (TypeError, ValueError):
+                    continue
+                _pairs.append((_rid_s, _fv))
+            if len(_pairs) > 32:
+                _pairs.sort(key=lambda kv: abs(kv[1]), reverse=True)
+                _pairs = _pairs[:32]
+            bounded_deltas = {_rid: _fv for _rid, _fv in _pairs}
+
+        # Per-layer snippets — strictly transcribes already-finalized
+        # meta["shadow"] block fields.  Bound to the registered layer count.
+        _metas_by_name: Dict[str, Dict[str, Any]] = {}
+        if isinstance(layer_metas, list):
+            for _entry in layer_metas:
+                if not (isinstance(_entry, tuple) and len(_entry) == 2):
+                    continue
+                _n, _m = _entry
+                if isinstance(_n, str) and isinstance(_m, dict):
+                    _metas_by_name[_n] = _m
+
+        per_layer: List[Dict[str, Any]] = []
+        _layer_cap = len(_PLAUSIBILITY_LAYER_REGISTRY)
+        for _name in shadow_layers:
+            if not isinstance(_name, str):
+                continue
+            if len(per_layer) >= _layer_cap:
+                break
+            _meta = _metas_by_name.get(_name) or {}
+            _sb = _meta.get("shadow") if isinstance(_meta, dict) else None
+            if not isinstance(_sb, dict):
+                _sb = {}
+            per_layer.append({
+                "layer":                    _name,
+                "mode":                     _trunc(_meta.get("mode") if isinstance(_meta, dict) else None, 500),
+                "schema_version":           _trunc(_meta.get("schema_version") if isinstance(_meta, dict) else None, 500),
+                "computed":                 bool(_sb.get("computed", False)),
+                "would_have_applied":       bool(_sb.get("would_have_applied", False)),
+                "would_have_reordered":     bool(_sb.get("would_have_reordered", False)),
+                "top1_unchanged_vs_actual": bool(_sb.get("top1_unchanged_vs_actual", True)),
+                "would_have_top1_route_id": _trunc(_sb.get("would_have_top1_route_id"), 500),
+                "error":                    _trunc(_sb.get("error"), 200),
+            })
+
+        # Identifiers — same safe set as Phase 1H-A, plus group_id.
+        _session_ps = STATE.get("_session_id_hint")
+        _sha_ps = STATE.get("last_kmz_input_sha256")
+
+        row: Dict[str, Any] = {
+            "schema_version":                       "plausibility-shadow-1",
+            "decided_at":                           datetime.now(timezone.utc).isoformat(),
+            "envelope_emit_id":                     uuid.uuid4().hex,
+            "session_id_hint":                      _trunc(_session_ps, 500),
+            "input_sha256":                         _trunc(_sha_ps, 500),
+            "group_id":                             _trunc(group_id, 500),
+            "envelope_schema_version":              _trunc(envelope.get("schema_version"), 500),
+            "generated_at_step":                    _trunc(envelope.get("generated_at_step"), 500),
+            "layers_present":                       list(envelope.get("layers_present") or []),
+            "modes_by_layer":                       dict(envelope.get("modes_by_layer") or {}),
+            "shadow_layers":                        list(shadow_layers),
+            "selection_impact_shadow_stack":        list(envelope.get("selection_impact_shadow_stack") or []),
+            "total_shadow_boost_delta_by_route_id": bounded_deltas,
+            "max_total_shadow_delta":               float(envelope.get("max_total_shadow_delta") or 0.0),
+            "cross_layer_top1_agreement":           envelope.get("cross_layer_top1_agreement"),
+            "any_layer_shadow_error":               bool(envelope.get("any_layer_shadow_error", False)),
+            "any_would_have_changed_top1":          bool(envelope.get("any_would_have_changed_top1", False)),
+            "any_shadow_layer_would_have_applied":  bool(envelope.get("any_shadow_layer_would_have_applied", False)),
+            "per_layer_shadow_meta":                per_layer,
+        }
+
+        _line_ps = json.dumps(row, separators=(",", ":")) + "\n"
+
+        with open(PLAUSIBILITY_SHADOW_PATH, "a", encoding="utf-8") as _fh_ps:
+            _fh_ps.write(_line_ps)
+
+        # Size-trigger trim — read+rewrite ONLY when file exceeds threshold.
+        try:
+            _size_ps = os.path.getsize(PLAUSIBILITY_SHADOW_PATH)
+        except OSError:
+            return
+        if _size_ps > PLAUSIBILITY_SHADOW_TRIM_TRIGGER_BYTES:
+            with open(PLAUSIBILITY_SHADOW_PATH, "r", encoding="utf-8") as _fh_ps:
+                _all_lines_ps = _fh_ps.readlines()
+            if len(_all_lines_ps) > PLAUSIBILITY_SHADOW_MAX_ROWS:
+                _all_lines_ps = _all_lines_ps[-PLAUSIBILITY_SHADOW_MAX_ROWS:]
+                with open(PLAUSIBILITY_SHADOW_PATH, "w", encoding="utf-8") as _fh_ps:
+                    _fh_ps.writelines(_all_lines_ps)
+
+    except Exception as _ps_exc:  # pragma: no cover
+        print(
+            f"[PLAUS_SHADOW] WARNING: failed to append plausibility shadow row: "
+            f"{type(_ps_exc).__name__}: {_ps_exc}",
+            flush=True,
+        )
+
+
 def _plan_aware_ranking_boost(
     rankings: List[Dict[str, Any]],
     normalized_group: Dict[str, Any],
@@ -9950,6 +10107,16 @@ def _rebuild_field_data_outputs() -> None:
             step="post_ranking_boosts",
         )
 
+        # ── PT.ACT R3.g: plausibility shadow telemetry (JSONL persistence) ──
+        # Emits one row to plausibility_shadow.jsonl iff at least one layer
+        # ran in shadow mode for this pass. Strictly observational; never
+        # mutates rankings or metas; never raises.
+        _append_plausibility_shadow_row(
+            _diag[_PLAUSIBILITY_CUMULATIVE_DIAG_KEY],
+            [("PT.1", _pts_meta), ("PT.2.0", _sa_meta)],
+            group_id=normalized_group.get("group_id"),
+        )
+
         anchored_hypotheses: List[Dict[str, Any]] = []
         for ranking in rankings[:3]:
             matched_route = _find_route_by_id(ranking.get("route_id"))
@@ -10003,6 +10170,14 @@ def _rebuild_field_data_outputs() -> None:
                     rankings,
                     [("PT.1", _pts_meta2), ("PT.2.0", _sa_meta2)],
                     step="post_ranking_boosts_fallback",
+                )
+                # ── PT.ACT R3.g: shadow telemetry (fallback pass 2) ──────
+                # Mirrors the main-pass hook; guarded by the same envelope
+                # presence check so we never double-emit per group.
+                _append_plausibility_shadow_row(
+                    _diag[_PLAUSIBILITY_CUMULATIVE_DIAG_KEY],
+                    [("PT.1", _pts_meta2), ("PT.2.0", _sa_meta2)],
+                    group_id=normalized_group.get("group_id"),
                 )
 
             for ranking in rankings[:3]:
