@@ -1,0 +1,352 @@
+[
+  {
+    "description": "Gap 0.01; route_B has full coverage (delta=cap); 0.59+0.03=0.62 -> reorder flips.",
+    "group": {
+      "group_idx": 0,
+      "print_tokens": [
+        "7"
+      ],
+      "source_file": "golden.csv"
+    },
+    "meta": {
+      "applied": true,
+      "boosted_entries": 1,
+      "flag_enabled": true,
+      "max_delta_applied": 0.03,
+      "mode": "live",
+      "per_route_match": {
+        "route_A": {
+          "coverage": 0.0,
+          "delta_applied": 0.0,
+          "matched_count": 0,
+          "route_sequence": [
+            201
+          ]
+        },
+        "route_B": {
+          "coverage": 1.0,
+          "delta_applied": 0.03,
+          "matched_count": 2,
+          "route_sequence": [
+            101,
+            102
+          ]
+        }
+      },
+      "reason_if_not_applied": null,
+      "reorder_attempted": true,
+      "reorder_blocked_reason": null,
+      "reordered": true,
+      "routes_with_sequence": 2,
+      "seam_sheets": [
+        101,
+        102
+      ],
+      "selection_impact": {
+        "changed": true,
+        "post_layer_top1": "route_B",
+        "pre_layer_top1": "route_A"
+      },
+      "tokens_considered": 1,
+      "tokens_resolving_to_sheets": 1,
+      "top2_gap_before_bias": 0.01
+    },
+    "name": "full_contiguous_match_flips",
+    "rankings_in": [
+      {
+        "combined_score": 0.6,
+        "route_id": "route_A",
+        "route_length_ft": 1000.0,
+        "route_name": "name_route_A",
+        "route_score": 0.0,
+        "score": 0.6
+      },
+      {
+        "combined_score": 0.59,
+        "route_id": "route_B",
+        "route_length_ft": 1000.0,
+        "route_name": "name_route_B",
+        "route_score": 0.0,
+        "score": 0.59
+      }
+    ],
+    "rankings_out": [
+      {
+        "combined_score": 0.62,
+        "route_id": "route_B",
+        "route_length_ft": 1000.0,
+        "route_name": "name_route_B",
+        "route_score": 0.0,
+        "score": 0.62,
+        "sheet_adjacency_boost_delta": 0.03,
+        "sheet_adjacency_boost_evidence": {
+          "coverage": 1.0,
+          "matched_count": 2,
+          "route_sequence": [
+            101,
+            102
+          ]
+        }
+      },
+      {
+        "combined_score": 0.6,
+        "route_id": "route_A",
+        "route_length_ft": 1000.0,
+        "route_name": "name_route_A",
+        "route_score": 0.0,
+        "score": 0.6
+      }
+    ],
+    "route_sequences": {
+      "route_A": [
+        201
+      ],
+      "route_B": [
+        101,
+        102
+      ]
+    },
+    "seam_map": {
+      "7": [
+        101,
+        102
+      ]
+    }
+  },
+  {
+    "description": "Gap 0.05; route_A's contiguous run is 2/3 (delta=0.02); no flip; gate fires.",
+    "group": {
+      "group_idx": 0,
+      "print_tokens": [
+        "7"
+      ],
+      "source_file": "golden.csv"
+    },
+    "meta": {
+      "applied": true,
+      "boosted_entries": 1,
+      "flag_enabled": true,
+      "max_delta_applied": 0.019999999999999997,
+      "mode": "live",
+      "per_route_match": {
+        "route_A": {
+          "coverage": 0.6666666666666666,
+          "delta_applied": 0.019999999999999997,
+          "matched_count": 2,
+          "route_sequence": [
+            101,
+            999,
+            102,
+            103
+          ]
+        },
+        "route_B": {
+          "coverage": 0.0,
+          "delta_applied": 0.0,
+          "matched_count": 0,
+          "route_sequence": [
+            201
+          ]
+        }
+      },
+      "reason_if_not_applied": null,
+      "reorder_attempted": true,
+      "reorder_blocked_reason": null,
+      "reordered": false,
+      "routes_with_sequence": 2,
+      "seam_sheets": [
+        101,
+        102,
+        103
+      ],
+      "selection_impact": {
+        "changed": false,
+        "post_layer_top1": "route_A",
+        "pre_layer_top1": "route_A"
+      },
+      "tokens_considered": 1,
+      "tokens_resolving_to_sheets": 1,
+      "top2_gap_before_bias": 0.05
+    },
+    "name": "partial_non_contiguous_run",
+    "rankings_in": [
+      {
+        "combined_score": 0.6,
+        "route_id": "route_A",
+        "route_length_ft": 1000.0,
+        "route_name": "name_route_A",
+        "route_score": 0.0,
+        "score": 0.6
+      },
+      {
+        "combined_score": 0.55,
+        "route_id": "route_B",
+        "route_length_ft": 1000.0,
+        "route_name": "name_route_B",
+        "route_score": 0.0,
+        "score": 0.55
+      }
+    ],
+    "rankings_out": [
+      {
+        "combined_score": 0.62,
+        "route_id": "route_A",
+        "route_length_ft": 1000.0,
+        "route_name": "name_route_A",
+        "route_score": 0.0,
+        "score": 0.62,
+        "sheet_adjacency_boost_delta": 0.019999999999999997,
+        "sheet_adjacency_boost_evidence": {
+          "coverage": 0.6666666666666666,
+          "matched_count": 2,
+          "route_sequence": [
+            101,
+            999,
+            102,
+            103
+          ]
+        }
+      },
+      {
+        "combined_score": 0.55,
+        "route_id": "route_B",
+        "route_length_ft": 1000.0,
+        "route_name": "name_route_B",
+        "route_score": 0.0,
+        "score": 0.55
+      }
+    ],
+    "route_sequences": {
+      "route_A": [
+        101,
+        999,
+        102,
+        103
+      ],
+      "route_B": [
+        201
+      ]
+    },
+    "seam_map": {
+      "7": [
+        101,
+        102,
+        103
+      ]
+    }
+  },
+  {
+    "description": "Gap 0.30 (>0.10); route_A has full coverage; reorder gate blocked.",
+    "group": {
+      "group_idx": 0,
+      "print_tokens": [
+        "7"
+      ],
+      "source_file": "golden.csv"
+    },
+    "meta": {
+      "applied": true,
+      "boosted_entries": 1,
+      "flag_enabled": true,
+      "max_delta_applied": 0.03,
+      "mode": "live",
+      "per_route_match": {
+        "route_A": {
+          "coverage": 1.0,
+          "delta_applied": 0.03,
+          "matched_count": 2,
+          "route_sequence": [
+            101,
+            102
+          ]
+        },
+        "route_B": {
+          "coverage": 0.0,
+          "delta_applied": 0.0,
+          "matched_count": 0,
+          "route_sequence": [
+            201
+          ]
+        }
+      },
+      "reason_if_not_applied": null,
+      "reorder_attempted": false,
+      "reorder_blocked_reason": "gap_above_threshold",
+      "reordered": false,
+      "routes_with_sequence": 2,
+      "seam_sheets": [
+        101,
+        102
+      ],
+      "selection_impact": {
+        "changed": false,
+        "post_layer_top1": "route_A",
+        "pre_layer_top1": "route_A"
+      },
+      "tokens_considered": 1,
+      "tokens_resolving_to_sheets": 1,
+      "top2_gap_before_bias": 0.3
+    },
+    "name": "gap_above_threshold",
+    "rankings_in": [
+      {
+        "combined_score": 0.85,
+        "route_id": "route_A",
+        "route_length_ft": 1000.0,
+        "route_name": "name_route_A",
+        "route_score": 0.0,
+        "score": 0.85
+      },
+      {
+        "combined_score": 0.55,
+        "route_id": "route_B",
+        "route_length_ft": 1000.0,
+        "route_name": "name_route_B",
+        "route_score": 0.0,
+        "score": 0.55
+      }
+    ],
+    "rankings_out": [
+      {
+        "combined_score": 0.88,
+        "route_id": "route_A",
+        "route_length_ft": 1000.0,
+        "route_name": "name_route_A",
+        "route_score": 0.0,
+        "score": 0.88,
+        "sheet_adjacency_boost_delta": 0.03,
+        "sheet_adjacency_boost_evidence": {
+          "coverage": 1.0,
+          "matched_count": 2,
+          "route_sequence": [
+            101,
+            102
+          ]
+        }
+      },
+      {
+        "combined_score": 0.55,
+        "route_id": "route_B",
+        "route_length_ft": 1000.0,
+        "route_name": "name_route_B",
+        "route_score": 0.0,
+        "score": 0.55
+      }
+    ],
+    "route_sequences": {
+      "route_A": [
+        101,
+        102
+      ],
+      "route_B": [
+        201
+      ]
+    },
+    "seam_map": {
+      "7": [
+        101,
+        102
+      ]
+    }
+  }
+]

@@ -1,0 +1,299 @@
+[
+  {
+    "description": "Gap 0.01; 3 tokens map to route_B (3*0.01 = cap); 0.59+0.03=0.62 > 0.60 -> reorder flips order.",
+    "group": {
+      "group_idx": 0,
+      "print_tokens": [
+        "7",
+        "8",
+        "9"
+      ],
+      "source_file": "golden.csv"
+    },
+    "meta": {
+      "applied": true,
+      "boosted_entries": 1,
+      "evidence_by_route_id": {
+        "route_B": [
+          "7",
+          "8",
+          "9"
+        ]
+      },
+      "evidence_by_sheet_int": {
+        "42": [
+          "7"
+        ],
+        "43": [
+          "8"
+        ],
+        "44": [
+          "9"
+        ]
+      },
+      "flag_enabled": true,
+      "max_delta_applied": 0.03,
+      "mode": "live",
+      "reason_if_not_applied": null,
+      "reorder_attempted": true,
+      "reorder_blocked_reason": null,
+      "reordered": true,
+      "routes_with_evidence": 1,
+      "selection_impact": {
+        "changed": true,
+        "post_layer_top1": "route_B",
+        "pre_layer_top1": "route_A"
+      },
+      "tokens_considered": 3,
+      "tokens_resolving_to_sheets": 3,
+      "top2_gap_before_bias": 0.01
+    },
+    "name": "reorder_fires_and_flips",
+    "rankings_in": [
+      {
+        "combined_score": 0.6,
+        "route_id": "route_A",
+        "route_length_ft": 1000.0,
+        "route_name": "name_route_A",
+        "route_score": 0.0,
+        "score": 0.6
+      },
+      {
+        "combined_score": 0.59,
+        "route_id": "route_B",
+        "route_length_ft": 1000.0,
+        "route_name": "name_route_B",
+        "route_score": 0.0,
+        "score": 0.59
+      }
+    ],
+    "rankings_out": [
+      {
+        "combined_score": 0.62,
+        "print_to_sheet_boost_delta": 0.03,
+        "print_to_sheet_boost_evidence": [
+          "7",
+          "8",
+          "9"
+        ],
+        "route_id": "route_B",
+        "route_length_ft": 1000.0,
+        "route_name": "name_route_B",
+        "route_score": 0.0,
+        "score": 0.62
+      },
+      {
+        "combined_score": 0.6,
+        "route_id": "route_A",
+        "route_length_ft": 1000.0,
+        "route_name": "name_route_A",
+        "route_score": 0.0,
+        "score": 0.6
+      }
+    ],
+    "seam_map": {
+      "7": [
+        42
+      ],
+      "8": [
+        43
+      ],
+      "9": [
+        44
+      ]
+    },
+    "sheet_to_routes": {
+      "42": [
+        "route_B"
+      ],
+      "43": [
+        "route_B"
+      ],
+      "44": [
+        "route_B"
+      ]
+    }
+  },
+  {
+    "description": "Gap 0.05; top-1 receives the 0.01 boost; gate fires but order unchanged (route_A stays).",
+    "group": {
+      "group_idx": 0,
+      "print_tokens": [
+        "7"
+      ],
+      "source_file": "golden.csv"
+    },
+    "meta": {
+      "applied": true,
+      "boosted_entries": 1,
+      "evidence_by_route_id": {
+        "route_A": [
+          "7"
+        ]
+      },
+      "evidence_by_sheet_int": {
+        "42": [
+          "7"
+        ]
+      },
+      "flag_enabled": true,
+      "max_delta_applied": 0.01,
+      "mode": "live",
+      "reason_if_not_applied": null,
+      "reorder_attempted": true,
+      "reorder_blocked_reason": null,
+      "reordered": false,
+      "routes_with_evidence": 1,
+      "selection_impact": {
+        "changed": false,
+        "post_layer_top1": "route_A",
+        "pre_layer_top1": "route_A"
+      },
+      "tokens_considered": 1,
+      "tokens_resolving_to_sheets": 1,
+      "top2_gap_before_bias": 0.05
+    },
+    "name": "reorder_attempted_no_flip",
+    "rankings_in": [
+      {
+        "combined_score": 0.6,
+        "route_id": "route_A",
+        "route_length_ft": 1000.0,
+        "route_name": "name_route_A",
+        "route_score": 0.0,
+        "score": 0.6
+      },
+      {
+        "combined_score": 0.55,
+        "route_id": "route_B",
+        "route_length_ft": 1000.0,
+        "route_name": "name_route_B",
+        "route_score": 0.0,
+        "score": 0.55
+      }
+    ],
+    "rankings_out": [
+      {
+        "combined_score": 0.61,
+        "print_to_sheet_boost_delta": 0.01,
+        "print_to_sheet_boost_evidence": [
+          "7"
+        ],
+        "route_id": "route_A",
+        "route_length_ft": 1000.0,
+        "route_name": "name_route_A",
+        "route_score": 0.0,
+        "score": 0.61
+      },
+      {
+        "combined_score": 0.55,
+        "route_id": "route_B",
+        "route_length_ft": 1000.0,
+        "route_name": "name_route_B",
+        "route_score": 0.0,
+        "score": 0.55
+      }
+    ],
+    "seam_map": {
+      "7": [
+        42
+      ]
+    },
+    "sheet_to_routes": {
+      "42": [
+        "route_A"
+      ]
+    }
+  },
+  {
+    "description": "Gap 0.30 (>0.10); boost applies to route_A; reorder gate blocked, gap_above_threshold.",
+    "group": {
+      "group_idx": 0,
+      "print_tokens": [
+        "7"
+      ],
+      "source_file": "golden.csv"
+    },
+    "meta": {
+      "applied": true,
+      "boosted_entries": 1,
+      "evidence_by_route_id": {
+        "route_A": [
+          "7"
+        ]
+      },
+      "evidence_by_sheet_int": {
+        "42": [
+          "7"
+        ]
+      },
+      "flag_enabled": true,
+      "max_delta_applied": 0.01,
+      "mode": "live",
+      "reason_if_not_applied": null,
+      "reorder_attempted": false,
+      "reorder_blocked_reason": "gap_above_threshold",
+      "reordered": false,
+      "routes_with_evidence": 1,
+      "selection_impact": {
+        "changed": false,
+        "post_layer_top1": "route_A",
+        "pre_layer_top1": "route_A"
+      },
+      "tokens_considered": 1,
+      "tokens_resolving_to_sheets": 1,
+      "top2_gap_before_bias": 0.3
+    },
+    "name": "gap_above_threshold",
+    "rankings_in": [
+      {
+        "combined_score": 0.85,
+        "route_id": "route_A",
+        "route_length_ft": 1000.0,
+        "route_name": "name_route_A",
+        "route_score": 0.0,
+        "score": 0.85
+      },
+      {
+        "combined_score": 0.55,
+        "route_id": "route_B",
+        "route_length_ft": 1000.0,
+        "route_name": "name_route_B",
+        "route_score": 0.0,
+        "score": 0.55
+      }
+    ],
+    "rankings_out": [
+      {
+        "combined_score": 0.86,
+        "print_to_sheet_boost_delta": 0.01,
+        "print_to_sheet_boost_evidence": [
+          "7"
+        ],
+        "route_id": "route_A",
+        "route_length_ft": 1000.0,
+        "route_name": "name_route_A",
+        "route_score": 0.0,
+        "score": 0.86
+      },
+      {
+        "combined_score": 0.55,
+        "route_id": "route_B",
+        "route_length_ft": 1000.0,
+        "route_name": "name_route_B",
+        "route_score": 0.0,
+        "score": 0.55
+      }
+    ],
+    "seam_map": {
+      "7": [
+        42
+      ]
+    },
+    "sheet_to_routes": {
+      "42": [
+        "route_A"
+      ]
+    }
+  }
+]
