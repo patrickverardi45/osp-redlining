@@ -105,6 +105,8 @@ REQUIRED_META_KEYS = {
     "routes_with_evidence", "boosted_entries", "max_delta_applied",
     "top2_gap_before_bias", "reordered",
     "evidence_by_route_id", "evidence_by_sheet_int",
+    # PT.ACT R1 — diagnostic schema hardening.
+    "mode", "reorder_attempted", "reorder_blocked_reason", "selection_impact",
 }
 
 
@@ -544,6 +546,127 @@ class TestRespectsSeamOutputs(unittest.TestCase):
             scores_by_route = {r["route_id"]: r["combined_score"] for r in out}
             self.assertAlmostEqual(scores_by_route["route_ALPHA"], 0.61, places=6)
             self.assertAlmostEqual(scores_by_route["route_BETA"], 0.56, places=6)
+
+
+# ===========================================================================
+# 15. PT.ACT R1 — diagnostic schema hardening (no behavior change)
+# ===========================================================================
+
+
+class TestR1MetaShape(unittest.TestCase):
+    """R1 adds: mode / reorder_attempted / reorder_blocked_reason /
+    selection_impact. No scoring, no reorder math, no flag interaction
+    changes."""
+
+    def test_off_mode_emits_mode_off_and_layer_not_applied(self) -> None:
+        rankings_in = [_ranking("route_476", 0.6), _ranking("route_477", 0.55)]
+        with _FlagContext(**{PT1_FLAG: False}):
+            out, meta = M._apply_print_to_sheet_plausibility_boost(
+                rankings_in, _group(["7"])
+            )
+            self.assertIs(out, rankings_in)
+            self.assertEqual(meta["mode"], "off")
+            self.assertFalse(meta["reorder_attempted"])
+            self.assertEqual(meta["reorder_blocked_reason"], "layer_not_applied")
+            self.assertIsNone(meta["selection_impact"])
+
+    def test_live_mode_early_return_keeps_layer_not_applied(self) -> None:
+        # Flag ON but seam empty -> reason_if_not_applied="seam_empty".
+        # mode must read "live" (the flag was on); reorder/selection_impact
+        # remain at the layer_not_applied / None defaults because the
+        # reorder step is not reached.
+        rankings_in = [_ranking("route_476", 0.6)]
+        with _FlagContext(**{PT1_FLAG: True}), \
+                patch.object(M, "_print_to_sheets_from_packet_index", return_value={}), \
+                patch.object(M, "_sheet_to_route_ids_from_packet_index", return_value={}):
+            out, meta = M._apply_print_to_sheet_plausibility_boost(
+                rankings_in, _group(["7"])
+            )
+            self.assertEqual(meta["mode"], "live")
+            self.assertEqual(meta["reason_if_not_applied"], "seam_empty")
+            self.assertFalse(meta["reorder_attempted"])
+            self.assertEqual(meta["reorder_blocked_reason"], "layer_not_applied")
+            self.assertIsNone(meta["selection_impact"])
+
+    def test_live_mode_with_boost_emits_selection_impact(self) -> None:
+        # Pre-bias gap = 0.01 (<= 0.10 threshold), and route_477 gets 3 tokens
+        # of evidence (3 * 0.01 = cap = 0.03). 0.59 + 0.03 = 0.62 > 0.60 ->
+        # gate fires AND order flips.
+        rankings_in = [_ranking("route_476", 0.60), _ranking("route_477", 0.59)]
+        seam_map = {"7": [42], "8": [43], "9": [44]}
+        s2r = {42: ["route_477"], 43: ["route_477"], 44: ["route_477"]}
+        with _FlagContext(**{PT1_FLAG: True}), \
+                patch.object(M, "_print_to_sheets_from_packet_index", return_value=seam_map), \
+                patch.object(M, "_sheet_to_route_ids_from_packet_index", return_value=s2r):
+            out, meta = M._apply_print_to_sheet_plausibility_boost(
+                rankings_in, _group(["7", "8", "9"])
+            )
+            self.assertEqual(meta["mode"], "live")
+            self.assertTrue(meta["applied"])
+            self.assertTrue(meta["reorder_attempted"])
+            self.assertIsNone(meta["reorder_blocked_reason"])
+            self.assertEqual(meta["selection_impact"]["pre_layer_top1"], "route_476")
+            self.assertEqual(meta["selection_impact"]["post_layer_top1"], "route_477")
+            self.assertTrue(meta["selection_impact"]["changed"])
+
+    def test_reorder_attempted_false_with_gap_above_threshold(self) -> None:
+        # Pre-bias gap = 0.30 -> gate does not fire even though boost applies.
+        rankings_in = [_ranking("route_476", 0.85), _ranking("route_477", 0.55)]
+        with _FlagContext(**{PT1_FLAG: True}), \
+                patch.object(M, "_print_to_sheets_from_packet_index",
+                             return_value={"7": [42]}), \
+                patch.object(M, "_sheet_to_route_ids_from_packet_index",
+                             return_value={42: ["route_476"]}):
+            out, meta = M._apply_print_to_sheet_plausibility_boost(
+                rankings_in, _group(["7"])
+            )
+            self.assertEqual(meta["mode"], "live")
+            self.assertTrue(meta["applied"])
+            self.assertFalse(meta["reordered"])
+            self.assertFalse(meta["reorder_attempted"])
+            self.assertEqual(meta["reorder_blocked_reason"], "gap_above_threshold")
+            self.assertEqual(meta["selection_impact"]["pre_layer_top1"], "route_476")
+            self.assertEqual(meta["selection_impact"]["post_layer_top1"], "route_476")
+            self.assertFalse(meta["selection_impact"]["changed"])
+
+    def test_reorder_attempted_false_with_single_candidate(self) -> None:
+        rankings_in = [_ranking("route_476", 0.6)]
+        with _FlagContext(**{PT1_FLAG: True}), \
+                patch.object(M, "_print_to_sheets_from_packet_index",
+                             return_value={"7": [42]}), \
+                patch.object(M, "_sheet_to_route_ids_from_packet_index",
+                             return_value={42: ["route_476"]}):
+            out, meta = M._apply_print_to_sheet_plausibility_boost(
+                rankings_in, _group(["7"])
+            )
+            self.assertEqual(meta["mode"], "live")
+            self.assertTrue(meta["applied"])
+            self.assertFalse(meta["reordered"])
+            self.assertFalse(meta["reorder_attempted"])
+            self.assertEqual(meta["reorder_blocked_reason"], "single_candidate")
+            self.assertEqual(meta["selection_impact"]["pre_layer_top1"], "route_476")
+            self.assertEqual(meta["selection_impact"]["post_layer_top1"], "route_476")
+            self.assertFalse(meta["selection_impact"]["changed"])
+
+    def test_selection_impact_unchanged_when_top1_was_already_boosted(self) -> None:
+        # Top-1 (route_476) receives the boost; order does not change but
+        # gate still fires (gap small). selection_impact.changed=False.
+        rankings_in = [_ranking("route_476", 0.60), _ranking("route_477", 0.55)]
+        with _FlagContext(**{PT1_FLAG: True}), \
+                patch.object(M, "_print_to_sheets_from_packet_index",
+                             return_value={"7": [42]}), \
+                patch.object(M, "_sheet_to_route_ids_from_packet_index",
+                             return_value={42: ["route_476"]}):
+            out, meta = M._apply_print_to_sheet_plausibility_boost(
+                rankings_in, _group(["7"])
+            )
+            self.assertEqual(meta["mode"], "live")
+            self.assertTrue(meta["reorder_attempted"])
+            self.assertIsNone(meta["reorder_blocked_reason"])
+            self.assertFalse(meta["reordered"])
+            self.assertEqual(meta["selection_impact"]["pre_layer_top1"], "route_476")
+            self.assertEqual(meta["selection_impact"]["post_layer_top1"], "route_476")
+            self.assertFalse(meta["selection_impact"]["changed"])
 
 
 if __name__ == "__main__":

@@ -7849,6 +7849,13 @@ def _apply_print_to_sheet_plausibility_boost(
         "reordered":                  False,
         "evidence_by_route_id":       {},
         "evidence_by_sheet_int":      {},
+        # PT.ACT R1 — diagnostic schema hardening (no behavior change).
+        # Defaults match every early-return path; reorder-step populates the
+        # live-mode values. "shadow" mode value is reserved for R3+.
+        "mode":                       "live" if flag_enabled else "off",
+        "reorder_attempted":          False,
+        "reorder_blocked_reason":     "layer_not_applied",
+        "selection_impact":           None,
     }
 
     if not flag_enabled:
@@ -7982,32 +7989,57 @@ def _apply_print_to_sheet_plausibility_boost(
         return rankings, {**base_meta, "reason_if_not_applied": "no_eligible_route_matches"}
 
     # ── Step 6: reorder gate ──────────────────────────────────────────────────
+    # PT.ACT R1 — record top-1 *before* reorder so selection_impact reflects
+    # this layer's effect on the leader. Same line of evidence already drives
+    # `_score_of(rankings[0])` above for `top_score`.
+    pre_layer_top1 = ""
+    if isinstance(rankings[0], dict):
+        pre_layer_top1 = str(rankings[0].get("route_id") or "")
     final_rankings = boosted_rankings
     reordered = False
-    if len(boosted_rankings) > 1 and gap_before_bias <= _PLAN_BIAS_REORDER_GAP:
-        def _sort_key(r: Any) -> Tuple[float, float, str]:
-            if not isinstance(r, dict):
-                return (0.0, 0.0, "")
-            cs = r.get("combined_score")
-            rs = r.get("route_score")
-            try:
-                cs_f = float(cs) if cs is not None else 0.0
-            except (TypeError, ValueError):
-                cs_f = 0.0
-            try:
-                rs_f = float(rs) if rs is not None else 0.0
-            except (TypeError, ValueError):
-                rs_f = 0.0
-            return (-cs_f, -rs_f, str(r.get("route_name") or ""))
-        sorted_rankings = sorted(boosted_rankings, key=_sort_key)
-        for old, new in zip(boosted_rankings, sorted_rankings):
-            if old is not new:
-                reordered = True
-                break
-        final_rankings = sorted_rankings
+    reorder_attempted = False
+    reorder_blocked_reason = None
+    if len(boosted_rankings) > 1:
+        if gap_before_bias <= _PLAN_BIAS_REORDER_GAP:
+            reorder_attempted = True
+            def _sort_key(r: Any) -> Tuple[float, float, str]:
+                if not isinstance(r, dict):
+                    return (0.0, 0.0, "")
+                cs = r.get("combined_score")
+                rs = r.get("route_score")
+                try:
+                    cs_f = float(cs) if cs is not None else 0.0
+                except (TypeError, ValueError):
+                    cs_f = 0.0
+                try:
+                    rs_f = float(rs) if rs is not None else 0.0
+                except (TypeError, ValueError):
+                    rs_f = 0.0
+                return (-cs_f, -rs_f, str(r.get("route_name") or ""))
+            sorted_rankings = sorted(boosted_rankings, key=_sort_key)
+            for old, new in zip(boosted_rankings, sorted_rankings):
+                if old is not new:
+                    reordered = True
+                    break
+            final_rankings = sorted_rankings
+        else:
+            reorder_blocked_reason = "gap_above_threshold"
+    else:
+        reorder_blocked_reason = "single_candidate"
+
+    post_layer_top1 = ""
+    if final_rankings and isinstance(final_rankings[0], dict):
+        post_layer_top1 = str(final_rankings[0].get("route_id") or "")
 
     base_meta["applied"] = True
     base_meta["reordered"] = reordered
+    base_meta["reorder_attempted"] = reorder_attempted
+    base_meta["reorder_blocked_reason"] = reorder_blocked_reason
+    base_meta["selection_impact"] = {
+        "pre_layer_top1":  pre_layer_top1,
+        "post_layer_top1": post_layer_top1,
+        "changed":         pre_layer_top1 != post_layer_top1,
+    }
     return final_rankings, base_meta
 
 
@@ -8097,6 +8129,13 @@ def _apply_sheet_adjacency_plausibility_boost(
         "top2_gap_before_bias":       0.0,
         "reordered":                  False,
         "per_route_match":            {},
+        # PT.ACT R1 — diagnostic schema hardening (no behavior change).
+        # Defaults match every early-return path; reorder-step populates the
+        # live-mode values. "shadow" mode value is reserved for R3+.
+        "mode":                       "live" if flag_enabled else "off",
+        "reorder_attempted":          False,
+        "reorder_blocked_reason":     "layer_not_applied",
+        "selection_impact":           None,
     }
 
     if not flag_enabled:
@@ -8276,32 +8315,55 @@ def _apply_sheet_adjacency_plausibility_boost(
         return rankings, {**base_meta, "reason_if_not_applied": "no_eligible_route_matches"}
 
     # ── Step 7: reorder gate ─────────────────────────────────────────────
+    # PT.ACT R1 — capture top-1 before reorder for selection_impact.
+    pre_layer_top1 = ""
+    if isinstance(rankings[0], dict):
+        pre_layer_top1 = str(rankings[0].get("route_id") or "")
     final_rankings = boosted_rankings
     reordered = False
-    if len(boosted_rankings) > 1 and gap_before_bias <= _PLAN_BIAS_REORDER_GAP:
-        def _sort_key(r: Any) -> Tuple[float, float, str]:
-            if not isinstance(r, dict):
-                return (0.0, 0.0, "")
-            cs = r.get("combined_score")
-            rs = r.get("route_score")
-            try:
-                cs_f = float(cs) if cs is not None else 0.0
-            except (TypeError, ValueError):
-                cs_f = 0.0
-            try:
-                rs_f = float(rs) if rs is not None else 0.0
-            except (TypeError, ValueError):
-                rs_f = 0.0
-            return (-cs_f, -rs_f, str(r.get("route_name") or ""))
-        sorted_rankings = sorted(boosted_rankings, key=_sort_key)
-        for old, new in zip(boosted_rankings, sorted_rankings):
-            if old is not new:
-                reordered = True
-                break
-        final_rankings = sorted_rankings
+    reorder_attempted = False
+    reorder_blocked_reason = None
+    if len(boosted_rankings) > 1:
+        if gap_before_bias <= _PLAN_BIAS_REORDER_GAP:
+            reorder_attempted = True
+            def _sort_key(r: Any) -> Tuple[float, float, str]:
+                if not isinstance(r, dict):
+                    return (0.0, 0.0, "")
+                cs = r.get("combined_score")
+                rs = r.get("route_score")
+                try:
+                    cs_f = float(cs) if cs is not None else 0.0
+                except (TypeError, ValueError):
+                    cs_f = 0.0
+                try:
+                    rs_f = float(rs) if rs is not None else 0.0
+                except (TypeError, ValueError):
+                    rs_f = 0.0
+                return (-cs_f, -rs_f, str(r.get("route_name") or ""))
+            sorted_rankings = sorted(boosted_rankings, key=_sort_key)
+            for old, new in zip(boosted_rankings, sorted_rankings):
+                if old is not new:
+                    reordered = True
+                    break
+            final_rankings = sorted_rankings
+        else:
+            reorder_blocked_reason = "gap_above_threshold"
+    else:
+        reorder_blocked_reason = "single_candidate"
+
+    post_layer_top1 = ""
+    if final_rankings and isinstance(final_rankings[0], dict):
+        post_layer_top1 = str(final_rankings[0].get("route_id") or "")
 
     base_meta["applied"] = True
     base_meta["reordered"] = reordered
+    base_meta["reorder_attempted"] = reorder_attempted
+    base_meta["reorder_blocked_reason"] = reorder_blocked_reason
+    base_meta["selection_impact"] = {
+        "pre_layer_top1":  pre_layer_top1,
+        "post_layer_top1": post_layer_top1,
+        "changed":         pre_layer_top1 != post_layer_top1,
+    }
     return final_rankings, base_meta
 
 

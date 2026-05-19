@@ -106,6 +106,8 @@ REQUIRED_META_KEYS = {
     "seam_sheets", "tokens_considered", "tokens_resolving_to_sheets",
     "routes_with_sequence", "boosted_entries", "max_delta_applied",
     "top2_gap_before_bias", "reordered", "per_route_match",
+    # PT.ACT R1 — diagnostic schema hardening.
+    "mode", "reorder_attempted", "reorder_blocked_reason", "selection_impact",
 }
 
 
@@ -634,6 +636,125 @@ class TestStackingWithPT1(unittest.TestCase):
             # Combined PT.1+PT.2.0 delta cannot exceed 2 * cap.
             total_delta = r476["combined_score"] - r476["original_score"]
             self.assertLessEqual(total_delta, 2 * M._PLAN_BIAS_MAX_BOOST + 1e-9)
+
+
+# ===========================================================================
+# PT.ACT R1 — diagnostic schema hardening (no behavior change)
+# ===========================================================================
+
+
+class TestR1MetaShape(unittest.TestCase):
+    """R1 adds: mode / reorder_attempted / reorder_blocked_reason /
+    selection_impact. No scoring, no reorder math, no flag interaction
+    changes."""
+
+    def test_off_mode_emits_mode_off_and_layer_not_applied(self) -> None:
+        rankings_in = [_ranking("route_476", 0.6), _ranking("route_477", 0.55)]
+        with _FlagContext(**{PT20_FLAG: False}):
+            out, meta = M._apply_sheet_adjacency_plausibility_boost(
+                rankings_in, _group(["7"])
+            )
+            self.assertIs(out, rankings_in)
+            self.assertEqual(meta["mode"], "off")
+            self.assertFalse(meta["reorder_attempted"])
+            self.assertEqual(meta["reorder_blocked_reason"], "layer_not_applied")
+            self.assertIsNone(meta["selection_impact"])
+
+    def test_live_mode_early_return_keeps_layer_not_applied(self) -> None:
+        # Flag ON but seam empty -> reason_if_not_applied="seam_empty".
+        # mode reads "live"; reorder/selection_impact remain at defaults.
+        rankings_in = [_ranking("route_476", 0.6)]
+        with _FlagContext(**{PT20_FLAG: True}), \
+                patch.object(M, "_print_to_sheets_from_packet_index", return_value={}), \
+                patch.object(M, "_route_sheet_sequence", return_value=[]):
+            out, meta = M._apply_sheet_adjacency_plausibility_boost(
+                rankings_in, _group(["7"])
+            )
+            self.assertEqual(meta["mode"], "live")
+            self.assertEqual(meta["reason_if_not_applied"], "seam_empty")
+            self.assertFalse(meta["reorder_attempted"])
+            self.assertEqual(meta["reorder_blocked_reason"], "layer_not_applied")
+            self.assertIsNone(meta["selection_impact"])
+
+    def test_live_mode_with_boost_emits_selection_impact(self) -> None:
+        # Pre-bias gap = 0.01 (<= 0.10 threshold), route_B gets full coverage
+        # (delta = cap = 0.03). 0.59 + 0.03 = 0.62 > 0.60 -> gate fires AND
+        # order flips.
+        seam_map = {"7": [101, 102]}
+        seq_map = {"route_A": [201], "route_B": [101, 102]}
+        rankings_in = [_ranking("route_A", 0.60), _ranking("route_B", 0.59)]
+        with _FlagContext(**{PT20_FLAG: True}), \
+                patch.object(M, "_print_to_sheets_from_packet_index", return_value=seam_map), \
+                patch.object(M, "_route_sheet_sequence", side_effect=lambda rid: seq_map.get(rid, [])):
+            out, meta = M._apply_sheet_adjacency_plausibility_boost(
+                rankings_in, _group(["7"])
+            )
+            self.assertEqual(meta["mode"], "live")
+            self.assertTrue(meta["applied"])
+            self.assertTrue(meta["reorder_attempted"])
+            self.assertIsNone(meta["reorder_blocked_reason"])
+            self.assertEqual(meta["selection_impact"]["pre_layer_top1"], "route_A")
+            self.assertEqual(meta["selection_impact"]["post_layer_top1"], "route_B")
+            self.assertTrue(meta["selection_impact"]["changed"])
+
+    def test_reorder_attempted_false_with_gap_above_threshold(self) -> None:
+        # Pre-bias gap = 0.30 -> gate does not fire even though boost applies.
+        seam_map = {"7": [101, 102]}
+        seq_map = {"route_A": [101, 102], "route_B": [201]}
+        rankings_in = [_ranking("route_A", 0.85), _ranking("route_B", 0.55)]
+        with _FlagContext(**{PT20_FLAG: True}), \
+                patch.object(M, "_print_to_sheets_from_packet_index", return_value=seam_map), \
+                patch.object(M, "_route_sheet_sequence", side_effect=lambda rid: seq_map.get(rid, [])):
+            out, meta = M._apply_sheet_adjacency_plausibility_boost(
+                rankings_in, _group(["7"])
+            )
+            self.assertEqual(meta["mode"], "live")
+            self.assertTrue(meta["applied"])
+            self.assertFalse(meta["reordered"])
+            self.assertFalse(meta["reorder_attempted"])
+            self.assertEqual(meta["reorder_blocked_reason"], "gap_above_threshold")
+            self.assertEqual(meta["selection_impact"]["pre_layer_top1"], "route_A")
+            self.assertEqual(meta["selection_impact"]["post_layer_top1"], "route_A")
+            self.assertFalse(meta["selection_impact"]["changed"])
+
+    def test_reorder_attempted_false_with_single_candidate(self) -> None:
+        seam_map = {"7": [101, 102]}
+        seq_map = {"route_A": [101, 102]}
+        rankings_in = [_ranking("route_A", 0.6)]
+        with _FlagContext(**{PT20_FLAG: True}), \
+                patch.object(M, "_print_to_sheets_from_packet_index", return_value=seam_map), \
+                patch.object(M, "_route_sheet_sequence", side_effect=lambda rid: seq_map.get(rid, [])):
+            out, meta = M._apply_sheet_adjacency_plausibility_boost(
+                rankings_in, _group(["7"])
+            )
+            self.assertEqual(meta["mode"], "live")
+            self.assertTrue(meta["applied"])
+            self.assertFalse(meta["reordered"])
+            self.assertFalse(meta["reorder_attempted"])
+            self.assertEqual(meta["reorder_blocked_reason"], "single_candidate")
+            self.assertEqual(meta["selection_impact"]["pre_layer_top1"], "route_A")
+            self.assertEqual(meta["selection_impact"]["post_layer_top1"], "route_A")
+            self.assertFalse(meta["selection_impact"]["changed"])
+
+    def test_selection_impact_unchanged_when_top1_was_already_boosted(self) -> None:
+        # Top-1 (route_A) receives the full boost; order does not change but
+        # gate still fires (gap small). selection_impact.changed=False.
+        seam_map = {"7": [101, 102]}
+        seq_map = {"route_A": [101, 102], "route_B": [201]}
+        rankings_in = [_ranking("route_A", 0.60), _ranking("route_B", 0.55)]
+        with _FlagContext(**{PT20_FLAG: True}), \
+                patch.object(M, "_print_to_sheets_from_packet_index", return_value=seam_map), \
+                patch.object(M, "_route_sheet_sequence", side_effect=lambda rid: seq_map.get(rid, [])):
+            out, meta = M._apply_sheet_adjacency_plausibility_boost(
+                rankings_in, _group(["7"])
+            )
+            self.assertEqual(meta["mode"], "live")
+            self.assertTrue(meta["reorder_attempted"])
+            self.assertIsNone(meta["reorder_blocked_reason"])
+            self.assertFalse(meta["reordered"])
+            self.assertEqual(meta["selection_impact"]["pre_layer_top1"], "route_A")
+            self.assertEqual(meta["selection_impact"]["post_layer_top1"], "route_A")
+            self.assertFalse(meta["selection_impact"]["changed"])
 
 
 if __name__ == "__main__":
