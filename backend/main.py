@@ -7861,6 +7861,22 @@ def _apply_print_to_sheet_plausibility_boost(
     if not flag_enabled:
         return rankings, {**base_meta, "reason_if_not_applied": "flag_off"}
 
+    return _compute_print_to_sheet_boost_internal(rankings, normalized_group, base_meta)
+
+
+def _compute_print_to_sheet_boost_internal(
+    rankings: List[Dict[str, Any]],
+    normalized_group: Dict[str, Any],
+    base_meta: Dict[str, Any],
+) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+    """PT.ACT R3.b — pure LIVE compute for PT.1.
+
+    Extracted verbatim from `_apply_print_to_sheet_plausibility_boost` so a
+    future R3.d/e SHADOW dispatcher can run the same algorithm on a deep
+    copy without mutating the caller's rankings. Reads no env vars; caller
+    constructs `base_meta` (incl. `mode="live"`) and the flag-off branch.
+    Mutates `base_meta` in place — same contract as before R3.b.
+    """
     if not rankings:
         return rankings, {**base_meta, "reason_if_not_applied": "no_rankings"}
 
@@ -8141,6 +8157,22 @@ def _apply_sheet_adjacency_plausibility_boost(
     if not flag_enabled:
         return rankings, {**base_meta, "reason_if_not_applied": "flag_off"}
 
+    return _compute_sheet_adjacency_boost_internal(rankings, normalized_group, base_meta)
+
+
+def _compute_sheet_adjacency_boost_internal(
+    rankings: List[Dict[str, Any]],
+    normalized_group: Dict[str, Any],
+    base_meta: Dict[str, Any],
+) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+    """PT.ACT R3.c — pure LIVE compute for PT.2.0.
+
+    Extracted verbatim from `_apply_sheet_adjacency_plausibility_boost` so
+    a future R3.d/e SHADOW dispatcher can run the same algorithm on a deep
+    copy without mutating the caller's rankings. Reads no env vars; caller
+    constructs `base_meta` (incl. `mode="live"`) and the flag-off branch.
+    Mutates `base_meta` in place — same contract as before R3.c.
+    """
     if not rankings:
         return rankings, {**base_meta, "reason_if_not_applied": "no_rankings"}
 
