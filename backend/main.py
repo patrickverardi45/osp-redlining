@@ -9661,7 +9661,7 @@ def _print_to_sheets_with_derived_attribution() -> Dict[str, List[int]]:
             catalog = _build_confirmed_sheet_set_for_session(session_id)
         except Exception:
             catalog = set()
-        if catalog or expected_hash:
+        if catalog:
             if was_cache_hit:
                 catalog_source = _PI4B_CATALOG_SOURCE_CACHE_HIT
             else:
