@@ -7796,6 +7796,7 @@ _PLAN_BIAS_REORDER_GAP: float = 0.10  # max top-2 gap that permits reorder
 # ---------------------------------------------------------------------------
 
 _PRINT_TO_SHEET_BOOST_FLAG_ENV: str = "TRUELINE_PRINT_TO_SHEET_BOOST"
+_PRINT_TO_SHEET_BOOST_SHADOW_FLAG_ENV: str = "TRUELINE_PRINT_TO_SHEET_BOOST_SHADOW"
 _PRINT_TO_SHEET_BOOST_PER_TOKEN: float = 0.01
 _PRINT_TO_SHEET_BOOST_DIAG_KEY: str = "print_to_sheet_boost_meta"
 
@@ -7806,6 +7807,21 @@ def _trueline_print_to_sheet_boost_enabled() -> bool:
     """
     raw = os.environ.get(_PRINT_TO_SHEET_BOOST_FLAG_ENV, "").strip().lower()
     return raw in {"1", "true", "yes", "on"}
+
+
+def _trueline_print_to_sheet_boost_mode() -> str:
+    """PT.ACT R3.d — tri-state mode resolver for PT.1.
+
+    Returns one of "off" / "shadow" / "live". LIVE flag wins over SHADOW
+    flag when both are set. Read every call; never captured at import-time.
+    """
+    raw_live = os.environ.get(_PRINT_TO_SHEET_BOOST_FLAG_ENV, "").strip().lower()
+    if raw_live in {"1", "true", "yes", "on"}:
+        return "live"
+    raw_shadow = os.environ.get(_PRINT_TO_SHEET_BOOST_SHADOW_FLAG_ENV, "").strip().lower()
+    if raw_shadow in {"1", "true", "yes", "on"}:
+        return "shadow"
+    return "off"
 
 
 def _apply_print_to_sheet_plausibility_boost(
@@ -7834,9 +7850,33 @@ def _apply_print_to_sheet_plausibility_boost(
     occurs, so no STATE side-effects (PI.4B.2 attribution write) are
     triggered from this layer when the boost is disabled.
     """
-    flag_enabled = _trueline_print_to_sheet_boost_enabled()
+    mode = _trueline_print_to_sheet_boost_mode()
+    base_meta = _build_pt1_base_meta(mode=mode)
 
-    base_meta: Dict[str, Any] = {
+    if mode == "off":
+        return rankings, {**base_meta, "reason_if_not_applied": "flag_off"}
+
+    if mode == "shadow":
+        return _run_print_to_sheet_boost_shadow(rankings, normalized_group, base_meta)
+
+    # mode == "live"
+    return _compute_print_to_sheet_boost_internal(rankings, normalized_group, base_meta)
+
+
+def _build_pt1_base_meta(*, mode: str) -> Dict[str, Any]:
+    """PT.ACT R3.d — base_meta constructor for PT.1.
+
+    Single source of truth for the 16-key R0/R1 schema. Produces a dict
+    byte-identical to the inline construction used before R3.d/e for the
+    OFF and LIVE modes (preserves R3.a golden fixtures). `flag_enabled`
+    is derived as `(mode == "live")` for backwards-compatible bool semantics.
+
+    Schema choice (b): `"shadow"` key is NOT included here. It is added only
+    on the SHADOW path by `_run_print_to_sheet_boost_shadow`. This preserves
+    R3.a golden fixtures byte-identically for OFF/LIVE.
+    """
+    flag_enabled = (mode == "live")
+    return {
         "applied":                    False,
         "flag_enabled":               flag_enabled,
         "reason_if_not_applied":      None,
@@ -7849,19 +7889,11 @@ def _apply_print_to_sheet_plausibility_boost(
         "reordered":                  False,
         "evidence_by_route_id":       {},
         "evidence_by_sheet_int":      {},
-        # PT.ACT R1 — diagnostic schema hardening (no behavior change).
-        # Defaults match every early-return path; reorder-step populates the
-        # live-mode values. "shadow" mode value is reserved for R3+.
-        "mode":                       "live" if flag_enabled else "off",
+        "mode":                       mode,
         "reorder_attempted":          False,
         "reorder_blocked_reason":     "layer_not_applied",
         "selection_impact":           None,
     }
-
-    if not flag_enabled:
-        return rankings, {**base_meta, "reason_if_not_applied": "flag_off"}
-
-    return _compute_print_to_sheet_boost_internal(rankings, normalized_group, base_meta)
 
 
 def _compute_print_to_sheet_boost_internal(
@@ -8059,6 +8091,113 @@ def _compute_print_to_sheet_boost_internal(
     return final_rankings, base_meta
 
 
+def _build_pt1_shadow_block(
+    *,
+    original_rankings: List[Dict[str, Any]],
+    tentative_boosted: List[Dict[str, Any]],
+    live_meta: Dict[str, Any],
+) -> Dict[str, Any]:
+    """PT.ACT R3.e — extract PT.1 shadow block from a would-be LIVE run.
+
+    All values are derived from `live_meta` + `tentative_boosted` produced by
+    `_compute_print_to_sheet_boost_internal` on a deep-shallow copy of the
+    rankings. Never raises; missing meta fields default to safe values.
+    """
+    actual_top1 = ""
+    if original_rankings and isinstance(original_rankings[0], dict):
+        actual_top1 = str(original_rankings[0].get("route_id") or "")
+
+    would_have_top1 = ""
+    if tentative_boosted and isinstance(tentative_boosted[0], dict):
+        would_have_top1 = str(tentative_boosted[0].get("route_id") or "")
+
+    would_have_delta_by_route_id: Dict[str, float] = {}
+    if isinstance(tentative_boosted, (list, tuple)):
+        for entry in tentative_boosted:
+            if not isinstance(entry, dict):
+                continue
+            rid = str(entry.get("route_id") or "").strip()
+            if not rid:
+                continue
+            v = entry.get("print_to_sheet_boost_delta")
+            if v is None or isinstance(v, bool):
+                continue
+            try:
+                d = float(v)
+            except (TypeError, ValueError):
+                continue
+            if d > 0:
+                would_have_delta_by_route_id[rid] = d
+
+    def _coerce_float(value: Any) -> float:
+        if value is None or isinstance(value, bool):
+            return 0.0
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return 0.0
+
+    return {
+        "computed":                          True,
+        "would_have_applied":                bool(live_meta.get("applied")),
+        "would_have_boosted_entries":        int(live_meta.get("boosted_entries", 0) or 0),
+        "would_have_max_delta":              _coerce_float(live_meta.get("max_delta_applied")),
+        "would_have_top2_gap":               _coerce_float(live_meta.get("top2_gap_before_bias")),
+        "would_have_reorder_attempted":      bool(live_meta.get("reorder_attempted")),
+        "would_have_reordered":              bool(live_meta.get("reordered")),
+        "would_have_reorder_blocked_reason": live_meta.get("reorder_blocked_reason"),
+        "would_have_top1_route_id":          would_have_top1,
+        "top1_unchanged_vs_actual":          (actual_top1 == would_have_top1),
+        "would_have_delta_by_route_id":      would_have_delta_by_route_id,
+        "would_have_evidence": {
+            "evidence_by_route_id":  dict(live_meta.get("evidence_by_route_id") or {}),
+            "evidence_by_sheet_int": dict(live_meta.get("evidence_by_sheet_int") or {}),
+        },
+        "error":                             None,
+    }
+
+
+def _run_print_to_sheet_boost_shadow(
+    rankings: List[Dict[str, Any]],
+    normalized_group: Dict[str, Any],
+    base_meta: Dict[str, Any],
+) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+    """PT.ACT R3.e — PT.1 SHADOW dispatcher.
+
+    Runs `_compute_print_to_sheet_boost_internal` on a deep-shallow copy of
+    `rankings`, extracts the would-be facts into `meta.shadow`, and returns
+    the ORIGINAL `rankings` reference. Production rankings are byte-identical
+    to OFF mode.
+
+    Exception safety: the shadow compute is wrapped in try/except. On any
+    exception, `meta.shadow = {"computed": False, "error": "<ClassName>"}`
+    and identity rankings are still returned. The exception NEVER escapes —
+    production cannot fail because of shadow.
+    """
+    rankings_copy = [dict(r) if isinstance(r, dict) else r for r in (rankings or [])]
+    live_base_meta_for_helper = _build_pt1_base_meta(mode="live")
+    try:
+        tentative_boosted, live_meta = _compute_print_to_sheet_boost_internal(
+            rankings_copy, normalized_group, live_base_meta_for_helper
+        )
+        shadow_block = _build_pt1_shadow_block(
+            original_rankings=rankings,
+            tentative_boosted=tentative_boosted,
+            live_meta=live_meta,
+        )
+        return rankings, {
+            **base_meta,
+            "reason_if_not_applied": "shadow_mode",
+            "shadow":                shadow_block,
+        }
+    except Exception as e:
+        return rankings, {
+            **base_meta,
+            "reason_if_not_applied": "shadow_mode",
+            "shadow": {"computed": False, "error": type(e).__name__},
+        }
+
+
 # ---------------------------------------------------------------------------
 # PT.2.0 — Sheet adjacency plausibility boost (additive, flag-gated default OFF)
 # ---------------------------------------------------------------------------
@@ -8095,6 +8234,7 @@ def _compute_print_to_sheet_boost_internal(
 # ---------------------------------------------------------------------------
 
 _SHEET_ADJACENCY_BOOST_FLAG_ENV: str = "TRUELINE_SHEET_ADJACENCY_BOOST"
+_SHEET_ADJACENCY_BOOST_SHADOW_FLAG_ENV: str = "TRUELINE_SHEET_ADJACENCY_BOOST_SHADOW"
 _SHEET_ADJACENCY_BOOST_DIAG_KEY: str = "sheet_adjacency_meta"
 
 
@@ -8105,6 +8245,21 @@ def _trueline_sheet_adjacency_boost_enabled() -> bool:
     """
     raw = os.environ.get(_SHEET_ADJACENCY_BOOST_FLAG_ENV, "").strip().lower()
     return raw in {"1", "true", "yes", "on"}
+
+
+def _trueline_sheet_adjacency_boost_mode() -> str:
+    """PT.ACT R3.d — tri-state mode resolver for PT.2.0.
+
+    Returns one of "off" / "shadow" / "live". LIVE flag wins over SHADOW
+    flag when both are set. Read every call; never captured at import-time.
+    """
+    raw_live = os.environ.get(_SHEET_ADJACENCY_BOOST_FLAG_ENV, "").strip().lower()
+    if raw_live in {"1", "true", "yes", "on"}:
+        return "live"
+    raw_shadow = os.environ.get(_SHEET_ADJACENCY_BOOST_SHADOW_FLAG_ENV, "").strip().lower()
+    if raw_shadow in {"1", "true", "yes", "on"}:
+        return "shadow"
+    return "off"
 
 
 def _apply_sheet_adjacency_plausibility_boost(
@@ -8130,9 +8285,33 @@ def _apply_sheet_adjacency_plausibility_boost(
     `meta.reason_if_not_applied == "flag_off"`. Neither helper is invoked,
     so no STATE side-effects.
     """
-    flag_enabled = _trueline_sheet_adjacency_boost_enabled()
+    mode = _trueline_sheet_adjacency_boost_mode()
+    base_meta = _build_pt2_base_meta(mode=mode)
 
-    base_meta: Dict[str, Any] = {
+    if mode == "off":
+        return rankings, {**base_meta, "reason_if_not_applied": "flag_off"}
+
+    if mode == "shadow":
+        return _run_sheet_adjacency_boost_shadow(rankings, normalized_group, base_meta)
+
+    # mode == "live"
+    return _compute_sheet_adjacency_boost_internal(rankings, normalized_group, base_meta)
+
+
+def _build_pt2_base_meta(*, mode: str) -> Dict[str, Any]:
+    """PT.ACT R3.d — base_meta constructor for PT.2.0.
+
+    Single source of truth for the 16-key R0/R1 schema. Produces a dict
+    byte-identical to the inline construction used before R3.d/e for the
+    OFF and LIVE modes (preserves R3.a golden fixtures). `flag_enabled`
+    is derived as `(mode == "live")` for backwards-compatible bool semantics.
+
+    Schema choice (b): `"shadow"` key is NOT included here. It is added only
+    on the SHADOW path by `_run_sheet_adjacency_boost_shadow`. This preserves
+    R3.a golden fixtures byte-identically for OFF/LIVE.
+    """
+    flag_enabled = (mode == "live")
+    return {
         "applied":                    False,
         "flag_enabled":               flag_enabled,
         "reason_if_not_applied":      None,
@@ -8145,19 +8324,11 @@ def _apply_sheet_adjacency_plausibility_boost(
         "top2_gap_before_bias":       0.0,
         "reordered":                  False,
         "per_route_match":            {},
-        # PT.ACT R1 — diagnostic schema hardening (no behavior change).
-        # Defaults match every early-return path; reorder-step populates the
-        # live-mode values. "shadow" mode value is reserved for R3+.
-        "mode":                       "live" if flag_enabled else "off",
+        "mode":                       mode,
         "reorder_attempted":          False,
         "reorder_blocked_reason":     "layer_not_applied",
         "selection_impact":           None,
     }
-
-    if not flag_enabled:
-        return rankings, {**base_meta, "reason_if_not_applied": "flag_off"}
-
-    return _compute_sheet_adjacency_boost_internal(rankings, normalized_group, base_meta)
 
 
 def _compute_sheet_adjacency_boost_internal(
@@ -8397,6 +8568,116 @@ def _compute_sheet_adjacency_boost_internal(
         "changed":         pre_layer_top1 != post_layer_top1,
     }
     return final_rankings, base_meta
+
+
+def _build_pt2_shadow_block(
+    *,
+    original_rankings: List[Dict[str, Any]],
+    tentative_boosted: List[Dict[str, Any]],
+    live_meta: Dict[str, Any],
+) -> Dict[str, Any]:
+    """PT.ACT R3.e — extract PT.2.0 shadow block from a would-be LIVE run.
+
+    All values are derived from `live_meta` + `tentative_boosted` produced by
+    `_compute_sheet_adjacency_boost_internal` on a deep-shallow copy of the
+    rankings. Never raises; missing meta fields default to safe values.
+    """
+    actual_top1 = ""
+    if original_rankings and isinstance(original_rankings[0], dict):
+        actual_top1 = str(original_rankings[0].get("route_id") or "")
+
+    would_have_top1 = ""
+    if tentative_boosted and isinstance(tentative_boosted[0], dict):
+        would_have_top1 = str(tentative_boosted[0].get("route_id") or "")
+
+    would_have_delta_by_route_id: Dict[str, float] = {}
+    if isinstance(tentative_boosted, (list, tuple)):
+        for entry in tentative_boosted:
+            if not isinstance(entry, dict):
+                continue
+            rid = str(entry.get("route_id") or "").strip()
+            if not rid:
+                continue
+            v = entry.get("sheet_adjacency_boost_delta")
+            if v is None or isinstance(v, bool):
+                continue
+            try:
+                d = float(v)
+            except (TypeError, ValueError):
+                continue
+            if d > 0:
+                would_have_delta_by_route_id[rid] = d
+
+    def _coerce_float(value: Any) -> float:
+        if value is None or isinstance(value, bool):
+            return 0.0
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return 0.0
+
+    return {
+        "computed":                          True,
+        "would_have_applied":                bool(live_meta.get("applied")),
+        "would_have_boosted_entries":        int(live_meta.get("boosted_entries", 0) or 0),
+        "would_have_max_delta":              _coerce_float(live_meta.get("max_delta_applied")),
+        "would_have_top2_gap":               _coerce_float(live_meta.get("top2_gap_before_bias")),
+        "would_have_reorder_attempted":      bool(live_meta.get("reorder_attempted")),
+        "would_have_reordered":              bool(live_meta.get("reordered")),
+        "would_have_reorder_blocked_reason": live_meta.get("reorder_blocked_reason"),
+        "would_have_top1_route_id":          would_have_top1,
+        "top1_unchanged_vs_actual":          (actual_top1 == would_have_top1),
+        "would_have_delta_by_route_id":      would_have_delta_by_route_id,
+        "would_have_evidence": {
+            "seam_sheets":     list(live_meta.get("seam_sheets") or []),
+            "per_route_match": {
+                k: dict(v) if isinstance(v, dict) else v
+                for k, v in (live_meta.get("per_route_match") or {}).items()
+            },
+        },
+        "error":                             None,
+    }
+
+
+def _run_sheet_adjacency_boost_shadow(
+    rankings: List[Dict[str, Any]],
+    normalized_group: Dict[str, Any],
+    base_meta: Dict[str, Any],
+) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+    """PT.ACT R3.e — PT.2.0 SHADOW dispatcher.
+
+    Runs `_compute_sheet_adjacency_boost_internal` on a deep-shallow copy of
+    `rankings`, extracts the would-be facts into `meta.shadow`, and returns
+    the ORIGINAL `rankings` reference. Production rankings are byte-identical
+    to OFF mode.
+
+    Exception safety: the shadow compute is wrapped in try/except. On any
+    exception, `meta.shadow = {"computed": False, "error": "<ClassName>"}`
+    and identity rankings are still returned. The exception NEVER escapes —
+    production cannot fail because of shadow.
+    """
+    rankings_copy = [dict(r) if isinstance(r, dict) else r for r in (rankings or [])]
+    live_base_meta_for_helper = _build_pt2_base_meta(mode="live")
+    try:
+        tentative_boosted, live_meta = _compute_sheet_adjacency_boost_internal(
+            rankings_copy, normalized_group, live_base_meta_for_helper
+        )
+        shadow_block = _build_pt2_shadow_block(
+            original_rankings=rankings,
+            tentative_boosted=tentative_boosted,
+            live_meta=live_meta,
+        )
+        return rankings, {
+            **base_meta,
+            "reason_if_not_applied": "shadow_mode",
+            "shadow":                shadow_block,
+        }
+    except Exception as e:
+        return rankings, {
+            **base_meta,
+            "reason_if_not_applied": "shadow_mode",
+            "shadow": {"computed": False, "error": type(e).__name__},
+        }
 
 
 # ---------------------------------------------------------------------------
