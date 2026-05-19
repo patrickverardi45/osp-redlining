@@ -8367,6 +8367,173 @@ def _apply_sheet_adjacency_plausibility_boost(
     return final_rankings, base_meta
 
 
+# ---------------------------------------------------------------------------
+# PT.ACT R2 — Plausibility cumulative diagnostic envelope (diagnostic-only).
+# ---------------------------------------------------------------------------
+# Aggregates per-layer R1 metas (PT.1, PT.2.0) plus the per-entry boost-delta
+# annotations into a single parent dict under
+# `_diag["plausibility_cumulative_meta"]`. Pure function; never mutates the
+# inputs; never raises; never invokes seam/sequence helpers. Always emitted
+# by the pipeline regardless of layer modes — the OFF/OFF payload is a
+# stable zero-state envelope.
+#
+# Schema doc: wiki/pt-act-r2-cumulative-envelope-design.md
+# Schema version: "plausibility-cumulative-1"
+#
+# Q3 / state-aware ceiling: `max_total_delta_ceiling` and
+# `cap_governance.ceiling` both carry the STATIC sum of registered caps in
+# R2. The state-aware variant (applied-layers-only) is deferred to a later
+# R-step.
+#
+# Forward-compat fields explicitly NOT in R2 (deferred to R3): `shadow_layers`,
+# `cross_layer_top1_agreement`. Their absence is intentional; consumers
+# should branch on `schema_version`.
+# ---------------------------------------------------------------------------
+
+_PLAUSIBILITY_LAYER_REGISTRY: Tuple[Tuple[str, float], ...] = (
+    ("PT.1",   _PLAN_BIAS_MAX_BOOST),
+    ("PT.2.0", _PLAN_BIAS_MAX_BOOST),
+)
+_PLAUSIBILITY_CUMULATIVE_DIAG_KEY: str = "plausibility_cumulative_meta"
+_PLAUSIBILITY_CUMULATIVE_SCHEMA_VERSION: str = "plausibility-cumulative-1"
+
+
+def _build_plausibility_cumulative_meta(
+    rankings: List[Dict[str, Any]],
+    layer_metas: List[Tuple[str, Dict[str, Any]]],
+    *,
+    step: str = "post_ranking_boosts",
+) -> Dict[str, Any]:
+    """PT.ACT R2 — pure diagnostic envelope aggregator.
+
+    Builds a single dict that aggregates the per-layer R1 metas plus the
+    `*_boost_delta` annotations PT.1 and PT.2.0 leave on boosted ranking
+    entries.  Never raises.  Never mutates `rankings` or any element of
+    `layer_metas`.  Always returns a fresh dict, suitable for direct
+    assignment into `_diag`.
+
+    `step` should be `"post_ranking_boosts"` (main pass) or
+    `"post_ranking_boosts_fallback"` (fallback pass 2).  Other values are
+    coerced via `str(...)`; never validated.
+
+    The function is registry-driven: layer presence, order, and per-layer
+    caps come from `_PLAUSIBILITY_LAYER_REGISTRY`.  Adding a future layer
+    is a single tuple append.
+
+    Defensive contract (R2):
+      - Non-dict `rankings` entries are skipped silently.
+      - Non-dict / non-tuple `layer_metas` entries are skipped silently.
+      - Numeric coercion of delta values uses try/except → 0.0 on failure.
+      - Missing meta keys default via `.get(..., default)`.
+      - Boolean values are NEVER summed into numeric totals.
+    """
+    cap_per_layer: Dict[str, float] = {name: cap for name, cap in _PLAUSIBILITY_LAYER_REGISTRY}
+    static_ceiling: float = float(sum(cap for _, cap in _PLAUSIBILITY_LAYER_REGISTRY))
+    layers_present: List[str] = [name for name, _ in _PLAUSIBILITY_LAYER_REGISTRY]
+
+    # Build a name -> meta lookup tolerant of the caller's input shape.
+    metas_by_name: Dict[str, Dict[str, Any]] = {}
+    if isinstance(layer_metas, (list, tuple)):
+        for entry in layer_metas:
+            if not isinstance(entry, (tuple, list)) or len(entry) != 2:
+                continue
+            name, meta = entry[0], entry[1]
+            if isinstance(name, str) and isinstance(meta, dict):
+                metas_by_name[name] = meta
+
+    layers_applied: List[str] = []
+    modes_by_layer: Dict[str, str] = {}
+    selection_impact_stack: List[Dict[str, Any]] = []
+    selection_changed_by_layers: List[str] = []
+    any_reorder_attempted: bool = False
+    any_reordered: bool = False
+
+    for name in layers_present:
+        meta = metas_by_name.get(name) or {}
+        if meta.get("applied") is True:
+            layers_applied.append(name)
+        modes_by_layer[name] = str(meta.get("mode") or "off")
+        if bool(meta.get("reorder_attempted")):
+            any_reorder_attempted = True
+        if bool(meta.get("reordered")):
+            any_reordered = True
+        si = meta.get("selection_impact")
+        if isinstance(si, dict):
+            selection_impact_stack.append({
+                "layer":           name,
+                "pre_layer_top1":  si.get("pre_layer_top1", ""),
+                "post_layer_top1": si.get("post_layer_top1", ""),
+                "changed":         bool(si.get("changed")),
+            })
+            if bool(si.get("changed")):
+                selection_changed_by_layers.append(name)
+
+    # Per-route total boost delta scanned from the surviving annotations
+    # on the post-stack rankings. Same route_id appearing twice (defensive)
+    # keeps the maximum total per occurrence.
+    total_boost_delta_by_route_id: Dict[str, float] = {}
+    if isinstance(rankings, (list, tuple)):
+        for entry in rankings:
+            if not isinstance(entry, dict):
+                continue
+            rid = str(entry.get("route_id") or "").strip()
+            if not rid:
+                continue
+            running = 0.0
+            for delta_key in ("print_to_sheet_boost_delta", "sheet_adjacency_boost_delta"):
+                v = entry.get(delta_key)
+                if v is None or isinstance(v, bool):
+                    continue
+                try:
+                    running += float(v)
+                except (TypeError, ValueError):
+                    continue
+            if running > 0.0:
+                prior = total_boost_delta_by_route_id.get(rid)
+                total_boost_delta_by_route_id[rid] = running if prior is None else max(prior, running)
+
+    max_total_delta: float = max(total_boost_delta_by_route_id.values(), default=0.0)
+
+    # cap_governance.violations — forward-compat invariant guard. In R2 the
+    # static ceiling (0.06) bounds the maximum stacked delta to 2 × cap, so
+    # this list is always empty under current scoring. A future layer or
+    # cap change could populate it; the synthetic-injection test verifies
+    # the detector itself works.
+    violations: List[Dict[str, Any]] = []
+    for rid, delta in total_boost_delta_by_route_id.items():
+        if delta > static_ceiling + 1e-9:
+            violations.append({
+                "route_id":       rid,
+                "observed_delta": delta,
+                "ceiling":        static_ceiling,
+                "reason":         "delta_exceeds_registered_layer_caps_sum",
+            })
+
+    cap_governance: Dict[str, Any] = {
+        "violations":    violations,
+        "cap_per_layer": cap_per_layer,
+        "ceiling":       static_ceiling,
+    }
+
+    return {
+        "schema_version":                _PLAUSIBILITY_CUMULATIVE_SCHEMA_VERSION,
+        "generated_at_step":             str(step),
+        "layers_present":                list(layers_present),
+        "layers_applied":                layers_applied,
+        "modes_by_layer":                modes_by_layer,
+        "total_boost_delta_by_route_id": total_boost_delta_by_route_id,
+        "max_total_delta":               max_total_delta,
+        # State-aware ceiling deferred per design Q3 — using the static
+        # registry-sum ceiling for both fields in R2.
+        "max_total_delta_ceiling":       static_ceiling,
+        "any_reorder_attempted":         any_reorder_attempted,
+        "any_reordered":                 any_reordered,
+        "selection_impact_stack":        selection_impact_stack,
+        "selection_changed_by_layers":   selection_changed_by_layers,
+        "cap_governance":                cap_governance,
+    }
+
+
 def _plan_aware_ranking_boost(
     rankings: List[Dict[str, Any]],
     normalized_group: Dict[str, Any],
@@ -9364,6 +9531,16 @@ def _rebuild_field_data_outputs() -> None:
         )
         _diag[_SHEET_ADJACENCY_BOOST_DIAG_KEY] = _sa_meta
 
+        # ── PT.ACT R2: plausibility cumulative diagnostic envelope ──────
+        # Aggregates PT.1 + PT.2.0 metas plus per-entry boost-delta
+        # annotations into a single parent dict. Always emitted regardless
+        # of layer modes; diagnostic-only.
+        _diag[_PLAUSIBILITY_CUMULATIVE_DIAG_KEY] = _build_plausibility_cumulative_meta(
+            rankings,
+            [("PT.1", _pts_meta), ("PT.2.0", _sa_meta)],
+            step="post_ranking_boosts",
+        )
+
         anchored_hypotheses: List[Dict[str, Any]] = []
         for ranking in rankings[:3]:
             matched_route = _find_route_by_id(ranking.get("route_id"))
@@ -9408,6 +9585,16 @@ def _rebuild_field_data_outputs() -> None:
             )
             if _SHEET_ADJACENCY_BOOST_DIAG_KEY not in _diag:
                 _diag[_SHEET_ADJACENCY_BOOST_DIAG_KEY] = _sa_meta2
+
+            # ── PT.ACT R2: plausibility cumulative envelope (fallback pass 2) ─
+            # Mirrors the main-pass emit; guarded so the main-pass envelope
+            # wins when both passes produce one.
+            if _PLAUSIBILITY_CUMULATIVE_DIAG_KEY not in _diag:
+                _diag[_PLAUSIBILITY_CUMULATIVE_DIAG_KEY] = _build_plausibility_cumulative_meta(
+                    rankings,
+                    [("PT.1", _pts_meta2), ("PT.2.0", _sa_meta2)],
+                    step="post_ranking_boosts_fallback",
+                )
 
             for ranking in rankings[:3]:
                 matched_route = _find_route_by_id(ranking.get("route_id"))
