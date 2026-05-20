@@ -4419,6 +4419,36 @@ ${redlinePlacemarks.length > 0 ? buildEngFolder("As-Built Redlines", redlinePlac
               </button>
               {engineeringPlansExpanded ? (
                 <div style={{ borderTop: "1px solid #e2e8f0", padding: "12px 14px", display: "grid", gap: 8 }}>
+                  <label
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 8,
+                      cursor: engPlansBusy ? "default" : "pointer",
+                      opacity: engPlansBusy ? 0.6 : 1,
+                      padding: "8px 14px",
+                      borderRadius: 10,
+                      border: "1px solid #0f172a",
+                      background: "#0f172a",
+                      color: "#ffffff",
+                      fontSize: 13,
+                      fontWeight: 700,
+                      justifySelf: "start",
+                    }}
+                  >
+                    <input
+                      type="file"
+                      accept=".pdf,application/pdf"
+                      multiple
+                      disabled={engPlansBusy}
+                      style={{ display: "none" }}
+                      onChange={(e) => {
+                        handleEngineeringPlansUpload(e.target.files);
+                        e.currentTarget.value = "";
+                      }}
+                    />
+                    {engPlansBusy ? "Uploading..." : "Upload Engineering Plan PDFs"}
+                  </label>
                   {(state?.engineering_plans?.length ?? 0) === 0 ? (
                     <div style={{ fontSize: 13, color: "#94a3b8" }}>No plans uploaded for this session.</div>
                   ) : (
