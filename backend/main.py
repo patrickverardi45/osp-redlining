@@ -9989,15 +9989,28 @@ def _rebuild_field_data_outputs(scope: RebuildScope = RebuildScope.FULL) -> None
     _signature: Optional[str] = None
 
     if _p53_pdf_parse_enabled:
-        # RI.3: cache-aware FULL rebuild. Cache reads + writes only happen
-        # when scope == FULL and kill switch is off. Other scopes / kill
-        # switch on preserve today's behavior verbatim. See
-        # wiki/sprints/rebuild-isolation/RI-3-kmz-cache-consumer.md.
-        cache_aware = (
-            scope == RebuildScope.FULL
-            and not plan_topology_cache.kill_switch_active()
-        )
-        if cache_aware:
+        if scope == RebuildScope.ROWS_ONLY:
+            # RI.4: structural fix for B-WS-12. NEVER invoke the parser on
+            # the ROWS_ONLY path, regardless of kill switch state. Cache
+            # consumer only; never producer. See
+            # wiki/sprints/rebuild-isolation/RI-4-bore-log-rows-only.md.
+            if plan_topology_cache.kill_switch_active():
+                _plan_sheet_origins = {}
+                _plan_topology_source = "rows_only_bypassed_kill_switch"
+            else:
+                _cache_file = plan_topology_cache.resolve_cache_file(_session_id_hint, UPLOADS_DIR)
+                _signature = plan_topology_cache.derive_plan_set_signature(_eng_plans_for_session)
+                _cached = plan_topology_cache.cache_read(_cache_file, _signature)
+                if _cached is not None:
+                    _plan_sheet_origins = _cached
+                    _plan_topology_source = "cache_hit"
+                else:
+                    _plan_sheet_origins = {}
+                    _plan_topology_source = "rows_only_cache_miss_empty"
+        elif scope == RebuildScope.FULL and not plan_topology_cache.kill_switch_active():
+            # RI.3: cache-aware FULL rebuild. Cache reads + writes only happen
+            # when scope == FULL and kill switch is off. See
+            # wiki/sprints/rebuild-isolation/RI-3-kmz-cache-consumer.md.
             _cache_file = plan_topology_cache.resolve_cache_file(_session_id_hint, UPLOADS_DIR)
             _signature = plan_topology_cache.derive_plan_set_signature(_eng_plans_for_session)
             _cached = plan_topology_cache.cache_read(_cache_file, _signature)
@@ -10019,8 +10032,9 @@ def _rebuild_field_data_outputs(scope: RebuildScope = RebuildScope.FULL) -> None
                     _plan_sheet_origins = {}
                     _plan_topology_source = "cache_miss_compute_failed"
         else:
-            # Bypass: kill switch on, OR scope != FULL. Preserve today's
-            # behavior verbatim (parser called directly with try/except).
+            # Bypass: FULL + kill switch on, OR scope is METADATA_ONLY/RESET.
+            # ROWS_ONLY is handled in its own branch above and never falls here.
+            # Preserve today's behavior verbatim (parser called directly).
             try:
                 _plan_sheet_origins = _build_plan_topology_for_session(_session_id_hint)
                 _plan_topology_source = (
@@ -12012,7 +12026,10 @@ async def upload_structured_bore_files(
             STATE["loaded_field_data_files"] = len(existing_by_file)
             STATE["latest_structured_file"] = latest_name
 
-            _rebuild_field_data_outputs()
+            # RI.4: ROWS_ONLY scope structurally prevents bore-log uploads from
+            # invoking the PDF parser. See wiki/sprints/rebuild-isolation/
+            # RI-4-bore-log-rows-only.md and bugs/current-bugs#B-WS-12.
+            _rebuild_field_data_outputs(scope=RebuildScope.ROWS_ONLY)
             return _ok(session_id=resolved_session_id, message="Bore logs uploaded successfully", **_summary_payload())
     except Exception as exc:
         return _err(str(exc), session_id=resolved_session_id)
