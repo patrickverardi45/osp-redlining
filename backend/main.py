@@ -27,6 +27,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from app.auth import current_tenant, get_current_tenant
 from app.auth_bridge import resolve_caller
+from app.core import plan_topology_cache
 from app.core.rebuild_scope import RebuildScope
 from app.services import engineering_plan_parser as _engineering_plan_parser
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -16764,6 +16765,23 @@ def _save_engineering_plan_index(index_data: Dict[str, Any]) -> None:
     temp_path = ENGINEERING_PLAN_INDEX_PATH.with_suffix(".tmp")
     temp_path.write_text(json.dumps(index_data, indent=2), encoding="utf-8")
     temp_path.replace(ENGINEERING_PLAN_INDEX_PATH)
+
+    # RI.2: invalidate per-session topology caches for every session whose
+    # plans appear in the new index. Best-effort; failures logged and skipped.
+    # Over-invalidation (sessions whose plan set did not actually change) is
+    # acceptable — the next FULL rebuild will repopulate. See
+    # wiki/sprints/rebuild-isolation/RI-2-topology-cache.md.
+    try:
+        affected_session_ids = {
+            str(p.get("session_id") or "").strip()
+            for p in (index_data.get("plans") or [])
+            if str(p.get("session_id") or "").strip()
+        }
+        for sid in affected_session_ids:
+            cache_file = plan_topology_cache.resolve_cache_file(sid, UPLOADS_DIR)
+            plan_topology_cache.cache_invalidate(cache_file)
+    except Exception as exc:
+        logging.warning("topology cache invalidation skipped: %s", exc)
 
 
 def _engineering_plan_record_matches_session(record: Dict[str, Any], session_id: str) -> bool:
