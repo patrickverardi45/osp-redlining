@@ -1,6 +1,7 @@
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import io
 import json
@@ -9663,7 +9664,7 @@ def _print_to_sheets_with_derived_attribution() -> Dict[str, List[int]]:
             catalog = _build_confirmed_sheet_set_for_session(session_id)
         except Exception:
             catalog = set()
-        if catalog or expected_hash:
+        if catalog:
             if was_cache_hit:
                 catalog_source = _PI4B_CATALOG_SOURCE_CACHE_HIT
             else:
@@ -12100,6 +12101,13 @@ def debug_pipeline_diag(session_id: Optional[str] = None, source_file: Optional[
         plan_signals: List[Dict[str, Any]] = list(STATE.get("engineering_plan_signals") or [])
         if not plan_signals:
             plan_signals = _build_engineering_plan_signals_for_session(sid)
+        # PI.4B.2 attribution snapshot. Deep-copied so response consumers
+        # cannot mutate STATE. Empty dict when the seam was not invoked in
+        # this rebuild (e.g. TRUELINE_PI4A_DERIVED_PRINT_INDEX OFF, or no
+        # consumer ever called _print_to_sheets_from_packet_index()).
+        pi4b_attr: Dict[str, Any] = copy.deepcopy(
+            STATE.get(_PI4B_ATTRIBUTION_STATE_KEY) or {}
+        )
     if source_file:
         diag = [d for d in diag if str(d.get("source_file") or "").lower() == source_file.lower()]
     return JSONResponse(content={
@@ -12108,6 +12116,7 @@ def debug_pipeline_diag(session_id: Optional[str] = None, source_file: Optional[
         "pipeline_diag": diag,
         "engineering_plan_signal_count": len(plan_signals),
         "engineering_plan_signals": plan_signals,
+        _PI4B_DIAG_KEY: pi4b_attr,
     })
 
 
