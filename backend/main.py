@@ -27,6 +27,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from app.auth import current_tenant, get_current_tenant
 from app.auth_bridge import resolve_caller
+from app.core.rebuild_scope import RebuildScope
 from app.services import engineering_plan_parser as _engineering_plan_parser
 from starlette.middleware.base import BaseHTTPMiddleware
 
@@ -9947,7 +9948,11 @@ def _emit_plan_footage_shadow_diagnostic(
         return {"emitted": False, "reason": "shadow_summary_error"}
 
 
-def _rebuild_field_data_outputs() -> None:
+def _rebuild_field_data_outputs(scope: RebuildScope = RebuildScope.FULL) -> None:
+    # RI.1: scope is accepted but not yet consumed by the function body.
+    # RI.2 adds the plan topology cache lookup; RI.4 branches on scope for
+    # the bore-log path. Default-FULL preserves today's behavior at every
+    # existing call site. See wiki/sprints/rebuild-isolation/.
     rows = STATE.get("committed_rows", []) or []
     groups = _group_rows_for_matching(rows)
 
