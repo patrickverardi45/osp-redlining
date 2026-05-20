@@ -96,19 +96,32 @@ class TestRI3CacheConsumer(unittest.TestCase):
     # ─── A. Cold/warm parity (load-bearing) ────────────────────────────────
 
     def test_01_cold_then_warm_state_byte_identity(self) -> None:
-        """COLD parse → cache populated → WARM read. STATE deep-equal."""
+        """COLD parse → cache populated → WARM read. STATE deep-equal.
+
+        PE.2: the cache-miss branch now invokes
+        _build_plan_topology_for_session_with_outcomes (returns tuple).
+        Mock target updated; semantic intent unchanged.
+        """
         self._enable_flag()
         synthetic = _synthetic_topology()
 
         self._reset_state()
-        with patch.object(M, "_build_plan_topology_for_session", return_value=synthetic) as mock_parse_cold:
+        with patch.object(
+            M,
+            "_build_plan_topology_for_session_with_outcomes",
+            return_value=(synthetic, []),
+        ) as mock_parse_cold:
             M._rebuild_field_data_outputs(scope=RebuildScope.FULL)
         self.assertEqual(mock_parse_cold.call_count, 1, "parser must be called on cold")
         state_cold = self._snapshot_state()
         self.assertTrue(self._cache_file.exists(), "cache file should exist after cold rebuild")
 
         self._reset_state()
-        with patch.object(M, "_build_plan_topology_for_session", return_value=synthetic) as mock_parse_warm:
+        with patch.object(
+            M,
+            "_build_plan_topology_for_session_with_outcomes",
+            return_value=(synthetic, []),
+        ) as mock_parse_warm:
             M._rebuild_field_data_outputs(scope=RebuildScope.FULL)
         self.assertEqual(mock_parse_warm.call_count, 0, "parser must NOT be called on warm")
         state_warm = self._snapshot_state()
@@ -130,7 +143,11 @@ class TestRI3CacheConsumer(unittest.TestCase):
         synthetic = _synthetic_topology()
 
         self._reset_state()
-        with patch.object(M, "_build_plan_topology_for_session", return_value=synthetic) as mock_parse:
+        with patch.object(
+            M,
+            "_build_plan_topology_for_session_with_outcomes",
+            return_value=(synthetic, []),
+        ) as mock_parse:
             M._rebuild_field_data_outputs(scope=RebuildScope.FULL)
         self.assertEqual(mock_parse.call_count, 1)
         self.assertTrue(self._cache_file.exists())
@@ -156,7 +173,11 @@ class TestRI3CacheConsumer(unittest.TestCase):
 
         self._reset_state()
         synthetic = _synthetic_topology()
-        with patch.object(M, "_build_plan_topology_for_session", return_value=synthetic) as mock_parse:
+        with patch.object(
+            M,
+            "_build_plan_topology_for_session_with_outcomes",
+            return_value=(synthetic, []),
+        ) as mock_parse:
             M._rebuild_field_data_outputs(scope=RebuildScope.FULL)
         self.assertEqual(mock_parse.call_count, 1)
 
@@ -173,7 +194,11 @@ class TestRI3CacheConsumer(unittest.TestCase):
 
         self._reset_state()
         synthetic = _synthetic_topology()
-        with patch.object(M, "_build_plan_topology_for_session", return_value=synthetic) as mock_parse:
+        with patch.object(
+            M,
+            "_build_plan_topology_for_session_with_outcomes",
+            return_value=(synthetic, []),
+        ) as mock_parse:
             M._rebuild_field_data_outputs(scope=RebuildScope.FULL)
         self.assertEqual(mock_parse.call_count, 1)
 

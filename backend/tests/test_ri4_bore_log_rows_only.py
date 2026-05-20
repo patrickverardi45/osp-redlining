@@ -296,24 +296,46 @@ class TestRI4BoreLogRowsOnly(unittest.TestCase):
         Simulates the exact reproduction sequence of B-WS-12 (KMZ → bore-log)
         with the parser flag ON locally and asserts that the bore-log path
         consumes the cached topology without invoking the parser.
+
+        PE.2: cache-miss branch invokes
+        _build_plan_topology_for_session_with_outcomes; mocks updated.
+        The B-WS-12 invariant (bore-log NEVER invokes parser) is preserved.
         """
         self._enable_flag()
         synthetic = _synthetic_topology()
 
         # Phase 1: KMZ upload → FULL rebuild → cache populated
         self._reset_state()
-        with patch.object(M, "_build_plan_topology_for_session", return_value=synthetic) as mock_parse_kmz:
+        with patch.object(
+            M,
+            "_build_plan_topology_for_session_with_outcomes",
+            return_value=(synthetic, []),
+        ) as mock_parse_kmz:
             M._rebuild_field_data_outputs(scope=RebuildScope.FULL)
         self.assertEqual(mock_parse_kmz.call_count, 1, "parser should run on cold KMZ")
         self.assertTrue(self._cache_file.exists(), "KMZ FULL must populate cache")
 
         # Phase 2: bore-log upload → ROWS_ONLY rebuild → cache consumed; NO parser
+        # ROWS_ONLY must NEVER invoke either parser function (with or without outcomes).
         self._reset_state()
-        with patch.object(M, "_build_plan_topology_for_session", side_effect=AssertionError("parser must not be called on bore-log")) as mock_parse_borelog:
-            M._rebuild_field_data_outputs(scope=RebuildScope.ROWS_ONLY)
+        with patch.object(
+            M,
+            "_build_plan_topology_for_session",
+            side_effect=AssertionError("parser must not be called on bore-log"),
+        ) as mock_parse_borelog:
+            with patch.object(
+                M,
+                "_build_plan_topology_for_session_with_outcomes",
+                side_effect=AssertionError("parser must not be called on bore-log (with_outcomes variant)"),
+            ) as mock_parse_borelog_outcomes:
+                M._rebuild_field_data_outputs(scope=RebuildScope.ROWS_ONLY)
         self.assertEqual(
             mock_parse_borelog.call_count, 0,
             "bore-log ROWS_ONLY must NEVER invoke parser (B-WS-12 structural fix)",
+        )
+        self.assertEqual(
+            mock_parse_borelog_outcomes.call_count, 0,
+            "bore-log ROWS_ONLY must NEVER invoke parser-with-outcomes either",
         )
 
         # Phase 3: cache content unchanged after bore-log pass

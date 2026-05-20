@@ -11,6 +11,8 @@ import os
 import re
 import shutil
 import sqlite3
+import subprocess
+import sys
 import threading
 import time
 import uuid
@@ -9334,31 +9336,161 @@ def _resolve_engineering_plan_pdf_paths(session_id: str) -> List[Path]:
     return out
 
 
-def _build_plan_topology_for_session(session_id: str) -> Dict[int, Dict[str, Any]]:
-    """Parse session PDFs (PDF-only; other file types ignored) and derive a
-    merged sheet-origin map. Safe-failure: returns {} on any error.
+# ---------------------------------------------------------------------------
+# PE.2 — Bounded Plan Topology Runner
+# ---------------------------------------------------------------------------
+# Per-PDF subprocess + OS-level timeout so production request workers cannot
+# hang inside pdfminer's unbounded execution path. See
+# wiki/sprints/pe/pe-2-bounded-runner.md.
+#
+# Invariant: _build_plan_topology_for_session never runs unbounded.
+# Worst-case wallclock = _pe2_per_pdf_timeout_sec() * len(pdf_paths).
+# Partial extraction is acceptable: PDFs that time out or error contribute
+# nothing; successful PDFs still contribute their matchlines/callouts.
+# ---------------------------------------------------------------------------
+
+_PE2_DEFAULT_PER_PDF_TIMEOUT_SEC: int = 60
+
+
+def _pe2_per_pdf_timeout_sec() -> int:
+    """Read TRUELINE_PE2_PER_PDF_TIMEOUT_SEC at runtime (per call).
+
+    Returns the configured per-PDF wallclock budget in seconds, or the
+    default (60) if unset / invalid. Minimum value enforced is 1.
+    """
+    raw = os.environ.get("TRUELINE_PE2_PER_PDF_TIMEOUT_SEC", "").strip()
+    if not raw:
+        return _PE2_DEFAULT_PER_PDF_TIMEOUT_SEC
+    try:
+        return max(1, int(raw))
+    except ValueError:
+        return _PE2_DEFAULT_PER_PDF_TIMEOUT_SEC
+
+
+_PE2_WORKER_PATH = Path(__file__).resolve().parent / "app" / "core" / "plan_topology_pdf_worker.py"
+
+
+def _extract_pdf_signals_bounded(pdf_path: Path, timeout_sec: int) -> Dict[str, Any]:
+    """Spawn the PE.2 worker subprocess against a single PDF.
+
+    Returns an outcome dict. Never raises. The orchestrator never blocks
+    longer than `timeout_sec` seconds because subprocess.run kills the
+    child via TerminateProcess (Windows) / SIGKILL (POSIX) on expiry.
+
+    Outcome shape:
+        {"status": "ok" | "timeout" | "error" | "unparseable",
+         "path": <filename>,
+         "elapsed_ms": int,
+         # only when status == "ok":
+         "matchlines": [...],
+         "callouts": [...],
+         # only when status in {error, unparseable}:
+         "error": <string>}
+    """
+    t0 = time.perf_counter()
+    try:
+        proc = subprocess.run(
+            [sys.executable, str(_PE2_WORKER_PATH), str(pdf_path)],
+            capture_output=True,
+            text=True,
+            timeout=timeout_sec,
+        )
+    except subprocess.TimeoutExpired:
+        elapsed_ms = int((time.perf_counter() - t0) * 1000)
+        return {
+            "status": "timeout",
+            "path": pdf_path.name,
+            "elapsed_ms": elapsed_ms,
+        }
+
+    elapsed_ms = int((time.perf_counter() - t0) * 1000)
+    stdout = (proc.stdout or "").strip()
+    last_line = stdout.splitlines()[-1] if stdout else ""
+    try:
+        payload = json.loads(last_line) if last_line else None
+    except json.JSONDecodeError:
+        return {
+            "status": "unparseable",
+            "path": pdf_path.name,
+            "elapsed_ms": elapsed_ms,
+            "error": "worker stdout not parseable as JSON",
+        }
+
+    if proc.returncode == 0 and payload and payload.get("ok"):
+        return {
+            "status": "ok",
+            "path": pdf_path.name,
+            "matchlines": payload.get("matchlines") or [],
+            "callouts": payload.get("callouts") or [],
+            "elapsed_ms": elapsed_ms,
+        }
+    return {
+        "status": "error",
+        "path": pdf_path.name,
+        "elapsed_ms": elapsed_ms,
+        "error": (payload or {}).get("error", "(no payload)"),
+    }
+
+
+def _build_plan_topology_for_session_with_outcomes(
+    session_id: str,
+) -> Tuple[Dict[int, Dict[str, Any]], List[Dict[str, Any]]]:
+    """Bounded per-PDF parser execution. Returns (topology, per_pdf_outcomes).
+
+    The outcomes list is used by callers (the rebuild path) to classify
+    topology_source. The topology itself is the merged sheet-origin map
+    derived from whichever PDFs returned cleanly.
     """
     if _engineering_plan_parser is None:
-        return {}
+        return {}, []
     paths = _resolve_engineering_plan_pdf_paths(session_id)
     if not paths:
-        return {}
+        return {}, []
+
+    timeout_sec = _pe2_per_pdf_timeout_sec()
     all_matchlines: List[Dict[str, Any]] = []
     all_callouts: List[Dict[str, Any]] = []
+    per_pdf_outcomes: List[Dict[str, Any]] = []
+
     for p in paths:
-        try:
-            ml = _engineering_plan_parser.extract_matchlines(p) or []
-            cl = _engineering_plan_parser.extract_station_callouts(p) or []
-            all_matchlines.extend(ml)
-            all_callouts.extend(cl)
-        except Exception:
-            continue
+        outcome = _extract_pdf_signals_bounded(p, timeout_sec)
+        per_pdf_outcomes.append(outcome)
+        if outcome.get("status") == "ok":
+            all_matchlines.extend(outcome.get("matchlines") or [])
+            all_callouts.extend(outcome.get("callouts") or [])
+        logging.info(
+            "parser_pdf result=%s path=%s elapsed_ms=%s ml=%s cl=%s",
+            outcome.get("status", "?"),
+            outcome.get("path", "?"),
+            outcome.get("elapsed_ms", 0),
+            len(outcome.get("matchlines") or []),
+            len(outcome.get("callouts") or []),
+        )
+
     try:
-        return _engineering_plan_parser.derive_sheet_station_origins(
+        topology = _engineering_plan_parser.derive_sheet_station_origins(
             all_matchlines, all_callouts
         )
     except Exception:
-        return {}
+        topology = {}
+
+    return topology, per_pdf_outcomes
+
+
+def _build_plan_topology_for_session(session_id: str) -> Dict[int, Dict[str, Any]]:
+    """Parse session PDFs (PDF-only; other file types ignored) and derive a
+    merged sheet-origin map.
+
+    PE.2: this is now a thin wrapper over
+    _build_plan_topology_for_session_with_outcomes. The signature is
+    preserved so existing callers (RI.3 bypass branch at main.py:10039)
+    do not change.
+
+    Safe-failure: returns {} on any error or on full-set timeout.
+    Bounded wallclock: at most _pe2_per_pdf_timeout_sec() * len(paths).
+    """
+    topology, _ = _build_plan_topology_for_session_with_outcomes(session_id)
+    return topology
 
 
 # ---------------------------------------------------------------------------
@@ -10012,6 +10144,10 @@ def _rebuild_field_data_outputs(scope: RebuildScope = RebuildScope.FULL) -> None
             # RI.3: cache-aware FULL rebuild. Cache reads + writes only happen
             # when scope == FULL and kill switch is off. See
             # wiki/sprints/rebuild-isolation/RI-3-kmz-cache-consumer.md.
+            #
+            # PE.2: cache-miss path now uses the with-outcomes variant to
+            # classify topology_source (computed / computed_partial / timeout)
+            # based on per-PDF outcomes. See wiki/sprints/pe/pe-2-bounded-runner.md.
             _cache_file = plan_topology_cache.resolve_cache_file(_session_id_hint, UPLOADS_DIR)
             _signature = plan_topology_cache.derive_plan_set_signature(_eng_plans_for_session)
             _cached = plan_topology_cache.cache_read(_cache_file, _signature)
@@ -10020,7 +10156,9 @@ def _rebuild_field_data_outputs(scope: RebuildScope = RebuildScope.FULL) -> None
                 _plan_topology_source = "cache_hit"
             else:
                 try:
-                    _plan_sheet_origins = _build_plan_topology_for_session(_session_id_hint)
+                    _plan_sheet_origins, _per_pdf_outcomes = (
+                        _build_plan_topology_for_session_with_outcomes(_session_id_hint)
+                    )
                     plan_topology_cache.cache_write(
                         _cache_file,
                         _signature,
@@ -10028,7 +10166,19 @@ def _rebuild_field_data_outputs(scope: RebuildScope = RebuildScope.FULL) -> None
                         plan_count=len(_eng_plans_for_session),
                         compute_duration_ms=0,
                     )
-                    _plan_topology_source = "cache_miss_computed"
+                    # PE.2: classify based on per-PDF outcomes
+                    if not _per_pdf_outcomes:
+                        _plan_topology_source = "cache_miss_computed"
+                    else:
+                        _ok_count = sum(
+                            1 for _o in _per_pdf_outcomes if _o.get("status") == "ok"
+                        )
+                        if _ok_count == 0:
+                            _plan_topology_source = "cache_miss_compute_timeout"
+                        elif _ok_count < len(_per_pdf_outcomes):
+                            _plan_topology_source = "cache_miss_computed_partial"
+                        else:
+                            _plan_topology_source = "cache_miss_computed"
                 except Exception:
                     _plan_sheet_origins = {}
                     _plan_topology_source = "cache_miss_compute_failed"
