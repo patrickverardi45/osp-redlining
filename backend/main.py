@@ -9985,11 +9985,61 @@ def _rebuild_field_data_outputs(scope: RebuildScope = RebuildScope.FULL) -> None
     # selection. Activates only when topology is available.
     _p54_a3_shadow_enabled = _trueline_plan_pdf_signals_a3_shadow_enabled()
     _plan_sheet_origins: Dict[int, Dict[str, Any]] = {}
+    _plan_topology_source: str = "bypassed_flag_off"
+    _signature: Optional[str] = None
+
     if _p53_pdf_parse_enabled:
-        try:
-            _plan_sheet_origins = _build_plan_topology_for_session(_session_id_hint)
-        except Exception:
-            _plan_sheet_origins = {}
+        # RI.3: cache-aware FULL rebuild. Cache reads + writes only happen
+        # when scope == FULL and kill switch is off. Other scopes / kill
+        # switch on preserve today's behavior verbatim. See
+        # wiki/sprints/rebuild-isolation/RI-3-kmz-cache-consumer.md.
+        cache_aware = (
+            scope == RebuildScope.FULL
+            and not plan_topology_cache.kill_switch_active()
+        )
+        if cache_aware:
+            _cache_file = plan_topology_cache.resolve_cache_file(_session_id_hint, UPLOADS_DIR)
+            _signature = plan_topology_cache.derive_plan_set_signature(_eng_plans_for_session)
+            _cached = plan_topology_cache.cache_read(_cache_file, _signature)
+            if _cached is not None:
+                _plan_sheet_origins = _cached
+                _plan_topology_source = "cache_hit"
+            else:
+                try:
+                    _plan_sheet_origins = _build_plan_topology_for_session(_session_id_hint)
+                    plan_topology_cache.cache_write(
+                        _cache_file,
+                        _signature,
+                        _plan_sheet_origins,
+                        plan_count=len(_eng_plans_for_session),
+                        compute_duration_ms=0,
+                    )
+                    _plan_topology_source = "cache_miss_computed"
+                except Exception:
+                    _plan_sheet_origins = {}
+                    _plan_topology_source = "cache_miss_compute_failed"
+        else:
+            # Bypass: kill switch on, OR scope != FULL. Preserve today's
+            # behavior verbatim (parser called directly with try/except).
+            try:
+                _plan_sheet_origins = _build_plan_topology_for_session(_session_id_hint)
+                _plan_topology_source = (
+                    "bypassed_kill_switch"
+                    if plan_topology_cache.kill_switch_active()
+                    else "bypassed_other_scope"
+                )
+            except Exception:
+                _plan_sheet_origins = {}
+                _plan_topology_source = "bypassed_compute_failed"
+
+    logging.info(
+        "rebuild scope=%s topology_source=%s session=%s signature=%s plan_count=%d",
+        scope.value,
+        _plan_topology_source,
+        str(_session_id_hint)[:16],
+        (_signature[:16] if _signature else "(n/a)"),
+        len(_eng_plans_for_session),
+    )
 
     group_matches: List[Dict[str, Any]] = []
     matching_debug: List[Dict[str, Any]] = []
@@ -11852,7 +11902,7 @@ async def upload_design(
 
             if STATE.get("committed_rows"):
                 try:
-                    _rebuild_field_data_outputs()
+                    _rebuild_field_data_outputs(scope=RebuildScope.FULL)
                 except Exception as rebuild_exc:
                     STATE["station_points"] = []
                     STATE["redline_segments"] = []
