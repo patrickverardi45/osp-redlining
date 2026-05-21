@@ -3547,15 +3547,52 @@ ${redlinePlacemarks.length > 0 ? buildEngFolder("As-Built Redlines", redlinePlac
 
   async function handleEngineeringPlansUpload(files: FileList | null) {
     if (!files || files.length === 0) return;
-    const totalBytes = Array.from(files).reduce((sum, f) => sum + f.size, 0);
-    const totalMB = totalBytes / (1024 * 1024);
-    if (totalMB > 4) {
-      setStatusText(
-        `Engineering plan files are too large (${totalMB.toFixed(1)} MB total). Compress the PDF or split into smaller uploads — maximum 4 MB per upload.`,
-      );
+
+    // PT.IU R1 — direct-to-Render upload bypasses Vercel ~4.5 MB serverless ceiling.
+    // Resolves at build time via Next.js inline-replacement of NEXT_PUBLIC_* vars.
+    // If unset (dev/local without env), falls back to same-origin proxy with the
+    // original 4 MB safety cap preserved.
+    const RENDER_BASE = (
+      process.env.NEXT_PUBLIC_API_BASE ||
+      process.env.NEXT_PUBLIC_API_BASE_URL ||
+      ""
+    ).replace(/\/+$/, "");
+    const uploadUrl = RENDER_BASE
+      ? `${RENDER_BASE}/api/upload-engineering-plans`
+      : `${API_BASE}/api/upload-engineering-plans`;
+    const directToRender = Boolean(RENDER_BASE);
+
+    // PT.IU R1 — per-file size cap. 100 MB direct-to-Render; 4 MB on proxy fallback.
+    // Rationale: Brenham max is ~14 MB; 100 MB provides headroom for future
+    // GIS/DWG/LiDAR artifacts while keeping Render memory spike bounded
+    // (file_bytes is read into RAM in upload_engineering_plans; ~512 MB container cap).
+    const PER_FILE_MAX_MB = directToRender ? 100 : 4;
+    const oversized = Array.from(files).filter((f) => f.size / (1024 * 1024) > PER_FILE_MAX_MB);
+    if (oversized.length > 0) {
+      const list = oversized
+        .map((f) => `${f.name} (${(f.size / (1024 * 1024)).toFixed(1)} MB)`)
+        .join(", ");
+      const hint = directToRender
+        ? `Per-file maximum is ${PER_FILE_MAX_MB} MB.`
+        : `Vercel proxy limit applies (${PER_FILE_MAX_MB} MB); contact support if direct upload is unavailable.`;
+      setStatusText(`Engineering plan file(s) exceed the size limit: ${list}. ${hint}`);
       setStatusTone("error");
       return;
     }
+
+    // PT.IU R1 — structured observability for future GIS-scale debugging.
+    const totalBytes = Array.from(files).reduce((sum, f) => sum + f.size, 0);
+    const uploadStartedAt = Date.now();
+    console.info("[eng-plan-upload]", {
+      event: "upload_start",
+      ts: new Date().toISOString(),
+      target: uploadUrl,
+      direct_to_render: directToRender,
+      file_count: files.length,
+      total_bytes: totalBytes,
+      total_mb: Number((totalBytes / (1024 * 1024)).toFixed(2)),
+    });
+
     setEngPlansBusy(true);
     setStatusText(`Uploading ${files.length} engineering plan file${files.length > 1 ? "s" : ""}...`);
     setStatusTone("neutral");
@@ -3563,30 +3600,60 @@ ${redlinePlacemarks.length > 0 ? buildEngFolder("As-Built Redlines", redlinePlac
       const form = new FormData();
       appendSessionIdToForm(form, projectId);
       Array.from(files).forEach((f) => form.append("files", f));
-      const response = await apiFetch(`${API_BASE}/api/upload-engineering-plans`, { method: "POST", body: form });
+      const response = await apiFetch(uploadUrl, { method: "POST", body: form });
       // Read body once as text; backend always returns JSON via _ok()/_err(),
       // so any non-JSON body means an upstream gateway error (Vercel timeout
-      // 504, payload-too-large 413, etc.). Surface that raw text instead of
-      // a generic "Unexpected token R..." JSON.parse failure.
+      // 504, payload-too-large 413, Render 5xx, etc.). Surface that raw text
+      // instead of a generic "Unexpected token R..." JSON.parse failure.
       const responseText = await response.text();
       let data: { success?: boolean; error?: string; message?: string; engineering_plans?: EngineeringPlan[] } = {};
       try {
         data = responseText ? JSON.parse(responseText) : {};
       } catch {
         const snippet = responseText.slice(0, 200).trim() || `HTTP ${response.status}`;
+        console.warn("[eng-plan-upload]", {
+          event: "non_json_response",
+          ts: new Date().toISOString(),
+          target: uploadUrl,
+          status: response.status,
+          body_snippet: snippet,
+        });
         throw new Error(`Engineering plan upload failed (${response.status}): ${snippet}`);
       }
       acceptSessionFromMutation(data, projectId);
-      if (!response.ok || data.success === false) throw new Error(data.error || "Engineering plan upload failed.");
+      if (!response.ok || data.success === false) {
+        console.warn("[eng-plan-upload]", {
+          event: "upload_failed",
+          ts: new Date().toISOString(),
+          target: uploadUrl,
+          status: response.status,
+          backend_error: data.error,
+        });
+        throw new Error(data.error || "Engineering plan upload failed.");
+      }
       setState((prev) => {
         if (!prev) return prev;
         const nextState = { ...prev, engineering_plans: data.engineering_plans ?? prev.engineering_plans };
         return withoutClearedEngineeringPlans(nextState, projectId);
       });
       fetchPipelineDiag(); // Nova Phase 1 — refresh plan signals after engineering plan upload
+      console.info("[eng-plan-upload]", {
+        event: "upload_success",
+        ts: new Date().toISOString(),
+        target: uploadUrl,
+        status: response.status,
+        uploaded_count: data.engineering_plans?.length ?? 0,
+        elapsed_ms: Date.now() - uploadStartedAt,
+      });
       setStatusText(String(data.message || "Engineering plans uploaded successfully."));
       setStatusTone("success");
     } catch (error) {
+      console.warn("[eng-plan-upload]", {
+        event: "upload_exception",
+        ts: new Date().toISOString(),
+        target: uploadUrl,
+        message: error instanceof Error ? error.message : "Unknown error",
+      });
       setStatusText(error instanceof Error ? error.message : "Engineering plan upload failed.");
       setStatusTone("error");
     } finally {
