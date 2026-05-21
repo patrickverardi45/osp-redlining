@@ -2679,12 +2679,82 @@ ${fieldSubmissionPlacemarks.length > 0 ? buildFolder("Selected Field Submission"
       return kmlDescriptionTable(rows);
     };
 
-    // Group placemarks by folder_path key.
-    const folderMap = new Map<string, string[]>();
-    const getFolderBucket = (fp: string[]) => {
-      const key = (fp ?? []).length > 0 ? (fp ?? []).join(" / ") : "Uncategorized";
-      if (!folderMap.has(key)) folderMap.set(key, []);
-      return folderMap.get(key)!;
+    // F7d — Nested folder hierarchy reconstruction.
+    // Source folder ancestry (from `folder_path: string[]` per feature) becomes
+    // a nested <Folder> tree at export emission so Google Earth Desktop renders
+    // each source level as an independently-toggleable sidebar checkbox.
+    // The prior flat bucketing model (folder_path.join(" / ") as Map key)
+    // collapsed every source level into a single sibling <Folder>. The tree
+    // model below preserves source nesting with insertion-ordered children.
+    //
+    // FolderNode is intentionally function-scoped (not exported) and is NOT
+    // added to web/src/lib/types/backend.ts — this is a transient in-memory
+    // shape used only during a single export pass. No schema bump.
+    //
+    // TL-generated folders (Photos, Stations, Selected Field Submission,
+    // As-Built Redlines) remain flat top-level siblings emitted via
+    // buildEngFolder() at the kml template below. F7d does NOT change their
+    // structure or emission order.
+    type FolderNode = {
+      name: string;
+      placemarks: string[];
+      children: Map<string, FolderNode>;
+    };
+    // Virtual root: never emitted as a <Folder>. Its `.children` become
+    // top-level siblings under <Document>.
+    const folderTree: FolderNode = {
+      name: "",
+      placemarks: [],
+      children: new Map(),
+    };
+    // Caller-facing interface preserved verbatim:
+    //   getFolderBucket(fp).push(xml)
+    // still works exactly like the prior flat-Map implementation. The returned
+    // array is now the leaf node's `.placemarks` instead of a flat Map value.
+    // Callers at lines downstream remain BYTE-IDENTICAL.
+    const getFolderBucket = (fp: string[]): string[] => {
+      const path = fp ?? [];
+      if (path.length === 0) {
+        // Empty path → "Uncategorized" top-level sibling (preserves prior fallback).
+        let bucket = folderTree.children.get("Uncategorized");
+        if (!bucket) {
+          bucket = { name: "Uncategorized", placemarks: [], children: new Map() };
+          folderTree.children.set("Uncategorized", bucket);
+        }
+        return bucket.placemarks;
+      }
+      let current = folderTree;
+      for (const segment of path) {
+        let next = current.children.get(segment);
+        if (!next) {
+          next = { name: segment, placemarks: [], children: new Map() };
+          current.children.set(segment, next);
+        }
+        current = next;
+      }
+      return current.placemarks;
+    };
+    // True iff this subtree contributes zero placemarks. Used at emission time
+    // to prune empty branches (matches the prior `marks.length > 0` filter).
+    const folderIsEmpty = (node: FolderNode): boolean => {
+      if (node.placemarks.length > 0) return false;
+      for (const child of node.children.values()) {
+        if (!folderIsEmpty(child)) return false;
+      }
+      return true;
+    };
+    // Recursive nested-folder emitter. Child folders emitted before sibling
+    // placemarks (matches source XML convention). Indentation is cosmetic only —
+    // KML is whitespace-insensitive; Google Earth parses structure regardless.
+    const emitFolder = (node: FolderNode, indent: string): string => {
+      const childBlocks: string[] = [];
+      for (const child of node.children.values()) {
+        if (folderIsEmpty(child)) continue;
+        childBlocks.push(emitFolder(child, indent + "  "));
+      }
+      const innerParts: string[] = [...childBlocks, ...node.placemarks];
+      const inner = innerParts.length > 0 ? innerParts.join("\n") : "";
+      return `${indent}<Folder>\n${indent}  <name>${escapeXml(node.name)}</name>\n${inner}\n${indent}</Folder>`;
     };
 
     // F3 helpers — scoped to export path, no external side effects
@@ -3013,10 +3083,13 @@ ${fieldSubmissionPlacemarks.length > 0 ? buildFolder("Selected Field Submission"
       }
     }
 
-    // Engineering context folders
-    const engFolderBlocks = Array.from(folderMap.entries())
-      .filter(([, marks]) => marks.length > 0)
-      .map(([key, marks]) => buildEngFolder(key, marks))
+    // Engineering context folders — F7d: nested-tree traversal from folderTree.
+    // folderTree's virtual root is not emitted; its non-empty children become
+    // top-level <Folder> siblings under <Document>. Each child recursively
+    // emits its own nested <Folder> descendants via emitFolder().
+    const engFolderBlocks = Array.from(folderTree.children.values())
+      .filter((child) => !folderIsEmpty(child))
+      .map((child) => emitFolder(child, "    "))
       .join("\n");
 
     // As-Built Redlines (same logic as existing export, no mutation)
