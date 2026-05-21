@@ -2781,7 +2781,11 @@ ${fieldSubmissionPlacemarks.length > 0 ? buildFolder("Selected Field Submission"
       if (pt.icon_href) {
         const ptStyleId = `pt_${sanitizeFeatId(pt.feature_id)}_${_ptStyleIdx++}`;
         featureStyles.push(
-          `    <Style id="${ptStyleId}">\n      <IconStyle><scale>0.8</scale><Icon><href>${pt.icon_href}</href></Icon></IconStyle>\n      <LabelStyle><scale>0.7</scale></LabelStyle>\n    </Style>`,
+          // F7e — hide source-point map text labels (LabelStyle scale=0 per OGC KML).
+          // Placemark <name> remains in XML for popup title + sidebar tree.
+          // Operator names (Photos/Stations/FieldSub/Redlines) use separate
+          // document-level styles and are NOT affected.
+          `    <Style id="${ptStyleId}">\n      <IconStyle><scale>0.8</scale><Icon><href>${pt.icon_href}</href></Icon></IconStyle>\n      <LabelStyle><scale>0</scale></LabelStyle>\n    </Style>`,
         );
         ptStyleUrl = `#${ptStyleId}`;
         referencedHrefs.add(pt.icon_href);
@@ -3114,7 +3118,9 @@ ${fieldSubmissionPlacemarks.length > 0 ? buildFolder("Selected Field Submission"
     </Style>
     <Style id="engPointStyle">
       <IconStyle><scale>0.8</scale></IconStyle>
-      <LabelStyle><scale>0.7</scale></LabelStyle>
+      <!-- F7e: scale=0 hides repeated source-point map text labels. -->
+      <!-- Name still present in placemark <name> for popup + sidebar. -->
+      <LabelStyle><scale>0</scale></LabelStyle>
     </Style>
     <Style id="engPolyStyle">
       <LineStyle><color>8894a3b8</color><width>1</width></LineStyle>
