@@ -492,17 +492,20 @@ function buildPrintHtml(
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
 <title>Closeout Packet — ${activeJob}</title>
 <style>
+  @page { size: auto; margin: 0.5in; }
   * { box-sizing: border-box; }
-  body { font-family: Inter, ui-sans-serif, system-ui, sans-serif; color: #0f172a; background: #fff; margin: 0; padding: 32px 40px; max-width: 980px; }
+  html, body { overflow-x: hidden; }
+  body { font-family: Inter, ui-sans-serif, system-ui, sans-serif; color: #0f172a; background: #fff; margin: 0 auto; padding: 32px 40px; max-width: 980px; }
   h1 { font-size: 24px; font-weight: 900; margin: 0 0 4px; letter-spacing: -0.5px; }
   h2 { font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.06em; color: #475569; margin: 24px 0 8px; padding-bottom: 4px; border-bottom: 2px solid #e2e8f0; }
   table { width: 100%; border-collapse: collapse; margin-bottom: 8px; }
   th { text-align: left; padding: 6px 8px; background: #f1f5f9; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: #475569; border: 1px solid #e2e8f0; }
+  img { max-width: 100%; height: auto; }
   .meta { font-size: 12px; color: #64748b; margin-bottom: 20px; }
   .status-pill { display: inline-block; padding: 3px 10px; border-radius: 999px; font-size: 11px; font-weight: 700; color: #fff; background: ${statusColor}; }
   .disc { background: #fafbfc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 10px 14px; font-size: 11px; color: #475569; margin: 8px 0; line-height: 1.5; }
   .footer { margin-top: 32px; padding-top: 12px; border-top: 1px solid #e2e8f0; font-size: 10px; color: #94a3b8; display: flex; justify-content: space-between; }
-  @media print { body { padding: 20px 24px; } h2 { break-after: avoid; } table { break-inside: auto; } tr { break-inside: avoid; } }
+  @media print { body { padding: 0; max-width: none; margin: 0; } h2 { break-after: avoid; } table { break-inside: auto; table-layout: fixed; } tr { break-inside: avoid; page-break-inside: avoid; } img { break-inside: avoid; page-break-inside: avoid; } }
 </style>
 </head>
 <body>
