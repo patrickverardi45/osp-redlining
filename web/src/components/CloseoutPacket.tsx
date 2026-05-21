@@ -4,8 +4,11 @@
 // No AI calls. No state mutation. No backend changes. No billing math changes.
 // Internal Nova language removed from all client-facing output.
 // Photos: stationPhotos (backend-persisted) and geoTaggedPhotos (client-session GPS photos).
-// Print: station photo thumbnails embedded via absolute HTTP URL;
-//        blob-URL previews (GPS photos) shown in modal only, not in PDF export window.
+// Print: station photo thumbnails embedded via absolute same-origin URL
+//        (window.location.origin + relative_url); geotagged blob-URL previews
+//        pre-converted to data URLs by handlePrint and embedded into the print
+//        HTML so they survive crossing into the about:blank popup
+//        (PT.CO R1, 2026-05-21).
 
 import React, { useState, useEffect, useCallback, useMemo } from "react";
 import type { NovaSummary, PipelineDiagEntry, EngineeringPlanSignal, QaFlagItem } from "@/lib/types/nova";
@@ -300,6 +303,7 @@ function buildPrintHtml(
   props: CloseoutPacketProps,
   overrides: ReviewOverride[],
   dateStr: string,
+  geoPhotoDataUrls: Map<string, string>,
 ): string {
   const {
     activeJob,
@@ -398,9 +402,16 @@ function buildPrintHtml(
     </tr>`
   ).join("");
 
-  // Station photos — use absolute HTTP URL for embedding in print window
+  // PT.CO R1 — print HTML is written into a window.open("", "_blank") popup
+  // whose location is about:blank; relative URLs do not inherit the parent
+  // origin in that context and silently fail (the existing onerror handler
+  // hides broken images, which is why station photos previously did not
+  // appear in print). Use window.location.origin to produce an absolute URL
+  // the popup can resolve.
+  const sameOrigin = typeof window !== "undefined" ? window.location.origin : "";
+  // Station photos — backend-persisted; embed via absolute same-origin URL.
   const stationPhotoRows = stationPhotos.map((p) => {
-    const imgSrc = API_BASE ? `${API_BASE}${p.relative_url}` : p.relative_url;
+    const imgSrc = `${sameOrigin}${p.relative_url}`;
     const thumb = `<img src="${imgSrc}" alt="${p.original_filename}" style="width:56px;height:56px;object-fit:cover;border-radius:4px;border:1px solid #e2e8f0" onerror="this.style.display='none'"/>`;
     return `<tr>
       <td style="padding:6px 8px;border:1px solid #e2e8f0;font-size:11px">${p.station_identity || "—"}</td>
@@ -409,15 +420,24 @@ function buildPrintHtml(
     </tr>`;
   }).join("");
 
-  // GPS photos — metadata only in print (blob URLs don't cross windows)
+  // PT.CO R1 — geotagged GPS photos now include embedded previews via data URLs
+  // pre-computed in handlePrint (fetch blob -> FileReader.readAsDataURL). If
+  // conversion failed for a single photo (e.g., blob revoked / network drop),
+  // that photo's row falls back to "Preview unavailable" metadata-only without
+  // breaking the rest of the print.
   const gpsPhotoRows = geoTaggedPhotos.map((p) => {
     const latLon = (p.lat != null && p.lon != null) ? `${p.lat.toFixed(6)}, ${p.lon.toFixed(6)}` : "No GPS";
     const ts = new Date(p.addedAt).toLocaleString();
     const statusLabel2 = p.reason === "mapped" ? "Located" : p.reason === "no_gps" ? "No GPS data" : "Unreadable";
+    const dataUrl = geoPhotoDataUrls.get(p.id);
+    const previewCell = dataUrl
+      ? `<img src="${dataUrl}" alt="${p.filename}" style="width:56px;height:56px;object-fit:cover;border-radius:4px;border:1px solid #e2e8f0"/>`
+      : `<span style="font-size:10px;color:#94a3b8">Preview unavailable</span>`;
     return `<tr>
       <td style="padding:6px 8px;border:1px solid #e2e8f0;font-size:11px">${latLon}</td>
       <td style="padding:6px 8px;border:1px solid #e2e8f0;font-size:11px">${ts}</td>
       <td style="padding:6px 8px;border:1px solid #e2e8f0;font-size:11px">${statusLabel2}</td>
+      <td style="padding:6px 8px;border:1px solid #e2e8f0">${previewCell}</td>
     </tr>`;
   }).join("");
 
@@ -558,9 +578,8 @@ ${!hasPhotoEvidence
   <tbody>${stationPhotoRows}</tbody>
 </table>` : ""}
 ${geoTaggedPhotos.length > 0 ? `<p style="font-size:11px;font-weight:700;color:#475569;text-transform:uppercase;letter-spacing:0.04em;margin:12px 0 6px">Geotagged Field Photos (${geoTaggedPhotos.length} — ${mappedGpsPhotos.length} with GPS location)</p>
-<p style="font-size:11px;color:#94a3b8;margin:0 0 6px">Photo previews are not available in PDF export. Metadata is recorded below.</p>
 <table>
-  <thead><tr><th>Coordinates (Lat, Lon)</th><th>Captured</th><th>Location Status</th></tr></thead>
+  <thead><tr><th>Coordinates (Lat, Lon)</th><th>Captured</th><th>Location Status</th><th>Preview</th></tr></thead>
   <tbody>${gpsPhotoRows}</tbody>
 </table>` : ""}`}
 
@@ -782,18 +801,66 @@ export default function CloseoutPacket(props: CloseoutPacketProps) {
     return () => { document.body.style.overflow = ""; };
   }, [open]);
 
-  const handlePrint = useCallback(() => {
+  const handlePrint = useCallback(async () => {
     setGenerating(true);
+    let popupWindow: Window | null = null;
     try {
+      // PT.CO R1 — open the popup synchronously to preserve the user-gesture
+      // context (popup blockers may reject window.open after an async await).
+      // Write a placeholder while we preprocess geotagged photo data URLs.
+      popupWindow = window.open("", "_blank", "width=960,height=800,scrollbars=yes");
+      if (!popupWindow) {
+        alert("Popup blocked. Allow popups for this page and try again.");
+        return;
+      }
+      popupWindow.document.write(
+        '<!DOCTYPE html><html><head><title>Generating closeout packet…</title></head>' +
+          '<body style="font-family:Inter,ui-sans-serif,system-ui,sans-serif;padding:40px;color:#475569;font-size:14px">' +
+          'Generating closeout packet, please wait…' +
+          '</body></html>',
+      );
+      popupWindow.document.close();
+      popupWindow.focus();
+
+      // PT.CO R1 — convert geotagged photo blob URLs into data URLs so they
+      // survive crossing into the about:blank popup. Blob URLs are
+      // origin/document-scoped; data URLs are inline and unrestricted.
+      // Per-photo failure is silent — that photo's row falls back to
+      // "Preview unavailable" in buildPrintHtml via the Map lookup.
+      const geoPhotoDataUrls = new Map<string, string>();
+      await Promise.all(
+        geoTaggedPhotos.map(async (photo) => {
+          if (!photo.previewUrl) return;
+          try {
+            const resp = await fetch(photo.previewUrl);
+            if (!resp.ok) return;
+            const blob = await resp.blob();
+            const dataUrl = await new Promise<string | null>((resolve) => {
+              const reader = new FileReader();
+              reader.onload = () => resolve(typeof reader.result === "string" ? reader.result : null);
+              reader.onerror = () => resolve(null);
+              reader.readAsDataURL(blob);
+            });
+            if (dataUrl) geoPhotoDataUrls.set(photo.id, dataUrl);
+          } catch {
+            // Per-photo failures are silent; print continues with whatever data URLs succeeded.
+          }
+        }),
+      );
+
       const dateStr = new Date().toLocaleString("en-US", {
         year: "numeric", month: "long", day: "numeric", hour: "2-digit", minute: "2-digit",
       });
-      const html = buildPrintHtml(props, overrides, dateStr);
-      const w = window.open("", "_blank", "width=960,height=800,scrollbars=yes");
-      if (!w) { alert("Popup blocked. Allow popups for this page and try again."); return; }
-      w.document.write(html);
-      w.document.close();
-      w.focus();
+      const html = buildPrintHtml(props, overrides, dateStr, geoPhotoDataUrls);
+      // Guard against the popup having been closed during the await.
+      if (popupWindow.closed) return;
+      // Replace the placeholder with the real HTML.
+      popupWindow.document.open();
+      popupWindow.document.write(html);
+      popupWindow.document.close();
+      popupWindow.focus();
+
+      const targetWindow = popupWindow;
       let fallbackCloseId: number | undefined;
       const closePrintWindow = () => {
         if (fallbackCloseId != null) {
@@ -801,17 +868,17 @@ export default function CloseoutPacket(props: CloseoutPacketProps) {
           fallbackCloseId = undefined;
         }
         try {
-          if (!w.closed) w.close();
+          if (!targetWindow.closed) targetWindow.close();
         } catch {
           /* ignore */
         }
       };
-      w.onafterprint = () => {
+      targetWindow.onafterprint = () => {
         closePrintWindow();
       };
       setTimeout(() => {
         try {
-          w.print();
+          targetWindow.print();
           fallbackCloseId = window.setTimeout(() => {
             closePrintWindow();
           }, 2500);
@@ -822,7 +889,7 @@ export default function CloseoutPacket(props: CloseoutPacketProps) {
     } finally {
       setGenerating(false);
     }
-  }, [props, overrides]);
+  }, [props, overrides, geoTaggedPhotos]);
 
   // ── Button (collapsed) ────────────────────────────────────────────────────
 
@@ -1072,7 +1139,7 @@ export default function CloseoutPacket(props: CloseoutPacketProps) {
                         </SectionSubtitle>
                         <div style={{ background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 6, padding: "6px 10px", marginBottom: 8, fontSize: 11, color: "#64748b" }}>
                           These photos are session-only and will not persist after refresh.
-                          Previews shown below are available in this view only; they will not appear in the PDF export.
+                          Previews are embedded into the printed/saved closeout packet (PT.CO R1).
                         </div>
                         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: 10, marginBottom: 12 }}>
                           {geoTaggedPhotos.map((photo) => (
