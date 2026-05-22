@@ -1,0 +1,16 @@
+{
+  "schema_version": "f7f-known-anomalies-1",
+  "generated_for": "F7f v1 (2026-05-22)",
+  "fixtures": {
+    "brenham_phase5_source_truth.kmz": {
+      "source_unresolvable_hrefs": [
+        "files/i20_01.png",
+        "files/i46.png",
+        "files/i47.png",
+        "files/i51.png",
+        "files/i61.png"
+      ],
+      "rationale": "Upstream source-authoring-tool drift: the source KMZ's KML emits <href>files/iNN.png</href> for these 5 icons, but the KMZ archive contains only the suffixed variants (e.g., files/i46_6_0.png, files/i46_8_0.png) — not the bare files/i46.png. These are pre-existing source-side anomalies, NOT TrueLine fidelity regressions. TrueLine cannot synthesize the missing icons; the source authoring tool would need to be fixed. Documented and verified during F7f v1 implementation 2026-05-22. If any of these icons later resolve at the source, this entry must be updated to remove the now-resolved href so the WARN signal does not become silent."
+    }
+  }
+}
