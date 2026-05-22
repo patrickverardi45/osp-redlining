@@ -2875,6 +2875,28 @@ ${fieldSubmissionPlacemarks.length > 0 ? buildFolder("Selected Field Submission"
       return [ENG_CONTEXT_WRAPPER, ...path.slice(1)];
     };
 
+    // F7-final cleanup Gate 3 (2026-05-22) — Determines whether a source-
+    // derived placemark should emit explicit <visibility>0</visibility> on
+    // first render. Belt-and-suspenders measure: Google Earth Pro was
+    // observed to preserve prior checkbox state on a folder (e.g., Stations
+    // appearing checked despite Gate 1+2 emitting folder vis=0), bypassing
+    // the folder-level visibility. Per-Placemark <visibility>0</visibility>
+    // overrides the inherited folder runtime state on FIRST LOAD. A user
+    // explicitly toggling the folder still reveals these placemarks normally
+    // — visibility on a Placemark is the INITIAL state, not a runtime lock.
+    //
+    // Rule: hide the placemark iff its NORMALIZED leaf folder is NOT in
+    // DEFAULT_VISIBLE_FOLDER_NAMES. Empty path (Uncategorized fallback) is
+    // also hidden. Backbone / Terminal Tail / underground cable placemarks
+    // continue to emit no <visibility> element and inherit visibility=1 from
+    // their folder (visible on first load).
+    const shouldExplicitlyHidePlacemark = (fp: string[]): boolean => {
+      const normalized = normalizeFolderPath(fp);
+      if (normalized.length === 0) return true;
+      const leaf = normalized[normalized.length - 1];
+      return !DEFAULT_VISIBLE_FOLDER_NAMES.has(leaf);
+    };
+
     // Build metadata description table for any engineering feature.
     const engMeta = (f: {
       description: string;
@@ -3025,8 +3047,11 @@ ${fieldSubmissionPlacemarks.length > 0 ? buildFolder("Selected Field Submission"
         ptStyleUrl = `#${ptStyleId}`;
         referencedHrefs.add(pt.icon_href);
       }
+      const ptVisibilityXml = shouldExplicitlyHidePlacemark(pt.folder_path)
+        ? "        <visibility>0</visibility>\n"
+        : "";
       getFolderBucket(normalizeFolderPath(pt.folder_path)).push(
-        `      <Placemark>\n        <name>${escapeXml(name)}</name>\n        <description>${engMeta(pt)}</description>\n        <styleUrl>${ptStyleUrl}</styleUrl>\n        <Point><coordinates>${coord}</coordinates></Point>\n      </Placemark>`,
+        `      <Placemark>\n        <name>${escapeXml(name)}</name>\n${ptVisibilityXml}        <description>${engMeta(pt)}</description>\n        <styleUrl>${ptStyleUrl}</styleUrl>\n        <Point><coordinates>${coord}</coordinates></Point>\n      </Placemark>`,
       );
     }
 
@@ -3044,8 +3069,11 @@ ${fieldSubmissionPlacemarks.length > 0 ? buildFolder("Selected Field Submission"
       featureStyles.push(
         `    <Style id="${lineStyleId}">\n      <LineStyle><color>${lineKmlColor}</color><width>${lineWidth}</width></LineStyle>\n    </Style>`,
       );
+      const lineVisibilityXml = shouldExplicitlyHidePlacemark(line.folder_path)
+        ? "        <visibility>0</visibility>\n"
+        : "";
       getFolderBucket(normalizeFolderPath(line.folder_path)).push(
-        `      <Placemark>\n        <name>${escapeXml(name)}</name>\n        <description>${engMeta(line)}</description>\n        <styleUrl>#${lineStyleId}</styleUrl>\n        <LineString><tessellate>1</tessellate><coordinates>${coords.join(" ")}</coordinates></LineString>\n      </Placemark>`,
+        `      <Placemark>\n        <name>${escapeXml(name)}</name>\n${lineVisibilityXml}        <description>${engMeta(line)}</description>\n        <styleUrl>#${lineStyleId}</styleUrl>\n        <LineString><tessellate>1</tessellate><coordinates>${coords.join(" ")}</coordinates></LineString>\n      </Placemark>`,
       );
     }
 
@@ -3095,7 +3123,12 @@ ${fieldSubmissionPlacemarks.length > 0 ? buildFolder("Selected Field Submission"
       // polygons via the Places-panel placemark entry if needed. Stops the
       // "huge green polygon fill" first-load clutter without altering
       // ingestion semantics or removing polygons from the export.
-      const polyVisibilityXml = polyIsBoundary
+      //
+      // F7-final cleanup Gate 3 (2026-05-22) — Extended to also hide polygons
+      // whose leaf folder is NOT in DEFAULT_VISIBLE_FOLDER_NAMES, matching
+      // the points/lines per-Placemark visibility rule. Catches rare non-
+      // boundary polygons that happen to live in a hidden source folder.
+      const polyVisibilityXml = (polyIsBoundary || shouldExplicitlyHidePlacemark(poly.folder_path))
         ? "        <visibility>0</visibility>\n"
         : "";
       getFolderBucket(normalizeFolderPath(poly.folder_path)).push(
@@ -3112,8 +3145,10 @@ ${fieldSubmissionPlacemarks.length > 0 ? buildFolder("Selected Field Submission"
       if (!coordinate) return;
       const dataUrl = photoDataUrlMap.get(p.id);
       const descriptionHtml = `\n  <div style="font-family: Arial; font-size: 12px;">\n    <strong>${p.filename || "Photo"}</strong><br/><br/>\n    ${dataUrl ? `<img src="${dataUrl}" style="max-width:300px; border:1px solid #ccc;" /><br/><br/>` : `<i>No preview available</i><br/><br/>`}\n    <b>Original GPS:</b> ${typeof p.lat === "number" ? p.lat.toFixed(6) : "--"}, ${typeof p.lon === "number" ? p.lon.toFixed(6) : "--"}<br/>\n    <b>Adjusted:</b> ${typeof p.displayLat === "number" && typeof p.displayLon === "number" ? `${p.displayLat.toFixed(6)}, ${p.displayLon.toFixed(6)}` : "none"}\n  </div>\n`;
+      // F7-final cleanup Gate 3 (2026-05-22) — Photos folder is off by
+      // default; per-Placemark visibility=0 ensures cache-proof hide.
       photoPlacemarks.push(
-        `      <Placemark>\n        <name>${escapeXml(p.filename)}</name>\n        <description><![CDATA[${descriptionHtml.replaceAll("]]>", "]]]]><![CDATA[>")}]]></description>\n        <styleUrl>#engPhotoStyle</styleUrl>\n        <Point><coordinates>${coordinate}</coordinates></Point>\n      </Placemark>`,
+        `      <Placemark>\n        <name>${escapeXml(p.filename)}</name>\n        <visibility>0</visibility>\n        <description><![CDATA[${descriptionHtml.replaceAll("]]>", "]]]]><![CDATA[>")}]]></description>\n        <styleUrl>#engPhotoStyle</styleUrl>\n        <Point><coordinates>${coordinate}</coordinates></Point>\n      </Placemark>`,
       );
     });
 
@@ -3131,8 +3166,13 @@ ${fieldSubmissionPlacemarks.length > 0 ? buildFolder("Selected Field Submission"
       const ll = kmlLatLonCells(point.lat, point.lon);
       const stationFtCell = formatNumber(point.station_ft, 3);
       const mappedFtCell = formatNumber(point.mapped_station_ft, 3);
+      // F7-final cleanup Gate 3 (2026-05-22) — Stations folder is off by
+      // default; per-Placemark visibility=0 makes station markers + labels
+      // initially hidden regardless of GE state cache. User toggling the
+      // Stations folder still reveals them.
       stationPlacemarks.push(`      <Placemark>
         <name>${escapeXml(`Station ${stationLabel !== "--" ? stationLabel : idx + 1}`)}</name>
+        <visibility>0</visibility>
         <description>${kmlDescriptionTable([
           { label: "Station", value: stationLabel },
           { label: "Station FT / mapped footage", value: kmlStationFtSlashMapped(stationFtCell, mappedFtCell) },
@@ -3211,8 +3251,12 @@ ${fieldSubmissionPlacemarks.length > 0 ? buildFolder("Selected Field Submission"
               : endStationLabel !== "--"
                 ? `Path through ${endStationLabel}`
                 : "--";
+        // F7-final cleanup Gate 3 (2026-05-22) — Selected Field Submission
+        // folder is off by default; per-Placemark visibility=0 makes the
+        // field submission path + station markers initially hidden.
         fieldSubmissionPlacemarks.push(`      <Placemark>
         <name>${escapeXml(`Field Submission ${sessionId}`)}</name>
+        <visibility>0</visibility>
         <description>${kmlDescriptionTable([
           { label: "Station", value: "Field submission path" },
           { label: "Station FT / mapped footage", value: "--" },
@@ -3253,6 +3297,7 @@ ${fieldSubmissionPlacemarks.length > 0 ? buildFolder("Selected Field Submission"
             const llS = kmlLatLonCells(firstEntry.row.displayLat, firstEntry.row.displayLon);
             fieldSubmissionPlacemarks.push(`      <Placemark>
         <name>${escapeXml(`Start ${startNum}`)}</name>
+        <visibility>0</visibility>
         <description>${kmlDescriptionTable([
           { label: "Station", value: `${startNum} (start)` },
           { label: "Station FT / mapped footage", value: kmlStationFtSlashMapped(ftStart, mappedStart) },
@@ -3287,6 +3332,7 @@ ${fieldSubmissionPlacemarks.length > 0 ? buildFolder("Selected Field Submission"
             const llE = kmlLatLonCells(lastEntry.row.displayLat, lastEntry.row.displayLon);
             fieldSubmissionPlacemarks.push(`      <Placemark>
         <name>${escapeXml(`End ${endNum}`)}</name>
+        <visibility>0</visibility>
         <description>${kmlDescriptionTable([
           { label: "Station", value: `${endNum} (end)` },
           { label: "Station FT / mapped footage", value: kmlStationFtSlashMapped(ftEnd, mappedEnd) },
@@ -3325,6 +3371,7 @@ ${fieldSubmissionPlacemarks.length > 0 ? buildFolder("Selected Field Submission"
           const ll = kmlLatLonCells(row.displayLat, row.displayLon);
           fieldSubmissionPlacemarks.push(`      <Placemark>
         <name>${escapeXml(`Station ${sn}`)}</name>
+        <visibility>0</visibility>
         <description>${kmlDescriptionTable([
           { label: "Station", value: sn },
           { label: "Station FT / mapped footage", value: kmlStationFtSlashMapped(ftCell, mappedSt) },
