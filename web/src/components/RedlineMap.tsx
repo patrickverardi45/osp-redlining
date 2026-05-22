@@ -2647,8 +2647,8 @@ ${fieldSubmissionPlacemarks.length > 0 ? buildFolder("Selected Field Submission"
       );
     }
 
-    const buildEngFolder = (name: string, marks: string[]) =>
-      `    <Folder>\n      <name>${escapeXml(name)}</name>\n${marks.join("\n")}\n    </Folder>`;
+    const buildEngFolder = (name: string, marks: string[], visibility: 0 | 1 = 1, open: 0 | 1 = 0) =>
+      `    <Folder>\n      <name>${escapeXml(name)}</name>\n      <visibility>${visibility}</visibility>\n      <open>${open}</open>\n${marks.join("\n")}\n    </Folder>`;
 
     // Build metadata description table for any engineering feature.
     const engMeta = (f: {
@@ -2746,7 +2746,7 @@ ${fieldSubmissionPlacemarks.length > 0 ? buildFolder("Selected Field Submission"
     // Recursive nested-folder emitter. Child folders emitted before sibling
     // placemarks (matches source XML convention). Indentation is cosmetic only —
     // KML is whitespace-insensitive; Google Earth parses structure regardless.
-    const emitFolder = (node: FolderNode, indent: string): string => {
+    const emitFolder = (node: FolderNode, indent: string, visibility: 0 | 1 = 0, open: 0 | 1 = 0): string => {
       const childBlocks: string[] = [];
       for (const child of node.children.values()) {
         if (folderIsEmpty(child)) continue;
@@ -2754,7 +2754,7 @@ ${fieldSubmissionPlacemarks.length > 0 ? buildFolder("Selected Field Submission"
       }
       const innerParts: string[] = [...childBlocks, ...node.placemarks];
       const inner = innerParts.length > 0 ? innerParts.join("\n") : "";
-      return `${indent}<Folder>\n${indent}  <name>${escapeXml(node.name)}</name>\n${inner}\n${indent}</Folder>`;
+      return `${indent}<Folder>\n${indent}  <name>${escapeXml(node.name)}</name>\n${indent}  <visibility>${visibility}</visibility>\n${indent}  <open>${open}</open>\n${inner}\n${indent}</Folder>`;
     };
 
     // F3 helpers — scoped to export path, no external side effects
@@ -3093,7 +3093,7 @@ ${fieldSubmissionPlacemarks.length > 0 ? buildFolder("Selected Field Submission"
     // emits its own nested <Folder> descendants via emitFolder().
     const engFolderBlocks = Array.from(folderTree.children.values())
       .filter((child) => !folderIsEmpty(child))
-      .map((child) => emitFolder(child, "    "))
+      .map((child) => emitFolder(child, "    ", 0, 0))
       .join("\n");
 
     // As-Built Redlines (same logic as existing export, no mutation)
@@ -3112,6 +3112,7 @@ ${fieldSubmissionPlacemarks.length > 0 ? buildFolder("Selected Field Submission"
     const kml = `<?xml version="1.0" encoding="UTF-8"?>
 <kml xmlns="http://www.opengis.net/kml/2.2" xmlns:gx="http://www.google.com/kml/ext/2.2">
   <Document>
+    <open>1</open>
     <name>${escapeXml("Engineering KMZ Context + Redlines")}</name>
     <Style id="engLineStyle">
       <LineStyle><color>ff94a3b8</color><width>2</width></LineStyle>
@@ -3139,10 +3140,10 @@ ${fieldSubmissionPlacemarks.length > 0 ? buildFolder("Selected Field Submission"
       <LineStyle><color>ff0000ff</color><width>7</width></LineStyle>
     </Style>
 ${featureStyles.length > 0 ? featureStyles.join("\n") + "\n" : ""}${engFolderBlocks}
-${photoPlacemarks.length > 0 ? buildEngFolder("Photos", photoPlacemarks) : ""}
-${stationPlacemarks.length > 0 ? buildEngFolder("Stations", stationPlacemarks) : ""}
-${fieldSubmissionPlacemarks.length > 0 ? buildEngFolder("Selected Field Submission", fieldSubmissionPlacemarks) : ""}
-${redlinePlacemarks.length > 0 ? buildEngFolder("As-Built Redlines", redlinePlacemarks) : ""}
+${photoPlacemarks.length > 0 ? buildEngFolder("Photos", photoPlacemarks, 1, 0) : ""}
+${stationPlacemarks.length > 0 ? buildEngFolder("Stations", stationPlacemarks, 0, 0) : ""}
+${fieldSubmissionPlacemarks.length > 0 ? buildEngFolder("Selected Field Submission", fieldSubmissionPlacemarks, 0, 0) : ""}
+${redlinePlacemarks.length > 0 ? buildEngFolder("As-Built Redlines", redlinePlacemarks, 1, 1) : ""}
   </Document>
 </kml>`;
 
