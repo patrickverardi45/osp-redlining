@@ -3459,22 +3459,24 @@ ${fieldSubmissionPlacemarks.length > 0 ? buildFolder("Selected Field Submission"
       <PolyStyle><color>1a94a3b8</color><fill>1</fill><outline>1</outline></PolyStyle>
     </Style>
     <Style id="engRedlineStyle">
-      <!-- F7-final cleanup Gate 4c (2026-05-22) — Main red width bumped -->
-      <!-- 8 → 12. Gate 4b's width=8 with width=10 casing only gave 1px -->
-      <!-- edge each side and was visually too subtle to dominate dense -->
-      <!-- blue/green source linework. width=12 makes the redline thick -->
-      <!-- enough to read as a bold markup layer on aerial imagery even -->
-      <!-- when zoomed out. Color ff0000ff (bright opaque red) preserved. -->
-      <LineStyle><color>ff0000ff</color><width>12</width></LineStyle>
+      <!-- F7-final cleanup Gate 4d (2026-05-22) — Main red width bumped -->
+      <!-- 12 → 18. Operator visual review after Gate 4c: redline still too -->
+      <!-- thin to dominate aerial perspective view. Width=18 makes the red -->
+      <!-- stroke visibly thick at typical Google Earth zoom levels. Color -->
+      <!-- ff0000ff (bright opaque red) preserved. -->
+      <LineStyle><color>ff0000ff</color><width>18</width></LineStyle>
     </Style>
     <Style id="engRedlineCasingStyle">
-      <!-- F7-final cleanup Gate 4c (2026-05-22) — Dark-red shadow casing -->
-      <!-- width bumped 10 → 16 to match the wider main (12). 4px of dark- -->
-      <!-- red edge visible (2px each side of the 12px main) — keeps the -->
-      <!-- shadow effect from Gate 4b's red-family approach but scales -->
-      <!-- proportionally with the larger main line. Color ff000066 (dark -->
-      <!-- red, RGB 102,0,0) preserved from Gate 4b. -->
-      <LineStyle><color>ff000066</color><width>16</width></LineStyle>
+      <!-- F7-final cleanup Gate 4d (2026-05-22) — Both layers now BRIGHT -->
+      <!-- RED (not a dark-red shadow). Gate 4b/4c's dark-red shadow read -->
+      <!-- as too subtle; the lesson from Gate 4's white casing was that the -->
+      <!-- thick-line effect IS what makes redlines pop, not contrast color. -->
+      <!-- So: unify casing color with main (ff0000ff), bump casing width -->
+      <!-- 16 → 22 = 4px of red under-stroke visible (2px each side of the -->
+      <!-- 18px main). Net: redlines render as a single bold solid red mass -->
+      <!-- effective width 22, no white halo, no dark shadow. Two placemark -->
+      <!-- pattern preserved so Gate 4's structural casing pattern stays. -->
+      <LineStyle><color>ff0000ff</color><width>22</width></LineStyle>
     </Style>
     <Style id="engPhotoStyle">
       <IconStyle><scale>0.9</scale></IconStyle>
