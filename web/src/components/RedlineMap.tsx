@@ -3462,12 +3462,16 @@ ${fieldSubmissionPlacemarks.length > 0 ? buildFolder("Selected Field Submission"
       <LineStyle><color>ff0000ff</color><width>8</width></LineStyle>
     </Style>
     <Style id="engRedlineCasingStyle">
-      <!-- F7-final cleanup Gate 4 (2026-05-22) — White halo casing emitted -->
-      <!-- BELOW the main red engRedlineStyle (drawOrder 999 vs 1000) so the -->
-      <!-- red main line reads as a solid top layer with high-contrast halo -->
-      <!-- against blue/green source linework. width=14 = 6px of casing -->
-      <!-- visible (3px each side of the 8px main). -->
-      <LineStyle><color>ffffffff</color><width>14</width></LineStyle>
+      <!-- F7-final cleanup Gate 4b (2026-05-22) — Dark-red shadow casing -->
+      <!-- emitted BELOW the bright-red main engRedlineStyle (drawOrder 999 -->
+      <!-- vs 1000). Gate 4's initial white casing made redlines visually -->
+      <!-- dominant but read as thick white paths rather than as redline -->
+      <!-- markup; operator correction: "and make them RED not white lol". -->
+      <!-- Dark-red shadow (RGB 102,0,0 via KML aabbggrr = ff000066) keeps -->
+      <!-- the line in the red family while providing a slight darker -->
+      <!-- contrast edge so the bright red main reads as solid dominant red. -->
+      <!-- width=10 = 2px of shadow visible (1px each side of the 8px main). -->
+      <LineStyle><color>ff000066</color><width>10</width></LineStyle>
     </Style>
     <Style id="engPhotoStyle">
       <IconStyle><scale>0.9</scale></IconStyle>
