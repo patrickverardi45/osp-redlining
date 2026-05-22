@@ -55,7 +55,7 @@ import zipfile
 from datetime import datetime, timezone
 from html import escape
 from pathlib import Path
-from typing import Any, Dict, List, Set
+from typing import Any, Dict, List, Optional, Set, Tuple
 import xml.etree.ElementTree as ET
 
 # ---------------------------------------------------------------------------
@@ -75,7 +75,7 @@ KML_NS = "http://www.opengis.net/kml/2.2"
 GX_NS = "http://www.google.com/kml/ext/2.2"
 NS = {"kml": KML_NS, "gx": GX_NS}
 
-HARNESS_VERSION = "f7f-v1-2026-05-22"
+HARNESS_VERSION = "f7f-v2-2026-05-22"
 SCHEMA_VERSION = "f7f-fidelity-report-2"
 KNOWN_ANOMALIES_PATH = TESTS_DIR / "fixtures" / "f7f_known_anomalies.json"
 KNOWN_ANOMALIES_SCHEMA_VERSION = "f7f-known-anomalies-1"
@@ -160,7 +160,7 @@ def _icon_hrefs_in_kml(root) -> Set[str]:
 
 
 def parse_kmz(file_bytes: bytes) -> Dict[str, Any]:
-    """Parse a KMZ into the F7f semantic slice (v1 extended).
+    """Parse a KMZ into the F7f semantic slice (v2 extended).
 
     v1 additions over v0:
       - per-placemark `style_url` extraction
@@ -169,10 +169,16 @@ def parse_kmz(file_bytes: bytes) -> Dict[str, Any]:
       - `geometry_counts` — dict keyed by geometry type
       - `style_urls` — set of referenced style URLs
       - `extended_data_keys` — union of all ExtendedData keys
+
+    v2 additions over v1:
+      - per-placemark `icon_href` resolved via styleUrl -> Style/StyleMap chain
+      - `style_id_to_icon_href` map (diagnostic; populated once per parse)
     """
     kml_bytes = _kml_bytes_from_kmz(file_bytes)
     root = ET.fromstring(kml_bytes)
     parent_map = {id(c): p for p in root.iter() for c in p}
+
+    style_id_to_icon_href = _parse_style_icon_hrefs(root)
 
     placemarks: List[Dict[str, Any]] = []
     for idx, pm in enumerate(root.iter(f"{{{KML_NS}}}Placemark")):
@@ -184,6 +190,7 @@ def parse_kmz(file_bytes: bytes) -> Dict[str, Any]:
             "geometry_type": _geometry_type_of(pm),
             "extended_data": _extended_data_of(pm),
             "style_url": _style_url_of(pm),
+            "icon_href": _resolve_icon_href(pm, style_id_to_icon_href),
         })
 
     folders = list(root.iter(f"{{{KML_NS}}}Folder"))
@@ -201,6 +208,7 @@ def parse_kmz(file_bytes: bytes) -> Dict[str, Any]:
         "extended_data_keys": _collect_ed_keys(placemarks),
         "archive_entries": _kmz_archive_entries(file_bytes),
         "referenced_hrefs": _icon_hrefs_in_kml(root),
+        "style_id_to_icon_href": style_id_to_icon_href,
     }
 
 
@@ -330,6 +338,60 @@ def _load_known_anomalies() -> Dict[str, Any]:
     return data
 
 
+# ---------------------------------------------------------------------------
+# v2 — Style/icon-href resolution
+# ---------------------------------------------------------------------------
+
+def _parse_style_icon_hrefs(root) -> Dict[str, str]:
+    """Build a map of `style_id -> icon_href` for every <Style> declaring an
+    <IconStyle><Icon><href>. Also resolves <StyleMap> entries one level deep
+    via their 'normal' Pair styleUrl. Used by `_resolve_icon_href` to derive
+    per-placemark icon hrefs.
+
+    Mirrors the slice of backend/main.py:_kmz_semantic_parse_styles that F7f
+    v2 needs for icon-href preservation gating. Same symmetric-parser-slice
+    rationale as v0/v1 (stdlib-only)."""
+    result: Dict[str, str] = {}
+    for style in root.iter(f"{{{KML_NS}}}Style"):
+        style_id = (style.get("id") or "").strip()
+        if not style_id:
+            continue
+        icon_elem = style.find("kml:IconStyle/kml:Icon", NS)
+        if icon_elem is None:
+            continue
+        href_text = (icon_elem.findtext("kml:href", default="", namespaces=NS) or "").strip()
+        if href_text:
+            result[style_id] = href_text
+
+    # StyleMap → normal style → IconStyle chain (one level deep).
+    for sm in root.iter(f"{{{KML_NS}}}StyleMap"):
+        sm_id = (sm.get("id") or "").strip()
+        if not sm_id:
+            continue
+        for pair in sm.findall("kml:Pair", NS):
+            key = (pair.findtext("kml:key", default="", namespaces=NS) or "").strip()
+            if key != "normal":
+                continue
+            ref = (pair.findtext("kml:styleUrl", default="", namespaces=NS) or "").strip()
+            if ref.startswith("#"):
+                ref = ref[1:]
+            if ref in result:
+                result[sm_id] = result[ref]
+            break
+
+    return result
+
+
+def _resolve_icon_href(placemark, style_id_to_icon_href: Dict[str, str]) -> str:
+    """Return the icon_href for a placemark via its <styleUrl> → Style chain.
+    Empty string if the placemark has no styleUrl, the styleUrl points
+    outside the document, or the referenced Style has no IconStyle."""
+    style_url = _style_url_of(placemark)
+    if not style_url.startswith("#"):
+        return ""
+    return style_id_to_icon_href.get(style_url[1:], "")
+
+
 # ===========================================================================
 # Python emitter port. Mirrors handleExportEngineeringKml's source-side
 # emission for v0. Preserves the load-bearing prior ships:
@@ -400,7 +462,7 @@ def _emit_folder(node: FolderNode, indent: str, visibility: int = 0, open_: int 
     )
 
 
-def _emit_placemark(pm: Dict[str, Any]) -> str:
+def _emit_placemark(pm: Dict[str, Any], style_url_override: Optional[str] = None) -> str:
     name = escape(pm["placemark_name"], quote=False)
     ed = pm.get("extended_data", {}) or {}
     if ed:
@@ -412,6 +474,10 @@ def _emit_placemark(pm: Dict[str, Any]) -> str:
         ed_xml = f"        <ExtendedData>\n{rows}        </ExtendedData>\n"
     else:
         ed_xml = ""
+    if style_url_override:
+        style_xml = f"        <styleUrl>{escape(style_url_override, quote=False)}</styleUrl>\n"
+    else:
+        style_xml = ""
     geom = pm.get("geometry_type", "Point")
     if geom == "LineString":
         geom_xml = "        <LineString><tessellate>1</tessellate><coordinates>0,0 1,1</coordinates></LineString>\n"
@@ -426,19 +492,52 @@ def _emit_placemark(pm: Dict[str, Any]) -> str:
     return (
         "      <Placemark>\n"
         f"        <name>{name}</name>\n"
+        f"{style_xml}"
         f"{ed_xml}"
         f"{geom_xml}"
         "      </Placemark>"
     )
 
 
-def emit_engineering_kml(parsed_source: Dict[str, Any]) -> str:
+def emit_engineering_kml(parsed_source: Dict[str, Any]) -> Tuple[str, Set[str]]:
     """Emit a minimal Engineering-KMZ KML mirroring handleExportEngineeringKml
-    for the source-side fidelity surfaces v0 asserts on."""
+    for the source-side fidelity surfaces v0-v2 assert on.
+
+    v2 addition (mirrors RedlineMap.tsx:2781-2792):
+      For every source placemark whose geometry is a Point AND has a resolved
+      icon_href, emit a per-feature <Style id="pt_{feature_id}_{idx}"> with
+      an <IconStyle><Icon><href>{icon_href}</href></Icon></IconStyle> block
+      and a <LabelStyle><scale>0</scale></LabelStyle> (F7e). The placemark
+      then uses an explicit <styleUrl>#pt_...</styleUrl> override pointing
+      at the per-feature style.
+
+      Other geometry types still use the generic eng* document-level styles
+      (line/polygon per-feature styling deferred to v3).
+
+    Returns (kml_str, referenced_hrefs) so package_as_kmz can embed source
+    asset bytes for each referenced relative href."""
     tree = FolderNode("")
+    feature_styles: List[str] = []
+    referenced_hrefs: Set[str] = set()
+    pt_style_idx = 0
+
     for pm in parsed_source["placemarks"]:
+        style_url_override: Optional[str] = None
+        icon_href = (pm.get("icon_href") or "").strip()
+        if pm.get("geometry_type") == "Point" and icon_href:
+            pt_style_id = f"pt_{pm['feature_id']}_{pt_style_idx}"
+            pt_style_idx += 1
+            feature_styles.append(
+                f'    <Style id="{pt_style_id}">\n'
+                f'      <IconStyle><scale>0.8</scale><Icon><href>{escape(icon_href, quote=False)}</href></Icon></IconStyle>\n'
+                f'      <LabelStyle><scale>0</scale></LabelStyle>\n'
+                f'    </Style>'
+            )
+            style_url_override = f"#{pt_style_id}"
+            referenced_hrefs.add(icon_href)
+
         bucket = _get_folder_bucket(tree, pm["folder_path"])
-        bucket.append(_emit_placemark(pm))
+        bucket.append(_emit_placemark(pm, style_url_override))
 
     eng_folder_blocks: List[str] = []
     for child in tree.children.values():
@@ -447,7 +546,9 @@ def emit_engineering_kml(parsed_source: Dict[str, Any]) -> str:
         eng_folder_blocks.append(_emit_folder(child, "    ", 0, 0))
     eng_folder_str = "\n".join(eng_folder_blocks)
 
-    return (
+    feature_styles_xml = "\n".join(feature_styles) + "\n" if feature_styles else ""
+
+    kml = (
         '<?xml version="1.0" encoding="UTF-8"?>\n'
         '<kml xmlns="http://www.opengis.net/kml/2.2" '
         'xmlns:gx="http://www.google.com/kml/ext/2.2">\n'
@@ -468,20 +569,50 @@ def emit_engineering_kml(parsed_source: Dict[str, Any]) -> str:
         '    <Style id="engRedlineStyle">\n'
         '      <LineStyle><color>ff0000ff</color><width>8</width></LineStyle>\n'
         '    </Style>\n'
+        f'{feature_styles_xml}'
         f'{eng_folder_str}\n'
         '  </Document>\n'
         '</kml>\n'
     )
+    return (kml, referenced_hrefs)
 
 
-def package_as_kmz(kml_str: str) -> bytes:
-    """Wrap KML in a deterministic KMZ ZIP. Fixed timestamp on the doc.kml
-    entry keeps byte-output stable across runs (required for G7)."""
+def package_as_kmz(
+    kml_str: str,
+    source_archive_bytes: Optional[bytes] = None,
+    referenced_hrefs: Optional[Set[str]] = None,
+) -> bytes:
+    """Wrap KML in a deterministic KMZ ZIP. Fixed timestamp on every entry
+    (doc.kml + all embedded assets) keeps byte-output stable across runs
+    (required for G7).
+
+    v2 addition (mirrors RedlineMap.tsx:3154-3162): if source_archive_bytes
+    and referenced_hrefs are both provided, the packager opens the source
+    archive and copies bytes for every referenced relative href into the
+    export ZIP at the same path. Mirrors production's kmzAssetsRef + fflate
+    behavior. Hrefs that point to absolute URLs (http://, https://, data:,
+    file:) are skipped (they need no archive entry). Hrefs that are not
+    present in the source archive are silently skipped (those are the
+    upstream-source-authoring anomalies documented in f7f_known_anomalies.json)."""
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
         zi = zipfile.ZipInfo("doc.kml", date_time=(2026, 1, 1, 0, 0, 0))
         zi.compress_type = zipfile.ZIP_DEFLATED
         zf.writestr(zi, kml_str.encode("utf-8"))
+
+        if source_archive_bytes is not None and referenced_hrefs:
+            with zipfile.ZipFile(io.BytesIO(source_archive_bytes)) as src_zip:
+                src_entries = set(src_zip.namelist())
+                # Sort for deterministic emission order.
+                for href in sorted(referenced_hrefs):
+                    if href.startswith(("http://", "https://", "data:", "file:")):
+                        continue
+                    if href not in src_entries:
+                        continue  # upstream anomaly — source itself missing this asset
+                    asset_bytes = src_zip.read(href)
+                    asset_zi = zipfile.ZipInfo(href, date_time=(2026, 1, 1, 0, 0, 0))
+                    asset_zi.compress_type = zipfile.ZIP_DEFLATED
+                    zf.writestr(asset_zi, asset_bytes)
     return buf.getvalue()
 
 
@@ -581,14 +712,40 @@ def _gate_g3_source(
     )
 
 
-def _gate_g3_export(export: Dict[str, Any]):
-    bad = _unresolvable_relative_hrefs(export)
-    if not bad:
+def _gate_g3_export(source: Dict[str, Any], export: Dict[str, Any]):
+    """Export-side icon-href resolution gate (v2 delta-based against source).
+
+    Production (and the v2 Python port) preserves source icon_href references
+    in per-feature styles AND embeds source asset bytes in the export KMZ
+    archive. The upstream-source authoring anomalies documented in
+    f7f_known_anomalies.json (5 Brenham hrefs whose source archive entries
+    don't exist) therefore propagate to the export at the same rate — that
+    is correct production behavior: the export pipeline cannot synthesize
+    icons the source itself omits.
+
+    Gate semantics:
+      PASS — export's unresolvable set is a subset of source's unresolvable
+             set (propagation; not regression).
+      FAIL — NEW unresolvable href(s) appear in export beyond source's set
+             (catches port regressions that break asset embedding, or
+             production-emitter regressions if v3+ swaps to production
+             parser path)."""
+    src_bad = _unresolvable_relative_hrefs(source)
+    exp_bad = _unresolvable_relative_hrefs(export)
+    new_in_export = exp_bad - src_bad
+    if new_in_export:
+        return (
+            "FAIL",
+            f"{len(new_in_export)} NEW unresolvable href(s) in export beyond "
+            f"the source's unresolvable set (port or asset-embedding regression): "
+            f"{sorted(new_in_export)[:3]}"
+        )
+    if not exp_bad:
         return ("PASS", "0 unresolvable relative hrefs in export")
     return (
-        "FAIL",
-        f"{len(bad)} unresolvable relative href(s) in export: "
-        f"{sorted(bad)[:3]}{'...' if len(bad) > 3 else ''}"
+        "PASS",
+        f"{len(exp_bad)} export-side unresolved href(s); all also unresolved "
+        f"in source (faithful propagation, not regression)"
     )
 
 
@@ -730,16 +887,30 @@ def _build_semantic_diff(
             "source": sorted(source["style_urls"]),
             "export": sorted(export["style_urls"]),
             "equivalent_as_set": source["style_urls"] == export["style_urls"],
+            "note": (
+                "By design, set equality is NOT expected: source uses shared "
+                "styleUrl strings (e.g., 14 shared IDs referenced by many "
+                "placemarks each), production export uses per-feature unique "
+                "style IDs (one per Point with icon_href). The load-bearing "
+                "fidelity axis is icon_href_refs.equivalent_as_set below."
+            ),
         },
         "icon_href_refs": {
             "source_count": len(source["referenced_hrefs"]),
             "export_count": len(export["referenced_hrefs"]),
             "source": sorted(source["referenced_hrefs"]),
             "export": sorted(export["referenced_hrefs"]),
+            "equivalent_as_set": source["referenced_hrefs"] == export["referenced_hrefs"],
+            "source_only_hrefs": sorted(source["referenced_hrefs"] - export["referenced_hrefs"]),
+            "export_only_hrefs": sorted(export["referenced_hrefs"] - source["referenced_hrefs"]),
             "note": (
-                "v0/v1 Python emitter port does not preserve source icon hrefs "
-                "in the export; v2+ (Option B Node.js or asset embedding port) "
-                "will close this gap. Export-side icon refs expected empty until then."
+                "v2 Python emitter port preserves icon hrefs via per-feature "
+                "<Style><IconStyle><Icon><href> emission for every source Point "
+                "with a resolved icon_href, and embeds source asset bytes in "
+                "the export KMZ archive (mirrors RedlineMap.tsx:2781-2792 + "
+                "3154-3162). source_only_hrefs (if non-empty) typically "
+                "indicates source styles declared but never referenced by any "
+                "placemark — these are NOT regressions."
             ),
         },
         "extended_data_keys": {
@@ -767,24 +938,25 @@ def run_harness() -> Dict[str, Any]:
     source_bytes = SOURCE_KMZ.read_bytes()
     parsed_source = parse_kmz(source_bytes)
 
-    kml_1 = emit_engineering_kml(parsed_source)
-    export_bytes_1 = package_as_kmz(kml_1)
+    kml_1, refs_1 = emit_engineering_kml(parsed_source)
+    export_bytes_1 = package_as_kmz(kml_1, source_bytes, refs_1)
     parsed_export = parse_kmz(export_bytes_1)
 
     # G7 — run a second time on the same input
-    kml_2 = emit_engineering_kml(parsed_source)
-    export_bytes_2 = package_as_kmz(kml_2)
+    kml_2, refs_2 = emit_engineering_kml(parsed_source)
+    export_bytes_2 = package_as_kmz(kml_2, source_bytes, refs_2)
 
-    # G8 — re-emit from the parsed export, package, re-parse
-    kml_3 = emit_engineering_kml(parsed_export)
-    export_bytes_3 = package_as_kmz(kml_3)
+    # G8 — re-emit from the parsed export, package (asset bytes come from
+    # export_bytes_1 which now contains the embedded source assets), re-parse.
+    kml_3, refs_3 = emit_engineering_kml(parsed_export)
+    export_bytes_3 = package_as_kmz(kml_3, export_bytes_1, refs_3)
     parsed_re_export = parse_kmz(export_bytes_3)
 
     gates = {
         "G1_placemark_count_parity": _gate_g1(parsed_source, parsed_export),
         "G2_folder_count_parity": _gate_g2(parsed_source, parsed_export),
         "G3_icon_resolution_source": _gate_g3_source(parsed_source, fixture_name, known_anomalies),
-        "G3_icon_resolution_export": _gate_g3_export(parsed_export),
+        "G3_icon_resolution_export": _gate_g3_export(parsed_source, parsed_export),
         "G4_extended_data_parity": _gate_g4(parsed_source, parsed_export),
         "G7_determinism": _gate_g7(export_bytes_1, export_bytes_2),
         "G8_round_trip_parse_stability": _gate_g8(parsed_export, parsed_re_export),
@@ -811,6 +983,8 @@ def run_harness() -> Dict[str, Any]:
             "source_archive_entries": len(parsed_source["archive_entries"]),
             "export_placemark_count": parsed_export["placemark_count"],
             "export_folder_count": parsed_export["folder_count"],
+            "export_referenced_hrefs": len(parsed_export["referenced_hrefs"]),
+            "export_archive_entries": len(parsed_export["archive_entries"]),
             "export_bytes": len(export_bytes_1),
         },
         "known_anomalies_schema": known_anomalies.get("schema_version"),
@@ -844,8 +1018,8 @@ def write_reports(report: Dict[str, Any]) -> None:
         "|---|---:|---:|",
         f"| Placemark count | {report['fixture']['source_placemark_count']} | {report['fixture']['export_placemark_count']} |",
         f"| Folder count | {report['fixture']['source_folder_count']} | {report['fixture']['export_folder_count']} |",
-        f"| Icon hrefs referenced | {report['fixture']['source_referenced_hrefs']} | (Python emitter port emits no icon hrefs; v2+) |",
-        f"| Archive entries | {report['fixture']['source_archive_entries']} | 1 (doc.kml only) |",
+        f"| Icon hrefs referenced | {report['fixture']['source_referenced_hrefs']} | {report['fixture'].get('export_referenced_hrefs', 'n/a')} (v2: per-feature `<IconStyle><Icon><href>` for points with resolved icon_href) |",
+        f"| Archive entries | {report['fixture']['source_archive_entries']} | {report['fixture'].get('export_archive_entries', 1)} (doc.kml + embedded source assets per referenced relative href) |",
         f"| Export size (bytes) | — | {report['fixture']['export_bytes']} |",
         "",
         "## Gates",

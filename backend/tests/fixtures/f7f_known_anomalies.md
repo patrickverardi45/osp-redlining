@@ -83,3 +83,35 @@ or any future per-firm engineering KMZ) is added, append a new entry to
 If you find yourself wanting to add an entry to silence a failure, ask:
 **is the failure upstream-of-TrueLine source-quality drift, or is it a
 TrueLine regression?** Only the former belongs here.
+
+## v2 update — propagation to export side
+
+F7f v2 (2026-05-22) ported the production exporter's icon-href preservation
+and asset-embedding behavior into the Python harness emitter (mirroring
+`RedlineMap.tsx:2781-2792` per-feature `<Style><IconStyle><Icon><href>`
+emission + `RedlineMap.tsx:3154-3162` source asset bytes embedding).
+Consequence: documented source-side anomalies now **propagate to the
+export side at the same rate**, exactly as they do in production.
+
+Specifically for `brenham_phase5_source_truth.kmz`:
+- Of the 5 documented unresolvable source hrefs, only **1** (`files/i46.png`)
+  is actually referenced by a placemark via the source's `<Style>` chain.
+  The other 4 (`files/i20_01.png`, `files/i47.png`, `files/i51.png`,
+  `files/i61.png`) are declared in source `<Style>` blocks but never
+  referenced by any `<Placemark>` `<styleUrl>` — dead style declarations.
+  The harness's v2 emitter only emits per-feature styles for actually-used
+  icon_hrefs, so only the 1 used-and-broken href propagates to the export.
+
+Gate behavior under v2:
+- `G3_icon_resolution_source` — unchanged delta-based check against the
+  documented known-anomalies set. Brenham: PASS (5/5 documented).
+- `G3_icon_resolution_export` — v2 delta-based against the **source's**
+  unresolvable set. PASS if `export_unresolvable ⊆ source_unresolvable`
+  (faithful propagation, not regression). FAIL if NEW unresolvable hrefs
+  appear in export beyond source's set (catches port regressions or
+  asset-embedding bugs). Brenham: PASS (1 unresolvable in export, also
+  unresolvable in source).
+
+This means the v2 harness can stop relying on visual-only Google Earth
+validation for the icon-href fidelity axis. Production behavior is now
+mirrored by the harness and structurally verified per run.
