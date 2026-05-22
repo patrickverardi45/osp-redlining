@@ -3459,19 +3459,22 @@ ${fieldSubmissionPlacemarks.length > 0 ? buildFolder("Selected Field Submission"
       <PolyStyle><color>1a94a3b8</color><fill>1</fill><outline>1</outline></PolyStyle>
     </Style>
     <Style id="engRedlineStyle">
-      <LineStyle><color>ff0000ff</color><width>8</width></LineStyle>
+      <!-- F7-final cleanup Gate 4c (2026-05-22) — Main red width bumped -->
+      <!-- 8 → 12. Gate 4b's width=8 with width=10 casing only gave 1px -->
+      <!-- edge each side and was visually too subtle to dominate dense -->
+      <!-- blue/green source linework. width=12 makes the redline thick -->
+      <!-- enough to read as a bold markup layer on aerial imagery even -->
+      <!-- when zoomed out. Color ff0000ff (bright opaque red) preserved. -->
+      <LineStyle><color>ff0000ff</color><width>12</width></LineStyle>
     </Style>
     <Style id="engRedlineCasingStyle">
-      <!-- F7-final cleanup Gate 4b (2026-05-22) — Dark-red shadow casing -->
-      <!-- emitted BELOW the bright-red main engRedlineStyle (drawOrder 999 -->
-      <!-- vs 1000). Gate 4's initial white casing made redlines visually -->
-      <!-- dominant but read as thick white paths rather than as redline -->
-      <!-- markup; operator correction: "and make them RED not white lol". -->
-      <!-- Dark-red shadow (RGB 102,0,0 via KML aabbggrr = ff000066) keeps -->
-      <!-- the line in the red family while providing a slight darker -->
-      <!-- contrast edge so the bright red main reads as solid dominant red. -->
-      <!-- width=10 = 2px of shadow visible (1px each side of the 8px main). -->
-      <LineStyle><color>ff000066</color><width>10</width></LineStyle>
+      <!-- F7-final cleanup Gate 4c (2026-05-22) — Dark-red shadow casing -->
+      <!-- width bumped 10 → 16 to match the wider main (12). 4px of dark- -->
+      <!-- red edge visible (2px each side of the 12px main) — keeps the -->
+      <!-- shadow effect from Gate 4b's red-family approach but scales -->
+      <!-- proportionally with the larger main line. Color ff000066 (dark -->
+      <!-- red, RGB 102,0,0) preserved from Gate 4b. -->
+      <LineStyle><color>ff000066</color><width>16</width></LineStyle>
     </Style>
     <Style id="engPhotoStyle">
       <IconStyle><scale>0.9</scale></IconStyle>
