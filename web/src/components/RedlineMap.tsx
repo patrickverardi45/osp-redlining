@@ -49,6 +49,10 @@ import { toMoney } from "@/lib/format/money";
 import { extractGps } from "@/lib/photos/exif";
 import { acceptSessionFromMutation, appendSessionId, appendSessionIdReadOnly, appendSessionIdToForm, getStoredSessionId, peekSessionId } from "@/lib/session";
 import { apiFetch } from "@/lib/apiFetch";
+// PT.IU R3 — token-presence helpers for the upload diagnostic panel.
+// Read-only boolean checks; token VALUES are never displayed.
+import { getAccessToken } from "@/lib/accessToken";
+import { getPilotToken } from "@/lib/pilotToken";
 import type { PipelineDiagEntry, EngineeringPlanSignal, QaFlagItem } from "@/lib/types/nova";
 import { buildNovaSummary } from "@/lib/nova/buildNovaSummary";
 import CloseoutPacket from "@/components/CloseoutPacket";
@@ -1051,6 +1055,19 @@ function OfficeRedlineMapInner({
   // visible UI so failures (CORS, missing NEXT_PUBLIC_API_BASE, JWT, 413, 500)
   // are diagnosable without DevTools. The panel renders adjacent to the
   // Upload button below; only the most recent event is shown.
+  //
+  // PT.IU R3 — extended with browser/runtime context (origin, href, UA,
+  // build-time NEXT_PUBLIC_API_BASE, token-presence boolean, planned request
+  // header names, failure_class heuristic) plus a manual probe button result.
+  // None of these expose token values. The probe button fires a real
+  // direct-to-Render GET via apiFetch so the operator can see — from inside
+  // the actual browser context — whether the cross-origin/preflight/auth path
+  // works for a non-upload request.
+  type EngUploadProbeResult =
+    | { state: "probing"; ts: string }
+    | { state: "ok"; ts: string; status: number; elapsed_ms: number }
+    | { state: "http_error"; ts: string; status: number; elapsed_ms: number; body_snippet?: string }
+    | { state: "exception"; ts: string; message: string; elapsed_ms: number };
   type EngUploadDiag = {
     event:
       | "upload_start"
@@ -1069,8 +1086,153 @@ function OfficeRedlineMapInner({
     message?: string;
     uploaded_count?: number;
     elapsed_ms?: number;
+    // PT.IU R3 — browser / runtime context
+    origin?: string;
+    href?: string;
+    user_agent_short?: string;
+    next_public_api_base?: string;
+    access_token_present?: boolean;
+    request_header_names?: string[];
+    // PT.IU R3 — failure-class heuristic computed in upload_exception
+    failure_class?:
+      | "likely_cors_or_network_or_browser_blocked"
+      | "likely_timeout_or_abort"
+      | "likely_offline"
+      | "other";
+    // PT.IU R3 — in-page probe result (manual button)
+    probe_result?: EngUploadProbeResult;
   };
   const [engUploadDiag, setEngUploadDiag] = useState<EngUploadDiag | null>(null);
+
+  // PT.IU R3 — capture build-time + browser/runtime context the diagnostic
+  // panel renders. All read-only; nothing here reads token VALUES.
+  function _engUploadEnvSnapshot() {
+    if (typeof window === "undefined") {
+      return {
+        origin: "(ssr)",
+        href: "(ssr)",
+        user_agent_short: "(ssr)",
+        next_public_api_base:
+          process.env.NEXT_PUBLIC_API_BASE ||
+          process.env.NEXT_PUBLIC_API_BASE_URL ||
+          "(unset)",
+        access_token_present: false,
+        request_header_names: [] as string[],
+      };
+    }
+    const accessToken = getAccessToken();
+    const pilotToken = !accessToken ? getPilotToken() : null;
+    const tokenPresent = Boolean(accessToken) || Boolean(pilotToken);
+    const headerNames: string[] = [];
+    if (tokenPresent) headerNames.push("authorization");
+    headerNames.push("x-tl-request-id");
+    headerNames.push("content-type (auto: multipart/form-data; boundary=...)");
+    const ua = (window.navigator && window.navigator.userAgent) || "";
+    return {
+      origin: window.location.origin,
+      href: window.location.href,
+      user_agent_short: ua.length > 140 ? ua.slice(0, 137) + "..." : ua,
+      next_public_api_base:
+        process.env.NEXT_PUBLIC_API_BASE ||
+        process.env.NEXT_PUBLIC_API_BASE_URL ||
+        "(unset)",
+      access_token_present: tokenPresent,
+      request_header_names: headerNames,
+    };
+  }
+
+  // PT.IU R3 — heuristic classifier for the upload_exception path. Pure
+  // text-pattern matching on the thrown error message; raw message is still
+  // displayed alongside the class.
+  function _classifyUploadException(error: unknown): EngUploadDiag["failure_class"] {
+    const msg = error instanceof Error ? error.message : String(error || "");
+    if (/failed to fetch|networkerror|load failed/i.test(msg)) {
+      return "likely_cors_or_network_or_browser_blocked";
+    }
+    if (/timeout|timed out|aborted/i.test(msg)) {
+      return "likely_timeout_or_abort";
+    }
+    if (/offline|disconnected/i.test(msg)) {
+      return "likely_offline";
+    }
+    return "other";
+  }
+
+  // PT.IU R3 — manual probe button handler. Fires a direct-to-Render GET
+  // against /api/current-state through apiFetch so the operator can see —
+  // from inside the same browser context the upload uses — whether the
+  // cross-origin + JWT + preflight (via x-tl-request-id custom header) path
+  // is healthy for a non-upload request. Result is written into
+  // engUploadDiag.probe_result; original event/start fields are preserved
+  // so the panel keeps showing what the operator was diagnosing.
+  async function handleEngUploadProbe() {
+    const env = _engUploadEnvSnapshot();
+    const renderBase = (env.next_public_api_base === "(unset)" ? "" : env.next_public_api_base).replace(/\/+$/, "");
+    if (!renderBase) {
+      // Caller would have no direct-to-Render path to probe — surface that.
+      setEngUploadDiag((prev) => ({
+        ...(prev ?? { event: "upload_exception", ts: new Date().toISOString() }),
+        ...env,
+        probe_result: {
+          state: "exception",
+          ts: new Date().toISOString(),
+          message:
+            "NEXT_PUBLIC_API_BASE is not set in this build — no direct-to-Render base to probe.",
+          elapsed_ms: 0,
+        },
+      }));
+      return;
+    }
+    const probeUrl = `${renderBase}/api/current-state`;
+    setEngUploadDiag((prev) => ({
+      ...(prev ?? { event: "upload_start", ts: new Date().toISOString() }),
+      ...env,
+      probe_result: { state: "probing", ts: new Date().toISOString() },
+    }));
+    const startedAt = Date.now();
+    try {
+      const resp = await apiFetch(probeUrl, { method: "GET" });
+      const elapsed = Date.now() - startedAt;
+      if (resp.ok) {
+        setEngUploadDiag((prev) => ({
+          ...(prev ?? { event: "upload_start", ts: new Date().toISOString() }),
+          ...env,
+          probe_result: {
+            state: "ok",
+            ts: new Date().toISOString(),
+            status: resp.status,
+            elapsed_ms: elapsed,
+          },
+        }));
+      } else {
+        const txt = await resp.text().catch(() => "");
+        const snippet = txt.slice(0, 200).trim();
+        setEngUploadDiag((prev) => ({
+          ...(prev ?? { event: "upload_start", ts: new Date().toISOString() }),
+          ...env,
+          probe_result: {
+            state: "http_error",
+            ts: new Date().toISOString(),
+            status: resp.status,
+            elapsed_ms: elapsed,
+            body_snippet: snippet || undefined,
+          },
+        }));
+      }
+    } catch (error) {
+      const elapsed = Date.now() - startedAt;
+      setEngUploadDiag((prev) => ({
+        ...(prev ?? { event: "upload_start", ts: new Date().toISOString() }),
+        ...env,
+        probe_result: {
+          state: "exception",
+          ts: new Date().toISOString(),
+          message: error instanceof Error ? error.message : String(error || "(unknown)"),
+          elapsed_ms: elapsed,
+        },
+      }));
+    }
+  }
   const [jobLabel, setJobLabel] = useState("");
   const [notes, setNotes] = useState("");
   const [operatorNotesNotRequired, setOperatorNotesNotRequired] = useState(false);
@@ -3699,6 +3861,10 @@ ${redlinePlacemarks.length > 0 ? buildEngFolder("As-Built Redlines", redlinePlac
       total_mb: Number((totalBytes / (1024 * 1024)).toFixed(2)),
     });
     // PT.IU R2 — mirror the structured event into operator-visible state.
+    // PT.IU R3 — also capture browser/runtime context (origin, href, UA,
+    // build-time NEXT_PUBLIC_API_BASE, token-presence boolean, planned
+    // request header names) so the operator can correlate against the
+    // manual curl preflight without DevTools.
     setEngUploadDiag({
       event: "upload_start",
       ts: new Date().toISOString(),
@@ -3706,6 +3872,7 @@ ${redlinePlacemarks.length > 0 ? buildEngFolder("As-Built Redlines", redlinePlac
       direct_to_render: directToRender,
       file_count: files.length,
       total_mb: Number((totalBytes / (1024 * 1024)).toFixed(2)),
+      ..._engUploadEnvSnapshot(),
     });
 
     setEngPlansBusy(true);
@@ -3801,6 +3968,10 @@ ${redlinePlacemarks.length > 0 ? buildEngFolder("As-Built Redlines", redlinePlac
         direct_to_render: directToRender,
         message: error instanceof Error ? error.message : "Unknown error",
         elapsed_ms: Date.now() - uploadStartedAt,
+        // PT.IU R3 — heuristic class + browser/runtime context for the
+        // operator to see immediately on a "Failed to fetch" exception.
+        failure_class: _classifyUploadException(error),
+        ..._engUploadEnvSnapshot(),
       });
       setStatusText(error instanceof Error ? error.message : "Engineering plan upload failed.");
       setStatusTone("error");
@@ -4728,8 +4899,137 @@ ${redlinePlacemarks.length > 0 ? buildEngFolder("As-Built Redlines", redlinePlac
                       {engUploadDiag.elapsed_ms !== undefined && (
                         <div>elapsed_ms: {engUploadDiag.elapsed_ms}</div>
                       )}
+                      {/* PT.IU R3 — failure-class heuristic */}
+                      {engUploadDiag.failure_class && (
+                        <div>
+                          failure_class: <strong>{engUploadDiag.failure_class}</strong>
+                        </div>
+                      )}
+                      {/* PT.IU R3 — browser / runtime context (operator
+                          copy-pastes to correlate against curl preflight) */}
+                      {(engUploadDiag.origin ||
+                        engUploadDiag.href ||
+                        engUploadDiag.user_agent_short ||
+                        engUploadDiag.next_public_api_base ||
+                        engUploadDiag.access_token_present !== undefined ||
+                        (engUploadDiag.request_header_names &&
+                          engUploadDiag.request_header_names.length > 0)) && (
+                        <div
+                          style={{
+                            marginTop: 6,
+                            paddingTop: 6,
+                            borderTop: "1px dashed #334155",
+                            color: "#cbd5e1",
+                          }}
+                        >
+                          <div style={{ color: "#94a3b8", marginBottom: 2 }}>
+                            -- browser / runtime context --
+                          </div>
+                          {engUploadDiag.origin && (
+                            <div>origin: {engUploadDiag.origin}</div>
+                          )}
+                          {engUploadDiag.href && (
+                            <div>href: {engUploadDiag.href}</div>
+                          )}
+                          {engUploadDiag.user_agent_short && (
+                            <div>user_agent: {engUploadDiag.user_agent_short}</div>
+                          )}
+                          {engUploadDiag.next_public_api_base && (
+                            <div>
+                              next_public_api_base: {engUploadDiag.next_public_api_base}
+                            </div>
+                          )}
+                          {engUploadDiag.access_token_present !== undefined && (
+                            <div>
+                              access_token_present:{" "}
+                              <strong>{String(engUploadDiag.access_token_present)}</strong>
+                            </div>
+                          )}
+                          {engUploadDiag.request_header_names &&
+                            engUploadDiag.request_header_names.length > 0 && (
+                              <div>
+                                request_header_names:{" "}
+                                {engUploadDiag.request_header_names.join(", ")}
+                              </div>
+                            )}
+                        </div>
+                      )}
+                      {/* PT.IU R3 — probe result */}
+                      {engUploadDiag.probe_result && (
+                        <div
+                          style={{
+                            marginTop: 6,
+                            paddingTop: 6,
+                            borderTop: "1px dashed #334155",
+                            color: "#cbd5e1",
+                          }}
+                        >
+                          <div style={{ color: "#94a3b8", marginBottom: 2 }}>
+                            -- probe (direct-to-Render GET /api/current-state) --
+                          </div>
+                          <div>
+                            probe_state:{" "}
+                            <strong
+                              style={{
+                                color:
+                                  engUploadDiag.probe_result.state === "ok"
+                                    ? "#86efac"
+                                    : engUploadDiag.probe_result.state === "probing"
+                                      ? "#93c5fd"
+                                      : "#fca5a5",
+                              }}
+                            >
+                              {engUploadDiag.probe_result.state}
+                            </strong>
+                            <span style={{ color: "#94a3b8", marginLeft: 8 }}>
+                              {engUploadDiag.probe_result.ts}
+                            </span>
+                          </div>
+                          {"status" in engUploadDiag.probe_result && (
+                            <div>probe_status: {engUploadDiag.probe_result.status}</div>
+                          )}
+                          {"elapsed_ms" in engUploadDiag.probe_result &&
+                            engUploadDiag.probe_result.elapsed_ms !== undefined && (
+                              <div>probe_elapsed_ms: {engUploadDiag.probe_result.elapsed_ms}</div>
+                            )}
+                          {"body_snippet" in engUploadDiag.probe_result &&
+                            engUploadDiag.probe_result.body_snippet && (
+                              <div>probe_body_snippet: {engUploadDiag.probe_result.body_snippet}</div>
+                            )}
+                          {"message" in engUploadDiag.probe_result && (
+                            <div>probe_message: {engUploadDiag.probe_result.message}</div>
+                          )}
+                        </div>
+                      )}
                     </div>
                   )}
+                  {/* PT.IU R3 — manual probe button. Always rendered when the
+                      Upload Engineering Plan PDFs button is rendered; lets
+                      operator test direct-to-Render reachability without
+                      DevTools and without firing an actual upload. */}
+                  <button
+                    type="button"
+                    onClick={handleEngUploadProbe}
+                    disabled={engUploadDiag?.probe_result?.state === "probing"}
+                    style={{
+                      marginTop: 8,
+                      padding: "6px 10px",
+                      fontSize: 11,
+                      fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+                      background: "#1e293b",
+                      color: "#e2e8f0",
+                      border: "1px solid #334155",
+                      borderRadius: 6,
+                      cursor:
+                        engUploadDiag?.probe_result?.state === "probing"
+                          ? "wait"
+                          : "pointer",
+                    }}
+                  >
+                    {engUploadDiag?.probe_result?.state === "probing"
+                      ? "Probing..."
+                      : "Test backend connection (direct-to-Render)"}
+                  </button>
                   {(state?.engineering_plans?.length ?? 0) === 0 ? (
                     <div style={{ fontSize: 13, color: "#94a3b8" }}>No plans uploaded for this session.</div>
                   ) : (
