@@ -3127,7 +3127,7 @@ ${fieldSubmissionPlacemarks.length > 0 ? buildFolder("Selected Field Submission"
       <PolyStyle><color>1a94a3b8</color><fill>1</fill><outline>1</outline></PolyStyle>
     </Style>
     <Style id="engRedlineStyle">
-      <LineStyle><color>ff0000ff</color><width>5</width></LineStyle>
+      <LineStyle><color>ff0000ff</color><width>8</width></LineStyle>
     </Style>
     <Style id="engPhotoStyle">
       <IconStyle><scale>0.9</scale></IconStyle>
