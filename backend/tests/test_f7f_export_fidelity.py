@@ -75,22 +75,29 @@ KML_NS = "http://www.opengis.net/kml/2.2"
 GX_NS = "http://www.google.com/kml/ext/2.2"
 NS = {"kml": KML_NS, "gx": GX_NS}
 
-HARNESS_VERSION = "f7f-v2-2026-05-22"
-SCHEMA_VERSION = "f7f-fidelity-report-2"
+HARNESS_VERSION = "f7f-v3-2026-05-22"
+SCHEMA_VERSION = "f7f-fidelity-report-3"
 KNOWN_ANOMALIES_PATH = TESTS_DIR / "fixtures" / "f7f_known_anomalies.json"
 KNOWN_ANOMALIES_SCHEMA_VERSION = "f7f-known-anomalies-1"
 
-# TrueLine-generated folder names (emitted by handleExportEngineeringKml at
-# RedlineMap.tsx:3142-3145). Used in semantic_diff to separate source-derived
-# folders from TrueLine-injected folders in the export tree. The v0 Brenham
-# fixture has no per-session photo/station/redline data, so the export's
-# TL-folder count is 0 — but the harness shape is forward-compatible for v2+
-# fixtures that DO include TL data.
+# F7-final cleanup (2026-05-22) — Customer-facing root wrapper that the
+# production emitter (handleExportEngineeringKml in web/src/components/
+# RedlineMap.tsx) now substitutes for the source <Document name>. The harness's
+# Python emitter port + folder-tree normalization mirror this so the gates
+# continue to compare apples-to-apples after the change.
+ENG_CONTEXT_WRAPPER = "Engineering Context"
+
+# TrueLine-generated folder names (emitted by handleExportEngineeringKml).
+# Used in semantic_diff to separate source-derived folders from TrueLine-
+# injected folders in the export tree. The v0 Brenham fixture has no
+# per-session photo/station/redline data, so the export's TL-folder count is 0
+# — but the harness shape is forward-compatible for v2+ fixtures that DO
+# include TL data. F7-final cleanup renamed "As-Built Redlines" → "Redlines".
 TL_FOLDER_NAMES = frozenset({
     "Photos",
     "Stations",
     "Selected Field Submission",
-    "As-Built Redlines",
+    "Redlines",
 })
 
 
@@ -260,33 +267,48 @@ def _walk_folder_tree(root) -> List[Any]:
     return result
 
 
-def _normalize_export_folder_tree(folder_tree: List[Any], document_name: str) -> List[Any]:
-    """Peel the Document-name wrapper <Folder> from an export's folder tree.
+def _normalize_folder_path(fp: List[str]) -> List[str]:
+    """Mirror of the production emitter's normalizeFolderPath helper.
 
-    The TrueLine engineering KMZ emitter promotes the source <Document name="X">
-    to a top-level <Folder name="X"> wrapper around the source folder structure
-    (so Google Earth's sidebar shows the source identity as a toggleable group).
-    For tree-structure comparison against a source that has no such wrapper,
-    we peel the wrapper here.
+    The production emitter (handleExportEngineeringKml) replaces the first
+    element of every source-derived folder_path array (the source <Document>
+    name) with ENG_CONTEXT_WRAPPER before tree insertion. The harness's
+    Python emitter port applies the same substitution so the emitted folder
+    tree matches production's shape, which keeps G2 + G11 + semantic_diff
+    apples-to-apples after the F7-final cleanup."""
+    path = fp or []
+    if not path:
+        return path
+    return [ENG_CONTEXT_WRAPPER, *path[1:]]
+
+
+def _normalize_export_folder_tree(folder_tree: List[Any]) -> List[Any]:
+    """Peel the ENG_CONTEXT_WRAPPER ('Engineering Context') Folder wrapper
+    from an export's folder tree.
+
+    F7-final cleanup (2026-05-22): the production emitter now wraps every
+    source-derived folder under a stable <Folder name="Engineering Context">
+    sibling at the top of the export tree, replacing the prior source-
+    Document-name wrapper. For tree-structure comparison against a source
+    that has no such wrapper, we peel here.
 
     Returns folders with:
       - The wrapper Folder entry removed
       - Every descendant's parent_path stripped of its leading wrapper name
 
-    No-op when no wrapper is detected.
-    """
-    if not document_name:
-        return list(folder_tree)
+    No-op when no wrapper is detected (defensive — e.g., synthetic fixtures
+    that don't produce any source-derived folders)."""
+    wrapper = ENG_CONTEXT_WRAPPER
     has_wrapper = any(
-        pp == () and name == document_name for (pp, name, _, _) in folder_tree
+        pp == () and name == wrapper for (pp, name, _, _) in folder_tree
     )
     if not has_wrapper:
         return list(folder_tree)
     result: List[Any] = []
     for parent_path, name, child_count, pm_count in folder_tree:
-        if parent_path == () and name == document_name:
+        if parent_path == () and name == wrapper:
             continue  # peel the wrapper itself
-        if parent_path and parent_path[0] == document_name:
+        if parent_path and parent_path[0] == wrapper:
             new_parent_path = parent_path[1:]
         else:
             new_parent_path = parent_path
@@ -536,7 +558,7 @@ def emit_engineering_kml(parsed_source: Dict[str, Any]) -> Tuple[str, Set[str]]:
             style_url_override = f"#{pt_style_id}"
             referenced_hrefs.add(icon_href)
 
-        bucket = _get_folder_bucket(tree, pm["folder_path"])
+        bucket = _get_folder_bucket(tree, _normalize_folder_path(pm["folder_path"]))
         bucket.append(_emit_placemark(pm, style_url_override))
 
     eng_folder_blocks: List[str] = []
@@ -628,29 +650,27 @@ def _gate_g1(source: Dict[str, Any], export: Dict[str, Any]):
 
 
 def _gate_g2(source: Dict[str, Any], export: Dict[str, Any]):
-    """Folder count parity after Document-wrapper normalization.
+    """Folder count parity after ENG_CONTEXT_WRAPPER normalization.
 
-    The TrueLine engineering KMZ emitter promotes the source
-    <Document name="X"> to a top-level <Folder name="X"> wrapper. Raw export
-    folder count is therefore source_count + 1 by design. G2 normalizes the
-    export side by peeling the wrapper before comparison."""
+    F7-final cleanup (2026-05-22): the TrueLine engineering KMZ emitter now
+    wraps source-derived folders under a stable <Folder name="Engineering
+    Context"> top-level sibling (replacing the prior source-Document-name
+    wrapper). Raw export folder count is therefore source_count + 1 by design.
+    G2 normalizes the export side by peeling the wrapper before comparison."""
     src_count = source["folder_count"]
-    document_name = source.get("document_name", "")
-    normalized_export_tree = _normalize_export_folder_tree(
-        export["folder_tree"], document_name
-    )
+    normalized_export_tree = _normalize_export_folder_tree(export["folder_tree"])
     exp_count_normalized = len(normalized_export_tree)
     exp_count_raw = export["folder_count"]
     if src_count == exp_count_normalized:
         return (
             "PASS",
             f"source={src_count} export_normalized={exp_count_normalized} "
-            f"(export_raw={exp_count_raw}, Document-wrapper {document_name!r} peeled)"
+            f"(export_raw={exp_count_raw}, {ENG_CONTEXT_WRAPPER!r} wrapper peeled)"
         )
     return (
         "FAIL",
         f"source={src_count} != export_normalized={exp_count_normalized} "
-        f"(export_raw={exp_count_raw}, Document-wrapper {document_name!r} peeled)"
+        f"(export_raw={exp_count_raw}, {ENG_CONTEXT_WRAPPER!r} wrapper peeled)"
     )
 
 
@@ -790,24 +810,21 @@ def _gate_g8(export: Dict[str, Any], re_export: Dict[str, Any]):
 
 
 def _gate_g11(source: Dict[str, Any], export: Dict[str, Any]):
-    """Folder hierarchy tree equality after Document-wrapper normalization.
+    """Folder hierarchy tree equality after ENG_CONTEXT_WRAPPER normalization.
 
     Explicit tree-tuple equality: build the (parent_path, folder_name) tuple
     set from source and from normalized-export trees; assert set equality.
     Catches F7d folder-structure regressions that raw count parity (G2)
     alone would miss."""
     src_tree = source["folder_tree"]
-    document_name = source.get("document_name", "")
-    exp_tree_normalized = _normalize_export_folder_tree(
-        export["folder_tree"], document_name
-    )
+    exp_tree_normalized = _normalize_export_folder_tree(export["folder_tree"])
     src_tuples = {(pp, name) for (pp, name, _, _) in src_tree}
     exp_tuples = {(pp, name) for (pp, name, _, _) in exp_tree_normalized}
     if src_tuples == exp_tuples:
         return (
             "PASS",
-            f"{len(src_tuples)} folder tuples match after Document-wrapper "
-            f"normalization (parent_path, name) set equality holds"
+            f"{len(src_tuples)} folder tuples match after {ENG_CONTEXT_WRAPPER!r} "
+            f"wrapper normalization (parent_path, name) set equality holds"
         )
     only_src = src_tuples - exp_tuples
     only_exp = exp_tuples - src_tuples
@@ -832,10 +849,7 @@ def _build_semantic_diff(
     folder split). Not gate-class; intended as the regression backbone — future
     runs can diff JSON reports for any changed axis even when gate verdicts
     stay PASS."""
-    document_name = source.get("document_name", "")
-    exp_tree_normalized = _normalize_export_folder_tree(
-        export["folder_tree"], document_name
-    )
+    exp_tree_normalized = _normalize_export_folder_tree(export["folder_tree"])
 
     src_tuples = {(pp, name) for (pp, name, _, _) in source["folder_tree"]}
     exp_tuples = {(pp, name) for (pp, name, _, _) in exp_tree_normalized}

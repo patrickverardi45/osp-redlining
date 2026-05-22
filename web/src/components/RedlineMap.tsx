@@ -2838,6 +2838,38 @@ ${fieldSubmissionPlacemarks.length > 0 ? buildFolder("Selected Field Submission"
     const buildEngFolder = (name: string, marks: string[], visibility: 0 | 1 = 1, open: 0 | 1 = 0) =>
       `    <Folder>\n      <name>${escapeXml(name)}</name>\n      <visibility>${visibility}</visibility>\n      <open>${open}</open>\n${marks.join("\n")}\n    </Folder>`;
 
+    // F7-final cleanup (2026-05-22) — Customer-facing root wrapper that
+    // replaces the source <Document name> (e.g., "Brenham, TX - Phase 5_Design
+    // Team") at the top of the exported source folder tree. Operator's
+    // screenshot review found long path-like labels in Google Earth's Places
+    // panel were noisy; "Engineering Context" gives a stable demo-friendly
+    // header without changing source semantics below.
+    const ENG_CONTEXT_WRAPPER = "Engineering Context";
+
+    // F7-final cleanup (2026-05-22) — Folder names that should be VISIBLE by
+    // default at customer demo open. Derived from operator's stated mapping +
+    // direct Brenham fixture inspection (Nodes/Terminal Port Handhole,
+    // Connections/{Backbone,Terminal Tail,House Drop}). All other source
+    // leaves emit visibility=0; branch folders (no direct placemarks) always
+    // emit visibility=1 so their descendants' checkbox states are honored.
+    const DEFAULT_VISIBLE_FOLDER_NAMES = new Set<string>([
+      ENG_CONTEXT_WRAPPER,
+      "Backbone",
+      "Terminal Port Handhole",
+      "Terminal Tail",
+      "House Drop",
+    ]);
+
+    // Replace the source Document-name root with the ENG_CONTEXT_WRAPPER label.
+    // Preserves all source nesting below (e.g., ["X","Nodes","Business"] →
+    // ["Engineering Context","Nodes","Business"]). Empty paths fall through to
+    // the existing "Uncategorized" fallback in getFolderBucket — unchanged.
+    const normalizeFolderPath = (fp: string[]): string[] => {
+      const path = fp ?? [];
+      if (path.length === 0) return path;
+      return [ENG_CONTEXT_WRAPPER, ...path.slice(1)];
+    };
+
     // Build metadata description table for any engineering feature.
     const engMeta = (f: {
       description: string;
@@ -2934,7 +2966,13 @@ ${fieldSubmissionPlacemarks.length > 0 ? buildFolder("Selected Field Submission"
     // Recursive nested-folder emitter. Child folders emitted before sibling
     // placemarks (matches source XML convention). Indentation is cosmetic only —
     // KML is whitespace-insensitive; Google Earth parses structure regardless.
-    const emitFolder = (node: FolderNode, indent: string, visibility: 0 | 1 = 0, open: 0 | 1 = 0): string => {
+    //
+    // F7-final cleanup (2026-05-22) — Per-node default visibility is now
+    // computed from node shape (branch vs data leaf) + DEFAULT_VISIBLE_FOLDER_NAMES.
+    // Branch nodes (no direct placemarks) always visibility=1 so descendant
+    // checkboxes function; data leaves visibility=1 iff in the set, else 0.
+    // All folders open=0 (collapsed) so the Places panel is not pre-expanded.
+    const emitFolder = (node: FolderNode, indent: string): string => {
       const childBlocks: string[] = [];
       for (const child of node.children.values()) {
         if (folderIsEmpty(child)) continue;
@@ -2942,6 +2980,10 @@ ${fieldSubmissionPlacemarks.length > 0 ? buildFolder("Selected Field Submission"
       }
       const innerParts: string[] = [...childBlocks, ...node.placemarks];
       const inner = innerParts.length > 0 ? innerParts.join("\n") : "";
+      const isDataLeaf = node.placemarks.length > 0;
+      const inVisibleSet = DEFAULT_VISIBLE_FOLDER_NAMES.has(node.name);
+      const visibility: 0 | 1 = (!isDataLeaf || inVisibleSet) ? 1 : 0;
+      const open: 0 | 1 = 0;
       return `${indent}<Folder>\n${indent}  <name>${escapeXml(node.name)}</name>\n${indent}  <visibility>${visibility}</visibility>\n${indent}  <open>${open}</open>\n${inner}\n${indent}</Folder>`;
     };
 
@@ -2978,7 +3020,7 @@ ${fieldSubmissionPlacemarks.length > 0 ? buildFolder("Selected Field Submission"
         ptStyleUrl = `#${ptStyleId}`;
         referencedHrefs.add(pt.icon_href);
       }
-      getFolderBucket(pt.folder_path).push(
+      getFolderBucket(normalizeFolderPath(pt.folder_path)).push(
         `      <Placemark>\n        <name>${escapeXml(name)}</name>\n        <description>${engMeta(pt)}</description>\n        <styleUrl>${ptStyleUrl}</styleUrl>\n        <Point><coordinates>${coord}</coordinates></Point>\n      </Placemark>`,
       );
     }
@@ -2997,7 +3039,7 @@ ${fieldSubmissionPlacemarks.length > 0 ? buildFolder("Selected Field Submission"
       featureStyles.push(
         `    <Style id="${lineStyleId}">\n      <LineStyle><color>${lineKmlColor}</color><width>${lineWidth}</width></LineStyle>\n    </Style>`,
       );
-      getFolderBucket(line.folder_path).push(
+      getFolderBucket(normalizeFolderPath(line.folder_path)).push(
         `      <Placemark>\n        <name>${escapeXml(name)}</name>\n        <description>${engMeta(line)}</description>\n        <styleUrl>#${lineStyleId}</styleUrl>\n        <LineString><tessellate>1</tessellate><coordinates>${coords.join(" ")}</coordinates></LineString>\n      </Placemark>`,
       );
     }
@@ -3021,11 +3063,27 @@ ${fieldSubmissionPlacemarks.length > 0 ? buildFolder("Selected Field Submission"
       const polyOutlineColor = hexToKmlColor(poly.fill_color || "#94a3b8", "ff");
       const polyFillColor = hexToKmlColor(poly.fill_color || "#94a3b8", "33");
       const polyStyleId = `fp_${sanitizeFeatId(poly.feature_id)}_${_polyStyleIdx++}`;
+      // F7-final cleanup (2026-05-22) — Boundary-class polygons are
+      // non-actionable visual background context per operator feedback
+      // (Google Earth Pro screenshots showed random info balloons on click).
+      // For these polygons: (1) attach <BalloonStyle><displayMode>hide</…>
+      // to the per-feature style so clicks do NOT open the balloon; and
+      // (2) omit the <description> entirely so there is nothing to render
+      // if a viewer ignores BalloonStyle. TrueLine-generated overlays
+      // (Photos / Stations / Field Submission / Redlines) are emitted
+      // through separate document-level styles and are NOT affected.
+      const polyIsBoundary = poly.classification === "boundary_polygon";
+      const polyBalloonHide = polyIsBoundary
+        ? "\n      <BalloonStyle><displayMode>hide</displayMode></BalloonStyle>"
+        : "";
       featureStyles.push(
-        `    <Style id="${polyStyleId}">\n      <LineStyle><color>${polyOutlineColor}</color><width>1</width></LineStyle>\n      <PolyStyle><color>${polyFillColor}</color><fill>1</fill><outline>1</outline></PolyStyle>\n    </Style>`,
+        `    <Style id="${polyStyleId}">\n      <LineStyle><color>${polyOutlineColor}</color><width>1</width></LineStyle>\n      <PolyStyle><color>${polyFillColor}</color><fill>1</fill><outline>1</outline></PolyStyle>${polyBalloonHide}\n    </Style>`,
       );
-      getFolderBucket(poly.folder_path).push(
-        `      <Placemark>\n        <name>${escapeXml(name)}</name>\n        <description>${engMeta(poly)}</description>\n        <styleUrl>#${polyStyleId}</styleUrl>\n        <Polygon><tessellate>1</tessellate><outerBoundaryIs><LinearRing><coordinates>${outer.join(" ")}</coordinates></LinearRing></outerBoundaryIs>${innerRingsXml ? "\n" + innerRingsXml : ""}\n        </Polygon>\n      </Placemark>`,
+      const polyDescriptionXml = polyIsBoundary
+        ? ""
+        : `        <description>${engMeta(poly)}</description>\n`;
+      getFolderBucket(normalizeFolderPath(poly.folder_path)).push(
+        `      <Placemark>\n        <name>${escapeXml(name)}</name>\n${polyDescriptionXml}        <styleUrl>#${polyStyleId}</styleUrl>\n        <Polygon><tessellate>1</tessellate><outerBoundaryIs><LinearRing><coordinates>${outer.join(" ")}</coordinates></LinearRing></outerBoundaryIs>${innerRingsXml ? "\n" + innerRingsXml : ""}\n        </Polygon>\n      </Placemark>`,
       );
     }
 
@@ -3279,9 +3337,12 @@ ${fieldSubmissionPlacemarks.length > 0 ? buildFolder("Selected Field Submission"
     // folderTree's virtual root is not emitted; its non-empty children become
     // top-level <Folder> siblings under <Document>. Each child recursively
     // emits its own nested <Folder> descendants via emitFolder().
+    // F7-final cleanup: emitFolder now computes per-node visibility/open
+    // internally from node shape + DEFAULT_VISIBLE_FOLDER_NAMES — no longer
+    // takes visibility/open params from this top-level caller.
     const engFolderBlocks = Array.from(folderTree.children.values())
       .filter((child) => !folderIsEmpty(child))
-      .map((child) => emitFolder(child, "    ", 0, 0))
+      .map((child) => emitFolder(child, "    "))
       .join("\n");
 
     // As-Built Redlines (same logic as existing export, no mutation)
@@ -3328,10 +3389,10 @@ ${fieldSubmissionPlacemarks.length > 0 ? buildFolder("Selected Field Submission"
       <LineStyle><color>ff0000ff</color><width>7</width></LineStyle>
     </Style>
 ${featureStyles.length > 0 ? featureStyles.join("\n") + "\n" : ""}${engFolderBlocks}
-${photoPlacemarks.length > 0 ? buildEngFolder("Photos", photoPlacemarks, 1, 0) : ""}
+${photoPlacemarks.length > 0 ? buildEngFolder("Photos", photoPlacemarks, 0, 0) : ""}
 ${stationPlacemarks.length > 0 ? buildEngFolder("Stations", stationPlacemarks, 0, 0) : ""}
 ${fieldSubmissionPlacemarks.length > 0 ? buildEngFolder("Selected Field Submission", fieldSubmissionPlacemarks, 0, 0) : ""}
-${redlinePlacemarks.length > 0 ? buildEngFolder("As-Built Redlines", redlinePlacemarks, 1, 1) : ""}
+${redlinePlacemarks.length > 0 ? buildEngFolder("Redlines", redlinePlacemarks, 1, 0) : ""}
   </Document>
 </kml>`;
 
