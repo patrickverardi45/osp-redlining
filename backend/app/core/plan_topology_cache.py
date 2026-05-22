@@ -32,10 +32,15 @@ from pathlib import Path
 from typing import Any, Dict, Optional, Sequence
 
 
-SCHEMA_VERSION: str = "plan-topology-cache-1"
+SCHEMA_VERSION: str = "plan-topology-cache-2"
 MAX_TOPOLOGY_BYTES: int = 5 * 1024 * 1024  # 5 MB hard cap on serialized cache payload
 CACHE_DIRNAME: str = "topology_cache"
 KILL_SWITCH_ENV: str = "TRUELINE_REBUILD_CACHE_DISABLE"
+
+# PE.3 schema-bump constants — kept distinct from the active SCHEMA_VERSION
+# so tests / migrations can reference v1 explicitly.
+_SCHEMA_VERSION_V1: str = "plan-topology-cache-1"
+_SCHEMA_VERSION_V2: str = "plan-topology-cache-2"
 
 _logger = logging.getLogger(__name__)
 
@@ -142,12 +147,23 @@ def cache_write(
     topology: Dict[int, Dict[str, Any]],
     plan_count: int,
     compute_duration_ms: int,
+    pdf_outcomes: Optional[Sequence[Dict[str, Any]]] = None,
+    per_page_outcomes: Optional[Sequence[Dict[str, Any]]] = None,
 ) -> CacheWriteResult:
     """Atomically persist topology + signature to cache_file.
 
     Creates the parent directory as needed. Refuses payloads that exceed
     MAX_TOPOLOGY_BYTES. Returns a structured result on success or refusal;
     never raises (OSError is captured and returned as ERROR_IO).
+
+    PE.3 additions (default `[]` for back-compat):
+      - ``pdf_outcomes``: per-PDF aggregate outcome dicts (status, page_count,
+        pages_ok/timeout/error/skipped, elapsed_ms, etc.)
+      - ``per_page_outcomes``: per-page outcome dicts (pdf_index, page_index,
+        status, elapsed_ms, text_len, error)
+
+    Both fields are observational (consumed by future Visual Overlay sprint).
+    The `topology` field remains the load-bearing one for current consumers.
     """
     session_id = cache_file.stem
 
@@ -157,10 +173,12 @@ def cache_write(
         "plan_set_signature": signature,
         "plan_count": int(plan_count),
         "generated_at": datetime.now(timezone.utc).isoformat(),
-        "generated_by": "rebuild-isolation/v1",
+        "generated_by": "rebuild-isolation/v2",
         "topology_bytes": 0,
         "compute_duration_ms": int(compute_duration_ms),
         "topology": topology,
+        "pdf_outcomes": list(pdf_outcomes or []),
+        "per_page_outcomes": list(per_page_outcomes or []),
     }
 
     try:

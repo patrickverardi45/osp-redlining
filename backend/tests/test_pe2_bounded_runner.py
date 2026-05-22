@@ -47,9 +47,15 @@ def _ok_payload(matchlines: List[Dict[str, Any]], callouts: List[Dict[str, Any]]
         "ok": True,
         "matchlines": matchlines,
         "callouts": callouts,
+        "text_len": 100,
         "elapsed_ms": 100,
         "peak_kb": 500,
     })
+
+
+# PE.3 helper: count-mode payload returned by the new per-page worker.
+def _count_payload(page_count: int) -> str:
+    return json.dumps({"ok": True, "page_count": page_count})
 
 
 class TestPE2BoundedRunner(unittest.TestCase):
@@ -78,7 +84,13 @@ class TestPE2BoundedRunner(unittest.TestCase):
         self.assertEqual(topology, {})
 
     def test_02_all_pdfs_timeout_outcome_classification(self) -> None:
-        """Multiple PDFs all timing out yields outcomes list with all 'timeout'."""
+        """Multiple PDFs all timing out yields outcomes with all 'count_failed'.
+
+        PE.3 NOTE: subprocess.run is now invoked twice per PDF (count +
+        extract_page). When TimeoutExpired fires on the FIRST subprocess
+        (count), the PDF never proceeds to per-page extraction and is
+        recorded as status='count_failed' (PE.3 vocabulary). Under PE.2
+        this case was recorded as status='timeout'."""
         paths = [Path("a.pdf"), Path("b.pdf")]
         with patch.object(M, "_resolve_engineering_plan_pdf_paths", return_value=paths):
             with patch.object(
@@ -89,30 +101,39 @@ class TestPE2BoundedRunner(unittest.TestCase):
                 topology, outcomes = M._build_plan_topology_for_session_with_outcomes("sid_test")
         self.assertEqual(topology, {})
         self.assertEqual(len(outcomes), 2)
-        self.assertTrue(all(o["status"] == "timeout" for o in outcomes))
+        self.assertTrue(all(o["status"] == "count_failed" for o in outcomes))
         self.assertTrue(all(o.get("path") in {"a.pdf", "b.pdf"} for o in outcomes))
 
     # ─── B. Success path ─────────────────────────────────────────────────
 
     def test_03_single_pdf_ok_yields_ok_outcome(self) -> None:
+        """PE.3: subprocess.run mocks must cover count + extract_page calls."""
         ml = [{"id": "ml_a"}]
         cl = [{"id": "cl_a"}]
-        proc = _mk_proc_result(0, stdout=_ok_payload(ml, cl))
+        results = [
+            _mk_proc_result(0, stdout=_count_payload(1)),       # count → 1 page
+            _mk_proc_result(0, stdout=_ok_payload(ml, cl)),     # page 0 → ok
+        ]
         with patch.object(M, "_resolve_engineering_plan_pdf_paths", return_value=[Path("a.pdf")]):
-            with patch.object(M.subprocess, "run", return_value=proc):
+            with patch.object(M.subprocess, "run", side_effect=results):
                 with patch.object(M._engineering_plan_parser, "derive_sheet_station_origins", return_value={0: {"sheet": "a"}}):
                     topology, outcomes = M._build_plan_topology_for_session_with_outcomes("sid_test")
         self.assertEqual(len(outcomes), 1)
         self.assertEqual(outcomes[0]["status"], "ok")
         self.assertEqual(outcomes[0]["matchlines"], ml)
         self.assertEqual(outcomes[0]["callouts"], cl)
+        self.assertEqual(outcomes[0]["pages_ok"], 1)
         self.assertEqual(topology, {0: {"sheet": "a"}})
 
     def test_04_multiple_pdfs_all_ok_merges_signals(self) -> None:
+        """PE.3: each PDF needs count + 1 extract_page subprocess mock."""
         proc_results = [
-            _mk_proc_result(0, stdout=_ok_payload([{"id": "a"}], [])),
-            _mk_proc_result(0, stdout=_ok_payload([{"id": "b"}], [])),
-            _mk_proc_result(0, stdout=_ok_payload([{"id": "c"}], [])),
+            _mk_proc_result(0, stdout=_count_payload(1)),                      # a.pdf count
+            _mk_proc_result(0, stdout=_ok_payload([{"id": "a"}], [])),         # a.pdf page 0
+            _mk_proc_result(0, stdout=_count_payload(1)),                      # b.pdf count
+            _mk_proc_result(0, stdout=_ok_payload([{"id": "b"}], [])),         # b.pdf page 0
+            _mk_proc_result(0, stdout=_count_payload(1)),                      # c.pdf count
+            _mk_proc_result(0, stdout=_ok_payload([{"id": "c"}], [])),         # c.pdf page 0
         ]
         paths = [Path("a.pdf"), Path("b.pdf"), Path("c.pdf")]
         with patch.object(M, "_resolve_engineering_plan_pdf_paths", return_value=paths):
@@ -127,11 +148,13 @@ class TestPE2BoundedRunner(unittest.TestCase):
     # ─── C. Partial extraction (LOAD-BEARING gate) ───────────────────────
 
     def test_05_partial_success_yields_partial_topology(self) -> None:
-        """PDF_0 ok, PDF_1 timeout, PDF_2 ok → only OK contributes."""
+        """PE.3: PDF_0 ok, PDF_1 count times out, PDF_2 ok. Only OK PDFs contribute."""
         proc_results = [
-            _mk_proc_result(0, stdout=_ok_payload([{"id": "a"}], [])),
-            subprocess.TimeoutExpired(cmd="x", timeout=1),
-            _mk_proc_result(0, stdout=_ok_payload([{"id": "c"}], [])),
+            _mk_proc_result(0, stdout=_count_payload(1)),                     # a.pdf count
+            _mk_proc_result(0, stdout=_ok_payload([{"id": "a"}], [])),        # a.pdf page 0
+            subprocess.TimeoutExpired(cmd="x", timeout=1),                    # b.pdf count fails
+            _mk_proc_result(0, stdout=_count_payload(1)),                     # c.pdf count
+            _mk_proc_result(0, stdout=_ok_payload([{"id": "c"}], [])),        # c.pdf page 0
         ]
         paths = [Path("a.pdf"), Path("b.pdf"), Path("c.pdf")]
         with patch.object(M, "_resolve_engineering_plan_pdf_paths", return_value=paths):
@@ -141,7 +164,9 @@ class TestPE2BoundedRunner(unittest.TestCase):
                     topology, outcomes = M._build_plan_topology_for_session_with_outcomes("sid_test")
         self.assertEqual(len(outcomes), 3)
         statuses = [o["status"] for o in outcomes]
-        self.assertEqual(statuses, ["ok", "timeout", "ok"])
+        # PE.3: count-subprocess timeout classifies the PDF as 'count_failed'
+        # (PDF couldn't be opened). Under PE.2 this was 'timeout'.
+        self.assertEqual(statuses, ["ok", "count_failed", "ok"])
         merged_ml = mock_derive.call_args[0][0]
         self.assertEqual(sorted(m["id"] for m in merged_ml), ["a", "c"])
         self.assertEqual(outcomes[1].get("path"), "b.pdf")
@@ -236,32 +261,56 @@ class TestPE2BoundedRunner(unittest.TestCase):
     # ─── D. Error and unparseable ─────────────────────────────────────────
 
     def test_08_worker_exception_recorded_as_error_status(self) -> None:
+        """PE.3: count returns ok then extract_page exit 1 → per-page status='error'.
+
+        Per-PDF aggregate becomes 'all_failed' when pages_ok==0 (no ok pages
+        contributed signals)."""
         err_payload = json.dumps({"ok": False, "error": "RuntimeError: simulated"})
-        proc = _mk_proc_result(1, stdout=err_payload)
+        results = [
+            _mk_proc_result(0, stdout=_count_payload(1)),  # count ok
+            _mk_proc_result(1, stdout=err_payload),         # page 0 error
+        ]
         with patch.object(M, "_resolve_engineering_plan_pdf_paths", return_value=[Path("a.pdf")]):
-            with patch.object(M.subprocess, "run", return_value=proc):
+            with patch.object(M.subprocess, "run", side_effect=results):
                 with patch.object(M._engineering_plan_parser, "derive_sheet_station_origins", return_value={}):
                     _, outcomes = M._build_plan_topology_for_session_with_outcomes("sid_test")
         self.assertEqual(len(outcomes), 1)
-        self.assertEqual(outcomes[0]["status"], "error")
-        self.assertIn("RuntimeError", outcomes[0]["error"])
+        # Per-PDF aggregate: all_failed (no pages ok).
+        self.assertEqual(outcomes[0]["status"], "all_failed")
+        # Per-page: error class with the RuntimeError string preserved.
+        self.assertEqual(outcomes[0]["pages_error"], 1)
+        self.assertEqual(outcomes[0]["page_outcomes"][0]["status"], "error")
+        self.assertIn("RuntimeError", outcomes[0]["page_outcomes"][0]["error"])
 
     def test_09_worker_unparseable_output_recorded_as_unparseable(self) -> None:
-        proc = _mk_proc_result(0, stdout="not valid json at all")
+        """PE.3: extract_page worker emitting non-JSON → per-page status='unparseable'."""
+        results = [
+            _mk_proc_result(0, stdout=_count_payload(1)),         # count ok
+            _mk_proc_result(0, stdout="not valid json at all"),   # page 0 unparseable
+        ]
         with patch.object(M, "_resolve_engineering_plan_pdf_paths", return_value=[Path("a.pdf")]):
-            with patch.object(M.subprocess, "run", return_value=proc):
+            with patch.object(M.subprocess, "run", side_effect=results):
                 with patch.object(M._engineering_plan_parser, "derive_sheet_station_origins", return_value={}):
                     _, outcomes = M._build_plan_topology_for_session_with_outcomes("sid_test")
-        self.assertEqual(outcomes[0]["status"], "unparseable")
+        # Per-PDF aggregate: all_failed (no ok pages).
+        self.assertEqual(outcomes[0]["status"], "all_failed")
+        # Per-page: unparseable status preserved.
+        self.assertEqual(outcomes[0]["page_outcomes"][0]["status"], "unparseable")
+        # 'unparseable' counts toward pages_error per PE.3 aggregation.
+        self.assertEqual(outcomes[0]["pages_error"], 1)
 
     def test_10_ok_with_zero_chars_is_not_failure(self) -> None:
-        """OK extraction with empty matchlines+callouts is valid (image-only PDF)."""
-        proc = _mk_proc_result(0, stdout=_ok_payload([], []))
+        """OK extraction with empty matchlines+callouts is valid (image-only page)."""
+        results = [
+            _mk_proc_result(0, stdout=_count_payload(1)),
+            _mk_proc_result(0, stdout=_ok_payload([], [])),
+        ]
         with patch.object(M, "_resolve_engineering_plan_pdf_paths", return_value=[Path("a.pdf")]):
-            with patch.object(M.subprocess, "run", return_value=proc):
+            with patch.object(M.subprocess, "run", side_effect=results):
                 with patch.object(M._engineering_plan_parser, "derive_sheet_station_origins", return_value={}):
                     _, outcomes = M._build_plan_topology_for_session_with_outcomes("sid_test")
-        self.assertEqual(outcomes[0]["status"], "ok")
+        self.assertEqual(outcomes[0]["status"], "ok")  # pages_ok >= 1 → ok
+        self.assertEqual(outcomes[0]["pages_ok"], 1)
         self.assertEqual(outcomes[0]["matchlines"], [])
         self.assertEqual(outcomes[0]["callouts"], [])
 

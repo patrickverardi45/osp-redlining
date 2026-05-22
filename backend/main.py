@@ -9337,19 +9337,29 @@ def _resolve_engineering_plan_pdf_paths(session_id: str) -> List[Path]:
 
 
 # ---------------------------------------------------------------------------
-# PE.2 — Bounded Plan Topology Runner
+# PE.2 / PE.3 — Bounded Plan Topology Runner
 # ---------------------------------------------------------------------------
-# Per-PDF subprocess + OS-level timeout so production request workers cannot
-# hang inside pdfminer's unbounded execution path. See
+# PE.2 (shipped): per-PDF subprocess + OS-level timeout so production request
+# workers cannot hang inside pdfminer's unbounded execution path. See
 # wiki/sprints/pe/pe-2-bounded-runner.md.
 #
+# PE.3: per-page subprocess granularity so a single pathological page no
+# longer invalidates an otherwise-useful PDF. The orchestrator drives a
+# per-page loop with a PDF-level circuit-breaker (total wallclock budget).
+# See wiki/sprints/pe/pe-3-per-page-runner.md +
+# wiki/sprints/pe/pe-3-implementation-packet-2026-05-20.md.
+#
 # Invariant: _build_plan_topology_for_session never runs unbounded.
-# Worst-case wallclock = _pe2_per_pdf_timeout_sec() * len(pdf_paths).
-# Partial extraction is acceptable: PDFs that time out or error contribute
-# nothing; successful PDFs still contribute their matchlines/callouts.
+# Worst-case wallclock = _pe3_per_pdf_total_budget_sec() * len(pdf_paths).
+# Partial extraction is acceptable at TWO levels:
+#   - per-PDF: PDFs whose `count` subprocess fails contribute nothing
+#   - per-page: pages that time out / error contribute nothing; sibling
+#               pages in the SAME PDF still contribute their signals
 # ---------------------------------------------------------------------------
 
 _PE2_DEFAULT_PER_PDF_TIMEOUT_SEC: int = 60
+_PE3_DEFAULT_PER_PAGE_TIMEOUT_SEC: int = 10
+_PE3_DEFAULT_PER_PDF_TOTAL_BUDGET_SEC: int = 60
 
 
 def _pe2_per_pdf_timeout_sec() -> int:
@@ -9357,6 +9367,11 @@ def _pe2_per_pdf_timeout_sec() -> int:
 
     Returns the configured per-PDF wallclock budget in seconds, or the
     default (60) if unset / invalid. Minimum value enforced is 1.
+
+    PE.3 NOTE: this env var is preserved for back-compat with the
+    `_extract_pdf_signals_bounded` wrapper signature; the PE.3 orchestrator
+    reads TRUELINE_PE3_PER_PAGE_TIMEOUT_SEC and
+    TRUELINE_PE3_PER_PDF_TOTAL_BUDGET_SEC directly.
     """
     raw = os.environ.get("TRUELINE_PE2_PER_PDF_TIMEOUT_SEC", "").strip()
     if not raw:
@@ -9367,41 +9382,68 @@ def _pe2_per_pdf_timeout_sec() -> int:
         return _PE2_DEFAULT_PER_PDF_TIMEOUT_SEC
 
 
+def _pe3_per_page_timeout_sec() -> int:
+    """Read TRUELINE_PE3_PER_PAGE_TIMEOUT_SEC at runtime (per call).
+
+    Per-page subprocess timeout. Default 10s; minimum 1s.
+    """
+    raw = os.environ.get("TRUELINE_PE3_PER_PAGE_TIMEOUT_SEC", "").strip()
+    if not raw:
+        return _PE3_DEFAULT_PER_PAGE_TIMEOUT_SEC
+    try:
+        return max(1, int(raw))
+    except ValueError:
+        return _PE3_DEFAULT_PER_PAGE_TIMEOUT_SEC
+
+
+def _pe3_per_pdf_total_budget_sec() -> int:
+    """Read TRUELINE_PE3_PER_PDF_TOTAL_BUDGET_SEC at runtime (per call).
+
+    PDF-level wallclock budget (circuit breaker). Default 60s; minimum 5s.
+    Back-compat: if TRUELINE_PE2_PER_PDF_TIMEOUT_SEC is set and the PE.3
+    env var is NOT set, the PE.2 value is used so legacy operators retain
+    a tuned per-PDF budget.
+    """
+    raw = os.environ.get("TRUELINE_PE3_PER_PDF_TOTAL_BUDGET_SEC", "").strip()
+    if raw:
+        try:
+            return max(5, int(raw))
+        except ValueError:
+            return _PE3_DEFAULT_PER_PDF_TOTAL_BUDGET_SEC
+    # PE.3 env var unset — fall back to PE.2 env var if set (back-compat).
+    pe2_raw = os.environ.get("TRUELINE_PE2_PER_PDF_TIMEOUT_SEC", "").strip()
+    if pe2_raw:
+        try:
+            return max(5, int(pe2_raw))
+        except ValueError:
+            pass
+    return _PE3_DEFAULT_PER_PDF_TOTAL_BUDGET_SEC
+
+
 _PE2_WORKER_PATH = Path(__file__).resolve().parent / "app" / "core" / "plan_topology_pdf_worker.py"
 
 
-def _extract_pdf_signals_bounded(pdf_path: Path, timeout_sec: int) -> Dict[str, Any]:
-    """Spawn the PE.2 worker subprocess against a single PDF.
+def _pe3_run_worker(args: List[str], timeout_sec: int) -> Dict[str, Any]:
+    """Run the per-page worker subprocess with given args + timeout.
 
-    Returns an outcome dict. Never raises. The orchestrator never blocks
-    longer than `timeout_sec` seconds because subprocess.run kills the
-    child via TerminateProcess (Windows) / SIGKILL (POSIX) on expiry.
+    Returns a normalized dict: {status, payload, elapsed_ms} where
+    status ∈ {"ok", "timeout", "error", "unparseable"}. Never raises.
 
-    Outcome shape:
-        {"status": "ok" | "timeout" | "error" | "unparseable",
-         "path": <filename>,
-         "elapsed_ms": int,
-         # only when status == "ok":
-         "matchlines": [...],
-         "callouts": [...],
-         # only when status in {error, unparseable}:
-         "error": <string>}
+    The orchestrator never blocks longer than `timeout_sec` seconds because
+    subprocess.run kills the child via TerminateProcess (Windows) /
+    SIGKILL (POSIX) on expiry.
     """
     t0 = time.perf_counter()
     try:
         proc = subprocess.run(
-            [sys.executable, str(_PE2_WORKER_PATH), str(pdf_path)],
+            [sys.executable, str(_PE2_WORKER_PATH)] + args,
             capture_output=True,
             text=True,
             timeout=timeout_sec,
         )
     except subprocess.TimeoutExpired:
         elapsed_ms = int((time.perf_counter() - t0) * 1000)
-        return {
-            "status": "timeout",
-            "path": pdf_path.name,
-            "elapsed_ms": elapsed_ms,
-        }
+        return {"status": "timeout", "payload": {}, "elapsed_ms": elapsed_ms}
 
     elapsed_ms = int((time.perf_counter() - t0) * 1000)
     stdout = (proc.stdout or "").strip()
@@ -9411,35 +9453,167 @@ def _extract_pdf_signals_bounded(pdf_path: Path, timeout_sec: int) -> Dict[str, 
     except json.JSONDecodeError:
         return {
             "status": "unparseable",
-            "path": pdf_path.name,
+            "payload": {"error": "worker stdout not parseable as JSON"},
             "elapsed_ms": elapsed_ms,
-            "error": "worker stdout not parseable as JSON",
         }
-
     if proc.returncode == 0 and payload and payload.get("ok"):
-        return {
-            "status": "ok",
-            "path": pdf_path.name,
-            "matchlines": payload.get("matchlines") or [],
-            "callouts": payload.get("callouts") or [],
-            "elapsed_ms": elapsed_ms,
-        }
+        return {"status": "ok", "payload": payload, "elapsed_ms": elapsed_ms}
     return {
         "status": "error",
-        "path": pdf_path.name,
+        "payload": payload or {"error": "(no payload)"},
         "elapsed_ms": elapsed_ms,
-        "error": (payload or {}).get("error", "(no payload)"),
     }
+
+
+def _extract_pdf_signals_per_page_bounded(
+    pdf_path: Path,
+    per_page_timeout_sec: int,
+    per_pdf_total_budget_sec: int,
+) -> Dict[str, Any]:
+    """PE.3 per-page bounded extraction with PDF-level circuit breaker.
+
+    Step 1: get page count via `count` subprocess (bounded by per_page_timeout_sec).
+            On failure → status="count_failed", no pages attempted.
+    Step 2: per-page loop. Each page invocation bounded by per_page_timeout_sec.
+            If cumulative PDF wallclock ≥ per_pdf_total_budget_sec → circuit
+            breaker fires; remaining pages recorded as status="skipped".
+    Step 3: aggregate per-page outcomes into per-PDF outcome dict.
+
+    Per-PDF outcome shape (mirrors PE.3 design §3.2):
+        {"path": <filename>,
+         "status": "ok" | "all_failed" | "count_failed",
+         "page_count": int,
+         "pages_ok": int, "pages_timeout": int,
+         "pages_error": int, "pages_skipped": int,
+         "page_outcomes": [<per-page dicts>],
+         "matchlines": [...], "callouts": [...],
+         "elapsed_ms": int,
+         "bounded_by": "natural_completion" | "per_pdf_total_budget" | "count_failed"}
+
+    Per-page outcome shape:
+        {"page_index": int, "status": str, "elapsed_ms": int,
+         "text_len": int, "error": Optional[str]}
+
+    Never raises; all error paths classified into the outcome dict.
+    """
+    pdf_t0 = time.perf_counter()
+
+    count_result = _pe3_run_worker(
+        ["count", str(pdf_path)], per_page_timeout_sec
+    )
+    if count_result["status"] != "ok":
+        elapsed_ms = int((time.perf_counter() - pdf_t0) * 1000)
+        return {
+            "path": pdf_path.name,
+            "status": "count_failed",
+            "page_count": 0,
+            "pages_ok": 0,
+            "pages_timeout": 0,
+            "pages_error": 0,
+            "pages_skipped": 0,
+            "page_outcomes": [],
+            "matchlines": [],
+            "callouts": [],
+            "elapsed_ms": elapsed_ms,
+            "bounded_by": "count_failed",
+        }
+
+    page_count = int(count_result["payload"].get("page_count", 0) or 0)
+    page_outcomes: List[Dict[str, Any]] = []
+    matchlines: List[Dict[str, Any]] = []
+    callouts: List[Dict[str, Any]] = []
+    pages_skipped_after: Optional[int] = None
+
+    for page_index in range(page_count):
+        elapsed_pdf = time.perf_counter() - pdf_t0
+        if elapsed_pdf >= per_pdf_total_budget_sec:
+            pages_skipped_after = page_index
+            break
+
+        page_result = _pe3_run_worker(
+            ["extract_page", str(pdf_path), str(page_index)],
+            per_page_timeout_sec,
+        )
+
+        if page_result["status"] == "ok":
+            matchlines.extend(page_result["payload"].get("matchlines") or [])
+            callouts.extend(page_result["payload"].get("callouts") or [])
+
+        page_outcomes.append({
+            "page_index": page_index,
+            "status": page_result["status"],
+            "elapsed_ms": page_result["elapsed_ms"],
+            "text_len": int(page_result["payload"].get("text_len", 0) or 0),
+            "error": page_result["payload"].get("error"),
+        })
+
+    if pages_skipped_after is not None:
+        for page_index in range(pages_skipped_after, page_count):
+            page_outcomes.append({
+                "page_index": page_index,
+                "status": "skipped",
+                "elapsed_ms": 0,
+                "text_len": 0,
+                "error": None,
+            })
+
+    pages_ok = sum(1 for o in page_outcomes if o["status"] == "ok")
+    pages_timeout = sum(1 for o in page_outcomes if o["status"] == "timeout")
+    pages_error = sum(1 for o in page_outcomes if o["status"] in ("error", "unparseable"))
+    pages_skipped = sum(1 for o in page_outcomes if o["status"] == "skipped")
+    elapsed_pdf_ms = int((time.perf_counter() - pdf_t0) * 1000)
+
+    if pages_skipped_after is not None:
+        bounded_by = "per_pdf_total_budget"
+    else:
+        bounded_by = "natural_completion"
+
+    return {
+        "path": pdf_path.name,
+        "status": "ok" if pages_ok > 0 else "all_failed",
+        "page_count": page_count,
+        "pages_ok": pages_ok,
+        "pages_timeout": pages_timeout,
+        "pages_error": pages_error,
+        "pages_skipped": pages_skipped,
+        "page_outcomes": page_outcomes,
+        "matchlines": matchlines,
+        "callouts": callouts,
+        "elapsed_ms": elapsed_pdf_ms,
+        "bounded_by": bounded_by,
+    }
+
+
+def _extract_pdf_signals_bounded(pdf_path: Path, timeout_sec: int) -> Dict[str, Any]:
+    """PE.2 → PE.3 back-compat wrapper. Preserves the per-PDF-timeout signature
+    for callers that don't separately tune per-page granularity. Delegates to
+    `_extract_pdf_signals_per_page_bounded` with:
+      - per_page_timeout_sec = min(timeout_sec, _pe3_per_page_timeout_sec())
+      - per_pdf_total_budget_sec = timeout_sec
+
+    The returned dict is a strict superset of the PE.2 outcome shape: existing
+    PE.2 readers see {status, path, elapsed_ms, matchlines, callouts} (status
+    semantics expanded — "count_failed" replaces the PE.2 "timeout" for the
+    PDF-can't-be-opened case; per-page "timeout" lives inside page_outcomes).
+    """
+    per_page_timeout = min(timeout_sec, _pe3_per_page_timeout_sec())
+    return _extract_pdf_signals_per_page_bounded(
+        pdf_path, per_page_timeout, timeout_sec
+    )
 
 
 def _build_plan_topology_for_session_with_outcomes(
     session_id: str,
 ) -> Tuple[Dict[int, Dict[str, Any]], List[Dict[str, Any]]]:
-    """Bounded per-PDF parser execution. Returns (topology, per_pdf_outcomes).
+    """PE.3 per-page bounded execution. Returns (topology, per_pdf_outcomes).
 
-    The outcomes list is used by callers (the rebuild path) to classify
-    topology_source. The topology itself is the merged sheet-origin map
-    derived from whichever PDFs returned cleanly.
+    Each per-PDF outcome dict includes a nested `page_outcomes` list (PE.3
+    addition) plus the existing PE.2 aggregate fields. The outcomes list is
+    used by callers (the rebuild path) to classify topology_source and to
+    feed cache_write with the v2 schema's pdf_outcomes + per_page_outcomes.
+
+    Signature unchanged from PE.2 so RI.3 / RI.4 callers and existing tests
+    continue to work; per-page detail surfaces via the nested page_outcomes.
     """
     if _engineering_plan_parser is None:
         return {}, []
@@ -9447,24 +9621,35 @@ def _build_plan_topology_for_session_with_outcomes(
     if not paths:
         return {}, []
 
-    timeout_sec = _pe2_per_pdf_timeout_sec()
+    per_page_timeout = _pe3_per_page_timeout_sec()
+    per_pdf_budget = _pe3_per_pdf_total_budget_sec()
     all_matchlines: List[Dict[str, Any]] = []
     all_callouts: List[Dict[str, Any]] = []
     per_pdf_outcomes: List[Dict[str, Any]] = []
 
     for p in paths:
-        outcome = _extract_pdf_signals_bounded(p, timeout_sec)
+        outcome = _extract_pdf_signals_per_page_bounded(
+            p, per_page_timeout, per_pdf_budget
+        )
         per_pdf_outcomes.append(outcome)
         if outcome.get("status") == "ok":
             all_matchlines.extend(outcome.get("matchlines") or [])
             all_callouts.extend(outcome.get("callouts") or [])
         logging.info(
-            "parser_pdf result=%s path=%s elapsed_ms=%s ml=%s cl=%s",
+            "parser_pdf result=%s path=%s elapsed_ms=%s ml=%s cl=%s "
+            "page_count=%s pages_ok=%s pages_timeout=%s pages_error=%s "
+            "pages_skipped=%s bounded_by=%s",
             outcome.get("status", "?"),
             outcome.get("path", "?"),
             outcome.get("elapsed_ms", 0),
             len(outcome.get("matchlines") or []),
             len(outcome.get("callouts") or []),
+            outcome.get("page_count", 0),
+            outcome.get("pages_ok", 0),
+            outcome.get("pages_timeout", 0),
+            outcome.get("pages_error", 0),
+            outcome.get("pages_skipped", 0),
+            outcome.get("bounded_by", "?"),
         )
 
     try:
@@ -10159,14 +10344,51 @@ def _rebuild_field_data_outputs(scope: RebuildScope = RebuildScope.FULL) -> None
                     _plan_sheet_origins, _per_pdf_outcomes = (
                         _build_plan_topology_for_session_with_outcomes(_session_id_hint)
                     )
+                    # PE.3: flatten per_page_outcomes from the nested
+                    # page_outcomes lists for cache schema v2 persistence.
+                    # Strip matchlines/callouts/page_outcomes from the
+                    # per-PDF outcomes that get cached (they're not needed
+                    # for downstream consumers; the page-level detail goes
+                    # into per_page_outcomes with pdf_index linkage).
+                    _pdf_outcomes_for_cache: List[Dict[str, Any]] = []
+                    _per_page_outcomes_for_cache: List[Dict[str, Any]] = []
+                    for _pdf_idx, _o in enumerate(_per_pdf_outcomes):
+                        _pdf_outcomes_for_cache.append({
+                            "pdf_index": _pdf_idx,
+                            "path": _o.get("path"),
+                            "status": _o.get("status"),
+                            "page_count": _o.get("page_count", 0),
+                            "pages_ok": _o.get("pages_ok", 0),
+                            "pages_timeout": _o.get("pages_timeout", 0),
+                            "pages_error": _o.get("pages_error", 0),
+                            "pages_skipped": _o.get("pages_skipped", 0),
+                            "total_matchlines": len(_o.get("matchlines") or []),
+                            "total_callouts": len(_o.get("callouts") or []),
+                            "elapsed_ms": _o.get("elapsed_ms", 0),
+                            "bounded_by": _o.get("bounded_by"),
+                        })
+                        for _po in (_o.get("page_outcomes") or []):
+                            _per_page_outcomes_for_cache.append({
+                                "pdf_index": _pdf_idx,
+                                "page_index": _po.get("page_index"),
+                                "status": _po.get("status"),
+                                "elapsed_ms": _po.get("elapsed_ms", 0),
+                                "text_len": _po.get("text_len", 0),
+                                "error": _po.get("error"),
+                            })
                     plan_topology_cache.cache_write(
                         _cache_file,
                         _signature,
                         _plan_sheet_origins,
                         plan_count=len(_eng_plans_for_session),
                         compute_duration_ms=0,
+                        pdf_outcomes=_pdf_outcomes_for_cache,
+                        per_page_outcomes=_per_page_outcomes_for_cache,
                     )
-                    # PE.2: classify based on per-PDF outcomes
+                    # PE.2/PE.3: classify based on per-PDF aggregate status.
+                    # PE.3 expands status vocabulary to include "all_failed"
+                    # and "count_failed"; both indicate the PDF contributed
+                    # no signals.
                     if not _per_pdf_outcomes:
                         _plan_topology_source = "cache_miss_computed"
                     else:
