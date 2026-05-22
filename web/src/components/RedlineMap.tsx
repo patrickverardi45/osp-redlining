@@ -3416,8 +3416,27 @@ ${fieldSubmissionPlacemarks.length > 0 ? buildFolder("Selected Field Submission"
         .filter((c): c is string => Boolean(c));
       if (coordinates.length < 2) return;
       const name = cleanDisplayText(segment.source_file || segment.segment_id || `Redline ${idx + 1}`);
+      const coordsStr = coordinates.join(" ");
+      // F7-final cleanup Gate 4 (2026-05-22) — Two-placemark casing pattern
+      // for visual dominance. Casing emitted FIRST with drawOrder=999 (above
+      // source linework at default 0, below the red main line at 1000); main
+      // emitted SECOND with drawOrder=1000 (existing R7g+R7h contract).
+      // Z-stack at render: source (0) → casing white halo (999) → red main
+      // (1000). The red line therefore reads as a solid top overlay with a
+      // visible halo against blue/green source linework regardless of
+      // underlay density.
+      //
+      // Both placemarks share identical coordinates and live in the same
+      // single Redlines folder (Gate 1 cadence: visibility=1, open=0 — single
+      // checkbox toggles both). Casing has no <name> to minimize Places
+      // panel clutter when the folder is manually expanded; Google Earth
+      // shows nameless casing entries as "Untitled Placemark" — acceptable
+      // since the folder defaults collapsed per Gate 1+2+3.
       redlinePlacemarks.push(
-        `      <Placemark>\n        <name>${escapeXml(`Redline - ${name}`)}</name>\n        <styleUrl>#engRedlineStyle</styleUrl>\n        <gx:drawOrder>1000</gx:drawOrder>\n        <LineString><tessellate>1</tessellate><coordinates>${coordinates.join(" ")}</coordinates></LineString>\n      </Placemark>`,
+        `      <Placemark>\n        <styleUrl>#engRedlineCasingStyle</styleUrl>\n        <gx:drawOrder>999</gx:drawOrder>\n        <LineString><tessellate>1</tessellate><coordinates>${coordsStr}</coordinates></LineString>\n      </Placemark>`,
+      );
+      redlinePlacemarks.push(
+        `      <Placemark>\n        <name>${escapeXml(`Redline - ${name}`)}</name>\n        <styleUrl>#engRedlineStyle</styleUrl>\n        <gx:drawOrder>1000</gx:drawOrder>\n        <LineString><tessellate>1</tessellate><coordinates>${coordsStr}</coordinates></LineString>\n      </Placemark>`,
       );
     });
 
@@ -3441,6 +3460,14 @@ ${fieldSubmissionPlacemarks.length > 0 ? buildFolder("Selected Field Submission"
     </Style>
     <Style id="engRedlineStyle">
       <LineStyle><color>ff0000ff</color><width>8</width></LineStyle>
+    </Style>
+    <Style id="engRedlineCasingStyle">
+      <!-- F7-final cleanup Gate 4 (2026-05-22) — White halo casing emitted -->
+      <!-- BELOW the main red engRedlineStyle (drawOrder 999 vs 1000) so the -->
+      <!-- red main line reads as a solid top layer with high-contrast halo -->
+      <!-- against blue/green source linework. width=14 = 6px of casing -->
+      <!-- visible (3px each side of the 8px main). -->
+      <LineStyle><color>ffffffff</color><width>14</width></LineStyle>
     </Style>
     <Style id="engPhotoStyle">
       <IconStyle><scale>0.9</scale></IconStyle>
