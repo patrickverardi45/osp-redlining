@@ -3105,12 +3105,12 @@ ${fieldSubmissionPlacemarks.length > 0 ? buildFolder("Selected Field Submission"
       if (coordinates.length < 2) return;
       const name = cleanDisplayText(segment.source_file || segment.segment_id || `Redline ${idx + 1}`);
       redlinePlacemarks.push(
-        `      <Placemark>\n        <name>${escapeXml(`Redline - ${name}`)}</name>\n        <styleUrl>#engRedlineStyle</styleUrl>\n        <LineString><tessellate>1</tessellate><coordinates>${coordinates.join(" ")}</coordinates></LineString>\n      </Placemark>`,
+        `      <Placemark>\n        <name>${escapeXml(`Redline - ${name}`)}</name>\n        <styleUrl>#engRedlineStyle</styleUrl>\n        <gx:drawOrder>1000</gx:drawOrder>\n        <LineString><tessellate>1</tessellate><coordinates>${coordinates.join(" ")}</coordinates></LineString>\n      </Placemark>`,
       );
     });
 
     const kml = `<?xml version="1.0" encoding="UTF-8"?>
-<kml xmlns="http://www.opengis.net/kml/2.2">
+<kml xmlns="http://www.opengis.net/kml/2.2" xmlns:gx="http://www.google.com/kml/ext/2.2">
   <Document>
     <name>${escapeXml("Engineering KMZ Context + Redlines")}</name>
     <Style id="engLineStyle">
