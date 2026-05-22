@@ -2846,18 +2846,23 @@ ${fieldSubmissionPlacemarks.length > 0 ? buildFolder("Selected Field Submission"
     // header without changing source semantics below.
     const ENG_CONTEXT_WRAPPER = "Engineering Context";
 
-    // F7-final cleanup (2026-05-22) — Folder names that should be VISIBLE by
-    // default at customer demo open. Derived from operator's stated mapping +
-    // direct Brenham fixture inspection (Nodes/Terminal Port Handhole,
-    // Connections/{Backbone,Terminal Tail,House Drop}). All other source
-    // leaves emit visibility=0; branch folders (no direct placemarks) always
-    // emit visibility=1 so their descendants' checkbox states are honored.
+    // F7-final cleanup Gate 2 (2026-05-22) — Folder names that should be
+    // VISIBLE by default at customer demo open. Tightened from Gate 1 after
+    // operator screenshot review of Google Earth Pro first-load state:
+    // "Terminal Port Handhole" + "House Drop" produced icon spam (pink node
+    // markers + orange drop markers) and have been removed from the default
+    // set. "underground cable" added per operator instinct that it represents
+    // useful route/fiber-path line context. Exact case matters — Set lookup is
+    // case-sensitive in JS; Brenham source folder is lowercase "underground
+    // cable" (verified by direct fixture inspection 2026-05-22). All other
+    // source leaves emit visibility=0; branch folders (no direct placemarks)
+    // always emit visibility=1 so their descendants' checkbox states are
+    // honored.
     const DEFAULT_VISIBLE_FOLDER_NAMES = new Set<string>([
       ENG_CONTEXT_WRAPPER,
       "Backbone",
-      "Terminal Port Handhole",
       "Terminal Tail",
-      "House Drop",
+      "underground cable",
     ]);
 
     // Replace the source Document-name root with the ENG_CONTEXT_WRAPPER label.
@@ -3082,8 +3087,19 @@ ${fieldSubmissionPlacemarks.length > 0 ? buildFolder("Selected Field Submission"
       const polyDescriptionXml = polyIsBoundary
         ? ""
         : `        <description>${engMeta(poly)}</description>\n`;
+      // F7-final cleanup Gate 2 (2026-05-22) — Per-Placemark visibility=0 on
+      // boundary polygons. Parent folder visibility (Engineering Context
+      // wrapper or any nested branch) stays =1 so descendant checkboxes
+      // function; per-Placemark <visibility>0</visibility> overrides folder
+      // visibility for the polygon itself. Operator can re-check individual
+      // polygons via the Places-panel placemark entry if needed. Stops the
+      // "huge green polygon fill" first-load clutter without altering
+      // ingestion semantics or removing polygons from the export.
+      const polyVisibilityXml = polyIsBoundary
+        ? "        <visibility>0</visibility>\n"
+        : "";
       getFolderBucket(normalizeFolderPath(poly.folder_path)).push(
-        `      <Placemark>\n        <name>${escapeXml(name)}</name>\n${polyDescriptionXml}        <styleUrl>#${polyStyleId}</styleUrl>\n        <Polygon><tessellate>1</tessellate><outerBoundaryIs><LinearRing><coordinates>${outer.join(" ")}</coordinates></LinearRing></outerBoundaryIs>${innerRingsXml ? "\n" + innerRingsXml : ""}\n        </Polygon>\n      </Placemark>`,
+        `      <Placemark>\n        <name>${escapeXml(name)}</name>\n${polyVisibilityXml}${polyDescriptionXml}        <styleUrl>#${polyStyleId}</styleUrl>\n        <Polygon><tessellate>1</tessellate><outerBoundaryIs><LinearRing><coordinates>${outer.join(" ")}</coordinates></LinearRing></outerBoundaryIs>${innerRingsXml ? "\n" + innerRingsXml : ""}\n        </Polygon>\n      </Placemark>`,
       );
     }
 
