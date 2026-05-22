@@ -1045,6 +1045,32 @@ function OfficeRedlineMapInner({
   const [busy, setBusy] = useState(false);
   const [statusTone, setStatusTone] = useState<NoteTone>("neutral");
   const [statusText, setStatusText] = useState("Connecting to local beta backend...");
+
+  // PT.IU R2 — operator-visible diagnostic for the engineering-plan PDF upload
+  // flow. Mirrors the 5 structured `[eng-plan-upload]` console events into
+  // visible UI so failures (CORS, missing NEXT_PUBLIC_API_BASE, JWT, 413, 500)
+  // are diagnosable without DevTools. The panel renders adjacent to the
+  // Upload button below; only the most recent event is shown.
+  type EngUploadDiag = {
+    event:
+      | "upload_start"
+      | "upload_success"
+      | "upload_failed"
+      | "non_json_response"
+      | "upload_exception";
+    ts: string;
+    direct_to_render?: boolean;
+    target?: string;
+    file_count?: number;
+    total_mb?: number;
+    status?: number;
+    backend_error?: string;
+    body_snippet?: string;
+    message?: string;
+    uploaded_count?: number;
+    elapsed_ms?: number;
+  };
+  const [engUploadDiag, setEngUploadDiag] = useState<EngUploadDiag | null>(null);
   const [jobLabel, setJobLabel] = useState("");
   const [notes, setNotes] = useState("");
   const [operatorNotesNotRequired, setOperatorNotesNotRequired] = useState(false);
@@ -3672,6 +3698,15 @@ ${redlinePlacemarks.length > 0 ? buildEngFolder("As-Built Redlines", redlinePlac
       total_bytes: totalBytes,
       total_mb: Number((totalBytes / (1024 * 1024)).toFixed(2)),
     });
+    // PT.IU R2 — mirror the structured event into operator-visible state.
+    setEngUploadDiag({
+      event: "upload_start",
+      ts: new Date().toISOString(),
+      target: uploadUrl,
+      direct_to_render: directToRender,
+      file_count: files.length,
+      total_mb: Number((totalBytes / (1024 * 1024)).toFixed(2)),
+    });
 
     setEngPlansBusy(true);
     setStatusText(`Uploading ${files.length} engineering plan file${files.length > 1 ? "s" : ""}...`);
@@ -3698,6 +3733,14 @@ ${redlinePlacemarks.length > 0 ? buildEngFolder("As-Built Redlines", redlinePlac
           status: response.status,
           body_snippet: snippet,
         });
+        setEngUploadDiag({
+          event: "non_json_response",
+          ts: new Date().toISOString(),
+          target: uploadUrl,
+          direct_to_render: directToRender,
+          status: response.status,
+          body_snippet: snippet,
+        });
         throw new Error(`Engineering plan upload failed (${response.status}): ${snippet}`);
       }
       acceptSessionFromMutation(data, projectId);
@@ -3706,6 +3749,14 @@ ${redlinePlacemarks.length > 0 ? buildEngFolder("As-Built Redlines", redlinePlac
           event: "upload_failed",
           ts: new Date().toISOString(),
           target: uploadUrl,
+          status: response.status,
+          backend_error: data.error,
+        });
+        setEngUploadDiag({
+          event: "upload_failed",
+          ts: new Date().toISOString(),
+          target: uploadUrl,
+          direct_to_render: directToRender,
           status: response.status,
           backend_error: data.error,
         });
@@ -3725,6 +3776,15 @@ ${redlinePlacemarks.length > 0 ? buildEngFolder("As-Built Redlines", redlinePlac
         uploaded_count: data.engineering_plans?.length ?? 0,
         elapsed_ms: Date.now() - uploadStartedAt,
       });
+      setEngUploadDiag({
+        event: "upload_success",
+        ts: new Date().toISOString(),
+        target: uploadUrl,
+        direct_to_render: directToRender,
+        status: response.status,
+        uploaded_count: data.engineering_plans?.length ?? 0,
+        elapsed_ms: Date.now() - uploadStartedAt,
+      });
       setStatusText(String(data.message || "Engineering plans uploaded successfully."));
       setStatusTone("success");
     } catch (error) {
@@ -3733,6 +3793,14 @@ ${redlinePlacemarks.length > 0 ? buildEngFolder("As-Built Redlines", redlinePlac
         ts: new Date().toISOString(),
         target: uploadUrl,
         message: error instanceof Error ? error.message : "Unknown error",
+      });
+      setEngUploadDiag({
+        event: "upload_exception",
+        ts: new Date().toISOString(),
+        target: uploadUrl,
+        direct_to_render: directToRender,
+        message: error instanceof Error ? error.message : "Unknown error",
+        elapsed_ms: Date.now() - uploadStartedAt,
       });
       setStatusText(error instanceof Error ? error.message : "Engineering plan upload failed.");
       setStatusTone("error");
@@ -4596,6 +4664,72 @@ ${redlinePlacemarks.length > 0 ? buildEngFolder("As-Built Redlines", redlinePlac
                     />
                     {engPlansBusy ? "Uploading..." : "Upload Engineering Plan PDFs"}
                   </label>
+                  {engUploadDiag && (
+                    <div
+                      style={{
+                        marginTop: 8,
+                        padding: "8px 10px",
+                        border: "1px solid #1e293b",
+                        borderRadius: 6,
+                        background: "#0b1220",
+                        fontSize: 11,
+                        color: "#e2e8f0",
+                        fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+                        lineHeight: 1.4,
+                        wordBreak: "break-all",
+                      }}
+                    >
+                      <div style={{ marginBottom: 4 }}>
+                        <strong
+                          style={{
+                            color:
+                              engUploadDiag.event === "upload_success"
+                                ? "#86efac"
+                                : engUploadDiag.event === "upload_start"
+                                  ? "#93c5fd"
+                                  : "#fca5a5",
+                          }}
+                        >
+                          {engUploadDiag.event}
+                        </strong>
+                        <span style={{ color: "#94a3b8", marginLeft: 8 }}>
+                          {engUploadDiag.ts}
+                        </span>
+                      </div>
+                      {engUploadDiag.direct_to_render !== undefined && (
+                        <div>
+                          direct_to_render: <strong>{String(engUploadDiag.direct_to_render)}</strong>
+                        </div>
+                      )}
+                      {engUploadDiag.target && <div>target: {engUploadDiag.target}</div>}
+                      {engUploadDiag.file_count !== undefined && (
+                        <div>
+                          files: {engUploadDiag.file_count}
+                          {engUploadDiag.total_mb !== undefined
+                            ? ` (${engUploadDiag.total_mb} MB)`
+                            : ""}
+                        </div>
+                      )}
+                      {engUploadDiag.status !== undefined && (
+                        <div>http status: {engUploadDiag.status}</div>
+                      )}
+                      {engUploadDiag.backend_error && (
+                        <div>backend_error: {engUploadDiag.backend_error}</div>
+                      )}
+                      {engUploadDiag.body_snippet && (
+                        <div>body_snippet: {engUploadDiag.body_snippet}</div>
+                      )}
+                      {engUploadDiag.message && (
+                        <div>message: {engUploadDiag.message}</div>
+                      )}
+                      {engUploadDiag.uploaded_count !== undefined && (
+                        <div>uploaded_count: {engUploadDiag.uploaded_count}</div>
+                      )}
+                      {engUploadDiag.elapsed_ms !== undefined && (
+                        <div>elapsed_ms: {engUploadDiag.elapsed_ms}</div>
+                      )}
+                    </div>
+                  )}
                   {(state?.engineering_plans?.length ?? 0) === 0 ? (
                     <div style={{ fontSize: 13, color: "#94a3b8" }}>No plans uploaded for this session.</div>
                   ) : (
