@@ -1,0 +1,6 @@
+# Test harness output — ignore everything in this directory except this gitignore.
+# F7f export fidelity reports (f7f_fidelity_report.{json,md}) and any other
+# generated test artifacts are regenerated on each pytest run and should never
+# be committed.
+*
+!.gitignore
