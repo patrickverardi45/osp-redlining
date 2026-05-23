@@ -49,6 +49,10 @@ import { toMoney } from "@/lib/format/money";
 import { extractGps } from "@/lib/photos/exif";
 import { acceptSessionFromMutation, appendSessionId, appendSessionIdReadOnly, appendSessionIdToForm, getStoredSessionId, peekSessionId } from "@/lib/session";
 import { apiFetch } from "@/lib/apiFetch";
+// PT.IU R3 — token-presence helpers for the upload diagnostic panel.
+// Read-only boolean checks; token VALUES are never displayed.
+import { getAccessToken } from "@/lib/accessToken";
+import { getPilotToken } from "@/lib/pilotToken";
 import type { PipelineDiagEntry, EngineeringPlanSignal, QaFlagItem } from "@/lib/types/nova";
 import { buildNovaSummary } from "@/lib/nova/buildNovaSummary";
 import CloseoutPacket from "@/components/CloseoutPacket";
@@ -1045,6 +1049,190 @@ function OfficeRedlineMapInner({
   const [busy, setBusy] = useState(false);
   const [statusTone, setStatusTone] = useState<NoteTone>("neutral");
   const [statusText, setStatusText] = useState("Connecting to local beta backend...");
+
+  // PT.IU R2 — operator-visible diagnostic for the engineering-plan PDF upload
+  // flow. Mirrors the 5 structured `[eng-plan-upload]` console events into
+  // visible UI so failures (CORS, missing NEXT_PUBLIC_API_BASE, JWT, 413, 500)
+  // are diagnosable without DevTools. The panel renders adjacent to the
+  // Upload button below; only the most recent event is shown.
+  //
+  // PT.IU R3 — extended with browser/runtime context (origin, href, UA,
+  // build-time NEXT_PUBLIC_API_BASE, token-presence boolean, planned request
+  // header names, failure_class heuristic) plus a manual probe button result.
+  // None of these expose token values. The probe button fires a real
+  // direct-to-Render GET via apiFetch so the operator can see — from inside
+  // the actual browser context — whether the cross-origin/preflight/auth path
+  // works for a non-upload request.
+  type EngUploadProbeResult =
+    | { state: "probing"; ts: string }
+    | { state: "ok"; ts: string; status: number; elapsed_ms: number }
+    | { state: "http_error"; ts: string; status: number; elapsed_ms: number; body_snippet?: string }
+    | { state: "exception"; ts: string; message: string; elapsed_ms: number };
+  type EngUploadDiag = {
+    event:
+      | "upload_start"
+      | "upload_success"
+      | "upload_failed"
+      | "non_json_response"
+      | "upload_exception";
+    ts: string;
+    direct_to_render?: boolean;
+    target?: string;
+    file_count?: number;
+    total_mb?: number;
+    status?: number;
+    backend_error?: string;
+    body_snippet?: string;
+    message?: string;
+    uploaded_count?: number;
+    elapsed_ms?: number;
+    // PT.IU R3 — browser / runtime context
+    origin?: string;
+    href?: string;
+    user_agent_short?: string;
+    next_public_api_base?: string;
+    access_token_present?: boolean;
+    request_header_names?: string[];
+    // PT.IU R3 — failure-class heuristic computed in upload_exception
+    failure_class?:
+      | "likely_cors_or_network_or_browser_blocked"
+      | "likely_timeout_or_abort"
+      | "likely_offline"
+      | "other";
+    // PT.IU R3 — in-page probe result (manual button)
+    probe_result?: EngUploadProbeResult;
+  };
+  const [engUploadDiag, setEngUploadDiag] = useState<EngUploadDiag | null>(null);
+
+  // PT.IU R3 — capture build-time + browser/runtime context the diagnostic
+  // panel renders. All read-only; nothing here reads token VALUES.
+  function _engUploadEnvSnapshot() {
+    if (typeof window === "undefined") {
+      return {
+        origin: "(ssr)",
+        href: "(ssr)",
+        user_agent_short: "(ssr)",
+        next_public_api_base:
+          process.env.NEXT_PUBLIC_API_BASE ||
+          process.env.NEXT_PUBLIC_API_BASE_URL ||
+          "(unset)",
+        access_token_present: false,
+        request_header_names: [] as string[],
+      };
+    }
+    const accessToken = getAccessToken();
+    const pilotToken = !accessToken ? getPilotToken() : null;
+    const tokenPresent = Boolean(accessToken) || Boolean(pilotToken);
+    const headerNames: string[] = [];
+    if (tokenPresent) headerNames.push("authorization");
+    headerNames.push("x-tl-request-id");
+    headerNames.push("content-type (auto: multipart/form-data; boundary=...)");
+    const ua = (window.navigator && window.navigator.userAgent) || "";
+    return {
+      origin: window.location.origin,
+      href: window.location.href,
+      user_agent_short: ua.length > 140 ? ua.slice(0, 137) + "..." : ua,
+      next_public_api_base:
+        process.env.NEXT_PUBLIC_API_BASE ||
+        process.env.NEXT_PUBLIC_API_BASE_URL ||
+        "(unset)",
+      access_token_present: tokenPresent,
+      request_header_names: headerNames,
+    };
+  }
+
+  // PT.IU R3 — heuristic classifier for the upload_exception path. Pure
+  // text-pattern matching on the thrown error message; raw message is still
+  // displayed alongside the class.
+  function _classifyUploadException(error: unknown): EngUploadDiag["failure_class"] {
+    const msg = error instanceof Error ? error.message : String(error || "");
+    if (/failed to fetch|networkerror|load failed/i.test(msg)) {
+      return "likely_cors_or_network_or_browser_blocked";
+    }
+    if (/timeout|timed out|aborted/i.test(msg)) {
+      return "likely_timeout_or_abort";
+    }
+    if (/offline|disconnected/i.test(msg)) {
+      return "likely_offline";
+    }
+    return "other";
+  }
+
+  // PT.IU R3 — manual probe button handler. Fires a direct-to-Render GET
+  // against /api/current-state through apiFetch so the operator can see —
+  // from inside the same browser context the upload uses — whether the
+  // cross-origin + JWT + preflight (via x-tl-request-id custom header) path
+  // is healthy for a non-upload request. Result is written into
+  // engUploadDiag.probe_result; original event/start fields are preserved
+  // so the panel keeps showing what the operator was diagnosing.
+  async function handleEngUploadProbe() {
+    const env = _engUploadEnvSnapshot();
+    const renderBase = (env.next_public_api_base === "(unset)" ? "" : env.next_public_api_base).replace(/\/+$/, "");
+    if (!renderBase) {
+      // Caller would have no direct-to-Render path to probe — surface that.
+      setEngUploadDiag((prev) => ({
+        ...(prev ?? { event: "upload_exception", ts: new Date().toISOString() }),
+        ...env,
+        probe_result: {
+          state: "exception",
+          ts: new Date().toISOString(),
+          message:
+            "NEXT_PUBLIC_API_BASE is not set in this build — no direct-to-Render base to probe.",
+          elapsed_ms: 0,
+        },
+      }));
+      return;
+    }
+    const probeUrl = `${renderBase}/api/current-state`;
+    setEngUploadDiag((prev) => ({
+      ...(prev ?? { event: "upload_start", ts: new Date().toISOString() }),
+      ...env,
+      probe_result: { state: "probing", ts: new Date().toISOString() },
+    }));
+    const startedAt = Date.now();
+    try {
+      const resp = await apiFetch(probeUrl, { method: "GET" });
+      const elapsed = Date.now() - startedAt;
+      if (resp.ok) {
+        setEngUploadDiag((prev) => ({
+          ...(prev ?? { event: "upload_start", ts: new Date().toISOString() }),
+          ...env,
+          probe_result: {
+            state: "ok",
+            ts: new Date().toISOString(),
+            status: resp.status,
+            elapsed_ms: elapsed,
+          },
+        }));
+      } else {
+        const txt = await resp.text().catch(() => "");
+        const snippet = txt.slice(0, 200).trim();
+        setEngUploadDiag((prev) => ({
+          ...(prev ?? { event: "upload_start", ts: new Date().toISOString() }),
+          ...env,
+          probe_result: {
+            state: "http_error",
+            ts: new Date().toISOString(),
+            status: resp.status,
+            elapsed_ms: elapsed,
+            body_snippet: snippet || undefined,
+          },
+        }));
+      }
+    } catch (error) {
+      const elapsed = Date.now() - startedAt;
+      setEngUploadDiag((prev) => ({
+        ...(prev ?? { event: "upload_start", ts: new Date().toISOString() }),
+        ...env,
+        probe_result: {
+          state: "exception",
+          ts: new Date().toISOString(),
+          message: error instanceof Error ? error.message : String(error || "(unknown)"),
+          elapsed_ms: elapsed,
+        },
+      }));
+    }
+  }
   const [jobLabel, setJobLabel] = useState("");
   const [notes, setNotes] = useState("");
   const [operatorNotesNotRequired, setOperatorNotesNotRequired] = useState(false);
@@ -2650,6 +2838,65 @@ ${fieldSubmissionPlacemarks.length > 0 ? buildFolder("Selected Field Submission"
     const buildEngFolder = (name: string, marks: string[], visibility: 0 | 1 = 1, open: 0 | 1 = 0) =>
       `    <Folder>\n      <name>${escapeXml(name)}</name>\n      <visibility>${visibility}</visibility>\n      <open>${open}</open>\n${marks.join("\n")}\n    </Folder>`;
 
+    // F7-final cleanup (2026-05-22) — Customer-facing root wrapper that
+    // replaces the source <Document name> (e.g., "Brenham, TX - Phase 5_Design
+    // Team") at the top of the exported source folder tree. Operator's
+    // screenshot review found long path-like labels in Google Earth's Places
+    // panel were noisy; "Engineering Context" gives a stable demo-friendly
+    // header without changing source semantics below.
+    const ENG_CONTEXT_WRAPPER = "Engineering Context";
+
+    // F7-final cleanup Gate 2 (2026-05-22) — Folder names that should be
+    // VISIBLE by default at customer demo open. Tightened from Gate 1 after
+    // operator screenshot review of Google Earth Pro first-load state:
+    // "Terminal Port Handhole" + "House Drop" produced icon spam (pink node
+    // markers + orange drop markers) and have been removed from the default
+    // set. "underground cable" added per operator instinct that it represents
+    // useful route/fiber-path line context. Exact case matters — Set lookup is
+    // case-sensitive in JS; Brenham source folder is lowercase "underground
+    // cable" (verified by direct fixture inspection 2026-05-22). All other
+    // source leaves emit visibility=0; branch folders (no direct placemarks)
+    // always emit visibility=1 so their descendants' checkbox states are
+    // honored.
+    const DEFAULT_VISIBLE_FOLDER_NAMES = new Set<string>([
+      ENG_CONTEXT_WRAPPER,
+      "Backbone",
+      "Terminal Tail",
+      "underground cable",
+    ]);
+
+    // Replace the source Document-name root with the ENG_CONTEXT_WRAPPER label.
+    // Preserves all source nesting below (e.g., ["X","Nodes","Business"] →
+    // ["Engineering Context","Nodes","Business"]). Empty paths fall through to
+    // the existing "Uncategorized" fallback in getFolderBucket — unchanged.
+    const normalizeFolderPath = (fp: string[]): string[] => {
+      const path = fp ?? [];
+      if (path.length === 0) return path;
+      return [ENG_CONTEXT_WRAPPER, ...path.slice(1)];
+    };
+
+    // F7-final cleanup Gate 3 (2026-05-22) — Determines whether a source-
+    // derived placemark should emit explicit <visibility>0</visibility> on
+    // first render. Belt-and-suspenders measure: Google Earth Pro was
+    // observed to preserve prior checkbox state on a folder (e.g., Stations
+    // appearing checked despite Gate 1+2 emitting folder vis=0), bypassing
+    // the folder-level visibility. Per-Placemark <visibility>0</visibility>
+    // overrides the inherited folder runtime state on FIRST LOAD. A user
+    // explicitly toggling the folder still reveals these placemarks normally
+    // — visibility on a Placemark is the INITIAL state, not a runtime lock.
+    //
+    // Rule: hide the placemark iff its NORMALIZED leaf folder is NOT in
+    // DEFAULT_VISIBLE_FOLDER_NAMES. Empty path (Uncategorized fallback) is
+    // also hidden. Backbone / Terminal Tail / underground cable placemarks
+    // continue to emit no <visibility> element and inherit visibility=1 from
+    // their folder (visible on first load).
+    const shouldExplicitlyHidePlacemark = (fp: string[]): boolean => {
+      const normalized = normalizeFolderPath(fp);
+      if (normalized.length === 0) return true;
+      const leaf = normalized[normalized.length - 1];
+      return !DEFAULT_VISIBLE_FOLDER_NAMES.has(leaf);
+    };
+
     // Build metadata description table for any engineering feature.
     const engMeta = (f: {
       description: string;
@@ -2746,7 +2993,13 @@ ${fieldSubmissionPlacemarks.length > 0 ? buildFolder("Selected Field Submission"
     // Recursive nested-folder emitter. Child folders emitted before sibling
     // placemarks (matches source XML convention). Indentation is cosmetic only —
     // KML is whitespace-insensitive; Google Earth parses structure regardless.
-    const emitFolder = (node: FolderNode, indent: string, visibility: 0 | 1 = 0, open: 0 | 1 = 0): string => {
+    //
+    // F7-final cleanup (2026-05-22) — Per-node default visibility is now
+    // computed from node shape (branch vs data leaf) + DEFAULT_VISIBLE_FOLDER_NAMES.
+    // Branch nodes (no direct placemarks) always visibility=1 so descendant
+    // checkboxes function; data leaves visibility=1 iff in the set, else 0.
+    // All folders open=0 (collapsed) so the Places panel is not pre-expanded.
+    const emitFolder = (node: FolderNode, indent: string): string => {
       const childBlocks: string[] = [];
       for (const child of node.children.values()) {
         if (folderIsEmpty(child)) continue;
@@ -2754,6 +3007,10 @@ ${fieldSubmissionPlacemarks.length > 0 ? buildFolder("Selected Field Submission"
       }
       const innerParts: string[] = [...childBlocks, ...node.placemarks];
       const inner = innerParts.length > 0 ? innerParts.join("\n") : "";
+      const isDataLeaf = node.placemarks.length > 0;
+      const inVisibleSet = DEFAULT_VISIBLE_FOLDER_NAMES.has(node.name);
+      const visibility: 0 | 1 = (!isDataLeaf || inVisibleSet) ? 1 : 0;
+      const open: 0 | 1 = 0;
       return `${indent}<Folder>\n${indent}  <name>${escapeXml(node.name)}</name>\n${indent}  <visibility>${visibility}</visibility>\n${indent}  <open>${open}</open>\n${inner}\n${indent}</Folder>`;
     };
 
@@ -2790,8 +3047,11 @@ ${fieldSubmissionPlacemarks.length > 0 ? buildFolder("Selected Field Submission"
         ptStyleUrl = `#${ptStyleId}`;
         referencedHrefs.add(pt.icon_href);
       }
-      getFolderBucket(pt.folder_path).push(
-        `      <Placemark>\n        <name>${escapeXml(name)}</name>\n        <description>${engMeta(pt)}</description>\n        <styleUrl>${ptStyleUrl}</styleUrl>\n        <Point><coordinates>${coord}</coordinates></Point>\n      </Placemark>`,
+      const ptVisibilityXml = shouldExplicitlyHidePlacemark(pt.folder_path)
+        ? "        <visibility>0</visibility>\n"
+        : "";
+      getFolderBucket(normalizeFolderPath(pt.folder_path)).push(
+        `      <Placemark>\n        <name>${escapeXml(name)}</name>\n${ptVisibilityXml}        <description>${engMeta(pt)}</description>\n        <styleUrl>${ptStyleUrl}</styleUrl>\n        <Point><coordinates>${coord}</coordinates></Point>\n      </Placemark>`,
       );
     }
 
@@ -2809,8 +3069,11 @@ ${fieldSubmissionPlacemarks.length > 0 ? buildFolder("Selected Field Submission"
       featureStyles.push(
         `    <Style id="${lineStyleId}">\n      <LineStyle><color>${lineKmlColor}</color><width>${lineWidth}</width></LineStyle>\n    </Style>`,
       );
-      getFolderBucket(line.folder_path).push(
-        `      <Placemark>\n        <name>${escapeXml(name)}</name>\n        <description>${engMeta(line)}</description>\n        <styleUrl>#${lineStyleId}</styleUrl>\n        <LineString><tessellate>1</tessellate><coordinates>${coords.join(" ")}</coordinates></LineString>\n      </Placemark>`,
+      const lineVisibilityXml = shouldExplicitlyHidePlacemark(line.folder_path)
+        ? "        <visibility>0</visibility>\n"
+        : "";
+      getFolderBucket(normalizeFolderPath(line.folder_path)).push(
+        `      <Placemark>\n        <name>${escapeXml(name)}</name>\n${lineVisibilityXml}        <description>${engMeta(line)}</description>\n        <styleUrl>#${lineStyleId}</styleUrl>\n        <LineString><tessellate>1</tessellate><coordinates>${coords.join(" ")}</coordinates></LineString>\n      </Placemark>`,
       );
     }
 
@@ -2833,11 +3096,43 @@ ${fieldSubmissionPlacemarks.length > 0 ? buildFolder("Selected Field Submission"
       const polyOutlineColor = hexToKmlColor(poly.fill_color || "#94a3b8", "ff");
       const polyFillColor = hexToKmlColor(poly.fill_color || "#94a3b8", "33");
       const polyStyleId = `fp_${sanitizeFeatId(poly.feature_id)}_${_polyStyleIdx++}`;
+      // F7-final cleanup (2026-05-22) — Boundary-class polygons are
+      // non-actionable visual background context per operator feedback
+      // (Google Earth Pro screenshots showed random info balloons on click).
+      // For these polygons: (1) attach <BalloonStyle><displayMode>hide</…>
+      // to the per-feature style so clicks do NOT open the balloon; and
+      // (2) omit the <description> entirely so there is nothing to render
+      // if a viewer ignores BalloonStyle. TrueLine-generated overlays
+      // (Photos / Stations / Field Submission / Redlines) are emitted
+      // through separate document-level styles and are NOT affected.
+      const polyIsBoundary = poly.classification === "boundary_polygon";
+      const polyBalloonHide = polyIsBoundary
+        ? "\n      <BalloonStyle><displayMode>hide</displayMode></BalloonStyle>"
+        : "";
       featureStyles.push(
-        `    <Style id="${polyStyleId}">\n      <LineStyle><color>${polyOutlineColor}</color><width>1</width></LineStyle>\n      <PolyStyle><color>${polyFillColor}</color><fill>1</fill><outline>1</outline></PolyStyle>\n    </Style>`,
+        `    <Style id="${polyStyleId}">\n      <LineStyle><color>${polyOutlineColor}</color><width>1</width></LineStyle>\n      <PolyStyle><color>${polyFillColor}</color><fill>1</fill><outline>1</outline></PolyStyle>${polyBalloonHide}\n    </Style>`,
       );
-      getFolderBucket(poly.folder_path).push(
-        `      <Placemark>\n        <name>${escapeXml(name)}</name>\n        <description>${engMeta(poly)}</description>\n        <styleUrl>#${polyStyleId}</styleUrl>\n        <Polygon><tessellate>1</tessellate><outerBoundaryIs><LinearRing><coordinates>${outer.join(" ")}</coordinates></LinearRing></outerBoundaryIs>${innerRingsXml ? "\n" + innerRingsXml : ""}\n        </Polygon>\n      </Placemark>`,
+      const polyDescriptionXml = polyIsBoundary
+        ? ""
+        : `        <description>${engMeta(poly)}</description>\n`;
+      // F7-final cleanup Gate 2 (2026-05-22) — Per-Placemark visibility=0 on
+      // boundary polygons. Parent folder visibility (Engineering Context
+      // wrapper or any nested branch) stays =1 so descendant checkboxes
+      // function; per-Placemark <visibility>0</visibility> overrides folder
+      // visibility for the polygon itself. Operator can re-check individual
+      // polygons via the Places-panel placemark entry if needed. Stops the
+      // "huge green polygon fill" first-load clutter without altering
+      // ingestion semantics or removing polygons from the export.
+      //
+      // F7-final cleanup Gate 3 (2026-05-22) — Extended to also hide polygons
+      // whose leaf folder is NOT in DEFAULT_VISIBLE_FOLDER_NAMES, matching
+      // the points/lines per-Placemark visibility rule. Catches rare non-
+      // boundary polygons that happen to live in a hidden source folder.
+      const polyVisibilityXml = (polyIsBoundary || shouldExplicitlyHidePlacemark(poly.folder_path))
+        ? "        <visibility>0</visibility>\n"
+        : "";
+      getFolderBucket(normalizeFolderPath(poly.folder_path)).push(
+        `      <Placemark>\n        <name>${escapeXml(name)}</name>\n${polyVisibilityXml}${polyDescriptionXml}        <styleUrl>#${polyStyleId}</styleUrl>\n        <Polygon><tessellate>1</tessellate><outerBoundaryIs><LinearRing><coordinates>${outer.join(" ")}</coordinates></LinearRing></outerBoundaryIs>${innerRingsXml ? "\n" + innerRingsXml : ""}\n        </Polygon>\n      </Placemark>`,
       );
     }
 
@@ -2850,8 +3145,10 @@ ${fieldSubmissionPlacemarks.length > 0 ? buildFolder("Selected Field Submission"
       if (!coordinate) return;
       const dataUrl = photoDataUrlMap.get(p.id);
       const descriptionHtml = `\n  <div style="font-family: Arial; font-size: 12px;">\n    <strong>${p.filename || "Photo"}</strong><br/><br/>\n    ${dataUrl ? `<img src="${dataUrl}" style="max-width:300px; border:1px solid #ccc;" /><br/><br/>` : `<i>No preview available</i><br/><br/>`}\n    <b>Original GPS:</b> ${typeof p.lat === "number" ? p.lat.toFixed(6) : "--"}, ${typeof p.lon === "number" ? p.lon.toFixed(6) : "--"}<br/>\n    <b>Adjusted:</b> ${typeof p.displayLat === "number" && typeof p.displayLon === "number" ? `${p.displayLat.toFixed(6)}, ${p.displayLon.toFixed(6)}` : "none"}\n  </div>\n`;
+      // F7-final cleanup Gate 3 (2026-05-22) — Photos folder is off by
+      // default; per-Placemark visibility=0 ensures cache-proof hide.
       photoPlacemarks.push(
-        `      <Placemark>\n        <name>${escapeXml(p.filename)}</name>\n        <description><![CDATA[${descriptionHtml.replaceAll("]]>", "]]]]><![CDATA[>")}]]></description>\n        <styleUrl>#engPhotoStyle</styleUrl>\n        <Point><coordinates>${coordinate}</coordinates></Point>\n      </Placemark>`,
+        `      <Placemark>\n        <name>${escapeXml(p.filename)}</name>\n        <visibility>0</visibility>\n        <description><![CDATA[${descriptionHtml.replaceAll("]]>", "]]]]><![CDATA[>")}]]></description>\n        <styleUrl>#engPhotoStyle</styleUrl>\n        <Point><coordinates>${coordinate}</coordinates></Point>\n      </Placemark>`,
       );
     });
 
@@ -2869,8 +3166,13 @@ ${fieldSubmissionPlacemarks.length > 0 ? buildFolder("Selected Field Submission"
       const ll = kmlLatLonCells(point.lat, point.lon);
       const stationFtCell = formatNumber(point.station_ft, 3);
       const mappedFtCell = formatNumber(point.mapped_station_ft, 3);
+      // F7-final cleanup Gate 3 (2026-05-22) — Stations folder is off by
+      // default; per-Placemark visibility=0 makes station markers + labels
+      // initially hidden regardless of GE state cache. User toggling the
+      // Stations folder still reveals them.
       stationPlacemarks.push(`      <Placemark>
         <name>${escapeXml(`Station ${stationLabel !== "--" ? stationLabel : idx + 1}`)}</name>
+        <visibility>0</visibility>
         <description>${kmlDescriptionTable([
           { label: "Station", value: stationLabel },
           { label: "Station FT / mapped footage", value: kmlStationFtSlashMapped(stationFtCell, mappedFtCell) },
@@ -2949,8 +3251,12 @@ ${fieldSubmissionPlacemarks.length > 0 ? buildFolder("Selected Field Submission"
               : endStationLabel !== "--"
                 ? `Path through ${endStationLabel}`
                 : "--";
+        // F7-final cleanup Gate 3 (2026-05-22) — Selected Field Submission
+        // folder is off by default; per-Placemark visibility=0 makes the
+        // field submission path + station markers initially hidden.
         fieldSubmissionPlacemarks.push(`      <Placemark>
         <name>${escapeXml(`Field Submission ${sessionId}`)}</name>
+        <visibility>0</visibility>
         <description>${kmlDescriptionTable([
           { label: "Station", value: "Field submission path" },
           { label: "Station FT / mapped footage", value: "--" },
@@ -2991,6 +3297,7 @@ ${fieldSubmissionPlacemarks.length > 0 ? buildFolder("Selected Field Submission"
             const llS = kmlLatLonCells(firstEntry.row.displayLat, firstEntry.row.displayLon);
             fieldSubmissionPlacemarks.push(`      <Placemark>
         <name>${escapeXml(`Start ${startNum}`)}</name>
+        <visibility>0</visibility>
         <description>${kmlDescriptionTable([
           { label: "Station", value: `${startNum} (start)` },
           { label: "Station FT / mapped footage", value: kmlStationFtSlashMapped(ftStart, mappedStart) },
@@ -3025,6 +3332,7 @@ ${fieldSubmissionPlacemarks.length > 0 ? buildFolder("Selected Field Submission"
             const llE = kmlLatLonCells(lastEntry.row.displayLat, lastEntry.row.displayLon);
             fieldSubmissionPlacemarks.push(`      <Placemark>
         <name>${escapeXml(`End ${endNum}`)}</name>
+        <visibility>0</visibility>
         <description>${kmlDescriptionTable([
           { label: "Station", value: `${endNum} (end)` },
           { label: "Station FT / mapped footage", value: kmlStationFtSlashMapped(ftEnd, mappedEnd) },
@@ -3063,6 +3371,7 @@ ${fieldSubmissionPlacemarks.length > 0 ? buildFolder("Selected Field Submission"
           const ll = kmlLatLonCells(row.displayLat, row.displayLon);
           fieldSubmissionPlacemarks.push(`      <Placemark>
         <name>${escapeXml(`Station ${sn}`)}</name>
+        <visibility>0</visibility>
         <description>${kmlDescriptionTable([
           { label: "Station", value: sn },
           { label: "Station FT / mapped footage", value: kmlStationFtSlashMapped(ftCell, mappedSt) },
@@ -3091,9 +3400,12 @@ ${fieldSubmissionPlacemarks.length > 0 ? buildFolder("Selected Field Submission"
     // folderTree's virtual root is not emitted; its non-empty children become
     // top-level <Folder> siblings under <Document>. Each child recursively
     // emits its own nested <Folder> descendants via emitFolder().
+    // F7-final cleanup: emitFolder now computes per-node visibility/open
+    // internally from node shape + DEFAULT_VISIBLE_FOLDER_NAMES — no longer
+    // takes visibility/open params from this top-level caller.
     const engFolderBlocks = Array.from(folderTree.children.values())
       .filter((child) => !folderIsEmpty(child))
-      .map((child) => emitFolder(child, "    ", 0, 0))
+      .map((child) => emitFolder(child, "    "))
       .join("\n");
 
     // As-Built Redlines (same logic as existing export, no mutation)
@@ -3104,8 +3416,27 @@ ${fieldSubmissionPlacemarks.length > 0 ? buildFolder("Selected Field Submission"
         .filter((c): c is string => Boolean(c));
       if (coordinates.length < 2) return;
       const name = cleanDisplayText(segment.source_file || segment.segment_id || `Redline ${idx + 1}`);
+      const coordsStr = coordinates.join(" ");
+      // F7-final cleanup Gate 4 (2026-05-22) — Two-placemark casing pattern
+      // for visual dominance. Casing emitted FIRST with drawOrder=999 (above
+      // source linework at default 0, below the red main line at 1000); main
+      // emitted SECOND with drawOrder=1000 (existing R7g+R7h contract).
+      // Z-stack at render: source (0) → casing white halo (999) → red main
+      // (1000). The red line therefore reads as a solid top overlay with a
+      // visible halo against blue/green source linework regardless of
+      // underlay density.
+      //
+      // Both placemarks share identical coordinates and live in the same
+      // single Redlines folder (Gate 1 cadence: visibility=1, open=0 — single
+      // checkbox toggles both). Casing has no <name> to minimize Places
+      // panel clutter when the folder is manually expanded; Google Earth
+      // shows nameless casing entries as "Untitled Placemark" — acceptable
+      // since the folder defaults collapsed per Gate 1+2+3.
       redlinePlacemarks.push(
-        `      <Placemark>\n        <name>${escapeXml(`Redline - ${name}`)}</name>\n        <styleUrl>#engRedlineStyle</styleUrl>\n        <gx:drawOrder>1000</gx:drawOrder>\n        <LineString><tessellate>1</tessellate><coordinates>${coordinates.join(" ")}</coordinates></LineString>\n      </Placemark>`,
+        `      <Placemark>\n        <styleUrl>#engRedlineCasingStyle</styleUrl>\n        <gx:drawOrder>999</gx:drawOrder>\n        <LineString><tessellate>1</tessellate><coordinates>${coordsStr}</coordinates></LineString>\n      </Placemark>`,
+      );
+      redlinePlacemarks.push(
+        `      <Placemark>\n        <name>${escapeXml(`Redline - ${name}`)}</name>\n        <styleUrl>#engRedlineStyle</styleUrl>\n        <gx:drawOrder>1000</gx:drawOrder>\n        <LineString><tessellate>1</tessellate><coordinates>${coordsStr}</coordinates></LineString>\n      </Placemark>`,
       );
     });
 
@@ -3128,7 +3459,24 @@ ${fieldSubmissionPlacemarks.length > 0 ? buildFolder("Selected Field Submission"
       <PolyStyle><color>1a94a3b8</color><fill>1</fill><outline>1</outline></PolyStyle>
     </Style>
     <Style id="engRedlineStyle">
-      <LineStyle><color>ff0000ff</color><width>8</width></LineStyle>
+      <!-- F7-final cleanup Gate 4d (2026-05-22) — Main red width bumped -->
+      <!-- 12 → 18. Operator visual review after Gate 4c: redline still too -->
+      <!-- thin to dominate aerial perspective view. Width=18 makes the red -->
+      <!-- stroke visibly thick at typical Google Earth zoom levels. Color -->
+      <!-- ff0000ff (bright opaque red) preserved. -->
+      <LineStyle><color>ff0000ff</color><width>18</width></LineStyle>
+    </Style>
+    <Style id="engRedlineCasingStyle">
+      <!-- F7-final cleanup Gate 4d (2026-05-22) — Both layers now BRIGHT -->
+      <!-- RED (not a dark-red shadow). Gate 4b/4c's dark-red shadow read -->
+      <!-- as too subtle; the lesson from Gate 4's white casing was that the -->
+      <!-- thick-line effect IS what makes redlines pop, not contrast color. -->
+      <!-- So: unify casing color with main (ff0000ff), bump casing width -->
+      <!-- 16 → 22 = 4px of red under-stroke visible (2px each side of the -->
+      <!-- 18px main). Net: redlines render as a single bold solid red mass -->
+      <!-- effective width 22, no white halo, no dark shadow. Two placemark -->
+      <!-- pattern preserved so Gate 4's structural casing pattern stays. -->
+      <LineStyle><color>ff0000ff</color><width>22</width></LineStyle>
     </Style>
     <Style id="engPhotoStyle">
       <IconStyle><scale>0.9</scale></IconStyle>
@@ -3140,10 +3488,10 @@ ${fieldSubmissionPlacemarks.length > 0 ? buildFolder("Selected Field Submission"
       <LineStyle><color>ff0000ff</color><width>7</width></LineStyle>
     </Style>
 ${featureStyles.length > 0 ? featureStyles.join("\n") + "\n" : ""}${engFolderBlocks}
-${photoPlacemarks.length > 0 ? buildEngFolder("Photos", photoPlacemarks, 1, 0) : ""}
+${photoPlacemarks.length > 0 ? buildEngFolder("Photos", photoPlacemarks, 0, 0) : ""}
 ${stationPlacemarks.length > 0 ? buildEngFolder("Stations", stationPlacemarks, 0, 0) : ""}
 ${fieldSubmissionPlacemarks.length > 0 ? buildEngFolder("Selected Field Submission", fieldSubmissionPlacemarks, 0, 0) : ""}
-${redlinePlacemarks.length > 0 ? buildEngFolder("As-Built Redlines", redlinePlacemarks, 1, 1) : ""}
+${redlinePlacemarks.length > 0 ? buildEngFolder("Redlines", redlinePlacemarks, 1, 0) : ""}
   </Document>
 </kml>`;
 
@@ -3672,6 +4020,20 @@ ${redlinePlacemarks.length > 0 ? buildEngFolder("As-Built Redlines", redlinePlac
       total_bytes: totalBytes,
       total_mb: Number((totalBytes / (1024 * 1024)).toFixed(2)),
     });
+    // PT.IU R2 — mirror the structured event into operator-visible state.
+    // PT.IU R3 — also capture browser/runtime context (origin, href, UA,
+    // build-time NEXT_PUBLIC_API_BASE, token-presence boolean, planned
+    // request header names) so the operator can correlate against the
+    // manual curl preflight without DevTools.
+    setEngUploadDiag({
+      event: "upload_start",
+      ts: new Date().toISOString(),
+      target: uploadUrl,
+      direct_to_render: directToRender,
+      file_count: files.length,
+      total_mb: Number((totalBytes / (1024 * 1024)).toFixed(2)),
+      ..._engUploadEnvSnapshot(),
+    });
 
     setEngPlansBusy(true);
     setStatusText(`Uploading ${files.length} engineering plan file${files.length > 1 ? "s" : ""}...`);
@@ -3698,6 +4060,14 @@ ${redlinePlacemarks.length > 0 ? buildEngFolder("As-Built Redlines", redlinePlac
           status: response.status,
           body_snippet: snippet,
         });
+        setEngUploadDiag({
+          event: "non_json_response",
+          ts: new Date().toISOString(),
+          target: uploadUrl,
+          direct_to_render: directToRender,
+          status: response.status,
+          body_snippet: snippet,
+        });
         throw new Error(`Engineering plan upload failed (${response.status}): ${snippet}`);
       }
       acceptSessionFromMutation(data, projectId);
@@ -3706,6 +4076,14 @@ ${redlinePlacemarks.length > 0 ? buildEngFolder("As-Built Redlines", redlinePlac
           event: "upload_failed",
           ts: new Date().toISOString(),
           target: uploadUrl,
+          status: response.status,
+          backend_error: data.error,
+        });
+        setEngUploadDiag({
+          event: "upload_failed",
+          ts: new Date().toISOString(),
+          target: uploadUrl,
+          direct_to_render: directToRender,
           status: response.status,
           backend_error: data.error,
         });
@@ -3725,6 +4103,15 @@ ${redlinePlacemarks.length > 0 ? buildEngFolder("As-Built Redlines", redlinePlac
         uploaded_count: data.engineering_plans?.length ?? 0,
         elapsed_ms: Date.now() - uploadStartedAt,
       });
+      setEngUploadDiag({
+        event: "upload_success",
+        ts: new Date().toISOString(),
+        target: uploadUrl,
+        direct_to_render: directToRender,
+        status: response.status,
+        uploaded_count: data.engineering_plans?.length ?? 0,
+        elapsed_ms: Date.now() - uploadStartedAt,
+      });
       setStatusText(String(data.message || "Engineering plans uploaded successfully."));
       setStatusTone("success");
     } catch (error) {
@@ -3733,6 +4120,18 @@ ${redlinePlacemarks.length > 0 ? buildEngFolder("As-Built Redlines", redlinePlac
         ts: new Date().toISOString(),
         target: uploadUrl,
         message: error instanceof Error ? error.message : "Unknown error",
+      });
+      setEngUploadDiag({
+        event: "upload_exception",
+        ts: new Date().toISOString(),
+        target: uploadUrl,
+        direct_to_render: directToRender,
+        message: error instanceof Error ? error.message : "Unknown error",
+        elapsed_ms: Date.now() - uploadStartedAt,
+        // PT.IU R3 — heuristic class + browser/runtime context for the
+        // operator to see immediately on a "Failed to fetch" exception.
+        failure_class: _classifyUploadException(error),
+        ..._engUploadEnvSnapshot(),
       });
       setStatusText(error instanceof Error ? error.message : "Engineering plan upload failed.");
       setStatusTone("error");
@@ -4596,6 +4995,201 @@ ${redlinePlacemarks.length > 0 ? buildEngFolder("As-Built Redlines", redlinePlac
                     />
                     {engPlansBusy ? "Uploading..." : "Upload Engineering Plan PDFs"}
                   </label>
+                  {engUploadDiag && (
+                    <div
+                      style={{
+                        marginTop: 8,
+                        padding: "8px 10px",
+                        border: "1px solid #1e293b",
+                        borderRadius: 6,
+                        background: "#0b1220",
+                        fontSize: 11,
+                        color: "#e2e8f0",
+                        fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+                        lineHeight: 1.4,
+                        wordBreak: "break-all",
+                      }}
+                    >
+                      <div style={{ marginBottom: 4 }}>
+                        <strong
+                          style={{
+                            color:
+                              engUploadDiag.event === "upload_success"
+                                ? "#86efac"
+                                : engUploadDiag.event === "upload_start"
+                                  ? "#93c5fd"
+                                  : "#fca5a5",
+                          }}
+                        >
+                          {engUploadDiag.event}
+                        </strong>
+                        <span style={{ color: "#94a3b8", marginLeft: 8 }}>
+                          {engUploadDiag.ts}
+                        </span>
+                      </div>
+                      {engUploadDiag.direct_to_render !== undefined && (
+                        <div>
+                          direct_to_render: <strong>{String(engUploadDiag.direct_to_render)}</strong>
+                        </div>
+                      )}
+                      {engUploadDiag.target && <div>target: {engUploadDiag.target}</div>}
+                      {engUploadDiag.file_count !== undefined && (
+                        <div>
+                          files: {engUploadDiag.file_count}
+                          {engUploadDiag.total_mb !== undefined
+                            ? ` (${engUploadDiag.total_mb} MB)`
+                            : ""}
+                        </div>
+                      )}
+                      {engUploadDiag.status !== undefined && (
+                        <div>http status: {engUploadDiag.status}</div>
+                      )}
+                      {engUploadDiag.backend_error && (
+                        <div>backend_error: {engUploadDiag.backend_error}</div>
+                      )}
+                      {engUploadDiag.body_snippet && (
+                        <div>body_snippet: {engUploadDiag.body_snippet}</div>
+                      )}
+                      {engUploadDiag.message && (
+                        <div>message: {engUploadDiag.message}</div>
+                      )}
+                      {engUploadDiag.uploaded_count !== undefined && (
+                        <div>uploaded_count: {engUploadDiag.uploaded_count}</div>
+                      )}
+                      {engUploadDiag.elapsed_ms !== undefined && (
+                        <div>elapsed_ms: {engUploadDiag.elapsed_ms}</div>
+                      )}
+                      {/* PT.IU R3 — failure-class heuristic */}
+                      {engUploadDiag.failure_class && (
+                        <div>
+                          failure_class: <strong>{engUploadDiag.failure_class}</strong>
+                        </div>
+                      )}
+                      {/* PT.IU R3 — browser / runtime context (operator
+                          copy-pastes to correlate against curl preflight) */}
+                      {(engUploadDiag.origin ||
+                        engUploadDiag.href ||
+                        engUploadDiag.user_agent_short ||
+                        engUploadDiag.next_public_api_base ||
+                        engUploadDiag.access_token_present !== undefined ||
+                        (engUploadDiag.request_header_names &&
+                          engUploadDiag.request_header_names.length > 0)) && (
+                        <div
+                          style={{
+                            marginTop: 6,
+                            paddingTop: 6,
+                            borderTop: "1px dashed #334155",
+                            color: "#cbd5e1",
+                          }}
+                        >
+                          <div style={{ color: "#94a3b8", marginBottom: 2 }}>
+                            -- browser / runtime context --
+                          </div>
+                          {engUploadDiag.origin && (
+                            <div>origin: {engUploadDiag.origin}</div>
+                          )}
+                          {engUploadDiag.href && (
+                            <div>href: {engUploadDiag.href}</div>
+                          )}
+                          {engUploadDiag.user_agent_short && (
+                            <div>user_agent: {engUploadDiag.user_agent_short}</div>
+                          )}
+                          {engUploadDiag.next_public_api_base && (
+                            <div>
+                              next_public_api_base: {engUploadDiag.next_public_api_base}
+                            </div>
+                          )}
+                          {engUploadDiag.access_token_present !== undefined && (
+                            <div>
+                              access_token_present:{" "}
+                              <strong>{String(engUploadDiag.access_token_present)}</strong>
+                            </div>
+                          )}
+                          {engUploadDiag.request_header_names &&
+                            engUploadDiag.request_header_names.length > 0 && (
+                              <div>
+                                request_header_names:{" "}
+                                {engUploadDiag.request_header_names.join(", ")}
+                              </div>
+                            )}
+                        </div>
+                      )}
+                      {/* PT.IU R3 — probe result */}
+                      {engUploadDiag.probe_result && (
+                        <div
+                          style={{
+                            marginTop: 6,
+                            paddingTop: 6,
+                            borderTop: "1px dashed #334155",
+                            color: "#cbd5e1",
+                          }}
+                        >
+                          <div style={{ color: "#94a3b8", marginBottom: 2 }}>
+                            -- probe (direct-to-Render GET /api/current-state) --
+                          </div>
+                          <div>
+                            probe_state:{" "}
+                            <strong
+                              style={{
+                                color:
+                                  engUploadDiag.probe_result.state === "ok"
+                                    ? "#86efac"
+                                    : engUploadDiag.probe_result.state === "probing"
+                                      ? "#93c5fd"
+                                      : "#fca5a5",
+                              }}
+                            >
+                              {engUploadDiag.probe_result.state}
+                            </strong>
+                            <span style={{ color: "#94a3b8", marginLeft: 8 }}>
+                              {engUploadDiag.probe_result.ts}
+                            </span>
+                          </div>
+                          {"status" in engUploadDiag.probe_result && (
+                            <div>probe_status: {engUploadDiag.probe_result.status}</div>
+                          )}
+                          {"elapsed_ms" in engUploadDiag.probe_result &&
+                            engUploadDiag.probe_result.elapsed_ms !== undefined && (
+                              <div>probe_elapsed_ms: {engUploadDiag.probe_result.elapsed_ms}</div>
+                            )}
+                          {"body_snippet" in engUploadDiag.probe_result &&
+                            engUploadDiag.probe_result.body_snippet && (
+                              <div>probe_body_snippet: {engUploadDiag.probe_result.body_snippet}</div>
+                            )}
+                          {"message" in engUploadDiag.probe_result && (
+                            <div>probe_message: {engUploadDiag.probe_result.message}</div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  {/* PT.IU R3 — manual probe button. Always rendered when the
+                      Upload Engineering Plan PDFs button is rendered; lets
+                      operator test direct-to-Render reachability without
+                      DevTools and without firing an actual upload. */}
+                  <button
+                    type="button"
+                    onClick={handleEngUploadProbe}
+                    disabled={engUploadDiag?.probe_result?.state === "probing"}
+                    style={{
+                      marginTop: 8,
+                      padding: "6px 10px",
+                      fontSize: 11,
+                      fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+                      background: "#1e293b",
+                      color: "#e2e8f0",
+                      border: "1px solid #334155",
+                      borderRadius: 6,
+                      cursor:
+                        engUploadDiag?.probe_result?.state === "probing"
+                          ? "wait"
+                          : "pointer",
+                    }}
+                  >
+                    {engUploadDiag?.probe_result?.state === "probing"
+                      ? "Probing..."
+                      : "Test backend connection (direct-to-Render)"}
+                  </button>
                   {(state?.engineering_plans?.length ?? 0) === 0 ? (
                     <div style={{ fontSize: 13, color: "#94a3b8" }}>No plans uploaded for this session.</div>
                   ) : (
