@@ -54,7 +54,6 @@ import gc
 import json
 import sys
 import time
-import tracemalloc
 from pathlib import Path
 from typing import Any, Dict, List
 
@@ -191,16 +190,18 @@ def _mode_extract_page(pdf_path_str: str, page_index: int) -> None:
     pp = _import_parser()
 
     gc.collect()
-    tracemalloc.start()
+    # PE.4: tracemalloc removed — it added ~13x wall-clock overhead on
+    # vector-heavy engineering pages (e.g. Brenham), causing per-page
+    # subprocess timeouts and per-PDF budget exhaustion. peak_kb is
+    # retained in the payload as 0 for schema back-compat; no production
+    # consumer reads the field (orchestrator uses text_len + elapsed_ms).
     t0 = time.perf_counter()
     try:
         with pp._safe_pdf(pdf_path) as pdf:  # type: ignore[attr-defined]
             if pdf is None:
-                tracemalloc.stop()
                 _emit({"ok": False, "error": "RuntimeError: _safe_pdf returned None"}, 1)
                 return
             if page_index < 0 or page_index >= len(pdf.pages):
-                tracemalloc.stop()
                 _emit({
                     "ok": False,
                     "error": (
@@ -212,22 +213,16 @@ def _mode_extract_page(pdf_path_str: str, page_index: int) -> None:
             page = pdf.pages[page_index]
             extracted = _extract_one_page_signals(pp, page, page_index + 1)
         elapsed_ms = int((time.perf_counter() - t0) * 1000)
-        _, peak_bytes = tracemalloc.get_traced_memory()
-        tracemalloc.stop()
         _emit({
             "ok": True,
             "matchlines": extracted["matchlines"],
             "callouts": extracted["callouts"],
             "text_len": extracted["text_len"],
             "elapsed_ms": elapsed_ms,
-            "peak_kb": peak_bytes // 1024,
+            "peak_kb": 0,
         }, 0)
     except Exception as e:
         elapsed_ms = int((time.perf_counter() - t0) * 1000)
-        try:
-            tracemalloc.stop()
-        except Exception:
-            pass
         _emit({
             "ok": False,
             "error": f"{type(e).__name__}: {e}",
