@@ -31,6 +31,7 @@ from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from app.auth import current_tenant, get_current_tenant
 from app.auth_bridge import resolve_caller
 from app.core import plan_topology_cache
+from app.core.notes_street_evidence import compute_location_evidence_mismatch
 from app.core.rebuild_scope import RebuildScope
 from app.services import engineering_plan_parser as _engineering_plan_parser
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -10477,6 +10478,12 @@ def _rebuild_field_data_outputs(scope: RebuildScope = RebuildScope.FULL) -> None
         _diag["strict_allowed_route_ids"] = list(filter_meta.get("allowed_route_ids") or [])
         _diag["strict_candidate_count_after_filter"] = len(list(filter_meta.get("allowed_route_ids") or [])) or None
         _diag["strict_candidate_count_after_span_gate"] = len(rankings)
+        # B-MATCH-LOC-EVIDENCE-1: diagnostic-only flag when bore-log notes name
+        # streets disjoint from the print-filter street_hints. Never mutates
+        # rankings, filter_meta, scoring, or route selection.
+        _loc_mismatch = compute_location_evidence_mismatch(group, filter_meta)
+        if _loc_mismatch:
+            _diag["location_evidence_mismatch"] = _loc_mismatch
         _diag["strict_rankings_empty"] = len(rankings) == 0
         _diag["strict_top5"] = [
             {"route_id": r.get("route_id"), "route_name": r.get("route_name"),
