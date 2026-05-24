@@ -37,6 +37,7 @@ from app.core.coverage_sanity import compute_coverage_sanity
 from app.core.evidence_resolver import resolve_evidence_for_group
 from app.core.notes_street_evidence import compute_location_evidence_mismatch
 from app.core.rebuild_scope import RebuildScope
+from app.core.route_collision_resolver import resolve_route_collisions
 from app.services import engineering_plan_parser as _engineering_plan_parser
 from starlette.middleware.base import BaseHTTPMiddleware
 
@@ -11051,6 +11052,65 @@ def _rebuild_field_data_outputs(scope: RebuildScope = RebuildScope.FULL) -> None
         )
     except Exception:
         STATE["coverage_sanity"] = None
+
+    # Anti-Collapse V1 — env-gated, default OFF. When ON, resolves
+    # same-route anchor collisions deterministically: for each cluster of
+    # placed groups projecting onto >= 50% overlapping ranges of the same
+    # route, keep the highest-confidence group, abstain the rest. Drops
+    # their station_points + redline_segments from rebuild output and
+    # records abstain_reason in their pipeline_diag entries. Recomputes
+    # coverage_sanity post-resolution.
+    if (
+        os.getenv("TRUELINE_ABSTAIN_ON_ROUTE_COLLISION", "0").strip() == "1"
+        and STATE.get("coverage_sanity")
+    ):
+        try:
+            _collisions = (STATE["coverage_sanity"] or {}).get("same_route_anchor_collisions") or []
+            _resolution = resolve_route_collisions(group_matches, pipeline_diag, _collisions)
+            _abstained = set(_resolution.get("abstained_source_files") or [])
+            if _abstained:
+                _reasons = _resolution.get("per_source_file_abstain_reason") or {}
+                # Mutate pipeline_diag for abstained groups
+                for _entry in pipeline_diag:
+                    _sf = str(_entry.get("source_file") or "")
+                    if _sf in _abstained:
+                        _entry["stopped_at"] = "abstained_same_route_anchor_collision"
+                        _entry["abstain_reason"] = _reasons.get(_sf)
+                        _entry["render_allowed"] = False
+                        _entry["render_block_reasons"] = list(_entry.get("render_block_reasons") or []) + [
+                            "same_route_anchor_collision"
+                        ]
+                        _entry["segments_returned"] = 0
+                # Mutate group_matches for abstained groups
+                for _m in group_matches:
+                    if str(_m.get("source_file") or "") in _abstained:
+                        _m["render_allowed"] = False
+                        _m["group_station_points"] = []
+                        _m["group_redline_segments"] = []
+                        _m["route_collision_abstain_reason"] = _reasons.get(
+                            str(_m.get("source_file") or "")
+                        )
+                # Recompute coverage_sanity post-resolution
+                STATE["coverage_sanity"] = compute_coverage_sanity(
+                    group_matches,
+                    STATE.get("route_catalog") or [],
+                    len(groups),
+                )
+            # Always record the resolution outcome (even when no abstains
+            # — useful audit trail).
+            (STATE["coverage_sanity"] or {})["route_collision_resolution"] = {
+                "applied": bool(_abstained),
+                "abstained_source_files": _resolution.get("abstained_source_files") or [],
+                "collision_resolutions": _resolution.get("collision_resolutions") or [],
+            }
+        except Exception:
+            # Diagnostic-fault tolerance: never break the rebuild on
+            # collision-resolver bugs.
+            if STATE.get("coverage_sanity"):
+                STATE["coverage_sanity"]["route_collision_resolution"] = {
+                    "applied": False,
+                    "error": "route_collision_resolver_failed",
+                }
     all_station_points = []
     all_redline_segments = []
     mapping_modes = []
