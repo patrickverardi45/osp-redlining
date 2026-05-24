@@ -60,6 +60,31 @@ def _lonlat_to_xy_ft(lon: float, lat: float, lon0: float, lat0: float) -> tuple:
     return ((lon - lon0) * _FT_PER_DEG_LON, (lat - lat0) * _FT_PER_DEG_LAT)
 
 
+def _coerce_lonlat(coord: Any) -> Optional[tuple]:
+    """Range-deterministic disambiguator between [lon, lat] and [lat, lon]
+    coord shapes. Mirrors coverage_sanity._coerce_lonlat byte-identical.
+
+    Brenham-area sanity: lon < 0, lat > 0. The production
+    `_parse_coordinate_text` (backend/main.py) swaps KML's natural
+    (lon, lat, alt) into [lat, lon] storage, while the existing V3 test
+    fixtures use (lon, lat) tuples directly. Both shapes are valid input
+    here; the heuristic places lon first regardless.
+
+    Returns None for malformed input.
+    """
+    if coord is None:
+        return None
+    try:
+        a, b = float(coord[0]), float(coord[1])
+    except (TypeError, ValueError, IndexError):
+        return None
+    if a < 0 and 0 < b < 90:
+        return (a, b)
+    if 0 < a < 90 and b < 0:
+        return (b, a)
+    return (a, b)
+
+
 def _point_to_segment_ft(px: float, py: float, ax: float, ay: float, bx: float, by: float) -> float:
     abx, aby = bx - ax, by - ay
     apx, apy = px - ax, py - ay
@@ -135,7 +160,17 @@ def discover_candidate_routes_from_notes_streets(
         coords = route.get("coords") or []
         if len(coords) < 2:
             continue
-        route_xy = [_lonlat_to_xy_ft(c[0], c[1], lon0, lat0) for c in coords]
+        # Coerce route coords to (lon, lat) regardless of storage shape.
+        # Without this, production [lat, lon] coords blow distances up
+        # by ~6e7 ft and every coverage_count is 0.
+        coerced: List[tuple] = []
+        for c in coords:
+            ll = _coerce_lonlat(c)
+            if ll is not None:
+                coerced.append(ll)
+        if len(coerced) < 2:
+            continue
+        route_xy = [_lonlat_to_xy_ft(c[0], c[1], lon0, lat0) for c in coerced]
         coverage_count = 0
         min_distance = float("inf")
         for px, py in cluster_xy:

@@ -243,6 +243,33 @@ def test_distance_threshold_kwarg_changes_coverage() -> None:
     assert result is None
 
 
+def test_production_shape_route_coords_lat_first_works() -> None:
+    """Regression: production stores route_catalog coords as [lat, lon]
+    via main._parse_coordinate_text, but the original V3 implementation
+    only handled (lon, lat) tuples. Without the coord coercer, every
+    distance computes as ~6e7 ft and discovery returns None for the
+    real Brenham PH5 corpus.
+
+    This test pins the production [lat, lon] shape through V3 discovery
+    and asserts the same dominant trunk wins as in the (lon, lat) test.
+    """
+    catalog = _route_catalog_with_trunk_and_drops()
+    # Swap every route's coord order from (lon, lat) to [lat, lon]
+    swapped = []
+    for r in catalog:
+        new_r = dict(r)
+        new_r["coords"] = [[c[1], c[0]] for c in r["coords"]]
+        swapped.append(new_r)
+    result = discover_candidate_routes_from_notes_streets(
+        ["LAWNDALE AVE"],
+        _lawndale_address_points(),
+        swapped,
+    )
+    assert result is not None
+    assert result["discovered_route_ids"] == ["route_trunk"]
+    assert result["evidence"]["coverage_count"] == 17
+
+
 def test_coverage_threshold_kwarg_blocks_below_floor() -> None:
     # Require 100% coverage but synthetic trunk only passes near most points;
     # if we set 1.01 the gate always fails.

@@ -36,6 +36,7 @@ from app.core.candidate_matrix import build_expanded_candidate_pool
 from app.core.candidate_route_discovery import discover_candidate_routes_from_notes_streets
 from app.core.coverage_sanity import compute_coverage_sanity
 from app.core.evidence_resolver import resolve_evidence_for_group
+from app.core.location_mismatch_rescue import attempt_location_mismatch_rescue
 from app.core.notes_street_evidence import compute_location_evidence_mismatch
 from app.core.rebuild_scope import RebuildScope
 from app.core.route_collision_alternate_search import (
@@ -10540,6 +10541,64 @@ def _rebuild_field_data_outputs(scope: RebuildScope = RebuildScope.FULL) -> None
                                 filter_meta["allowed_route_ids"] = [_best_rid] + _allowed
                             _diag["strict_allowed_route_ids"] = list(filter_meta["allowed_route_ids"])
                             _expansion_applied = True
+
+                # Location-Mismatch V4 — env-gated, default OFF. Second-
+                # chance rescue for LAWNDALE-bearing notes that V3 could
+                # not promote due to its strict 0.30 gate. V4 uses a
+                # relaxed two-way gate (absolute >= 0.15 OR ratio >= 0.60
+                # of current top) and is restricted to the LAWNDALE
+                # allowlist so CHERI / HUISACHE-only still abstain.
+                if (
+                    not _expansion_applied
+                    and os.getenv("TRUELINE_LOCATION_MISMATCH_MATRIX_RESCUE", "0").strip() == "1"
+                ):
+                    try:
+                        _v4_min_score = float(os.getenv(
+                            "TRUELINE_LOCATION_MISMATCH_RESCUE_MIN_SCORE", "0.15"
+                        ))
+                    except ValueError:
+                        _v4_min_score = 0.15
+                    try:
+                        _v4_ratio = float(os.getenv(
+                            "TRUELINE_LOCATION_MISMATCH_RESCUE_RATIO", "0.60"
+                        ))
+                    except ValueError:
+                        _v4_ratio = 0.60
+                    try:
+                        _rescue = attempt_location_mismatch_rescue(
+                            notes_streets=_loc_mismatch.get("notes_streets") or [],
+                            filter_streets=_loc_mismatch.get("filter_streets") or [],
+                            current_rankings=list(rankings),
+                            route_catalog=STATE.get("route_catalog") or [],
+                            address_points=STATE.get("address_points") or [],
+                            group_rows=group,
+                            discover_callback=discover_candidate_routes_from_notes_streets,
+                            score_callback=_score_route_for_group,
+                            find_route_callback=_find_route_by_id,
+                            min_absolute_score=_v4_min_score,
+                            score_ratio_fallback=_v4_ratio,
+                        )
+                    except Exception:
+                        _rescue = None
+                    if _rescue and _rescue.get("rescued"):
+                        _v4_rid = str(_rescue.get("selected_route_id") or "")
+                        _v4_scored = dict(_rescue.get("scored_full") or {})
+                        if _v4_rid and _v4_scored:
+                            # Promote rescued route to rankings top (mirrors V3 pattern)
+                            rankings = [_v4_scored] + [
+                                r for r in rankings
+                                if r.get("route_id") != _v4_rid
+                            ]
+                            filter_meta = dict(filter_meta)
+                            _allowed_v4 = list(filter_meta.get("allowed_route_ids") or [])
+                            if _v4_rid not in _allowed_v4:
+                                filter_meta["allowed_route_ids"] = [_v4_rid] + _allowed_v4
+                            _diag["strict_allowed_route_ids"] = list(filter_meta["allowed_route_ids"])
+                            _diag["location_mismatch_rescue_selected"] = _rescue
+                            _expansion_applied = True
+                    elif _rescue:
+                        _diag["location_mismatch_rescue_rejected"] = _rescue
+
                 if not _expansion_applied:
                     _diag["stopped_at"] = "abstained_location_evidence_mismatch"
                     _diag["abstain_reason"] = {
