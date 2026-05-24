@@ -37,6 +37,10 @@ from app.core.coverage_sanity import compute_coverage_sanity
 from app.core.evidence_resolver import resolve_evidence_for_group
 from app.core.notes_street_evidence import compute_location_evidence_mismatch
 from app.core.rebuild_scope import RebuildScope
+from app.core.route_collision_alternate_search import (
+    build_kept_offsets_by_route,
+    search_alternate_placement,
+)
 from app.core.route_collision_resolver import resolve_route_collisions
 from app.services import engineering_plan_parser as _engineering_plan_parser
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -11068,6 +11072,145 @@ def _rebuild_field_data_outputs(scope: RebuildScope = RebuildScope.FULL) -> None
             _collisions = (STATE["coverage_sanity"] or {}).get("same_route_anchor_collisions") or []
             _resolution = resolve_route_collisions(group_matches, pipeline_diag, _collisions)
             _abstained = set(_resolution.get("abstained_source_files") or [])
+            _alternate_selected: Dict[str, Dict[str, Any]] = {}
+            _alternate_rejected: Dict[str, Dict[str, Any]] = {}
+
+            # Anti-Collapse V2 — env-gated, default OFF. When ON together
+            # with TRUELINE_ABSTAIN_ON_ROUTE_COLLISION=1, search each V1
+            # loser's candidate_rankings for an alternate route that is
+            # geographically near the loser's existing segments AND does
+            # not collide with any already-kept group. Accepted alternates
+            # are re-placed via _build_*_for_group (so geometry is fresh);
+            # losers with no safe alternate fall back to V1 abstain.
+            if (
+                _abstained
+                and os.getenv("TRUELINE_ROUTE_COLLISION_ALTERNATE_SEARCH", "0").strip() == "1"
+            ):
+                try:
+                    _v2_min_score = float(os.getenv(
+                        "TRUELINE_ROUTE_COLLISION_ALTERNATE_MIN_SCORE", "0.10"
+                    ))
+                except ValueError:
+                    _v2_min_score = 0.10
+                try:
+                    _v2_max_perp_ft = float(os.getenv(
+                        "TRUELINE_ROUTE_COLLISION_ALTERNATE_MAX_PERP_FT", "200.0"
+                    ))
+                except ValueError:
+                    _v2_max_perp_ft = 200.0
+                _v2_overlap_threshold = (STATE["coverage_sanity"] or {}).get(
+                    "same_route_anchor_collision_threshold", 0.50
+                )
+
+                _route_catalog = STATE.get("route_catalog") or []
+                _kept_offsets_by_route = build_kept_offsets_by_route(
+                    group_matches, list(_abstained), _route_catalog
+                )
+                _match_by_sf = {
+                    str(_m.get("source_file") or ""): _m
+                    for _m in group_matches
+                }
+
+                # Deterministic ordering: sort losers by source_file lexically
+                # so re-placement order is reproducible across runs.
+                for _sf in sorted(_abstained):
+                    _loser_match = _match_by_sf.get(_sf)
+                    if _loser_match is None:
+                        continue
+                    try:
+                        _decision = search_alternate_placement(
+                            _loser_match,
+                            route_catalog=_route_catalog,
+                            kept_offsets_by_route=_kept_offsets_by_route,
+                            min_score=_v2_min_score,
+                            max_perp_ft=_v2_max_perp_ft,
+                            overlap_threshold=float(_v2_overlap_threshold or 0.50),
+                        )
+                    except Exception:
+                        continue
+
+                    if _decision.get("outcome") != "alternate_selected":
+                        _alternate_rejected[_sf] = _decision
+                        continue
+
+                    _alt_rid = str(_decision.get("alternate_route_id") or "")
+                    _alt_route = _find_route_by_id(_alt_rid) if _alt_rid else None
+                    if not _alt_route:
+                        _decision["outcome"] = "no_safe_alternate"
+                        _decision["alternate_route_id"] = None
+                        _decision["rejected_candidates"] = list(
+                            _decision.get("rejected_candidates") or []
+                        ) + [{
+                            "route_id": _alt_rid,
+                            "reason": "route_lookup_failed_at_build",
+                        }]
+                        _alternate_rejected[_sf] = _decision
+                        continue
+
+                    _norm_group = dict(_loser_match.get("_normalized_group") or {})
+                    _group_rows = list(_norm_group.get("station_rows") or [])
+                    _candidate_rankings = list(_loser_match.get("candidate_rankings") or [])
+                    _filter_meta = dict(_loser_match.get("print_filter") or {})
+                    _mapping_in = dict(_loser_match.get("mapping") or {})
+
+                    try:
+                        _new_points, _new_mapping = _build_station_points_for_group(
+                            _group_rows, _alt_route, _candidate_rankings, _filter_meta, _mapping_in
+                        )
+                        _new_segments = _build_redline_segments_for_group(
+                            _group_rows, _alt_route, _candidate_rankings, _new_mapping, _filter_meta
+                        )
+                    except Exception:
+                        _new_points, _new_segments, _new_mapping = [], [], _mapping_in
+
+                    if not _new_points or not _new_segments:
+                        _decision["outcome"] = "no_safe_alternate"
+                        _decision["rejected_candidates"] = list(
+                            _decision.get("rejected_candidates") or []
+                        ) + [{
+                            "route_id": _alt_rid,
+                            "reason": "alternate_build_returned_empty",
+                        }]
+                        _alternate_rejected[_sf] = _decision
+                        continue
+
+                    # Mutate group_match — re-place onto the alternate route.
+                    _loser_match["route_id"] = _alt_route.get("route_id")
+                    _loser_match["route_name"] = _alt_route.get("route_name")
+                    _loser_match["source_folder"] = _alt_route.get("source_folder")
+                    _loser_match["route_role"] = _alt_route.get("route_role")
+                    _loser_match["confidence"] = round(
+                        float(_decision.get("alternate_confidence") or 0.0), 3
+                    )
+                    _loser_match["mapping"] = _new_mapping
+                    _loser_match["group_station_points"] = list(_new_points)
+                    _loser_match["group_redline_segments"] = list(_new_segments)
+                    _loser_match["render_allowed"] = True
+                    _loser_match["render_block_reasons"] = []
+                    _loser_match["rendered_station_point_count"] = len(_new_points)
+                    _loser_match["rendered_redline_segment_count"] = len(_new_segments)
+                    _loser_match["_matched_route"] = dict(_alt_route)
+                    _validation = dict(_loser_match.get("validation") or {})
+                    _validation["alternate_placement_review"] = True
+                    _validation["render_gate"] = {
+                        "render_allowed": True,
+                        "block_reasons": [],
+                        "mode": "anti_collapse_v2_alternate_placement",
+                    }
+                    _loser_match["validation"] = _validation
+
+                    _alternate_selected[_sf] = _decision
+                    # Update kept_offsets so subsequent losers cannot collide
+                    # with this newly-placed alternate.
+                    _kept_offsets_by_route.setdefault(_alt_rid, []).append((
+                        float(_decision["projected_range_ft"][0]),
+                        float(_decision["projected_range_ft"][1]),
+                    ))
+
+                # Remove successfully re-placed losers from the abstain set so
+                # the V1 mutation block below does NOT zero out their geometry.
+                _abstained = _abstained - set(_alternate_selected.keys())
+
             if _abstained:
                 _reasons = _resolution.get("per_source_file_abstain_reason") or {}
                 # Mutate pipeline_diag for abstained groups
@@ -11081,6 +11224,8 @@ def _rebuild_field_data_outputs(scope: RebuildScope = RebuildScope.FULL) -> None
                             "same_route_anchor_collision"
                         ]
                         _entry["segments_returned"] = 0
+                        if _sf in _alternate_rejected:
+                            _entry["route_collision_alternate_rejected"] = _alternate_rejected[_sf]
                 # Mutate group_matches for abstained groups
                 for _m in group_matches:
                     if str(_m.get("source_file") or "") in _abstained:
@@ -11090,6 +11235,18 @@ def _rebuild_field_data_outputs(scope: RebuildScope = RebuildScope.FULL) -> None
                         _m["route_collision_abstain_reason"] = _reasons.get(
                             str(_m.get("source_file") or "")
                         )
+
+            # Stamp alternate-selected diag on pipeline_diag for re-placed
+            # losers (these are NOT in _abstained anymore — they were placed).
+            if _alternate_selected:
+                for _entry in pipeline_diag:
+                    _sf = str(_entry.get("source_file") or "")
+                    if _sf in _alternate_selected:
+                        _entry["route_collision_alternate_selected"] = _alternate_selected[_sf]
+                        _entry["stopped_at"] = None
+                        _entry["render_allowed"] = True
+
+            if _abstained or _alternate_selected:
                 # Recompute coverage_sanity post-resolution
                 STATE["coverage_sanity"] = compute_coverage_sanity(
                     group_matches,
@@ -11099,8 +11256,10 @@ def _rebuild_field_data_outputs(scope: RebuildScope = RebuildScope.FULL) -> None
             # Always record the resolution outcome (even when no abstains
             # — useful audit trail).
             (STATE["coverage_sanity"] or {})["route_collision_resolution"] = {
-                "applied": bool(_abstained),
-                "abstained_source_files": _resolution.get("abstained_source_files") or [],
+                "applied": bool(_abstained) or bool(_alternate_selected),
+                "abstained_source_files": sorted(_abstained),
+                "alternate_selected_source_files": sorted(_alternate_selected.keys()),
+                "alternate_rejected_source_files": sorted(_alternate_rejected.keys()),
                 "collision_resolutions": _resolution.get("collision_resolutions") or [],
             }
         except Exception:
