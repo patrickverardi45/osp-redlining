@@ -10484,6 +10484,19 @@ def _rebuild_field_data_outputs(scope: RebuildScope = RebuildScope.FULL) -> None
         _loc_mismatch = compute_location_evidence_mismatch(group, filter_meta)
         if _loc_mismatch:
             _diag["location_evidence_mismatch"] = _loc_mismatch
+            # B-MATCH-LOC-EVIDENCE-1 V2 abstain: under env-var gate, skip
+            # placement rather than draw a wrong redline on the stale-print-
+            # filter route. Operator reviews via pipeline_diag.
+            if os.getenv("TRUELINE_ABSTAIN_ON_LOCATION_MISMATCH", "0").strip() == "1":
+                _diag["stopped_at"] = "abstained_location_evidence_mismatch"
+                _diag["abstain_reason"] = {
+                    "reason": "location_evidence_mismatch",
+                    "notes_streets": list(_loc_mismatch.get("notes_streets") or []),
+                    "filter_streets": list(_loc_mismatch.get("filter_streets") or []),
+                    "source": _loc_mismatch.get("source"),
+                }
+                pipeline_diag.append(_diag)
+                continue
         _diag["strict_rankings_empty"] = len(rankings) == 0
         _diag["strict_top5"] = [
             {"route_id": r.get("route_id"), "route_name": r.get("route_name"),
