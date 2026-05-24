@@ -31,6 +31,10 @@ from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from app.auth import current_tenant, get_current_tenant
 from app.auth_bridge import resolve_caller
 from app.core import plan_topology_cache
+from app.core.address_point_index import parse_address_points_from_kml
+from app.core.candidate_route_discovery import discover_candidate_routes_from_notes_streets
+from app.core.coverage_sanity import compute_coverage_sanity
+from app.core.evidence_resolver import resolve_evidence_for_group
 from app.core.notes_street_evidence import compute_location_evidence_mismatch
 from app.core.rebuild_scope import RebuildScope
 from app.services import engineering_plan_parser as _engineering_plan_parser
@@ -523,6 +527,7 @@ def _default_session_state() -> Dict[str, Any]:
         "route_coords": [],
         "route_length_ft": 0.0,
         "route_catalog": [],
+        "address_points": [],
         "map_points": [],
         "committed_rows": [],
         "station_points": [],
@@ -10488,15 +10493,70 @@ def _rebuild_field_data_outputs(scope: RebuildScope = RebuildScope.FULL) -> None
             # placement rather than draw a wrong redline on the stale-print-
             # filter route. Operator reviews via pipeline_diag.
             if os.getenv("TRUELINE_ABSTAIN_ON_LOCATION_MISMATCH", "0").strip() == "1":
-                _diag["stopped_at"] = "abstained_location_evidence_mismatch"
-                _diag["abstain_reason"] = {
-                    "reason": "location_evidence_mismatch",
-                    "notes_streets": list(_loc_mismatch.get("notes_streets") or []),
-                    "filter_streets": list(_loc_mismatch.get("filter_streets") or []),
-                    "source": _loc_mismatch.get("source"),
-                }
-                pipeline_diag.append(_diag)
-                continue
+                # B-MATCH-LOC-EVIDENCE-1 V3 auto candidate expansion (env-
+                # gated, default OFF). Try to deterministically discover a
+                # trunk LineString candidate from KMZ address-point proximity
+                # BEFORE falling through to abstain. If a clean candidate is
+                # found and its scored ranking beats the current top-1, swap
+                # it in as the new top ranking and let the existing pipeline
+                # downstream handle anchoring + segment build. If no clean
+                # candidate, fall through to abstain unchanged.
+                _expansion_applied = False
+                if os.getenv("TRUELINE_AUTO_CANDIDATE_EXPANSION", "0").strip() == "1":
+                    _disc = discover_candidate_routes_from_notes_streets(
+                        _loc_mismatch.get("notes_streets") or [],
+                        STATE.get("address_points") or [],
+                        STATE.get("route_catalog") or [],
+                    )
+                    if _disc and _disc.get("discovered_route_ids"):
+                        _best_rid: Optional[str] = None
+                        _best_scored: Optional[Dict[str, Any]] = None
+                        for _rid in _disc["discovered_route_ids"]:
+                            _route = _find_route_by_id(_rid)
+                            if not _route:
+                                continue
+                            _scored = _score_route_for_group(group, _route)
+                            if _best_scored is None or float(_scored.get("score") or 0.0) > float(_best_scored.get("score") or 0.0):
+                                _best_rid = _rid
+                                _best_scored = _scored
+                        _current_top_score = float(rankings[0].get("score") or 0.0) if rankings else 0.0
+                        if (
+                            _best_rid
+                            and _best_scored
+                            and float(_best_scored.get("score") or 0.0) >= max(_current_top_score, 0.30)
+                        ):
+                            _disc["selected_candidate_route_id"] = _best_rid
+                            _diag["auto_candidate_expansion"] = _disc
+                            rankings = [_best_scored] + [r for r in rankings if r.get("route_id") != _best_rid]
+                            filter_meta = dict(filter_meta)
+                            _allowed = list(filter_meta.get("allowed_route_ids") or [])
+                            if _best_rid not in _allowed:
+                                filter_meta["allowed_route_ids"] = [_best_rid] + _allowed
+                            _diag["strict_allowed_route_ids"] = list(filter_meta["allowed_route_ids"])
+                            _expansion_applied = True
+                if not _expansion_applied:
+                    _diag["stopped_at"] = "abstained_location_evidence_mismatch"
+                    _diag["abstain_reason"] = {
+                        "reason": "location_evidence_mismatch",
+                        "notes_streets": list(_loc_mismatch.get("notes_streets") or []),
+                        "filter_streets": list(_loc_mismatch.get("filter_streets") or []),
+                        "source": _loc_mismatch.get("source"),
+                    }
+                    # Evidence Resolver advisory tag (diagnostic only; does
+                    # not override the V2 abstain decision above).
+                    _diag["evidence_resolver"] = resolve_evidence_for_group(
+                        group, normalized_group, filter_meta, rankings,
+                        _loc_mismatch, None,
+                    )
+                    pipeline_diag.append(_diag)
+                    continue
+        # Evidence Resolver advisory tag for the non-abstain code path. The
+        # _diag dict persists through every subsequent pipeline_diag.append
+        # in this iteration, so we set it once here.
+        _diag["evidence_resolver"] = resolve_evidence_for_group(
+            group, normalized_group, filter_meta, rankings,
+            _loc_mismatch, _diag.get("auto_candidate_expansion"),
+        )
         _diag["strict_rankings_empty"] = len(rankings) == 0
         _diag["strict_top5"] = [
             {"route_id": r.get("route_id"), "route_name": r.get("route_name"),
@@ -10980,6 +11040,17 @@ def _rebuild_field_data_outputs(scope: RebuildScope = RebuildScope.FULL) -> None
     STATE["pipeline_diag"] = pipeline_diag
 
     group_matches = _apply_batch_level_conflict_resolution(group_matches)
+    # Coverage sanity diagnostic — post-loop, read-only. Surfaces route
+    # over-concentration ("4-5 routes absorbing 500 stations" pattern) so
+    # operators can investigate. Never modifies group_matches.
+    try:
+        STATE["coverage_sanity"] = compute_coverage_sanity(
+            group_matches,
+            STATE.get("route_catalog") or [],
+            len(groups),
+        )
+    except Exception:
+        STATE["coverage_sanity"] = None
     all_station_points = []
     all_redline_segments = []
     mapping_modes = []
@@ -12239,6 +12310,14 @@ async def upload_design(
                 return _json_closeout_locked_response()
             route_catalog = _build_route_catalog(file_bytes, file.filename or "design.kmz")
             STATE["route_catalog"] = route_catalog
+            # B-MATCH-LOC-EVIDENCE-1 V3: read-only address-point index built
+            # alongside route_catalog. Used by auto candidate-discovery when
+            # both abstain + expansion gates are ON. Failure here MUST NOT
+            # break the upload — fall back to empty list on any parser error.
+            try:
+                STATE["address_points"] = parse_address_points_from_kml(file_bytes, file.filename or "design.kmz")
+            except Exception:
+                STATE["address_points"] = []
             STATE["kmz_reference"] = _build_kmz_reference(file_bytes, file.filename or "design.kmz")
             # Phase 1A: additive semantic layer. Computed alongside the
             # existing kmz_reference; any failure here MUST NOT break the
