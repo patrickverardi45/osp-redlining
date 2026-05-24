@@ -32,6 +32,7 @@ from app.auth import current_tenant, get_current_tenant
 from app.auth_bridge import resolve_caller
 from app.core import plan_topology_cache
 from app.core.address_point_index import parse_address_points_from_kml
+from app.core.candidate_matrix import build_expanded_candidate_pool
 from app.core.candidate_route_discovery import discover_candidate_routes_from_notes_streets
 from app.core.coverage_sanity import compute_coverage_sanity
 from app.core.evidence_resolver import resolve_evidence_for_group
@@ -11074,6 +11075,7 @@ def _rebuild_field_data_outputs(scope: RebuildScope = RebuildScope.FULL) -> None
             _abstained = set(_resolution.get("abstained_source_files") or [])
             _alternate_selected: Dict[str, Dict[str, Any]] = {}
             _alternate_rejected: Dict[str, Dict[str, Any]] = {}
+            _matrix_by_sf: Dict[str, Dict[str, Any]] = {}
 
             # Anti-Collapse V2 — env-gated, default OFF. When ON together
             # with TRUELINE_ABSTAIN_ON_ROUTE_COLLISION=1, search each V1
@@ -11113,10 +11115,86 @@ def _rebuild_field_data_outputs(scope: RebuildScope = RebuildScope.FULL) -> None
 
                 # Deterministic ordering: sort losers by source_file lexically
                 # so re-placement order is reproducible across runs.
+                _expand_matrix = (
+                    os.getenv("TRUELINE_EXPANDED_CANDIDATE_MATRIX", "0").strip() == "1"
+                )
+                _address_points_state = STATE.get("address_points") or []
                 for _sf in sorted(_abstained):
                     _loser_match = _match_by_sf.get(_sf)
                     if _loser_match is None:
                         continue
+
+                    # Candidate Matrix V1 — env-gated, default OFF. Expand the
+                    # loser's candidate_rankings by walking six deterministic
+                    # evidence sources BEFORE V2 search runs, so V2 has more
+                    # alternates to test against. Never mutates print filter
+                    # or top-1 selection — only widens the loser's pool.
+                    if _expand_matrix:
+                        try:
+                            _norm_group_for_mtx = _loser_match.get("_normalized_group") or {}
+                            _group_rows_for_mtx = list(_norm_group_for_mtx.get("station_rows") or [])
+                            _base_rankings = list(_loser_match.get("candidate_rankings") or [])
+                            _base_filter_meta = dict(_loser_match.get("print_filter") or {})
+                            _diag_for_loser = next(
+                                (e for e in pipeline_diag
+                                 if str(e.get("source_file") or "") == _sf),
+                                None,
+                            )
+                            _notes_streets: List[str] = []
+                            if _diag_for_loser:
+                                _evr = (_diag_for_loser.get("evidence_resolver") or {})
+                                _notes_streets = list(_evr.get("notes_streets") or [])
+                            _expansion = build_expanded_candidate_pool(
+                                source_file=_sf,
+                                base_rankings=_base_rankings,
+                                base_filter_meta=_base_filter_meta,
+                                route_catalog=_route_catalog,
+                                address_points=_address_points_state,
+                                notes_streets=_notes_streets,
+                                span_ft=float(_norm_group_for_mtx.get("span_ft") or 0.0),
+                                print_sheet_index=CURRENT_PACKET_PRINT_SHEET_INDEX,
+                            )
+                            _matrix_by_sf[_sf] = _expansion["matrix"]
+                            _new_rids = _expansion["additional_route_ids"]
+                            if _new_rids:
+                                _new_routes = [
+                                    _find_route_by_id(_rid) for _rid in _new_rids
+                                ]
+                                _new_routes = [r for r in _new_routes if r]
+                                _new_scored: List[Dict[str, Any]] = []
+                                for _route in _new_routes:
+                                    try:
+                                        _new_scored.append(_score_route_candidate(
+                                            _group_rows_for_mtx, _route,
+                                            _base_filter_meta, _norm_group_for_mtx,
+                                        ))
+                                    except Exception:
+                                        continue
+                                _merged: Dict[str, Dict[str, Any]] = {}
+                                for _r in _base_rankings + _new_scored:
+                                    _rid = str(_r.get("route_id") or "")
+                                    if not _rid:
+                                        continue
+                                    _existing = _merged.get(_rid)
+                                    if (_existing is None
+                                            or float(_r.get("score") or 0.0)
+                                            > float(_existing.get("score") or 0.0)):
+                                        _merged[_rid] = _r
+                                _combined = sorted(
+                                    _merged.values(),
+                                    key=lambda item: (
+                                        -float(item.get("score") or 0.0),
+                                        float(item.get("length_gap_ft") or 0.0),
+                                        float(item.get("route_length_ft") or 0.0),
+                                        str(item.get("route_name") or ""),
+                                    ),
+                                )
+                                _loser_match["candidate_rankings"] = _combined
+                        except Exception:
+                            # Matrix is purely additive; never break V2 on
+                            # expansion failure.
+                            pass
+
                     try:
                         _decision = search_alternate_placement(
                             _loser_match,
@@ -11245,6 +11323,15 @@ def _rebuild_field_data_outputs(scope: RebuildScope = RebuildScope.FULL) -> None
                         _entry["route_collision_alternate_selected"] = _alternate_selected[_sf]
                         _entry["stopped_at"] = None
                         _entry["render_allowed"] = True
+
+            # Candidate Matrix diag — stamp on every loser the expansion ran
+            # for (independent of V2 outcome), so audit shows pool size and
+            # rejection reasons for both rescued and still-abstained groups.
+            if _matrix_by_sf:
+                for _entry in pipeline_diag:
+                    _sf = str(_entry.get("source_file") or "")
+                    if _sf in _matrix_by_sf:
+                        _entry["candidate_matrix"] = _matrix_by_sf[_sf]
 
             if _abstained or _alternate_selected:
                 # Recompute coverage_sanity post-resolution
