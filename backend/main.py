@@ -11534,7 +11534,15 @@ def _rebuild_field_data_outputs(scope: RebuildScope = RebuildScope.FULL) -> None
                     _group_rows = list(_norm_group.get("station_rows") or [])
                     _candidate_rankings = list(_loser_match.get("candidate_rankings") or [])
                     _filter_meta = dict(_loser_match.get("print_filter") or {})
-                    _mapping_in = dict(_loser_match.get("mapping") or {})
+                    # B-MATCH-V2-ALT-BUILD-FIX-1: do NOT inherit the V1-original
+                    # mapping. Its anchor_offset_ft was calibrated against the
+                    # original route's chainage; reapplying it to a different
+                    # alternate route clamps every station to the alt route's
+                    # endpoint (Phase 2 attribution: stale_anchor_offset). Passing
+                    # None forces _build_station_points_for_group to compute a
+                    # fresh _resolve_station_mapping(rows, alt_route_total) with
+                    # anchor_offset_ft=0.0.
+                    _mapping_in = None
 
                     _build_exception: Optional[BaseException] = None
                     try:
@@ -11657,6 +11665,79 @@ def _rebuild_field_data_outputs(scope: RebuildScope = RebuildScope.FULL) -> None
                         STATE.get("route_catalog") or [],
                         len(groups),
                     )
+
+            # B-MATCH-V2-ALT-BUILD-FIX-2: post-V2 collision re-arbitration.
+            # V2 rescues may land two groups on the same alternate route in
+            # truly-overlapping station windows. The first-pass V1 resolver
+            # did NOT see these collisions (they only exist after V2 mutates
+            # group_matches). The second coverage_sanity recompute above
+            # detects them via the same Window V2 distinctness check used
+            # for first-pass collisions, but no step yet acts on them.
+            # Re-run resolve_route_collisions over the NEW pairs so the
+            # safety contract ("same-route true-overlap must not both
+            # render") survives V2 rescues. Filter out pairs where any
+            # member is STILL ABSTAINED from first-pass V1 (i.e.
+            # pre-abstained AND not V2-rescued) — that's the no-double-
+            # abstain guard. V2-rescued members CAN appear (and that is
+            # exactly the new-collision case we want to handle).
+            _abstained_post_v2: Set[str] = set()
+            _resolution_post_v2: Dict[str, Any] = {}
+            if _alternate_selected:
+                _collisions_post = (STATE["coverage_sanity"] or {}).get(
+                    "same_route_anchor_collisions"
+                ) or []
+                _still_abstained = (
+                    set(_resolution.get("abstained_source_files") or [])
+                    - set(_alternate_selected.keys())
+                )
+                _collisions_post_new = [
+                    c for c in _collisions_post
+                    if not any(
+                        sf in _still_abstained
+                        for sf in (c.get("source_files") or [])
+                    )
+                ]
+                if _collisions_post_new:
+                    _resolution_post_v2 = resolve_route_collisions(
+                        group_matches, pipeline_diag, _collisions_post_new
+                    )
+                    _abstained_post_v2 = set(
+                        _resolution_post_v2.get("abstained_source_files") or []
+                    )
+
+            if _abstained_post_v2:
+                _reasons_post_v2 = (
+                    _resolution_post_v2.get("per_source_file_abstain_reason") or {}
+                )
+                for _entry in pipeline_diag:
+                    _sf = str(_entry.get("source_file") or "")
+                    if _sf in _abstained_post_v2:
+                        _entry["stopped_at"] = "abstained_post_v2_collision"
+                        _entry["abstain_reason"] = _reasons_post_v2.get(_sf)
+                        _entry["render_allowed"] = False
+                        _entry["render_block_reasons"] = list(
+                            _entry.get("render_block_reasons") or []
+                        ) + ["post_v2_collision"]
+                        _entry["segments_returned"] = 0
+                for _m in group_matches:
+                    if str(_m.get("source_file") or "") in _abstained_post_v2:
+                        _m["render_allowed"] = False
+                        _m["group_station_points"] = []
+                        _m["group_redline_segments"] = []
+                        _m["route_collision_abstain_reason"] = _reasons_post_v2.get(
+                            str(_m.get("source_file") or "")
+                        )
+                with _perf_audit_timer(
+                    "rebuild.coverage_sanity_third",
+                    phase=_pa_rebuild_phase,
+                    input_count=len(group_matches),
+                ):
+                    STATE["coverage_sanity"] = compute_coverage_sanity(
+                        group_matches,
+                        STATE.get("route_catalog") or [],
+                        len(groups),
+                    )
+
             # Always record the resolution outcome (even when no abstains
             # — useful audit trail).
             (STATE["coverage_sanity"] or {})["route_collision_resolution"] = {
@@ -11665,6 +11746,10 @@ def _rebuild_field_data_outputs(scope: RebuildScope = RebuildScope.FULL) -> None
                 "alternate_selected_source_files": sorted(_alternate_selected.keys()),
                 "alternate_rejected_source_files": sorted(_alternate_rejected.keys()),
                 "collision_resolutions": _resolution.get("collision_resolutions") or [],
+                "post_v2_abstained_source_files": sorted(_abstained_post_v2),
+                "collision_resolutions_post_v2": _resolution_post_v2.get(
+                    "collision_resolutions"
+                ) or [],
             }
             if _perf_audit_enabled():
                 try:
@@ -18577,6 +18662,8 @@ def _nc_blocked_answer(
             "no matching route was found — station points may not align with any route in the KMZ",
         "no_anchored_hypotheses":
             "route alignment couldn't be confirmed — station spacing didn't match any candidate",
+        "abstained_post_v2_collision":
+            "abstained after V2 rescue — another bore log already covers the same route window",
     }
     for d in (stopped + render_only)[:5]:
         f        = _nc_short_file(d.get("source_file") or "")
@@ -18757,6 +18844,11 @@ def _nc_source_file_answer(
             "The engine couldn't find a confident match for the station spacing."
         ),
         "render_gate_blocked": "the render gate blocked it after routing.",
+        "abstained_post_v2_collision": (
+            "abstained after V2 rescue. "
+            "Another bore log already covers the same route window, "
+            "so the V1 resolver kept the higher-confidence placement and abstained this one."
+        ),
     }
 
     for d in (stopped + blk_only)[:3]:
