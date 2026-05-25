@@ -19,6 +19,7 @@ same-route anchor collisions.
 from __future__ import annotations
 
 import math
+import os
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 # Defaults tuned for the Brenham 58-group corpus context. Operators can
@@ -31,12 +32,71 @@ _DEFAULT_TOP5_COLLAPSE_THRESHOLD = 0.80
 # shorter group's range.
 _DEFAULT_SAME_ROUTE_COLLISION_THRESHOLD = 0.50
 
+# Collision Window V2 — Station-Frame Distinctness Override.
+# When TRUELINE_SAME_ROUTE_WINDOW_OWNERSHIP=1, a projected-overlap pair is
+# only treated as a true collision when the two groups' STATION-FRAME
+# ranges also overlap by >= this fraction of the shorter station span.
+# Below the floor, the pair is reclassified as
+# "allow_both_distinct_station_windows": the projection collapsed two
+# distinct field-frame work windows onto the same KMZ route, but the
+# crews bored physically distinct stretches and both should draw.
+_DEFAULT_STATION_DISTINCTNESS_FLOOR = 0.10
+_ENV_STATION_DISTINCTNESS = "TRUELINE_SAME_ROUTE_WINDOW_OWNERSHIP"
+
 
 def _safe_int(value: Any) -> int:
     try:
         return int(value or 0)
     except (TypeError, ValueError):
         return 0
+
+
+def _safe_float_or_none(value: Any) -> Optional[float]:
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _resolve_station_distinctness_floor(explicit: Optional[float]) -> Optional[float]:
+    """Determine the effective station-distinctness floor.
+
+    Priority:
+      1. Explicit kwarg (any float, including 0.0) wins for tests + callers.
+      2. Else if env TRUELINE_SAME_ROUTE_WINDOW_OWNERSHIP=1, use 0.10 default.
+      3. Else None — override disabled; legacy behavior preserved byte-identically.
+    """
+    if explicit is not None:
+        return explicit
+    if os.getenv(_ENV_STATION_DISTINCTNESS, "0").strip() == "1":
+        return _DEFAULT_STATION_DISTINCTNESS_FLOOR
+    return None
+
+
+def _station_overlap(
+    a_min: Any, a_max: Any, b_min: Any, b_max: Any,
+) -> Tuple[Optional[float], Optional[float]]:
+    """Return (overlap_ft, overlap_ratio_against_shorter_span).
+
+    Returns (None, None) when any station-frame endpoint is missing /
+    non-numeric, OR when either group's station span is non-positive
+    (single-point groups cannot be meaningfully distinct in station-frame).
+    """
+    am = _safe_float_or_none(a_min)
+    ax = _safe_float_or_none(a_max)
+    bm = _safe_float_or_none(b_min)
+    bx = _safe_float_or_none(b_max)
+    if am is None or ax is None or bm is None or bx is None:
+        return (None, None)
+    a_span = max(ax - am, 0.0)
+    b_span = max(bx - bm, 0.0)
+    shorter = min(a_span, b_span)
+    if shorter <= 0.0:
+        return (None, None)
+    overlap_ft = max(0.0, min(ax, bx) - max(am, bm))
+    return (overlap_ft, overlap_ft / shorter)
 
 
 def _route_role_for_id(route_catalog: Sequence[Dict[str, Any]], route_id: str) -> str:
@@ -171,10 +231,21 @@ def _detect_same_route_collisions(
     route_catalog: Sequence[Dict[str, Any]],
     *,
     threshold: float = _DEFAULT_SAME_ROUTE_COLLISION_THRESHOLD,
-) -> List[Dict[str, Any]]:
+    station_distinctness_floor: Optional[float] = None,
+) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
     """Identify pairs of placed groups on the same route whose projected
     route-offset ranges overlap by >= threshold of the shorter group's
-    range. Returns a list of collision records (deterministic order).
+    range. Returns (collisions, window_decisions).
+
+    `collisions` matches the pre-override schema and is what feeds the
+    Anti-Collapse V1 resolver downstream.
+
+    `window_decisions` is non-empty ONLY when station_distinctness_floor
+    is not None (Collision Window V2 override active). Every
+    projected-overlap pair that clears `threshold` lands in this list
+    with its station-frame analysis + decision. Pairs reclassified as
+    "allow_both_distinct_station_windows" are suppressed from
+    `collisions`.
 
     Pure read-only; never mutates group_matches or route_catalog.
     """
@@ -190,6 +261,7 @@ def _detect_same_route_collisions(
             by_route.setdefault(rid, []).append(m)
 
     collisions: List[Dict[str, Any]] = []
+    window_decisions: List[Dict[str, Any]] = []
     for rid in sorted(by_route.keys()):
         groups = by_route[rid]
         if len(groups) < 2:
@@ -239,7 +311,8 @@ def _detect_same_route_collisions(
                 overlap_ratio = overlap_ft / min_span
                 if overlap_ratio < threshold:
                     continue
-                collisions.append({
+
+                collision_record = {
                     "route_id": rid,
                     "route_name": str(route.get("route_name") or ""),
                     "route_role": str(route.get("route_role") or ""),
@@ -280,8 +353,63 @@ def _detect_same_route_collisions(
                         f"{b['source_file']} project onto {round(overlap_ratio * 100)}% "
                         f"overlapping ranges of {rid}"
                     ),
+                }
+
+                if station_distinctness_floor is None:
+                    # Legacy path — byte-identical to pre-override behavior.
+                    collisions.append(collision_record)
+                    continue
+
+                # Collision Window V2 — Station-Frame Distinctness Override.
+                # Compute station-frame overlap. Pairs whose station-frame
+                # ranges are disjoint (or near-disjoint) are reclassified
+                # as projection artifacts: distinct field-frame work windows
+                # collapsed onto the same KMZ route by the projector.
+                st_overlap_ft, st_overlap_ratio = _station_overlap(
+                    a["station_min_ft"], a["station_max_ft"],
+                    b["station_min_ft"], b["station_max_ft"],
+                )
+
+                if st_overlap_ratio is None:
+                    decision = "abstain_loser"
+                    reason = "station_metadata_unavailable"
+                    include_in_collisions = True
+                elif st_overlap_ratio < station_distinctness_floor:
+                    decision = "allow_both_distinct_station_windows"
+                    reason = "station_overlap_below_distinctness_floor"
+                    include_in_collisions = False
+                else:
+                    decision = "abstain_loser"
+                    reason = "true_window_overlap"
+                    include_in_collisions = True
+
+                window_decisions.append({
+                    "route_id": rid,
+                    "route_name": str(route.get("route_name") or ""),
+                    "source_files": [a["source_file"], b["source_file"]],
+                    "projected_overlap_ft": round(overlap_ft, 2),
+                    "projected_overlap_ratio": round(overlap_ratio, 4),
+                    "station_overlap_ft": (
+                        round(st_overlap_ft, 2) if st_overlap_ft is not None else None
+                    ),
+                    "station_overlap_ratio": (
+                        round(st_overlap_ratio, 4) if st_overlap_ratio is not None else None
+                    ),
+                    "decision": decision,
+                    "reason": reason,
+                    # kept_group / abstained_group: resolver determines these
+                    # downstream on `decision == "abstain_loser"` cases. Left
+                    # as None at coverage_sanity time; operators can join
+                    # against `route_collision_resolution.collision_resolutions`
+                    # for the resolver verdict.
+                    "kept_group": None,
+                    "abstained_group": None,
                 })
-    return collisions
+
+                if include_in_collisions:
+                    collisions.append(collision_record)
+
+    return collisions, window_decisions
 
 
 def compute_coverage_sanity(
@@ -293,6 +421,7 @@ def compute_coverage_sanity(
     overuse_share_pct: float = _DEFAULT_OVERUSE_SHARE_PCT,
     top5_collapse_threshold: float = _DEFAULT_TOP5_COLLAPSE_THRESHOLD,
     same_route_collision_threshold: float = _DEFAULT_SAME_ROUTE_COLLISION_THRESHOLD,
+    station_distinctness_floor: Optional[float] = None,
 ) -> Dict[str, Any]:
     """Build the coverage-sanity diagnostic dict.
 
@@ -306,6 +435,15 @@ def compute_coverage_sanity(
       overuse_share_pct: see above
       top5_collapse_threshold: if top-5 routes hold >= this share of all
         placed groups, corpus is flagged as "collapse_detected"
+      station_distinctness_floor: optional float in [0,1]. When provided
+        (or when TRUELINE_SAME_ROUTE_WINDOW_OWNERSHIP=1 is set in env),
+        activates the Collision Window V2 station-frame override:
+        projected-overlap pairs whose station-frame overlap_ratio is
+        below this floor are reclassified as
+        "allow_both_distinct_station_windows" and dropped from the
+        `same_route_anchor_collisions` list. Schema bumps to
+        coverage-sanity-3 in that case; otherwise byte-identical to
+        coverage-sanity-2 output.
     """
     placed = [
         m for m in (group_matches or [])
@@ -361,13 +499,19 @@ def compute_coverage_sanity(
         placed_count > 0 and matched_route_count > 0 and top5_share >= top5_collapse_threshold
     )
 
-    same_route_collisions = _detect_same_route_collisions(
-        group_matches, route_catalog, threshold=same_route_collision_threshold,
+    effective_distinctness_floor = _resolve_station_distinctness_floor(
+        station_distinctness_floor
+    )
+    same_route_collisions, same_route_window_decisions = _detect_same_route_collisions(
+        group_matches,
+        route_catalog,
+        threshold=same_route_collision_threshold,
+        station_distinctness_floor=effective_distinctness_floor,
     )
     same_route_collision_detected = bool(same_route_collisions)
 
-    return {
-        "schema": "coverage-sanity-2",
+    out: Dict[str, Any] = {
+        "schema": "coverage-sanity-3" if effective_distinctness_floor is not None else "coverage-sanity-2",
         "total_groups": _safe_int(total_groups),
         "placed_group_count": placed_count,
         "abstained_group_count": abstained_count,
@@ -404,6 +548,10 @@ def compute_coverage_sanity(
             same_route_collision_detected, len(same_route_collisions),
         ),
     }
+    if effective_distinctness_floor is not None:
+        out["same_route_window_distinctness_floor"] = effective_distinctness_floor
+        out["same_route_window_decisions"] = same_route_window_decisions
+    return out
 
 
 def _build_warnings(

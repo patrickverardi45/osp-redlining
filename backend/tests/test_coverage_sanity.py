@@ -403,3 +403,161 @@ def test_existing_schema_fields_preserved() -> None:
                      "same_route_anchor_collision_detected",
                      "same_route_anchor_collisions"):
         assert new_key in out, f"missing new key {new_key!r}"
+
+
+# ── H. Collision Window V2 — Station-Frame Distinctness Override ─────────────
+#
+# Env gate: TRUELINE_SAME_ROUTE_WINDOW_OWNERSHIP=1
+# Behavior: when ON, projected-overlap pairs whose station-frame overlap
+# is below the distinctness floor (default 0.10) are reclassified as
+# "allow_both_distinct_station_windows" and dropped from
+# same_route_anchor_collisions. New diagnostic key
+# same_route_window_decisions records every projected-overlap pair.
+# Tests pass `station_distinctness_floor=0.10` as an explicit kwarg so
+# they do not depend on os.environ state.
+
+
+def _pair_with_proj_overlap_one(route_id: str, sf_a: str, sf_b: str,
+                                 a_station: tuple, b_station: tuple) -> tuple:
+    """Build a matched-pair with projected_overlap_ratio=1.0 on a shared
+    KMZ window, parameterizing each group's station-frame range.
+
+    Both groups draw two identical segments at lon (-96.390 .. -96.388)
+    on a route polyline at (-96.39, 30.15) -> (-96.37, 30.15). Their
+    projected route_offset_ranges are nearly identical (~6312 ft span on
+    a ~6312 ft route), so overlap_ratio ~= 1.0 under the 0.50 default.
+    """
+    match_a = _match_with_segments(
+        route_id, sf_a,
+        lon_lat_seg_endpoints=[(-96.390, 30.150, -96.388, 30.150)],
+        station_min=a_station[0], station_max=a_station[1],
+        dates=["2025-12-15"], crews=["tx1-4"],
+    )
+    match_b = _match_with_segments(
+        route_id, sf_b,
+        lon_lat_seg_endpoints=[(-96.390, 30.150, -96.388, 30.150)],
+        station_min=b_station[0], station_max=b_station[1],
+        dates=["2025-12-17"], crews=["tx1-4"],
+    )
+    return match_a, match_b
+
+
+def test_window_override_flag_off_preserves_legacy_output_byte_identically() -> None:
+    catalog = [_route_with_coords("route_x")]
+    match_a, match_b = _pair_with_proj_overlap_one(
+        "route_x", "a.xlsx", "b.xlsx",
+        a_station=(0.0, 100.0), b_station=(500.0, 600.0),  # disjoint station-frame
+    )
+    legacy = compute_coverage_sanity([match_a, match_b], catalog, total_groups=2)
+    # Schema preserved
+    assert legacy["schema"] == "coverage-sanity-2"
+    # Legacy collision present (would have been allow_both under override)
+    assert legacy["same_route_anchor_collision_detected"] is True
+    assert len(legacy["same_route_anchor_collisions"]) == 1
+    # Override-only keys absent
+    assert "same_route_window_decisions" not in legacy
+    assert "same_route_window_distinctness_floor" not in legacy
+
+
+def test_window_override_proj_one_station_zero_allows_both() -> None:
+    catalog = [_route_with_coords("route_x")]
+    match_a, match_b = _pair_with_proj_overlap_one(
+        "route_x", "log_left.xlsx", "log_right.xlsx",
+        a_station=(0.0, 100.0), b_station=(500.0, 600.0),  # station overlap = 0
+    )
+    out = compute_coverage_sanity([match_a, match_b], catalog, total_groups=2,
+                                   station_distinctness_floor=0.10)
+    # Schema bumped
+    assert out["schema"] == "coverage-sanity-3"
+    assert out["same_route_window_distinctness_floor"] == 0.10
+    # Pair is suppressed from collisions
+    assert out["same_route_anchor_collision_detected"] is False
+    assert out["same_route_anchor_collisions"] == []
+    # Decision record emitted
+    decisions = out["same_route_window_decisions"]
+    assert len(decisions) == 1
+    d = decisions[0]
+    assert d["decision"] == "allow_both_distinct_station_windows"
+    assert d["reason"] == "station_overlap_below_distinctness_floor"
+    assert d["projected_overlap_ratio"] >= 0.50
+    assert d["station_overlap_ft"] == 0.0
+    assert d["station_overlap_ratio"] == 0.0
+    assert set(d["source_files"]) == {"log_left.xlsx", "log_right.xlsx"}
+    # kept_group / abstained_group are null at coverage_sanity time
+    assert d["kept_group"] is None
+    assert d["abstained_group"] is None
+
+
+def test_window_override_proj_one_station_eighty_keeps_collision() -> None:
+    catalog = [_route_with_coords("route_x")]
+    # Station ranges 0-100 and 20-120 -> overlap_ft = 80, shorter span = 100,
+    # station_overlap_ratio = 0.80
+    match_a, match_b = _pair_with_proj_overlap_one(
+        "route_x", "log_overlap_a.xlsx", "log_overlap_b.xlsx",
+        a_station=(0.0, 100.0), b_station=(20.0, 120.0),
+    )
+    out = compute_coverage_sanity([match_a, match_b], catalog, total_groups=2,
+                                   station_distinctness_floor=0.10)
+    assert out["schema"] == "coverage-sanity-3"
+    # Collision retained
+    assert out["same_route_anchor_collision_detected"] is True
+    assert len(out["same_route_anchor_collisions"]) == 1
+    # Decision record shows abstain_loser / true_window_overlap
+    decisions = out["same_route_window_decisions"]
+    assert len(decisions) == 1
+    d = decisions[0]
+    assert d["decision"] == "abstain_loser"
+    assert d["reason"] == "true_window_overlap"
+    assert d["station_overlap_ratio"] == 0.8
+    assert d["station_overlap_ft"] == 80.0
+
+
+def test_window_override_missing_station_metadata_keeps_collision() -> None:
+    catalog = [_route_with_coords("route_x")]
+    match_a, match_b = _pair_with_proj_overlap_one(
+        "route_x", "with_meta.xlsx", "no_meta.xlsx",
+        a_station=(0.0, 100.0), b_station=(0.0, 100.0),
+    )
+    # Strip station metadata from match_b's _normalized_group so the
+    # override falls through to current abstain behavior.
+    match_b["_normalized_group"] = {
+        "min_station_ft": None,
+        "max_station_ft": None,
+        "span_ft": None,
+    }
+    out = compute_coverage_sanity([match_a, match_b], catalog, total_groups=2,
+                                   station_distinctness_floor=0.10)
+    assert out["schema"] == "coverage-sanity-3"
+    # Collision retained (fail-safe to abstain)
+    assert out["same_route_anchor_collision_detected"] is True
+    assert len(out["same_route_anchor_collisions"]) == 1
+    decisions = out["same_route_window_decisions"]
+    assert len(decisions) == 1
+    d = decisions[0]
+    assert d["decision"] == "abstain_loser"
+    assert d["reason"] == "station_metadata_unavailable"
+    assert d["station_overlap_ft"] is None
+    assert d["station_overlap_ratio"] is None
+
+
+def test_window_override_station_ratio_exactly_at_floor_keeps_collision() -> None:
+    catalog = [_route_with_coords("route_x")]
+    # Station ranges 0-100 and 90-190 -> overlap_ft = 10, shorter span = 100,
+    # station_overlap_ratio = 0.10 exactly. Floor is 0.10. Strict less-than
+    # comparison -> 0.10 is NOT below floor -> keeps collision.
+    match_a, match_b = _pair_with_proj_overlap_one(
+        "route_x", "edge_a.xlsx", "edge_b.xlsx",
+        a_station=(0.0, 100.0), b_station=(90.0, 190.0),
+    )
+    out = compute_coverage_sanity([match_a, match_b], catalog, total_groups=2,
+                                   station_distinctness_floor=0.10)
+    assert out["schema"] == "coverage-sanity-3"
+    # Collision retained — exactly at floor is NOT "below"
+    assert out["same_route_anchor_collision_detected"] is True
+    assert len(out["same_route_anchor_collisions"]) == 1
+    decisions = out["same_route_window_decisions"]
+    assert len(decisions) == 1
+    d = decisions[0]
+    assert d["decision"] == "abstain_loser"
+    assert d["reason"] == "true_window_overlap"
+    assert d["station_overlap_ratio"] == 0.1
