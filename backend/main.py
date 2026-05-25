@@ -2787,7 +2787,17 @@ def _append_match_audit_v2_entries(
     ``_build_semantic_match_shadow()`` is called once per call (not per group)
     to derive the presence-only ``semantic_shadow_available`` bool; if it
     raises for any reason the value defaults to False.
+
+    B-PERF-OPT-1: gated by ``TRUELINE_MATCH_AUDIT_V2_WRITE``. Default OFF
+    short-circuits the entire function — no semantic shadow build, no
+    file open, no JSONL serialization, no trim. Operators flip the flag
+    to "1" during diagnostic windows; historical rows in
+    match_audit_groups.jsonl remain readable via
+    /api/observability/match-audit-groups regardless.
     """
+    if os.getenv("TRUELINE_MATCH_AUDIT_V2_WRITE", "0").strip() != "1":
+        return
+
     import uuid as _uuid
     from datetime import timezone as _tz
 
@@ -2931,7 +2941,10 @@ def _append_match_audit_v2_entries(
         with open(MATCH_AUDIT_GROUPS_PATH, "a", encoding="utf-8") as _fh:
             _fh.writelines(rows)
 
-        # Tail-truncate to cap.
+        # B-PERF-OPT-1: trim policy unchanged in this commit. When the
+        # writer is gated OFF (default) this path never runs anyway.
+        # Size-trigger conversion deferred to a follow-up sprint to
+        # avoid changing semantics that existing tests assert.
         with open(MATCH_AUDIT_GROUPS_PATH, "r", encoding="utf-8") as _fh:
             _all_lines = _fh.readlines()
 
@@ -2964,7 +2977,16 @@ def _append_match_shadow_compare_entries(
 
     The ``operational_winner_*`` fields are sourced from ``group_matches``
     (the production pipeline output), NOT from the shadow payload.
+
+    B-PERF-OPT-1: gated by ``TRUELINE_MATCH_SHADOW_COMPARE_WRITE``. Default
+    OFF short-circuits the entire function — no semantic shadow build, no
+    file open, no JSONL serialization, no trim. Historical rows in
+    match_shadow_compare.jsonl remain readable via
+    /api/observability/match-shadow-compare regardless.
     """
+    if os.getenv("TRUELINE_MATCH_SHADOW_COMPARE_WRITE", "0").strip() != "1":
+        return
+
     import uuid as _uuid_sc
     from datetime import timezone as _tz_sc
 
@@ -3098,7 +3120,10 @@ def _append_match_shadow_compare_entries(
         with open(MATCH_SHADOW_COMPARE_PATH, "a", encoding="utf-8") as _fh_sc:
             _fh_sc.writelines(rows_sc)
 
-        # Tail-truncate to cap.
+        # B-PERF-OPT-1: trim policy unchanged in this commit. When the
+        # writer is gated OFF (default) this path never runs anyway.
+        # Size-trigger conversion deferred to a follow-up sprint to
+        # avoid changing semantics that existing tests assert.
         with open(MATCH_SHADOW_COMPARE_PATH, "r", encoding="utf-8") as _fh_sc:
             _all_lines_sc = _fh_sc.readlines()
 
@@ -12916,8 +12941,13 @@ def _summary_payload(include_debug: bool = False) -> Dict[str, Any]:
         # uploaded or when the additive parse failed; consumers must treat
         # the absence as "no semantic data".
         "kmz_semantic": STATE.get("kmz_semantic") or None,
-        # Phase 1C — SHADOW MODE diagnostics. Read-only, additive.
-        "kmz_semantic_match_shadow": _build_semantic_match_shadow(),
+        # B-PERF-OPT-1: kmz_semantic_match_shadow removed from non-debug
+        # payload. Its O(anchors × routes × polyline) compute via
+        # _build_semantic_match_shadow() ran on every upload-completion
+        # response (~1.5s in production timing). Only consumed by
+        # KmzSemanticDiagnosticsPanel.tsx (a debug surface) which already
+        # null-guards the field. Debug payload at include_debug=True still
+        # emits it.
         "closeout_lock": _normalize_closeout_lock(STATE.get("closeout_lock")),
         **_closeout_flat_fields(),
     }

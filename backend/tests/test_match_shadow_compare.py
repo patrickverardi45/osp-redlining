@@ -23,6 +23,7 @@ IF A TEST FAILS after a legitimate Phase 1H-A change:
 from __future__ import annotations
 
 import json
+import os
 import sys
 import tempfile
 import unittest
@@ -152,6 +153,12 @@ class TestMatchShadowCompare(unittest.TestCase):
             Path(self._tmpdir.name) / "match_shadow_compare.jsonl"
         )
 
+        # B-PERF-OPT-1: writer is env-gated default OFF. These tests verify
+        # legacy behavior — set the flag ON for their duration. Gating itself
+        # is verified by test_match_audit_gating.py.
+        self._orig_sc_flag = os.environ.get("TRUELINE_MATCH_SHADOW_COMPARE_WRITE")
+        os.environ["TRUELINE_MATCH_SHADOW_COMPARE_WRITE"] = "1"
+
         self._orig_session = main.STATE.get("_session_id_hint")
         self._orig_sha = main.STATE.get("last_kmz_input_sha256")
 
@@ -166,6 +173,10 @@ class TestMatchShadowCompare(unittest.TestCase):
         main.STATE["last_kmz_input_sha256"] = self._orig_sha
         main.STATE["_session_id_hint"] = self._orig_session
         main._build_semantic_match_shadow = self._orig_shadow  # type: ignore[assignment]
+        if self._orig_sc_flag is None:
+            os.environ.pop("TRUELINE_MATCH_SHADOW_COMPARE_WRITE", None)
+        else:
+            os.environ["TRUELINE_MATCH_SHADOW_COMPARE_WRITE"] = self._orig_sc_flag
         main.MATCH_SHADOW_COMPARE_MAX_ROWS = self._orig_max_rows
         main.MATCH_SHADOW_COMPARE_PATH = self._orig_path
         self._tmpdir.cleanup()
