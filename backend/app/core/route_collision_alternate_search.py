@@ -426,3 +426,73 @@ def search_alternate_placement(
             "overlap_threshold": overlap_threshold,
         },
     }
+
+
+# Phase 1 diagnostic taxonomy (B-MATCH-V2-ALT-BUILD-DIAG-1). The single
+# legacy reason "alternate_build_returned_empty" silently masked three
+# distinct failure modes (exception raised, empty points, empty segments)
+# in the rebuild-loop call site at backend/main.py:11538+. Operators
+# could not tell which mode fired for bore_log29 → route_443 et al.
+# The classifier below distinguishes the three so the next code
+# decision (fix vs. accept) is data-driven.
+_EXCEPTION_MESSAGE_TRUNCATE_CHARS = 200
+
+
+def classify_alternate_build_failure(
+    *,
+    source_file: Any,
+    alt_route: Optional[Dict[str, Any]],
+    norm_group: Optional[Dict[str, Any]],
+    new_points: Sequence[Any],
+    new_segments: Sequence[Any],
+    build_exception: Optional[BaseException] = None,
+) -> Optional[Dict[str, Any]]:
+    """Build a structured rejection record when alternate-route geometry
+    build fails. Returns None when the build succeeded (no exception AND
+    non-empty points AND non-empty segments) so callers can keep the
+    happy-path placement.
+
+    Failure classification (priority order — exception always wins):
+      - ``alternate_build_raised_exception``: ``build_exception`` is not None
+      - ``alternate_build_returned_no_points``: build returned ``[]`` for points
+      - ``alternate_build_returned_no_segments``: build returned points but
+        ``[]`` for segments
+
+    Diagnostic payload includes source_file, candidate route_id/name, the
+    point/segment counts at failure time, the loser's station window, the
+    alternate route's coord count + length_ft, and (when exception fired)
+    the exception type plus a safely-truncated message. This is the
+    audit-trail Phase 2 will read to decide whether to fix the build path
+    or accept the failure as legitimate.
+    """
+    if build_exception is None and new_points and new_segments:
+        return None
+
+    if build_exception is not None:
+        reason = "alternate_build_raised_exception"
+    elif not new_points:
+        reason = "alternate_build_returned_no_points"
+    else:
+        reason = "alternate_build_returned_no_segments"
+
+    route = alt_route or {}
+    group = norm_group or {}
+    coords = route.get("coords") or []
+    rejection: Dict[str, Any] = {
+        "source_file": _safe_str(source_file),
+        "route_id": _safe_str(route.get("route_id")),
+        "route_name": _safe_str(route.get("route_name")),
+        "reason": reason,
+        "point_count": len(new_points),
+        "segment_count": len(new_segments),
+        "station_min_ft": group.get("min_station_ft"),
+        "station_max_ft": group.get("max_station_ft"),
+        "route_coord_count": len(coords),
+        "route_length_ft": route.get("length_ft"),
+    }
+    if build_exception is not None:
+        rejection["exception_type"] = type(build_exception).__name__
+        rejection["exception_message"] = str(build_exception)[
+            :_EXCEPTION_MESSAGE_TRUNCATE_CHARS
+        ]
+    return rejection

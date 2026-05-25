@@ -29,6 +29,7 @@ from backend import main as M
 from backend.app.core.rebuild_scope import RebuildScope
 from backend.app.core.route_collision_alternate_search import (
     build_kept_offsets_by_route,
+    classify_alternate_build_failure,
     compute_pair_overlap_ratio,
     project_segments_onto_route,
     search_alternate_placement,
@@ -398,6 +399,151 @@ class TestAlternateSearchBoreLog2930Style(unittest.TestCase):
         )
         assert decision["outcome"] == "alternate_selected"
         assert decision["alternate_route_id"] == "route_B"
+
+
+# ── Phase 1 build-failure classifier (B-MATCH-V2-ALT-BUILD-DIAG-1) ────────
+
+
+class TestClassifyAlternateBuildFailure(unittest.TestCase):
+    """Pure unit tests for classify_alternate_build_failure.
+
+    The classifier splits the legacy "alternate_build_returned_empty"
+    bucket into three actionable failure modes plus a happy-path
+    None-return.
+    """
+
+    def _alt_route(self) -> Dict[str, Any]:
+        return {
+            "route_id": "route_443",
+            "route_name": "Underground Cable Spur",
+            "coords": [[-96.4000, 30.155], [-96.3990, 30.155]],
+            "length_ft": 317.5,
+        }
+
+    def _norm_group(self) -> Dict[str, Any]:
+        return {
+            "min_station_ft": 0.0,
+            "max_station_ft": 415.0,
+            "span_ft": 415.0,
+        }
+
+    def test_classify_exception_returns_exception_reason_with_type_and_message(self) -> None:
+        rejection = classify_alternate_build_failure(
+            source_file="bore_log29.xlsx",
+            alt_route=self._alt_route(),
+            norm_group=self._norm_group(),
+            new_points=[],
+            new_segments=[],
+            build_exception=ValueError("seg coords malformed"),
+        )
+        assert rejection is not None
+        assert rejection["reason"] == "alternate_build_raised_exception"
+        assert rejection["exception_type"] == "ValueError"
+        assert rejection["exception_message"] == "seg coords malformed"
+        assert rejection["source_file"] == "bore_log29.xlsx"
+        assert rejection["route_id"] == "route_443"
+        assert rejection["route_name"] == "Underground Cable Spur"
+        assert rejection["point_count"] == 0
+        assert rejection["segment_count"] == 0
+        assert rejection["station_min_ft"] == 0.0
+        assert rejection["station_max_ft"] == 415.0
+        assert rejection["route_coord_count"] == 2
+        assert rejection["route_length_ft"] == 317.5
+
+    def test_classify_no_points_returns_no_points_reason(self) -> None:
+        rejection = classify_alternate_build_failure(
+            source_file="bore_log29.xlsx",
+            alt_route=self._alt_route(),
+            norm_group=self._norm_group(),
+            new_points=[],
+            new_segments=[],
+            build_exception=None,
+        )
+        assert rejection is not None
+        assert rejection["reason"] == "alternate_build_returned_no_points"
+        assert "exception_type" not in rejection
+        assert "exception_message" not in rejection
+        assert rejection["point_count"] == 0
+        assert rejection["segment_count"] == 0
+
+    def test_classify_points_present_no_segments_returns_no_segments_reason(self) -> None:
+        rejection = classify_alternate_build_failure(
+            source_file="bore_log29.xlsx",
+            alt_route=self._alt_route(),
+            norm_group=self._norm_group(),
+            new_points=[{"station": "0+00"}, {"station": "1+00"}],
+            new_segments=[],
+            build_exception=None,
+        )
+        assert rejection is not None
+        assert rejection["reason"] == "alternate_build_returned_no_segments"
+        assert "exception_type" not in rejection
+        assert rejection["point_count"] == 2
+        assert rejection["segment_count"] == 0
+
+    def test_classify_happy_path_returns_none(self) -> None:
+        result = classify_alternate_build_failure(
+            source_file="bore_log29.xlsx",
+            alt_route=self._alt_route(),
+            norm_group=self._norm_group(),
+            new_points=[{"station": "0+00"}, {"station": "1+00"}],
+            new_segments=[{"coords": [[30.155, -96.4], [30.155, -96.399]]}],
+            build_exception=None,
+        )
+        assert result is None
+
+    def test_classify_truncates_long_exception_message_to_200_chars(self) -> None:
+        long_msg = "x" * 5000
+        rejection = classify_alternate_build_failure(
+            source_file="bore_log29.xlsx",
+            alt_route=self._alt_route(),
+            norm_group=self._norm_group(),
+            new_points=[],
+            new_segments=[],
+            build_exception=RuntimeError(long_msg),
+        )
+        assert rejection is not None
+        assert rejection["exception_type"] == "RuntimeError"
+        assert rejection["exception_message"] == "x" * 200
+        assert len(rejection["exception_message"]) == 200
+
+    def test_classify_missing_route_and_group_metadata_still_returns_record(self) -> None:
+        # Defensive: when caller hands us None / empty dicts, the classifier
+        # must still emit a rejection with the failure mode rather than
+        # crashing — Phase 1's job is to expose, never to mask.
+        rejection = classify_alternate_build_failure(
+            source_file="bore_log29.xlsx",
+            alt_route=None,
+            norm_group=None,
+            new_points=[],
+            new_segments=[],
+            build_exception=None,
+        )
+        assert rejection is not None
+        assert rejection["reason"] == "alternate_build_returned_no_points"
+        assert rejection["route_id"] == ""
+        assert rejection["route_name"] == ""
+        assert rejection["station_min_ft"] is None
+        assert rejection["station_max_ft"] is None
+        assert rejection["route_coord_count"] == 0
+        assert rejection["route_length_ft"] is None
+
+    def test_classify_exception_priority_over_empty_points(self) -> None:
+        # If both an exception fires AND points come back empty (the
+        # actual production except-handler resets both lists), exception
+        # wins. This protects against future regressions where someone
+        # reorders the if/elif chain.
+        rejection = classify_alternate_build_failure(
+            source_file="bore_log29.xlsx",
+            alt_route=self._alt_route(),
+            norm_group=self._norm_group(),
+            new_points=[],
+            new_segments=[],
+            build_exception=KeyError("expected_key_absent"),
+        )
+        assert rejection is not None
+        assert rejection["reason"] == "alternate_build_raised_exception"
+        assert rejection["exception_type"] == "KeyError"
 
 
 if __name__ == "__main__":

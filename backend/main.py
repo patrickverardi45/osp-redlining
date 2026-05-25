@@ -42,6 +42,7 @@ from app.core.notes_street_evidence import compute_location_evidence_mismatch
 from app.core.rebuild_scope import RebuildScope
 from app.core.route_collision_alternate_search import (
     build_kept_offsets_by_route,
+    classify_alternate_build_failure,
     search_alternate_placement,
 )
 from app.core.route_collision_resolver import resolve_route_collisions
@@ -11535,6 +11536,7 @@ def _rebuild_field_data_outputs(scope: RebuildScope = RebuildScope.FULL) -> None
                     _filter_meta = dict(_loser_match.get("print_filter") or {})
                     _mapping_in = dict(_loser_match.get("mapping") or {})
 
+                    _build_exception: Optional[BaseException] = None
                     try:
                         _new_points, _new_mapping = _build_station_points_for_group(
                             _group_rows, _alt_route, _candidate_rankings, _filter_meta, _mapping_in
@@ -11542,17 +11544,23 @@ def _rebuild_field_data_outputs(scope: RebuildScope = RebuildScope.FULL) -> None
                         _new_segments = _build_redline_segments_for_group(
                             _group_rows, _alt_route, _candidate_rankings, _new_mapping, _filter_meta
                         )
-                    except Exception:
+                    except Exception as _exc:
+                        _build_exception = _exc
                         _new_points, _new_segments, _new_mapping = [], [], _mapping_in
 
-                    if not _new_points or not _new_segments:
+                    _build_rejection = classify_alternate_build_failure(
+                        source_file=_sf,
+                        alt_route=_alt_route,
+                        norm_group=_norm_group,
+                        new_points=_new_points,
+                        new_segments=_new_segments,
+                        build_exception=_build_exception,
+                    )
+                    if _build_rejection is not None:
                         _decision["outcome"] = "no_safe_alternate"
                         _decision["rejected_candidates"] = list(
                             _decision.get("rejected_candidates") or []
-                        ) + [{
-                            "route_id": _alt_rid,
-                            "reason": "alternate_build_returned_empty",
-                        }]
+                        ) + [_build_rejection]
                         _alternate_rejected[_sf] = _decision
                         continue
 
