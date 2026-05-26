@@ -5476,8 +5476,20 @@ ${redlinePlacemarks.length > 0 ? buildEngFolder("Redlines", redlinePlacemarks, 1
                     ? React.cloneElement(
                         operationalMap as React.ReactElement<{
                           engineeringPlanOverlay?: EngineeringPlanOverlayState;
+                          engineeringPlanSessionByPlanId?: Record<string, string>;
                         }>,
-                        { engineeringPlanOverlay: pdfOverlay },
+                        {
+                          engineeringPlanOverlay: pdfOverlay,
+                          // VO.2b R4 — plan_id → session_id lookup so the
+                          // page-image fetch uses each plan's own immutable
+                          // upload-time session_id, decoupled from the
+                          // volatile workspace localStorage osp_session_id.
+                          engineeringPlanSessionByPlanId: Object.fromEntries(
+                            (state?.engineering_plans ?? [])
+                              .filter((p: EngineeringPlan) => Boolean(p.plan_id) && Boolean(p.session_id))
+                              .map((p: EngineeringPlan) => [p.plan_id, p.session_id]),
+                          ),
+                        },
                       )
                     : operationalMap}
                 </div>

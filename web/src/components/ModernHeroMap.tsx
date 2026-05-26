@@ -74,6 +74,13 @@ type ModernHeroMapProps = {
   kmzSemantic?: SemanticKmz | null;
   /** VO.2b — PDF page-image overlay state (see type doc above). */
   engineeringPlanOverlay?: EngineeringPlanOverlayState;
+  /** VO.2b R4 — plan_id → session_id lookup map.  When present, the PDF page-
+   *  image fetch uses each plan's OWN persisted session_id (immutable since
+   *  upload) rather than the volatile workspace localStorage session_id.
+   *  This is self-healing across post-upload session rotations triggered by
+   *  any acceptSessionFromMutation-emitting route.  Optional for backward
+   *  compatibility: when absent, falls back to appendSessionIdReadOnly. */
+  engineeringPlanSessionByPlanId?: Record<string, string>;
 };
 
 function cleanCoords(coords: number[][] | undefined | null): Array<[number, number]> {
@@ -506,6 +513,7 @@ export default function ModernHeroMap({
   bridgedGpsPhotos = [],
   kmzSemantic,
   engineeringPlanOverlay,
+  engineeringPlanSessionByPlanId,
 }: ModernHeroMapProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<ReturnType<LeafletNS["map"]> | null>(null);
@@ -1235,16 +1243,23 @@ export default function ModernHeroMap({
     let cancelled = false;
     void (async () => {
       try {
-        // Scope the page-image fetch to the same workspace session_id used by
-        // the upload (appendSessionIdToForm at RedlineMap.handleEngineeringPlansUpload).
-        // Without this query param, _resolve_session_id(None) on the backend
-        // mints a fresh uuid4 hex per request — guaranteeing a 404 because no
-        // plan was ever stored under that random id. Read-only variant: never
-        // mints a session as a side-effect of a GET.
+        // Scope the page-image fetch to the plan's OWN persisted session_id
+        // when available — this is immutable since upload and survives any
+        // post-upload acceptSessionFromMutation-driven rotation of the
+        // workspace localStorage session_id (VO.2b R4 root cause).  When the
+        // lookup map is absent or doesn't contain the planId, fall back to
+        // appendSessionIdReadOnly (R3 behavior) so unscoped callers still
+        // work via current workspace session.
         const baseImageUrl =
           `${baseUrl}/api/engineering-plans/${encodeURIComponent(planId)}` +
           `/page/${encodeURIComponent(String(pageIndex))}/image?dpi=${dpi}`;
-        const url = appendSessionIdReadOnly(baseImageUrl, projectId);
+        const planOwnSessionId =
+          (engineeringPlanSessionByPlanId &&
+            engineeringPlanSessionByPlanId[planId]) ||
+          undefined;
+        const url = planOwnSessionId
+          ? `${baseImageUrl}&session_id=${encodeURIComponent(planOwnSessionId)}`
+          : appendSessionIdReadOnly(baseImageUrl, projectId);
         const resp = await apiFetch(url, undefined, "vo2b_load_plan_page");
         if (cancelled) return;
         if (!resp.ok) return; // 404 / 500 / 400 → no overlay; silent (UI shows prior state)
