@@ -18493,6 +18493,151 @@ async def get_engineering_plan_page_image(
     )
 
 
+# ── PDF Plan Mode Step 2A: plan set page index + classification ─────────────
+#
+# Returns a per-page index of a previously-uploaded engineering PDF with
+# coarse classification (plan_sheet / detail_sheet / cover_sheet /
+# notes_sheet / unknown), extracted route names, station labels,
+# matchline references, and construction keywords.  Suggestion-grade
+# output — operator review required for any downstream use.
+#
+# Gated by TRUELINE_PLAN_OVERLAY_IMAGE for consistency with the page-image
+# endpoint (same PDF Plan Mode lane; same kill switch).
+#
+# Cached on disk under {ENGINEERING_PLAN_ROOT}/{session_id}/{plan_id}_
+# index_{schema_version}.json.  Cache invalidated when the source PDF's
+# mtime is newer than the cache file.
+#
+# Authoritative design: lane planning §1-§3 + Step 2A goal directive.
+
+@protected_router.get("/api/engineering-plans/{plan_id}/index")
+async def get_engineering_plan_index(
+    plan_id: str,
+    session_id: Optional[str] = None,
+    request: Request = None,
+):
+    # Gate check before any work; flag-off returns 404 with no PyMuPDF cost.
+    if not _trueline_plan_overlay_image_enabled():
+        return _err(
+            "Engineering plan page index is disabled.",
+            status_code=404,
+        )
+
+    resolved_session_id = _resolve_session_id(session_id)
+    _require_tenant_owns_session(resolved_session_id, request)
+
+    target_plan_id = str(plan_id or "").strip()
+    if not target_plan_id:
+        return _err(
+            "plan_id is required.",
+            status_code=400,
+            session_id=resolved_session_id,
+        )
+
+    # VO.2b R6 pattern: read the RAW index (not the public projection)
+    # so the internal stored_path / stored_filename fields are visible.
+    index_data = _load_engineering_plan_index()
+    matched: Optional[Dict[str, Any]] = None
+    for plan in index_data.get("plans", []):
+        if not _engineering_plan_record_matches_session(plan, resolved_session_id):
+            continue
+        if str(plan.get("plan_id") or "").strip() == target_plan_id:
+            matched = plan
+            break
+    if matched is None:
+        return _err(
+            "Engineering plan not found.",
+            status_code=404,
+            session_id=resolved_session_id,
+        )
+
+    file_type = str(matched.get("file_type") or "").strip().lower()
+    if file_type != "application/pdf":
+        return _err(
+            "Engineering plan is not a PDF; index extraction is only "
+            "supported for PDFs.",
+            status_code=400,
+            session_id=resolved_session_id,
+        )
+
+    # Same path-resolution + safe fallback as the image endpoint (R6 contract).
+    stored_path_str = str(matched.get("stored_path") or "").strip()
+    if not stored_path_str:
+        stored_filename = str(matched.get("stored_filename") or "").strip()
+        record_session_id = str(matched.get("session_id") or "").strip()
+        if stored_filename and record_session_id:
+            stored_path_str = str(
+                ENGINEERING_PLAN_ROOT
+                / _safe_filename(record_session_id)
+                / stored_filename
+            )
+    if not stored_path_str or not os.path.exists(stored_path_str):
+        return _err(
+            "Engineering plan file was not found on disk.",
+            status_code=404,
+            session_id=resolved_session_id,
+        )
+
+    # Lazy imports: keep the flag-off path free of PyMuPDF + helper cost.
+    from app.core.pdf_plan_index import (
+        PdfPlanIndexError,
+        SCHEMA_VERSION as _PDF_PLAN_INDEX_SCHEMA,
+        extract_plan_set_index,
+    )
+
+    pdf_path_obj = Path(stored_path_str)
+    session_folder = ENGINEERING_PLAN_ROOT / _safe_filename(resolved_session_id)
+    cache_file = session_folder / f"{target_plan_id}_index_{_PDF_PLAN_INDEX_SCHEMA}.json"
+
+    # Cache hit: serve from disk when cache mtime >= PDF mtime.
+    try:
+        if cache_file.is_file():
+            pdf_mtime = pdf_path_obj.stat().st_mtime
+            cache_mtime = cache_file.stat().st_mtime
+            if cache_mtime >= pdf_mtime:
+                cached = json.loads(cache_file.read_text(encoding="utf-8"))
+                if isinstance(cached, dict) and cached.get("schema_version") == _PDF_PLAN_INDEX_SCHEMA:
+                    return _ok(
+                        session_id=resolved_session_id,
+                        plan_id=target_plan_id,
+                        cache="hit",
+                        **cached,
+                    )
+    except Exception as e:
+        logging.warning(
+            "plan index cache read failed plan_id=%s err=%s", target_plan_id, e
+        )
+
+    # Cache miss: extract fresh.
+    try:
+        result = extract_plan_set_index(pdf_path_obj)
+    except PdfPlanIndexError as e:
+        logging.warning(
+            "plan index extraction failed plan_id=%s err=%s", target_plan_id, e
+        )
+        return _err(
+            "Engineering plan index could not be extracted.",
+            status_code=500,
+            session_id=resolved_session_id,
+        )
+
+    # Best-effort cache write (failure is logged but does not block response).
+    try:
+        session_folder.mkdir(parents=True, exist_ok=True)
+        cache_file.write_text(json.dumps(result, indent=2), encoding="utf-8")
+    except Exception as e:
+        logging.warning(
+            "plan index cache write failed plan_id=%s err=%s", target_plan_id, e
+        )
+
+    return _ok(
+        session_id=resolved_session_id,
+        plan_id=target_plan_id,
+        cache="miss",
+        **result,
+    )
+
+
 # ── Nova override decision endpoints ─────────────────────────────────────────
 
 @protected_router.get("/api/nova-overrides")
