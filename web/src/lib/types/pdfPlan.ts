@@ -90,6 +90,10 @@ export type PdfRouteTracePayload = {
 // Step 3A — manual station segments
 // ───────────────────────────────────────────────────────────────────────────
 
+/** Step 3B — source tag indicating how the segment was created.
+ *  Older segments lacking this field default to "manual" on the server. */
+export type PdfSegmentSource = "manual" | "bore_log_row";
+
 export type PdfStationSegment = {
   segment_id: string;
   label: string;
@@ -98,8 +102,35 @@ export type PdfStationSegment = {
   start_label: string;
   end_label: string;
   notes: string;
+  /** Step 3B — optional source tag.  Older saved segments may omit it;
+   *  treat as "manual" if absent. */
+  source?: PdfSegmentSource;
+  /** Step 3B — optional small key/value bag carrying the originating
+   *  row's bookkeeping fields (depth, boc, crew, date).  Older saved
+   *  segments may omit it; treat as {} if absent. */
+  source_metadata?: Record<string, string>;
   created_at: string;
   updated_at: string;
+};
+
+// Step 3B — local-only bore-log-style row (operator scratch space).
+// Rows live in browser localStorage keyed by plan_id + page_index;
+// the persistent record is the generated segment.
+export type BoreLogRow = {
+  row_id: string;
+  label: string;
+  start_label: string;
+  end_label: string;
+  depth?: string;
+  boc?: string;
+  crew?: string;
+  date?: string;
+  notes?: string;
+  /** Marks the row as already-generated so the operator can see which
+   *  rows are pending vs. already saved as segments. */
+  last_generated_segment_id?: string;
+  last_generated_at?: string;
+  created_at: string;
 };
 
 export type PdfSegmentsEnvelope = {
@@ -123,4 +154,8 @@ export type PdfStationSegmentPayload = {
   start_label?: string;
   end_label?: string;
   notes?: string;
+  /** Step 3B — optional source tag carried through to the stored segment. */
+  source?: PdfSegmentSource;
+  /** Step 3B — optional metadata bag carried through to the stored segment. */
+  source_metadata?: Record<string, string>;
 };

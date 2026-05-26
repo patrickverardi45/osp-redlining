@@ -40,6 +40,7 @@ import { apiFetch } from "@/lib/apiFetch";
 import { appendSessionIdReadOnly } from "@/lib/session";
 import type { EngineeringPlan } from "@/lib/types/backend";
 import type {
+  BoreLogRow,
   PageClassification,
   PdfPoint,
   PdfRouteTrace,
@@ -187,6 +188,38 @@ export default function PdfPlanCanvas({ projectId, planId }: PdfPlanCanvasProps)
     end: string;
     notes: string;
   }>({ label: "", start: "", end: "", notes: "" });
+
+  // Step 3B — bore-log-style rows (operator scratch space; persisted to
+  // localStorage so they survive reloads but are NOT shared across
+  // browsers/devices.  The PERSISTENT record of work is the generated
+  // segment server-side; rows are the source from which segments are
+  // generated.)
+  const [boreLogRows, setBoreLogRows] = useState<BoreLogRow[]>([]);
+  const [generateOpState, setGenerateOpState] = useState<{
+    kind: "idle" | "running";
+    message?: string;
+    tone?: "info" | "success" | "warn" | "error";
+  }>({ kind: "idle" });
+  const [rowDraftOpen, setRowDraftOpen] = useState<boolean>(false);
+  const [rowDraft, setRowDraft] = useState<{
+    label: string;
+    start: string;
+    end: string;
+    depth: string;
+    boc: string;
+    crew: string;
+    date: string;
+    notes: string;
+  }>({
+    label: "",
+    start: "",
+    end: "",
+    depth: "",
+    boc: "",
+    crew: "",
+    date: "",
+    notes: "",
+  });
 
   const activeObjectUrlRef = useRef<string | null>(null);
   const svgRef = useRef<SVGSVGElement | null>(null);
@@ -534,6 +567,65 @@ export default function PdfPlanCanvas({ projectId, planId }: PdfPlanCanvasProps)
       cancelled = true;
     };
   }, [metadata, pageIndex]);
+
+  // -------------------------------------------------------------------------
+  // Step 3B — hydrate / persist bore-log-style rows in localStorage
+  // -------------------------------------------------------------------------
+  useEffect(() => {
+    // Reset + hydrate on (plan, page) change.  Setters are placed inside
+    // an async IIFE so they execute after the synchronous effect body
+    // completes (avoids react-hooks/set-state-in-effect lint).
+    void (async () => {
+      setGenerateOpState({ kind: "idle" });
+      setRowDraftOpen(false);
+      setRowDraft({
+        label: "",
+        start: "",
+        end: "",
+        depth: "",
+        boc: "",
+        crew: "",
+        date: "",
+        notes: "",
+      });
+      if (metadata.kind !== "ok" || typeof window === "undefined") {
+        setBoreLogRows([]);
+        return;
+      }
+      const key = boreLogRowsStorageKey(metadata.plan.plan_id, pageIndex);
+      try {
+        const raw = window.localStorage.getItem(key);
+        if (!raw) {
+          setBoreLogRows([]);
+          return;
+        }
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) {
+          setBoreLogRows(parsed as BoreLogRow[]);
+        } else {
+          setBoreLogRows([]);
+        }
+      } catch {
+        setBoreLogRows([]);
+      }
+    })();
+  }, [metadata, pageIndex]);
+
+  // Persist bore-log rows to localStorage whenever they change.
+  useEffect(() => {
+    if (metadata.kind !== "ok" || typeof window === "undefined") return;
+    const key = boreLogRowsStorageKey(metadata.plan.plan_id, pageIndex);
+    try {
+      if (boreLogRows.length === 0) {
+        window.localStorage.removeItem(key);
+      } else {
+        window.localStorage.setItem(key, JSON.stringify(boreLogRows));
+      }
+    } catch {
+      /* localStorage full / disabled — silently degrade; the generated
+         segments are the authoritative record server-side. */
+    }
+  }, [metadata, pageIndex, boreLogRows]);
 
   // -------------------------------------------------------------------------
   // Unmount cleanup
@@ -992,6 +1084,268 @@ export default function PdfPlanCanvas({ projectId, planId }: PdfPlanCanvasProps)
     }
   }, [metadata, segmentDraft, pageIndex]);
 
+  // -------------------------------------------------------------------------
+  // Step 3B — bore-log row handlers (add/edit/delete) + Generate Segments
+  // -------------------------------------------------------------------------
+
+  const openAddRow = useCallback(() => {
+    setRowDraft({
+      label: "",
+      start: "",
+      end: "",
+      depth: "",
+      boc: "",
+      crew: "",
+      date: "",
+      notes: "",
+    });
+    setRowDraftOpen(true);
+    setGenerateOpState({ kind: "idle" });
+  }, []);
+
+  const closeAddRow = useCallback(() => {
+    setRowDraftOpen(false);
+  }, []);
+
+  const submitRow = useCallback(() => {
+    const labelTrim = rowDraft.label.trim();
+    const startTrim = rowDraft.start.trim();
+    const endTrim = rowDraft.end.trim();
+    if (!labelTrim) {
+      setGenerateOpState({
+        kind: "idle",
+        message: "Row label is required.",
+        tone: "error",
+      });
+      return;
+    }
+    const startFt = parseStationLabel(startTrim);
+    const endFt = parseStationLabel(endTrim);
+    if (startFt === null) {
+      setGenerateOpState({
+        kind: "idle",
+        message: `Start station "${startTrim}" is not a valid station (use 11+60, STA 14+20, or raw feet).`,
+        tone: "error",
+      });
+      return;
+    }
+    if (endFt === null) {
+      setGenerateOpState({
+        kind: "idle",
+        message: `End station "${endTrim}" is not a valid station.`,
+        tone: "error",
+      });
+      return;
+    }
+    const newRow: BoreLogRow = {
+      row_id: generateAnchorId(),
+      label: labelTrim,
+      start_label: startTrim,
+      end_label: endTrim,
+      depth: rowDraft.depth.trim() || undefined,
+      boc: rowDraft.boc.trim() || undefined,
+      crew: rowDraft.crew.trim() || undefined,
+      date: rowDraft.date.trim() || undefined,
+      notes: rowDraft.notes.trim() || undefined,
+      created_at: new Date().toISOString(),
+    };
+    setBoreLogRows((prev) => [...prev, newRow]);
+    setRowDraftOpen(false);
+    setRowDraft({
+      label: "",
+      start: "",
+      end: "",
+      depth: "",
+      boc: "",
+      crew: "",
+      date: "",
+      notes: "",
+    });
+    setGenerateOpState({
+      kind: "idle",
+      message: `Row "${labelTrim}" added. Click Generate Segments to render it on the PDF.`,
+      tone: "info",
+    });
+  }, [rowDraft]);
+
+  const deleteRow = useCallback((rowId: string) => {
+    setBoreLogRows((prev) => prev.filter((r) => r.row_id !== rowId));
+    setGenerateOpState({ kind: "idle" });
+  }, []);
+
+  const clearAllRows = useCallback(() => {
+    if (boreLogRows.length === 0) return;
+    if (
+      typeof window !== "undefined" &&
+      !window.confirm(
+        `Clear all ${boreLogRows.length} bore-log row(s)? This does NOT delete any segments already generated from them.`,
+      )
+    ) {
+      return;
+    }
+    setBoreLogRows([]);
+    setGenerateOpState({ kind: "idle" });
+  }, [boreLogRows.length]);
+
+  const generateSegmentsFromRows = useCallback(async () => {
+    if (metadata.kind !== "ok") return;
+    if (boreLogRows.length === 0) {
+      setGenerateOpState({
+        kind: "idle",
+        message: "No rows to generate from. Add at least one bore-log row first.",
+        tone: "warn",
+      });
+      return;
+    }
+    if (!segmentsRenderable) {
+      setGenerateOpState({
+        kind: "idle",
+        message: "Save a trace + at least 2 station anchors before generating segments.",
+        tone: "warn",
+      });
+      return;
+    }
+    const plan = metadata.plan;
+    setGenerateOpState({ kind: "running" });
+
+    // Build a set of currently-saved segments to detect duplicates
+    // server-side rejects (label + start + end identical) so we can
+    // report which rows were already present.
+    const generated: BoreLogRow[] = [];
+    const duplicates: BoreLogRow[] = [];
+    const errors: Array<{ row: BoreLogRow; message: string }> = [];
+    let latestEnvelope: PdfSegmentsEnvelope | null = null;
+
+    for (const row of boreLogRows) {
+      const startFt = parseStationLabel(row.start_label);
+      const endFt = parseStationLabel(row.end_label);
+      if (startFt === null || endFt === null) {
+        errors.push({
+          row,
+          message: `Unparseable station on row "${row.label}".`,
+        });
+        continue;
+      }
+      const sourceMetadata: Record<string, string> = {};
+      if (row.depth) sourceMetadata.depth = row.depth;
+      if (row.boc) sourceMetadata.boc = row.boc;
+      if (row.crew) sourceMetadata.crew = row.crew;
+      if (row.date) sourceMetadata.date = row.date;
+      sourceMetadata.row_id = row.row_id;
+      const payload: PdfStationSegmentPayload = {
+        label: row.label,
+        start_station_ft: startFt,
+        end_station_ft: endFt,
+        start_label: row.start_label,
+        end_label: row.end_label,
+        notes: row.notes,
+        source: "bore_log_row",
+        source_metadata: sourceMetadata,
+      };
+      try {
+        const url =
+          `${RENDER_BASE}/api/engineering-plans/${encodeURIComponent(plan.plan_id)}` +
+          `/segments?page_index=${encodeURIComponent(String(pageIndex))}` +
+          `&session_id=${encodeURIComponent(plan.session_id)}`;
+        const resp = await apiFetch(
+          url,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+          },
+          "pdf_plan_segment_generate_from_row",
+        );
+        if (resp.ok) {
+          const data = (await resp.json().catch(() => null)) as
+            | { envelope?: PdfSegmentsEnvelope }
+            | null;
+          if (data?.envelope) {
+            latestEnvelope = data.envelope;
+            const matched = data.envelope.segments.find(
+              (s) =>
+                s.label === row.label &&
+                Math.abs(s.start_station_ft - startFt) < 1e-6 &&
+                Math.abs(s.end_station_ft - endFt) < 1e-6,
+            );
+            generated.push({
+              ...row,
+              last_generated_segment_id: matched?.segment_id,
+              last_generated_at: new Date().toISOString(),
+            });
+          } else {
+            generated.push(row);
+          }
+        } else {
+          const body = (await resp.json().catch(() => null)) as
+            | { error?: string }
+            | null;
+          const errMsg = body?.error || `HTTP ${resp.status}`;
+          if (errMsg.toLowerCase().includes("already exists")) {
+            duplicates.push(row);
+          } else {
+            errors.push({ row, message: errMsg });
+          }
+        }
+      } catch (err) {
+        errors.push({
+          row,
+          message: err instanceof Error ? err.message : "Unexpected error",
+        });
+      }
+    }
+
+    // Update row records with last_generated_segment_id stamps.
+    if (generated.length > 0) {
+      const generatedIds = new Set(generated.map((g) => g.row_id));
+      setBoreLogRows((prev) =>
+        prev.map((r) => {
+          const g = generated.find((x) => x.row_id === r.row_id);
+          return generatedIds.has(r.row_id) && g
+            ? {
+                ...r,
+                last_generated_segment_id: g.last_generated_segment_id,
+                last_generated_at: g.last_generated_at,
+              }
+            : r;
+        }),
+      );
+    }
+    if (latestEnvelope) {
+      setSegmentsState({ kind: "ok", envelope: latestEnvelope });
+    }
+
+    const parts: string[] = [];
+    parts.push(
+      `Generated ${generated.length} PDF redline segment${generated.length === 1 ? "" : "s"} from bore-log-style row${generated.length === 1 ? "" : "s"}.`,
+    );
+    if (duplicates.length > 0) {
+      parts.push(
+        `${duplicates.length} row${duplicates.length === 1 ? " was" : "s were"} skipped because an identical segment (same label + start + end) already exists.`,
+      );
+    }
+    if (errors.length > 0) {
+      parts.push(
+        `${errors.length} row${errors.length === 1 ? "" : "s"} could not be generated: ${errors
+          .slice(0, 3)
+          .map((e) => `"${e.row.label}" (${e.message})`)
+          .join("; ")}`,
+      );
+    }
+    setGenerateOpState({
+      kind: "idle",
+      message: parts.join(" "),
+      tone:
+        errors.length > 0
+          ? "error"
+          : duplicates.length > 0
+          ? "warn"
+          : generated.length > 0
+          ? "success"
+          : "info",
+    });
+  }, [metadata, boreLogRows, segmentsRenderable, pageIndex]);
+
   const deleteSegmentById = useCallback(
     async (segmentId: string) => {
       if (metadata.kind !== "ok") return;
@@ -1179,6 +1533,25 @@ export default function PdfPlanCanvas({ projectId, planId }: PdfPlanCanvasProps)
           onDeleteSaved={deleteTrace}
           onAddAnchor={beginAnchoring}
           onUndoLastPoint={removeLastDraftPoint}
+        />
+      )}
+
+      {/* Step 3B — bore-log-style rows panel (drives segment generation) */}
+      {metadata.kind === "ok" && pageState.kind === "ready" && (
+        <BoreLogRowsPanel
+          rows={boreLogRows}
+          rowDraftOpen={rowDraftOpen}
+          rowDraft={rowDraft}
+          generateOpState={generateOpState}
+          segmentsRenderable={segmentsRenderable}
+          traceState={traceState}
+          onOpenAddRow={openAddRow}
+          onCloseAddRow={closeAddRow}
+          onRowDraftChange={setRowDraft}
+          onSubmitRow={submitRow}
+          onDeleteRow={deleteRow}
+          onClearAll={clearAllRows}
+          onGenerate={generateSegmentsFromRows}
         />
       )}
 
@@ -2470,6 +2843,10 @@ function buildPolylinePath(points: PdfPoint[]): string {
   return parts.join(" ");
 }
 
+function boreLogRowsStorageKey(planId: string, pageIndex: number): string {
+  return `pdf_plan_bore_rows:${planId}:p${pageIndex}`;
+}
+
 function emptySegmentsEnvelope(
   planId: string,
   sessionId: string,
@@ -2857,6 +3234,431 @@ function SegmentField({
   );
 }
 
+// ───────────────────────────────────────────────────────────────────────────
+// Step 3B — bore-log-style rows panel
+// ───────────────────────────────────────────────────────────────────────────
+
+function BoreLogRowsPanel({
+  rows,
+  rowDraftOpen,
+  rowDraft,
+  generateOpState,
+  segmentsRenderable,
+  traceState,
+  onOpenAddRow,
+  onCloseAddRow,
+  onRowDraftChange,
+  onSubmitRow,
+  onDeleteRow,
+  onClearAll,
+  onGenerate,
+}: {
+  rows: BoreLogRow[];
+  rowDraftOpen: boolean;
+  rowDraft: {
+    label: string;
+    start: string;
+    end: string;
+    depth: string;
+    boc: string;
+    crew: string;
+    date: string;
+    notes: string;
+  };
+  generateOpState: {
+    kind: "idle" | "running";
+    message?: string;
+    tone?: "info" | "success" | "warn" | "error";
+  };
+  segmentsRenderable: boolean;
+  traceState: TraceState;
+  onOpenAddRow: () => void;
+  onCloseAddRow: () => void;
+  onRowDraftChange: (d: {
+    label: string;
+    start: string;
+    end: string;
+    depth: string;
+    boc: string;
+    crew: string;
+    date: string;
+    notes: string;
+  }) => void;
+  onSubmitRow: () => void;
+  onDeleteRow: (rowId: string) => void;
+  onClearAll: () => void;
+  onGenerate: () => void;
+}) {
+  const traceLoaded = traceState.kind === "loaded";
+  const generateDisabled =
+    rows.length === 0 ||
+    !traceLoaded ||
+    !segmentsRenderable ||
+    generateOpState.kind === "running";
+
+  const statusColor =
+    generateOpState.tone === "error"
+      ? "#dc2626"
+      : generateOpState.tone === "warn"
+      ? "#92400e"
+      : generateOpState.tone === "success"
+      ? "#047857"
+      : "var(--tl-text-muted)";
+
+  return (
+    <div
+      style={{
+        padding: "8px 22px",
+        borderBottom: "1px solid var(--tl-border)",
+        background: "var(--tl-bg-grid)",
+      }}
+    >
+      <div
+        style={{
+          maxWidth: 1600,
+          margin: "0 auto",
+          display: "flex",
+          flexDirection: "column",
+          gap: 8,
+          fontSize: 12,
+        }}
+      >
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 10,
+            flexWrap: "wrap",
+          }}
+        >
+          <span
+            style={{
+              fontSize: 11,
+              fontWeight: 700,
+              letterSpacing: "0.04em",
+              textTransform: "uppercase",
+              color: "var(--tl-text)",
+            }}
+          >
+            Bore Log Rows
+          </span>
+          <span
+            style={{
+              fontSize: 10,
+              padding: "2px 6px",
+              background: "rgba(180, 83, 9, 0.10)",
+              color: "#92400e",
+              border: "1px solid rgba(180, 83, 9, 0.30)",
+              borderRadius: 4,
+              fontWeight: 700,
+              letterSpacing: "0.04em",
+              textTransform: "uppercase",
+            }}
+          >
+            Segment Source · Local Draft
+          </span>
+          <ToolbarButton
+            onClick={onOpenAddRow}
+            disabled={rowDraftOpen}
+            variant="default"
+            title="Add one bore-log-style row (label, start/end stations, optional depth/BOC/crew/date/notes)"
+          >
+            + Add Row
+          </ToolbarButton>
+          <ToolbarButton
+            onClick={onGenerate}
+            disabled={generateDisabled}
+            variant="primary"
+            title="POST one segment per row to /api/.../segments with source=bore_log_row. Reuses Step 3A storage + rendering."
+          >
+            {generateOpState.kind === "running"
+              ? "Generating…"
+              : `Generate Segments${rows.length > 0 ? ` (${rows.length})` : ""}`}
+          </ToolbarButton>
+          <ToolbarButton
+            onClick={onClearAll}
+            disabled={rows.length === 0 || generateOpState.kind === "running"}
+            variant="ghost"
+            title="Clear all rows (does NOT delete any segments already generated from them)"
+          >
+            Clear Rows
+          </ToolbarButton>
+          <span
+            role="status"
+            style={{
+              marginLeft: "auto",
+              color: statusColor,
+              fontWeight: 500,
+              fontSize: 12,
+              maxWidth: 640,
+              textAlign: "right",
+              lineHeight: 1.4,
+            }}
+          >
+            {generateOpState.message ||
+              (rows.length === 0
+                ? "No rows yet. + Add Row to enter bore-log-style data."
+                : `${rows.length} row${rows.length === 1 ? "" : "s"} drafted. Click Generate Segments to render as redlines.`)}
+          </span>
+        </div>
+
+        <div
+          style={{
+            fontSize: 11,
+            color: "var(--tl-text-faint)",
+            lineHeight: 1.45,
+            fontStyle: "italic",
+          }}
+        >
+          <span style={{ color: "#92400e", fontWeight: 600, fontStyle: "normal" }}>
+            Bore-log-style rows
+          </span>
+          {" "}are structured operator input (label, station range, optional
+          depth/BOC/crew/date/notes) that get converted into PDF redline
+          segments via the same Step 3A engine. Rows are local browser
+          drafts (this page only); generated segments are the persistent
+          record server-side. This is the bridge that later Excel bore-log
+          import will use.
+        </div>
+
+        {rowDraftOpen && (
+          <BoreLogRowDraftForm
+            draft={rowDraft}
+            onChange={onRowDraftChange}
+            onSubmit={onSubmitRow}
+            onCancel={onCloseAddRow}
+          />
+        )}
+
+        {rows.length > 0 && (
+          <ol
+            style={{
+              listStyle: "none",
+              padding: 0,
+              margin: 0,
+              display: "grid",
+              gap: 4,
+              borderTop: "1px solid var(--tl-border)",
+              paddingTop: 8,
+            }}
+          >
+            {rows.map((row) => (
+              <li key={row.row_id}>
+                <BoreLogRowEntry row={row} onDelete={onDeleteRow} />
+              </li>
+            ))}
+          </ol>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function BoreLogRowDraftForm({
+  draft,
+  onChange,
+  onSubmit,
+  onCancel,
+}: {
+  draft: {
+    label: string;
+    start: string;
+    end: string;
+    depth: string;
+    boc: string;
+    crew: string;
+    date: string;
+    notes: string;
+  };
+  onChange: (d: typeof draft) => void;
+  onSubmit: () => void;
+  onCancel: () => void;
+}) {
+  return (
+    <form
+      onSubmit={(e) => {
+        e.preventDefault();
+        onSubmit();
+      }}
+      style={{
+        display: "grid",
+        gridTemplateColumns: "1.4fr 1fr 1fr 0.8fr 0.8fr 1fr 1fr 2fr auto auto",
+        gap: 6,
+        alignItems: "end",
+        padding: "8px",
+        border: "1px solid rgba(180, 83, 9, 0.30)",
+        borderRadius: 8,
+        background: "rgba(180, 83, 9, 0.04)",
+      }}
+    >
+      <SegmentField
+        label="Label / Bore"
+        value={draft.label}
+        placeholder="Bore 1"
+        onChange={(v) => onChange({ ...draft, label: v })}
+        autoFocus
+      />
+      <SegmentField
+        label="Start sta."
+        value={draft.start}
+        placeholder="16+79"
+        onChange={(v) => onChange({ ...draft, start: v })}
+      />
+      <SegmentField
+        label="End sta."
+        value={draft.end}
+        placeholder="19+54"
+        onChange={(v) => onChange({ ...draft, end: v })}
+      />
+      <SegmentField
+        label="Depth"
+        value={draft.depth}
+        placeholder="6.0"
+        onChange={(v) => onChange({ ...draft, depth: v })}
+      />
+      <SegmentField
+        label="BOC"
+        value={draft.boc}
+        placeholder="8.0"
+        onChange={(v) => onChange({ ...draft, boc: v })}
+      />
+      <SegmentField
+        label="Crew"
+        value={draft.crew}
+        placeholder="Smith"
+        onChange={(v) => onChange({ ...draft, crew: v })}
+      />
+      <SegmentField
+        label="Date"
+        value={draft.date}
+        placeholder="2026-05-26"
+        onChange={(v) => onChange({ ...draft, date: v })}
+      />
+      <SegmentField
+        label="Notes (optional)"
+        value={draft.notes}
+        placeholder="…"
+        onChange={(v) => onChange({ ...draft, notes: v })}
+      />
+      <ToolbarButton onClick={onSubmit} variant="primary">
+        Save Row
+      </ToolbarButton>
+      <ToolbarButton onClick={onCancel} variant="ghost">
+        Cancel
+      </ToolbarButton>
+    </form>
+  );
+}
+
+function BoreLogRowEntry({
+  row,
+  onDelete,
+}: {
+  row: BoreLogRow;
+  onDelete: (rowId: string) => void;
+}) {
+  const detailParts: string[] = [];
+  if (row.depth) detailParts.push(`depth ${row.depth}`);
+  if (row.boc) detailParts.push(`BOC ${row.boc}`);
+  if (row.crew) detailParts.push(`crew ${row.crew}`);
+  if (row.date) detailParts.push(row.date);
+  const detailLine = detailParts.join(" · ");
+  return (
+    <div
+      style={{
+        display: "grid",
+        gridTemplateColumns: "auto 1fr auto auto auto",
+        gap: 8,
+        alignItems: "center",
+        padding: "6px 8px",
+        background: row.last_generated_segment_id
+          ? "rgba(4, 120, 87, 0.04)"
+          : "rgba(180, 83, 9, 0.04)",
+        border: `1px solid ${
+          row.last_generated_segment_id
+            ? "rgba(4, 120, 87, 0.20)"
+            : "rgba(180, 83, 9, 0.20)"
+        }`,
+        borderRadius: 6,
+        fontSize: 12,
+      }}
+    >
+      <span
+        title={
+          row.last_generated_segment_id
+            ? "Generated as a segment"
+            : "Pending — click Generate Segments to render"
+        }
+        style={{
+          width: 8,
+          height: 8,
+          borderRadius: "50%",
+          background: row.last_generated_segment_id ? "#059669" : "#b45309",
+        }}
+      />
+      <div style={{ display: "flex", flexDirection: "column", gap: 1, minWidth: 0 }}>
+        <span style={{ fontWeight: 700, color: "var(--tl-text)" }}>
+          {row.label}
+        </span>
+        {(detailLine || row.notes) && (
+          <span
+            style={{
+              fontSize: 11,
+              color: "var(--tl-text-muted)",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+            }}
+            title={`${detailLine}${detailLine && row.notes ? " · " : ""}${row.notes || ""}`}
+          >
+            {detailLine && <span style={{ color: "#92400e" }}>{detailLine}</span>}
+            {detailLine && row.notes && " · "}
+            {row.notes}
+          </span>
+        )}
+      </div>
+      <span
+        style={{
+          fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+          color: "var(--tl-text)",
+          whiteSpace: "nowrap",
+        }}
+      >
+        {row.start_label} → {row.end_label}
+      </span>
+      <span
+        style={{
+          fontSize: 10,
+          padding: "2px 6px",
+          borderRadius: 4,
+          background: row.last_generated_segment_id
+            ? "rgba(4, 120, 87, 0.12)"
+            : "rgba(100, 116, 139, 0.10)",
+          color: row.last_generated_segment_id ? "#047857" : "#475569",
+          border: `1px solid ${
+            row.last_generated_segment_id
+              ? "rgba(4, 120, 87, 0.35)"
+              : "rgba(100, 116, 139, 0.30)"
+          }`,
+          fontWeight: 700,
+          letterSpacing: "0.04em",
+          textTransform: "uppercase",
+          whiteSpace: "nowrap",
+        }}
+      >
+        {row.last_generated_segment_id ? "Generated" : "Pending"}
+      </span>
+      <ToolbarButton
+        onClick={() => onDelete(row.row_id)}
+        variant="danger-ghost"
+        title="Delete this row (does NOT delete any segment previously generated from it)"
+      >
+        Delete Row
+      </ToolbarButton>
+    </div>
+  );
+}
+
 function SegmentListEntry({
   segment,
   computable,
@@ -2868,11 +3670,21 @@ function SegmentListEntry({
 }) {
   const lengthFt = segment.end_station_ft - segment.start_station_ft;
   const lengthAbs = Math.abs(lengthFt);
+  // Step 3B — source badge. Older segments have no source; treat as manual.
+  const source = segment.source || "manual";
+  const isBoreLogRow = source === "bore_log_row";
+  const sourceMetadata = segment.source_metadata || {};
+  const metadataParts: string[] = [];
+  if (sourceMetadata.depth) metadataParts.push(`depth ${sourceMetadata.depth}`);
+  if (sourceMetadata.boc) metadataParts.push(`BOC ${sourceMetadata.boc}`);
+  if (sourceMetadata.crew) metadataParts.push(`crew ${sourceMetadata.crew}`);
+  if (sourceMetadata.date) metadataParts.push(sourceMetadata.date);
+  const metadataLine = metadataParts.join(" · ");
   return (
     <div
       style={{
         display: "grid",
-        gridTemplateColumns: "auto 1fr auto auto auto",
+        gridTemplateColumns: "auto auto 1fr auto auto auto",
         gap: 8,
         alignItems: "center",
         padding: "6px 8px",
@@ -2883,7 +3695,7 @@ function SegmentListEntry({
       }}
     >
       <span
-        title="Manual draft segment indicator"
+        title={isBoreLogRow ? "Generated from a bore-log-style row" : "Manual segment"}
         style={{
           width: 8,
           height: 8,
@@ -2891,11 +3703,32 @@ function SegmentListEntry({
           background: computable ? "#dc2626" : "#cbd5e1",
         }}
       />
+      <span
+        title={
+          isBoreLogRow
+            ? "This segment was generated from a structured bore-log-style row (Step 3B)."
+            : "This segment was entered manually (Step 3A)."
+        }
+        style={{
+          fontSize: 10,
+          fontWeight: 700,
+          letterSpacing: "0.04em",
+          textTransform: "uppercase",
+          padding: "2px 6px",
+          borderRadius: 4,
+          background: isBoreLogRow ? "rgba(180, 83, 9, 0.10)" : "rgba(100, 116, 139, 0.10)",
+          color: isBoreLogRow ? "#92400e" : "#475569",
+          border: `1px solid ${isBoreLogRow ? "rgba(180, 83, 9, 0.35)" : "rgba(100, 116, 139, 0.30)"}`,
+          whiteSpace: "nowrap",
+        }}
+      >
+        {isBoreLogRow ? "Bore-Log Row" : "Manual"}
+      </span>
       <div style={{ display: "flex", flexDirection: "column", gap: 1, minWidth: 0 }}>
         <span style={{ fontWeight: 700, color: "var(--tl-text)" }}>
           {segment.label}
         </span>
-        {segment.notes && (
+        {(segment.notes || metadataLine) && (
           <span
             style={{
               fontSize: 11,
@@ -2904,8 +3737,10 @@ function SegmentListEntry({
               textOverflow: "ellipsis",
               whiteSpace: "nowrap",
             }}
-            title={segment.notes}
+            title={segment.notes || metadataLine}
           >
+            {metadataLine && <span style={{ color: "#92400e" }}>{metadataLine}</span>}
+            {metadataLine && segment.notes && " · "}
             {segment.notes}
           </span>
         )}

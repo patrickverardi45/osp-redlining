@@ -396,6 +396,71 @@ class T8_StoreNormalize(unittest.TestCase):
         self.assertEqual(len(out["notes"]), 280)
 
 
+class T9b_SourceFieldsStep3B(unittest.TestCase):
+    """Step 3B — source + source_metadata fields are backward-compatible
+    additions to pdf-plan-segments-1.  Existing payloads without these
+    fields default to source='manual' with an empty metadata dict."""
+
+    def test_default_source_is_manual(self) -> None:
+        out = SS.normalize_segment_payload({
+            "label": "Bore A",
+            "start_label": "1+00",
+            "end_label": "2+00",
+        })
+        self.assertEqual(out["source"], "manual")
+        self.assertEqual(out["source_metadata"], {})
+
+    def test_source_bore_log_row_accepted(self) -> None:
+        out = SS.normalize_segment_payload({
+            "label": "Bore A",
+            "start_label": "16+79",
+            "end_label": "19+54",
+            "source": "bore_log_row",
+            "source_metadata": {
+                "depth": "6.0",
+                "boc": "8.0",
+                "crew": "Smith",
+                "date": "2026-05-26",
+            },
+        })
+        self.assertEqual(out["source"], "bore_log_row")
+        self.assertEqual(out["source_metadata"]["depth"], "6.0")
+        self.assertEqual(out["source_metadata"]["crew"], "Smith")
+
+    def test_unknown_source_falls_back_to_manual(self) -> None:
+        out = SS.normalize_segment_payload({
+            "label": "Bore A",
+            "start_label": "1+00",
+            "end_label": "2+00",
+            "source": "made_up_source",
+        })
+        self.assertEqual(out["source"], "manual")
+
+    def test_source_metadata_keys_capped(self) -> None:
+        big_md = {f"key_{i}": f"val_{i}" for i in range(30)}
+        out = SS.normalize_segment_payload({
+            "label": "Bore A",
+            "start_label": "1+00",
+            "end_label": "2+00",
+            "source": "bore_log_row",
+            "source_metadata": big_md,
+        })
+        # Capped at _SOURCE_META_KEY_COUNT_MAX (16)
+        self.assertLessEqual(len(out["source_metadata"]), 16)
+
+    def test_source_metadata_value_trimmed(self) -> None:
+        long_val = "x" * 500
+        out = SS.normalize_segment_payload({
+            "label": "Bore A",
+            "start_label": "1+00",
+            "end_label": "2+00",
+            "source": "bore_log_row",
+            "source_metadata": {"notes_long": long_val},
+        })
+        # Capped at _SOURCE_META_VALUE_MAX (128)
+        self.assertLessEqual(len(out["source_metadata"]["notes_long"]), 128)
+
+
 class T9_PathSafety(unittest.TestCase):
     def test_traversal_rejected(self) -> None:
         root = Path(tempfile.mkdtemp(prefix="pdf_plan_seg_path_"))

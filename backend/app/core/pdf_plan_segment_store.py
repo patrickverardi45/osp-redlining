@@ -53,6 +53,20 @@ _NOTES_MAX_LEN: Final[int] = 280
 _STATION_FT_MIN: Final[float] = 0.0
 _STATION_FT_MAX: Final[float] = 1_000_000.0
 
+# Step 3B — segment source tagging (additive, backward-compatible).
+# Segments saved before Step 3B have no `source` field; the loader
+# treats them as "manual" by default.  New writes can carry:
+#   source = "manual"       (Step 3A operator-entered range)
+#   source = "bore_log_row" (Step 3B generated from a structured row)
+# source_metadata is an optional small key-value bag for the
+# originating row's bookkeeping fields (depth, boc, crew, date).
+# Strict cap on key/value sizes so the file can't bloat.
+_VALID_SOURCES: Final[frozenset[str]] = frozenset({"manual", "bore_log_row"})
+_DEFAULT_SOURCE: Final[str] = "manual"
+_SOURCE_META_KEY_MAX: Final[int] = 32
+_SOURCE_META_VALUE_MAX: Final[int] = 128
+_SOURCE_META_KEY_COUNT_MAX: Final[int] = 16
+
 _SAFE_ID_RX: Final = re.compile(r"^[a-zA-Z0-9_-]+$")
 
 
@@ -147,6 +161,46 @@ def _coerce_notes(value: Any) -> str:
     return text
 
 
+def _coerce_source(value: Any) -> str:
+    """Validate the segment source tag.  Step 3B addition.  Unknown
+    values fall back to the default ('manual') so older payloads
+    + future tags do not crash the loader."""
+    if value is None:
+        return _DEFAULT_SOURCE
+    text = str(value).strip().lower()
+    if text in _VALID_SOURCES:
+        return text
+    return _DEFAULT_SOURCE
+
+
+def _coerce_source_metadata(value: Any) -> Dict[str, str]:
+    """Bound a small {key: value} bag carrying the originating row's
+    bookkeeping (depth, BOC, crew, date, etc.).  Each key + value is
+    coerced to a string and trimmed; the bag is capped at
+    _SOURCE_META_KEY_COUNT_MAX keys to keep on-disk envelopes small.
+    Step 3B addition; backward-compatible (default empty dict)."""
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        return {}
+    out: Dict[str, str] = {}
+    for k, v in value.items():
+        if len(out) >= _SOURCE_META_KEY_COUNT_MAX:
+            break
+        if k is None:
+            continue
+        key = str(k).strip()
+        if not key:
+            continue
+        if len(key) > _SOURCE_META_KEY_MAX:
+            key = key[:_SOURCE_META_KEY_MAX]
+        val = "" if v is None else str(v).strip()
+        if len(val) > _SOURCE_META_VALUE_MAX:
+            val = val[:_SOURCE_META_VALUE_MAX]
+        out[key] = val
+    return out
+
+
 def _resolve_station_ft_and_label(
     raw_station_ft: Any,
     raw_label: Any,
@@ -230,6 +284,11 @@ def normalize_segment_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
     else:
         created_at = now
 
+    # Step 3B — preserve any existing source / source_metadata on re-
+    # normalize cycles; new payloads can carry these fields explicitly.
+    source = _coerce_source(payload.get("source"))
+    source_metadata = _coerce_source_metadata(payload.get("source_metadata"))
+
     return {
         "segment_id": segment_id,
         "label": label,
@@ -238,6 +297,8 @@ def normalize_segment_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
         "start_label": start_label,
         "end_label": end_label,
         "notes": notes,
+        "source": source,
+        "source_metadata": source_metadata,
         "created_at": created_at,
         "updated_at": now,
     }
