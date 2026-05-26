@@ -130,6 +130,11 @@ export type BoreLogRow = {
    *  rows are pending vs. already saved as segments. */
   last_generated_segment_id?: string;
   last_generated_at?: string;
+  /** Step 3C — optional metadata captured when the row was imported from
+   *  an Excel bore-log file.  Merged into the generated segment's
+   *  `source_metadata` at Generate-Segments time.  Older manually-added
+   *  rows omit this field. */
+  import_metadata?: Record<string, string>;
   created_at: string;
 };
 

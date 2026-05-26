@@ -61,6 +61,10 @@ import {
   parseStationLabel,
   stationFtToPolylineDistance,
 } from "@/lib/pdfPlanMath";
+import {
+  importBoreLogExcelBatch,
+  type ImportFileOutcome,
+} from "@/lib/pdfPlanBoreLogImport";
 
 const _RAW_API_BASE =
   process.env.NEXT_PUBLIC_API_BASE ||
@@ -1173,6 +1177,86 @@ export default function PdfPlanCanvas({ projectId, planId }: PdfPlanCanvasProps)
     setGenerateOpState({ kind: "idle" });
   }, []);
 
+  // Step 3C — Excel bore-log import.  Frontend-only: parses each .xlsx in
+  // the browser, aggregates to one Step 3B row per workbook, and appends
+  // to the current page's row list.  Backend unchanged — the existing
+  // Generate Segments handler will POST these rows like any other.
+  const handleImportExcel = useCallback(async (files: FileList | File[]) => {
+    const fileArr = Array.from(files);
+    if (fileArr.length === 0) return;
+    setGenerateOpState({
+      kind: "running",
+      message: `Importing ${fileArr.length} file${fileArr.length === 1 ? "" : "s"}…`,
+      tone: "info",
+    });
+    let outcomes: ImportFileOutcome[];
+    try {
+      outcomes = await importBoreLogExcelBatch(fileArr);
+    } catch (err) {
+      setGenerateOpState({
+        kind: "idle",
+        message: `Excel import failed: ${err instanceof Error ? err.message : String(err)}`,
+        tone: "error",
+      });
+      return;
+    }
+    const newRows: BoreLogRow[] = [];
+    const skipped: Array<{ filename: string; reason: string }> = [];
+    const errored: Array<{ filename: string; reason: string }> = [];
+    const nowIso = new Date().toISOString();
+    for (const out of outcomes) {
+      if (out.kind === "ok") {
+        newRows.push({
+          row_id: generateAnchorId(),
+          created_at: nowIso,
+          ...out.row_spec,
+        });
+      } else if (out.kind === "skipped") {
+        skipped.push({ filename: out.filename, reason: out.reason });
+      } else {
+        errored.push({ filename: out.filename, reason: out.reason });
+      }
+    }
+    if (newRows.length > 0) {
+      setBoreLogRows((prev) => [...prev, ...newRows]);
+    }
+    const parts: string[] = [];
+    parts.push(
+      `Imported ${newRows.length} row${newRows.length === 1 ? "" : "s"} from ${fileArr.length} file${fileArr.length === 1 ? "" : "s"}.`,
+    );
+    if (skipped.length > 0) {
+      parts.push(
+        `${skipped.length} skipped: ${skipped
+          .slice(0, 3)
+          .map((s) => `${s.filename} (${s.reason})`)
+          .join("; ")}${skipped.length > 3 ? "; …" : ""}`,
+      );
+    }
+    if (errored.length > 0) {
+      parts.push(
+        `${errored.length} failed: ${errored
+          .slice(0, 3)
+          .map((e) => `${e.filename} (${e.reason})`)
+          .join("; ")}${errored.length > 3 ? "; …" : ""}`,
+      );
+    }
+    if (newRows.length > 0) {
+      parts.push("Click Generate Segments to render them as redlines.");
+    }
+    setGenerateOpState({
+      kind: "idle",
+      message: parts.join(" "),
+      tone:
+        errored.length > 0
+          ? "error"
+          : skipped.length > 0
+          ? "warn"
+          : newRows.length > 0
+          ? "success"
+          : "info",
+    });
+  }, []);
+
   const clearAllRows = useCallback(() => {
     if (boreLogRows.length === 0) return;
     if (
@@ -1227,6 +1311,13 @@ export default function PdfPlanCanvas({ projectId, planId }: PdfPlanCanvasProps)
         continue;
       }
       const sourceMetadata: Record<string, string> = {};
+      // Step 3C — start with import metadata (filename, print, point_readings, etc.)
+      // so subsequent per-field row values override matching keys.  This lets the
+      // operator edit the row inline after import and have those edits win on the
+      // generated segment.
+      if (row.import_metadata) {
+        Object.assign(sourceMetadata, row.import_metadata);
+      }
       if (row.depth) sourceMetadata.depth = row.depth;
       if (row.boc) sourceMetadata.boc = row.boc;
       if (row.crew) sourceMetadata.crew = row.crew;
@@ -1552,6 +1643,7 @@ export default function PdfPlanCanvas({ projectId, planId }: PdfPlanCanvasProps)
           onDeleteRow={deleteRow}
           onClearAll={clearAllRows}
           onGenerate={generateSegmentsFromRows}
+          onImportFiles={handleImportExcel}
         />
       )}
 
@@ -3252,6 +3344,7 @@ function BoreLogRowsPanel({
   onDeleteRow,
   onClearAll,
   onGenerate,
+  onImportFiles,
 }: {
   rows: BoreLogRow[];
   rowDraftOpen: boolean;
@@ -3288,7 +3381,26 @@ function BoreLogRowsPanel({
   onDeleteRow: (rowId: string) => void;
   onClearAll: () => void;
   onGenerate: () => void;
+  /** Step 3C — fires when the operator picks one or more .xlsx files. */
+  onImportFiles: (files: FileList | File[]) => void;
 }) {
+  const importInputRef = useRef<HTMLInputElement>(null);
+  const onImportClick = useCallback(() => {
+    importInputRef.current?.click();
+  }, []);
+  const onImportChange = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      const files = e.target.files;
+      if (files && files.length > 0) {
+        onImportFiles(files);
+      }
+      // Reset so re-picking the same file fires onChange again.
+      if (importInputRef.current) {
+        importInputRef.current.value = "";
+      }
+    },
+    [onImportFiles],
+  );
   const traceLoaded = traceState.kind === "loaded";
   const generateDisabled =
     rows.length === 0 ||
@@ -3366,6 +3478,23 @@ function BoreLogRowsPanel({
             + Add Row
           </ToolbarButton>
           <ToolbarButton
+            onClick={onImportClick}
+            disabled={generateOpState.kind === "running"}
+            variant="default"
+            title="Step 3C — Pick one or more .xlsx bore-log files. Each workbook becomes one row (label = filename stem, start/end = first/last station, depth/BOC = max numeric, crew/date/print preserved). Parses in browser only; no upload."
+          >
+            Import from Excel
+          </ToolbarButton>
+          <input
+            ref={importInputRef}
+            type="file"
+            accept=".xlsx"
+            multiple
+            onChange={onImportChange}
+            style={{ display: "none" }}
+            aria-hidden="true"
+          />
+          <ToolbarButton
             onClick={onGenerate}
             disabled={generateDisabled}
             variant="primary"
@@ -3415,10 +3544,13 @@ function BoreLogRowsPanel({
           </span>
           {" "}are structured operator input (label, station range, optional
           depth/BOC/crew/date/notes) that get converted into PDF redline
-          segments via the same Step 3A engine. Rows are local browser
+          segments via the same Step 3A engine. Add rows manually via{" "}
+          <strong>+ Add Row</strong>, or bulk-import from .xlsx bore-log
+          files via <strong>Import from Excel</strong> (one workbook = one
+          row; first/last station become start/end; max depth/BOC preserved
+          in metadata along with all point readings). Rows are local browser
           drafts (this page only); generated segments are the persistent
-          record server-side. This is the bridge that later Excel bore-log
-          import will use.
+          record server-side.
         </div>
 
         {rowDraftOpen && (
