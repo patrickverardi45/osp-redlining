@@ -5276,6 +5276,41 @@ ${redlinePlacemarks.length > 0 ? buildEngFolder("Redlines", redlinePlacemarks, 1
                         <div style={{ fontWeight: 700, fontSize: 12, color: "#0f172a" }}>
                           PDF map overlay (read-only, default off)
                         </div>
+                        {/* PDF Plan Mode Step 1 — discoverability links to the
+                             dedicated plan viewer at /projects/{projectId}/plan/{planId}.
+                             Opens in a new tab so the workspace stays open.
+                             Each link mounts the standalone viewer (no Leaflet). */}
+                        <div
+                          style={{
+                            display: "grid",
+                            gap: 4,
+                            padding: "8px 10px",
+                            background: "rgba(37, 99, 235, 0.06)",
+                            border: "1px solid rgba(37, 99, 235, 0.22)",
+                            borderRadius: 8,
+                            fontSize: 11,
+                          }}
+                        >
+                          <div style={{ fontWeight: 600, color: "#1d4ed8" }}>
+                            Open in dedicated Plan Viewer
+                          </div>
+                          {pdfPlans.map((p: EngineeringPlan) => (
+                            <a
+                              key={`plan-viewer-link-${p.plan_id}`}
+                              href={`/projects/${projectId}/plan/${p.plan_id}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              style={{
+                                color: "#1d4ed8",
+                                textDecoration: "underline",
+                                textUnderlineOffset: 2,
+                                wordBreak: "break-all",
+                              }}
+                            >
+                              {p.original_filename} →
+                            </a>
+                          ))}
+                        </div>
                         <label
                           style={{
                             display: "inline-flex",
