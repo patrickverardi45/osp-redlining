@@ -1351,8 +1351,9 @@ export default function PdfPlanCanvas({ projectId, planId }: PdfPlanCanvasProps)
           }}
         >
           <span>
-            PDF Plan Viewer · Step 1 + 2A + 2B (operator-traced; station
-            placement is operator-entered, suggestion-grade classifications)
+            PDF Plan Viewer · Steps 1 + 2A + 2B + 3A.1 (operator-traced; station
+            anchors calibrate the trace; manual segments draw redline ranges;
+            suggestion-grade page classifications)
           </span>
           {metadata.kind === "ok" && (
             <span
@@ -1520,16 +1521,36 @@ function CanvasWithOverlay({
             cursor: cursorStyle,
           }}
         >
-          {/* Trace polyline */}
+          {/* Trace polyline — muted underlay when segments are present so
+               the segment overlay reads as the dominant redline.  Stays
+               brighter during active tracing so the operator can see what
+               they're drawing. */}
           {pathD && (
             <path
               d={pathD}
               fill="none"
               stroke="#1d4ed8"
-              strokeWidth={Math.max(2, renderedDimensions.w / 480)}
+              strokeWidth={
+                editMode === "tracing"
+                  ? Math.max(2.5, renderedDimensions.w / 380)
+                  : Math.max(1.5, renderedDimensions.w / 540)
+              }
               strokeLinecap="round"
               strokeLinejoin="round"
-              opacity={editMode === "tracing" ? 0.75 : 0.9}
+              opacity={
+                editMode === "tracing"
+                  ? 0.85
+                  : renderableSegments.some((s) => s.computable && s.subpath.length >= 2)
+                  ? 0.45
+                  : 0.85
+              }
+              strokeDasharray={
+                editMode === "tracing"
+                  ? undefined
+                  : renderableSegments.some((s) => s.computable && s.subpath.length >= 2)
+                  ? `${Math.max(6, renderedDimensions.w / 200)} ${Math.max(4, renderedDimensions.w / 320)}`
+                  : undefined
+              }
             />
           )}
           {/* Vertex dots */}
@@ -1538,76 +1559,184 @@ function CanvasWithOverlay({
               key={`vertex-${i}`}
               cx={pt[0]}
               cy={pt[1]}
-              r={Math.max(4, renderedDimensions.w / 320)}
+              r={Math.max(3, renderedDimensions.w / 360)}
               fill="#ffffff"
               stroke="#1d4ed8"
-              strokeWidth={Math.max(1.5, renderedDimensions.w / 720)}
+              strokeWidth={Math.max(1.2, renderedDimensions.w / 800)}
+              opacity={
+                editMode === "tracing"
+                  ? 1
+                  : renderableSegments.some((s) => s.computable && s.subpath.length >= 2)
+                  ? 0.55
+                  : 1
+              }
             />
           ))}
-          {/* Step 3A — manual station segments rendered as red overlays
-               on top of the operator trace.  Segments below the trace
-               in the z-stack would be obscured by the trace stroke; we
-               render thicker on top so the manual redline reads clearly
-               on busy plan sheets. */}
+          {/* Step 3A.1 — manual station segments rendered as bold red
+               overlays on top of the (now muted) operator trace.  Three
+               layers per segment for contractor-redline legibility on
+               busy plan sheets:
+                 1. wide white halo (knocks out the busy background)
+                 2. bold red core stroke (the actual redline)
+                 3. red round endcaps at start + end (clear bounds)
+               Labels are drawn perpendicular-offset from the segment
+               midpoint with a thin red leader line, so the geometry
+               itself stays visible underneath the label.  Label box
+               sizes are based on actual character count for readability
+               at any page width. */}
           {renderableSegments.map(({ segment, subpath, midpoint, computable }) => {
             if (!computable || subpath.length < 2) return null;
             const segPath = buildPolylinePath(subpath);
-            const segStroke = Math.max(4, renderedDimensions.w / 200);
+            // Bolder core stroke — scales with page width but with a
+            // firmer floor so even at small zooms the redline reads.
+            const coreStroke = Math.max(8, renderedDimensions.w / 130);
+            // Halo wider than core so it always shows around the edges.
+            const haloStroke = coreStroke + Math.max(5, renderedDimensions.w / 240);
+            // Endcap radius — slightly larger than half the core stroke
+            // so the cap visually clamps the segment ends.
+            const endcapR = coreStroke * 0.62;
+
+            // Perpendicular offset for the label based on the chord
+            // direction (subpath start -> end).  Falls back to "above"
+            // when the chord is too short to derive a stable normal.
+            const start = subpath[0];
+            const end = subpath[subpath.length - 1];
+            const chordDx = end[0] - start[0];
+            const chordDy = end[1] - start[1];
+            const chordLen = Math.sqrt(chordDx * chordDx + chordDy * chordDy);
+            let nx = 0;
+            let ny = -1;
+            if (chordLen > 1e-3) {
+              // Perpendicular to chord; default to the side with smaller
+              // y (toward the top of the page) so labels stack predictably.
+              const rawNx = -chordDy / chordLen;
+              const rawNy = chordDx / chordLen;
+              if (rawNy <= 0) {
+                nx = rawNx;
+                ny = rawNy;
+              } else {
+                nx = -rawNx;
+                ny = -rawNy;
+              }
+            }
+            const labelOffset = Math.max(34, renderedDimensions.w / 48);
+
+            // Label box sizing — proportional to character count + page
+            // width.  Conservative width estimate for monospace-like
+            // proportional fonts.
+            const labelText = segment.label;
+            const fontPx = Math.max(11, renderedDimensions.w / 110);
+            const charPx = fontPx * 0.58;
+            const padX = fontPx * 0.7;
+            const padY = fontPx * 0.32;
+            const boxW = labelText.length * charPx + padX * 2;
+            const boxH = fontPx + padY * 2;
+            const labelMidX = midpoint ? midpoint[0] + nx * labelOffset : 0;
+            const labelMidY = midpoint ? midpoint[1] + ny * labelOffset : 0;
+
             return (
               <g key={`seg-${segment.segment_id}`}>
-                {/* White halo for legibility on dark line work */}
+                {/* (1) white halo */}
                 <path
                   d={segPath}
                   fill="none"
                   stroke="#ffffff"
-                  strokeWidth={segStroke + 4}
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  opacity={0.65}
-                />
-                {/* Primary segment stroke — red, semi-opaque */}
-                <path
-                  d={segPath}
-                  fill="none"
-                  stroke="#dc2626"
-                  strokeWidth={segStroke}
+                  strokeWidth={haloStroke}
                   strokeLinecap="round"
                   strokeLinejoin="round"
                   opacity={0.85}
                 />
+                {/* (2) bold red core */}
+                <path
+                  d={segPath}
+                  fill="none"
+                  stroke="#dc2626"
+                  strokeWidth={coreStroke}
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  opacity={0.96}
+                />
+                {/* (3) red endcaps at the start + end of the segment */}
+                <circle
+                  cx={start[0]}
+                  cy={start[1]}
+                  r={endcapR}
+                  fill="#b91c1c"
+                  stroke="#ffffff"
+                  strokeWidth={Math.max(1.5, renderedDimensions.w / 720)}
+                  opacity={0.98}
+                />
+                <circle
+                  cx={end[0]}
+                  cy={end[1]}
+                  r={endcapR}
+                  fill="#b91c1c"
+                  stroke="#ffffff"
+                  strokeWidth={Math.max(1.5, renderedDimensions.w / 720)}
+                  opacity={0.98}
+                />
                 {midpoint && (
                   <g pointerEvents="none">
+                    {/* leader line from segment midpoint to label centre */}
+                    <line
+                      x1={midpoint[0]}
+                      y1={midpoint[1]}
+                      x2={labelMidX}
+                      y2={labelMidY}
+                      stroke="#b91c1c"
+                      strokeWidth={Math.max(1, renderedDimensions.w / 700)}
+                      strokeDasharray={`${Math.max(2, renderedDimensions.w / 720)} ${Math.max(2, renderedDimensions.w / 720)}`}
+                      opacity={0.7}
+                    />
+                    {/* label pill */}
                     <rect
-                      x={midpoint[0] - segment.label.length * (renderedDimensions.w / 180)}
-                      y={midpoint[1] - renderedDimensions.w / 60}
-                      width={segment.label.length * (renderedDimensions.w / 90) + 12}
-                      height={renderedDimensions.w / 36}
-                      rx={4}
-                      ry={4}
-                      fill="#fecaca"
-                      stroke="#dc2626"
-                      strokeWidth={Math.max(1, renderedDimensions.w / 960)}
-                      opacity={0.92}
+                      x={labelMidX - boxW / 2}
+                      y={labelMidY - boxH / 2}
+                      width={boxW}
+                      height={boxH}
+                      rx={Math.max(3, fontPx * 0.3)}
+                      ry={Math.max(3, fontPx * 0.3)}
+                      fill="#ffffff"
+                      stroke="#b91c1c"
+                      strokeWidth={Math.max(1.2, renderedDimensions.w / 720)}
+                      opacity={0.96}
                     />
                     <text
-                      x={midpoint[0]}
-                      y={midpoint[1] + renderedDimensions.w / 240}
+                      x={labelMidX}
+                      y={labelMidY + fontPx * 0.34}
                       textAnchor="middle"
-                      fill="#7f1d1d"
-                      fontSize={Math.max(12, renderedDimensions.w / 90)}
+                      fill="#b91c1c"
+                      fontSize={fontPx}
                       fontWeight={700}
                       fontFamily="ui-sans-serif, system-ui, sans-serif"
                     >
-                      {segment.label}
+                      {labelText}
                     </text>
                   </g>
                 )}
               </g>
             );
           })}
-          {/* Station anchors — vertical marker line + label box */}
+          {/* Station anchors — small diamond markers + station label.
+               Visually subdued vs. segment redlines (Step 3A.1): smaller
+               size, dark-amber color (distinct from segment red), label
+               offset above the diamond.  Clear visual hierarchy:
+                 - bold red lines  = redline segments (operator output)
+                 - amber diamonds  = station anchors (calibration points)
+                 - blue trace      = operator-drawn route (calibration spine)
+               This keeps "what is the redline" unambiguous on a busy
+               plan sheet. */}
           {draftAnchors.map((a) => {
-            const r = Math.max(6, renderedDimensions.w / 240);
+            // Diamond size — half the previous circle, more compact.
+            const r = Math.max(4, renderedDimensions.w / 360);
+            const fontPx = Math.max(10, renderedDimensions.w / 130);
+            // Diamond points (rotated square)
+            const diamond = [
+              `${a.point[0]},${a.point[1] - r}`,
+              `${a.point[0] + r},${a.point[1]}`,
+              `${a.point[0]},${a.point[1] + r}`,
+              `${a.point[0] - r},${a.point[1]}`,
+            ].join(" ");
             return (
               <g
                 key={`anchor-${a.anchor_id}`}
@@ -1626,25 +1755,24 @@ function CanvasWithOverlay({
                   }
                 }}
               >
-                <circle
-                  cx={a.point[0]}
-                  cy={a.point[1]}
-                  r={r}
-                  fill="#dc2626"
+                <polygon
+                  points={diamond}
+                  fill="#b45309"
                   stroke="#ffffff"
-                  strokeWidth={Math.max(1.5, renderedDimensions.w / 720)}
+                  strokeWidth={Math.max(1, renderedDimensions.w / 800)}
                 />
                 <text
-                  x={a.point[0] + r + 6}
-                  y={a.point[1] + r / 2}
-                  fill="#7f1d1d"
-                  fontSize={Math.max(11, renderedDimensions.w / 96)}
-                  fontWeight={700}
+                  x={a.point[0]}
+                  y={a.point[1] - r - Math.max(4, fontPx * 0.3)}
+                  textAnchor="middle"
+                  fill="#92400e"
+                  fontSize={fontPx}
+                  fontWeight={600}
                   fontFamily="ui-sans-serif, system-ui, sans-serif"
                   style={{
                     paintOrder: "stroke",
                     stroke: "#ffffff",
-                    strokeWidth: Math.max(2, renderedDimensions.w / 480),
+                    strokeWidth: Math.max(2, renderedDimensions.w / 540),
                     strokeLinejoin: "round",
                   }}
                 >
@@ -1838,6 +1966,28 @@ function TraceToolbar({
         >
           {statusText}
         </span>
+      </div>
+      {/* Step 3A.1 — help line explaining anchors vs segments visually. */}
+      <div
+        style={{
+          maxWidth: 1600,
+          margin: "4px auto 0",
+          fontSize: 11,
+          color: "var(--tl-text-faint)",
+          lineHeight: 1.45,
+          fontStyle: "italic",
+        }}
+      >
+        <span style={{ color: "#1d4ed8", fontWeight: 600, fontStyle: "normal" }}>
+          Trace
+        </span>
+        {" "}is the blue route you draw on the plan sheet.{" "}
+        <span style={{ color: "#b45309", fontWeight: 600, fontStyle: "normal" }}>
+          Station anchors
+        </span>
+        {" "}are amber diamonds you place on the trace at known station values
+        (e.g. 16+79, 19+54) — they calibrate the trace&rsquo;s station scale.
+        Add at least 2 anchors before defining segments.
       </div>
     </div>
   );
@@ -2489,6 +2639,28 @@ function SegmentsPanel({
           >
             {headerMessage}
           </span>
+        </div>
+
+        {/* Step 3A.1 — help line explaining segments. */}
+        <div
+          style={{
+            fontSize: 11,
+            color: "var(--tl-text-faint)",
+            lineHeight: 1.45,
+            fontStyle: "italic",
+          }}
+        >
+          <span style={{ color: "#b91c1c", fontWeight: 600, fontStyle: "normal" }}>
+            Station segments
+          </span>
+          {" "}mark redline ranges along the calibrated trace. Example: with
+          anchors at 16+79 and 19+54 on the trace, add a segment{" "}
+          <span style={{ fontWeight: 600, fontStyle: "normal" }}>
+            &ldquo;Bore 1&rdquo; from 16+79 to 19+54
+          </span>
+          {" "}— it will render as a bold red line covering exactly that 275 ft
+          of the trace. Segment list below is the source of truth; the on-PDF
+          drawing is the visual derivative.
         </div>
 
         {draftOpen && (
