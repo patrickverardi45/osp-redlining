@@ -1241,7 +1241,9 @@ export default function PdfPlanCanvas({ projectId, planId }: PdfPlanCanvasProps)
       );
     }
     if (newRows.length > 0) {
-      parts.push("Click Generate Segments to render them as redlines.");
+      parts.push(
+        "Confirm these bore logs belong to this PDF plan before clicking Generate Segments.",
+      );
     }
     setGenerateOpState({
       kind: "idle",
@@ -3551,6 +3553,26 @@ function BoreLogRowsPanel({
           in metadata along with all point readings). Rows are local browser
           drafts (this page only); generated segments are the persistent
           record server-side.
+        </div>
+
+        <div
+          role="note"
+          style={{
+            fontSize: 11,
+            lineHeight: 1.45,
+            padding: "6px 10px",
+            background: "rgba(180, 83, 9, 0.08)",
+            border: "1px solid rgba(180, 83, 9, 0.35)",
+            borderRadius: 4,
+            color: "#92400e",
+            fontStyle: "normal",
+          }}
+        >
+          <strong style={{ letterSpacing: "0.02em" }}>Provenance check:</strong>{" "}
+          Imported Excel rows are assigned to the currently open PDF page for
+          testing / review. The importer does <em>not</em> verify that a bore
+          log belongs to this plan set. Confirm the bore log belongs to this
+          plan before clicking Generate Segments.
         </div>
 
         {rowDraftOpen && (
