@@ -18385,10 +18385,21 @@ async def get_engineering_plan_page_image(
             session_id=resolved_session_id,
         )
 
-    # Locate the plan record via the existing tenant-scoped index reader.
-    plans = _load_engineering_plan_index_for_session(resolved_session_id)
+    # VO.2b R6: read the RAW index (not the public projection) because the
+    # endpoint needs the internal `stored_path` field which
+    # `_engineering_plan_public_record` deliberately strips for API safety.
+    # Session + plan_id filters inline; tenant ownership was already checked
+    # above via `_require_tenant_owns_session`. The previous implementation
+    # called `_load_engineering_plan_index_for_session()` which projected each
+    # record through the public-record helper, dropping `stored_path` — so the
+    # subsequent file-existence check always saw an empty path string and
+    # returned a misleading 404 "file not found on disk" even when the PDF
+    # was present on disk.
+    index_data = _load_engineering_plan_index()
     matched: Optional[Dict[str, Any]] = None
-    for plan in plans:
+    for plan in index_data.get("plans", []):
+        if not _engineering_plan_record_matches_session(plan, resolved_session_id):
+            continue
         if str(plan.get("plan_id") or "").strip() == target_plan_id:
             matched = plan
             break
@@ -18408,7 +18419,23 @@ async def get_engineering_plan_page_image(
             session_id=resolved_session_id,
         )
 
+    # VO.2b R6: resolve PDF file path with safe fallback.  Prefer the upload-
+    # time `stored_path` field (immutable since upload). If absent/empty
+    # (legacy records, alternate writer, schema drift), reconstruct from the
+    # upload convention: ENGINEERING_PLAN_ROOT / _safe_filename(session_id)
+    # / stored_filename. The fallback NEVER broadens the lookup across
+    # sessions — session_id is taken from the matched record itself, which
+    # was already filtered to resolved_session_id above.
     stored_path_str = str(matched.get("stored_path") or "").strip()
+    if not stored_path_str:
+        stored_filename = str(matched.get("stored_filename") or "").strip()
+        record_session_id = str(matched.get("session_id") or "").strip()
+        if stored_filename and record_session_id:
+            stored_path_str = str(
+                ENGINEERING_PLAN_ROOT
+                / _safe_filename(record_session_id)
+                / stored_filename
+            )
     if not stored_path_str or not os.path.exists(stored_path_str):
         return _err(
             "Engineering plan file was not found on disk.",

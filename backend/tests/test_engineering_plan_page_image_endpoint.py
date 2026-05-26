@@ -95,10 +95,13 @@ class _BaseEndpointTest(unittest.TestCase):
         )
 
         # Default patches: tenant gate, session resolve, index lookup.
+        # VO.2b R6: endpoint now reads the RAW index (not the public projection)
+        # so it has access to internal `stored_path`. The mock returns the
+        # raw-shape dict {"plans": [...]} to match `_load_engineering_plan_index`.
         self._patches: List[Any] = []
         self._patches.append(patch.object(M, "_resolve_session_id", return_value=self.SESSION_ID))
         self._patches.append(patch.object(M, "_require_tenant_owns_session", return_value=None))
-        self._patches.append(patch.object(M, "_load_engineering_plan_index_for_session", return_value=[self._plan]))
+        self._patches.append(patch.object(M, "_load_engineering_plan_index", return_value={"plans": [self._plan]}))
         # Redirect ENGINEERING_PLAN_ROOT to our tmp dir so cache files
         # land under the test tmp tree rather than the prod uploads dir.
         self._patches.append(patch.object(M, "ENGINEERING_PLAN_ROOT", self._eng_root))
@@ -331,19 +334,31 @@ class T7_TenantIsolation(_BaseEndpointTest):
             self.assertEqual(ctx.exception.status_code, 403)
 
     def test_index_lookup_uses_caller_session_id(self) -> None:
-        """The endpoint must call _load_engineering_plan_index_for_session
-        with the resolved session id — not a hardcoded value, not from
-        STATE.  A cross-session leak would surface here."""
+        """The endpoint must filter the index by the resolved session id —
+        not a hardcoded value, not from STATE. A cross-session leak would
+        surface here.
+
+        VO.2b R6: after the lookup switched from the public-projection helper
+        to the raw index reader, the per-record session filter is the new
+        chokepoint. We spy on `_engineering_plan_record_matches_session` to
+        confirm every call uses the resolved session id."""
         seen: List[Any] = []
 
-        def fake_load(sid: str) -> List[Dict[str, Any]]:
-            seen.append(sid)
-            return [self._plan]
+        def fake_match(record: Dict[str, Any], session_id: str) -> bool:
+            seen.append(session_id)
+            return (
+                str(record.get("session_id") or "").strip()
+                == str(session_id or "").strip()
+            )
 
-        with patch.object(M, "_load_engineering_plan_index_for_session", side_effect=fake_load):
+        with patch.object(M, "_engineering_plan_record_matches_session", side_effect=fake_match):
             response = self._call()
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(seen, [self.SESSION_ID])
+        # Matcher is called once per record in the index. All calls must use
+        # the resolved session id — no cross-session probing.
+        self.assertGreaterEqual(len(seen), 1)
+        for sid in seen:
+            self.assertEqual(sid, self.SESSION_ID)
 
 
 # ─── T8 — no parser invocation ──────────────────────────────────────────────
@@ -385,7 +400,7 @@ class T9_NonPdfFileType(_BaseEndpointTest):
         self._patches = []
         self._patches.append(patch.object(M, "_resolve_session_id", return_value=self.SESSION_ID))
         self._patches.append(patch.object(M, "_require_tenant_owns_session", return_value=None))
-        self._patches.append(patch.object(M, "_load_engineering_plan_index_for_session", return_value=[self._plan_png]))
+        self._patches.append(patch.object(M, "_load_engineering_plan_index", return_value={"plans": [self._plan_png]}))
         self._patches.append(patch.object(M, "ENGINEERING_PLAN_ROOT", self._eng_root))
         for p in self._patches:
             p.start()
