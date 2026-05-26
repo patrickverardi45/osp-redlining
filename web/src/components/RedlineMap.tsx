@@ -56,6 +56,9 @@ import { getPilotToken } from "@/lib/pilotToken";
 import type { PipelineDiagEntry, EngineeringPlanSignal, QaFlagItem } from "@/lib/types/nova";
 import { buildNovaSummary } from "@/lib/nova/buildNovaSummary";
 import CloseoutPacket from "@/components/CloseoutPacket";
+// VO.2b — type-only import for the PDF overlay state injected into the
+// operationalMap (ModernHeroMap) via React.cloneElement at the render site.
+import type { EngineeringPlanOverlayState } from "@/components/ModernHeroMap";
 
 const API_BASE = "";
 
@@ -1256,6 +1259,63 @@ function OfficeRedlineMapInner({
   const [stationPhotoBusy, setStationPhotoBusy] = useState(false);
   const [engPlansBusy, setEngPlansBusy] = useState(false);
   const [engineeringPlansExpanded, setEngineeringPlansExpanded] = useState(false);
+
+  // VO.2b — PDF page-image overlay UI state, hydrated lazily from
+  // localStorage on first render so the overlay's prior project-scoped
+  // selection survives page reloads.  Default OFF every session if no
+  // prior state exists.  Persisted on every change via the useEffect
+  // below.  The bundled shape is injected into operationalMap
+  // (ModernHeroMap) via React.cloneElement at the render site.
+  const [pdfOverlay, setPdfOverlay] = useState<EngineeringPlanOverlayState>(() => {
+    const defaults: EngineeringPlanOverlayState = {
+      visible: false,
+      planId: null,
+      pageIndex: 0,
+      opacity: 0.45,
+      dpi: 96,
+    };
+    if (typeof window === "undefined" || !projectId) return defaults;
+    try {
+      const raw = window.localStorage.getItem(`osp_pdf_overlay:${projectId}`);
+      if (!raw) return defaults;
+      const parsed = JSON.parse(raw);
+      if (!parsed || typeof parsed !== "object") return defaults;
+      return {
+        visible: typeof parsed.visible === "boolean" ? parsed.visible : false,
+        planId: typeof parsed.planId === "string" ? parsed.planId : null,
+        pageIndex:
+          typeof parsed.pageIndex === "number" && Number.isFinite(parsed.pageIndex)
+            ? Math.max(0, Math.floor(parsed.pageIndex))
+            : 0,
+        opacity:
+          typeof parsed.opacity === "number" && Number.isFinite(parsed.opacity)
+            ? Math.min(0.8, Math.max(0, parsed.opacity))
+            : 0.45,
+        dpi:
+          typeof parsed.dpi === "number" && Number.isFinite(parsed.dpi)
+            ? Math.min(300, Math.max(48, Math.floor(parsed.dpi)))
+            : 96,
+      };
+    } catch {
+      return defaults;
+    }
+  });
+
+  // VO.2b — persist PDF overlay state per project on every change.  Failures
+  // are silently swallowed (quota / private-mode); the overlay simply falls
+  // back to defaults on next page load.
+  useEffect(() => {
+    if (typeof window === "undefined" || !projectId) return;
+    try {
+      window.localStorage.setItem(
+        `osp_pdf_overlay:${projectId}`,
+        JSON.stringify(pdfOverlay),
+      );
+    } catch {
+      /* ignore quota / private-mode failures */
+    }
+  }, [projectId, pdfOverlay]);
+
   // V1 Photo GPS Mapping — client-only, resets on refresh.
   const [gpsPhotos, setGpsPhotos] = useState<GpsPhoto[]>([]);
   const [gpsPhotoBusy, setGpsPhotoBusy] = useState(false);
@@ -5190,6 +5250,166 @@ ${redlinePlacemarks.length > 0 ? buildEngFolder("Redlines", redlinePlacemarks, 1
                       ? "Probing..."
                       : "Test backend connection (direct-to-Render)"}
                   </button>
+                  {/* VO.2b — PDF map overlay controls.  Default OFF every session.
+                       Rendered only when at least one uploaded plan is a PDF.
+                       Backend gate: TRUELINE_PLAN_OVERLAY_IMAGE=1 on Render.
+                       Layer pane: pdfOverlayPane (z=150), strictly below KMZ
+                       and operational redlines/stations/photos. */}
+                  {(() => {
+                    const pdfPlans = (state?.engineering_plans ?? []).filter(
+                      (p: EngineeringPlan) => p.file_type === "application/pdf",
+                    );
+                    if (pdfPlans.length === 0) return null;
+                    const opacityPct = Math.round(pdfOverlay.opacity * 100);
+                    return (
+                      <div
+                        style={{
+                          marginTop: 4,
+                          padding: "10px 12px",
+                          border: "1px solid #cbd5e1",
+                          borderRadius: 10,
+                          background: "#f8fafc",
+                          display: "grid",
+                          gap: 8,
+                        }}
+                      >
+                        <div style={{ fontWeight: 700, fontSize: 12, color: "#0f172a" }}>
+                          PDF map overlay (read-only, default off)
+                        </div>
+                        <label
+                          style={{
+                            display: "inline-flex",
+                            alignItems: "center",
+                            gap: 6,
+                            fontSize: 12,
+                            color: "#334155",
+                            cursor: "pointer",
+                          }}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={pdfOverlay.visible}
+                            onChange={(e) => {
+                              const visible = e.target.checked;
+                              // Auto-select the first PDF when enabling for the
+                              // first time so the operator doesn't have to pick
+                              // explicitly.
+                              const nextPlanId =
+                                visible && !pdfOverlay.planId && pdfPlans.length > 0
+                                  ? pdfPlans[0].plan_id
+                                  : pdfOverlay.planId;
+                              setPdfOverlay({ ...pdfOverlay, visible, planId: nextPlanId });
+                            }}
+                          />
+                          Show PDF on map
+                        </label>
+                        {pdfPlans.length > 1 ? (
+                          <label style={{ display: "grid", gap: 4, fontSize: 12, color: "#334155" }}>
+                            Plan
+                            <select
+                              value={pdfOverlay.planId ?? ""}
+                              onChange={(e) =>
+                                setPdfOverlay({
+                                  ...pdfOverlay,
+                                  planId: e.target.value || null,
+                                  pageIndex: 0,
+                                })
+                              }
+                              style={{
+                                padding: "4px 6px",
+                                fontSize: 12,
+                                borderRadius: 6,
+                                border: "1px solid #cbd5e1",
+                                background: "#ffffff",
+                              }}
+                            >
+                              <option value="">— select a PDF —</option>
+                              {pdfPlans.map((p: EngineeringPlan) => (
+                                <option key={p.plan_id} value={p.plan_id}>
+                                  {p.original_filename}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                        ) : null}
+                        <div
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            gap: 6,
+                            fontSize: 12,
+                            color: "#334155",
+                          }}
+                        >
+                          <span>Page</span>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setPdfOverlay({
+                                ...pdfOverlay,
+                                pageIndex: Math.max(0, pdfOverlay.pageIndex - 1),
+                              })
+                            }
+                            className="tl-btn tl-btn-ghost"
+                            style={{ padding: "2px 8px", fontSize: 12 }}
+                            disabled={pdfOverlay.pageIndex <= 0}
+                          >
+                            Prev
+                          </button>
+                          <input
+                            type="number"
+                            min={0}
+                            value={pdfOverlay.pageIndex}
+                            onChange={(e) => {
+                              const raw = Number(e.target.value);
+                              const v = Number.isFinite(raw) ? Math.max(0, Math.floor(raw)) : 0;
+                              setPdfOverlay({ ...pdfOverlay, pageIndex: v });
+                            }}
+                            style={{
+                              width: 64,
+                              padding: "2px 6px",
+                              fontSize: 12,
+                              borderRadius: 6,
+                              border: "1px solid #cbd5e1",
+                              background: "#ffffff",
+                            }}
+                          />
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setPdfOverlay({
+                                ...pdfOverlay,
+                                pageIndex: pdfOverlay.pageIndex + 1,
+                              })
+                            }
+                            className="tl-btn tl-btn-ghost"
+                            style={{ padding: "2px 8px", fontSize: 12 }}
+                          >
+                            Next
+                          </button>
+                        </div>
+                        <label style={{ display: "grid", gap: 4, fontSize: 12, color: "#334155" }}>
+                          Opacity {opacityPct}%
+                          <input
+                            type="range"
+                            min={0}
+                            max={80}
+                            step={1}
+                            value={opacityPct}
+                            onChange={(e) => {
+                              const pct = Math.max(0, Math.min(80, Number(e.target.value) || 0));
+                              setPdfOverlay({ ...pdfOverlay, opacity: pct / 100 });
+                            }}
+                          />
+                        </label>
+                        <div style={{ fontSize: 11, color: "#94a3b8", lineHeight: 1.4 }}>
+                          Renders below KMZ and redlines.  Requires{" "}
+                          <code style={{ fontSize: 11 }}>TRUELINE_PLAN_OVERLAY_IMAGE=1</code>{" "}
+                          on Render; if disabled, the overlay silently does not appear.
+                        </div>
+                      </div>
+                    );
+                  })()}
                   {(state?.engineering_plans?.length ?? 0) === 0 ? (
                     <div style={{ fontSize: 13, color: "#94a3b8" }}>No plans uploaded for this session.</div>
                   ) : (
@@ -5246,7 +5466,20 @@ ${redlinePlacemarks.length > 0 ? buildEngFolder("Redlines", redlinePlacemarks, 1
                     order: 18,
                   }}
                 >
-                  {operationalMap}
+                  {/* VO.2b — inject the PDF overlay state into the passed-in
+                       operationalMap (ModernHeroMap) via React.cloneElement.
+                       This keeps overlay state (and its UI controls) co-located
+                       in RedlineMap without threading new props through
+                       projects/[projectId]/page.tsx.  Falls back to rendering
+                       operationalMap unchanged if it isn't a valid element. */}
+                  {React.isValidElement(operationalMap)
+                    ? React.cloneElement(
+                        operationalMap as React.ReactElement<{
+                          engineeringPlanOverlay?: EngineeringPlanOverlayState;
+                        }>,
+                        { engineeringPlanOverlay: pdfOverlay },
+                      )
+                    : operationalMap}
                 </div>
               ) : null}
 

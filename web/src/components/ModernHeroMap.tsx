@@ -32,6 +32,29 @@ const EMPTY_DEFAULT_ZOOM = 4;
 type LeafletNS = typeof import("leaflet");
 type BaseStyle = "standard" | "satellite";
 
+/** VO.2b — read-only PDF page-image overlay state injected by RedlineMap via
+ *  React.cloneElement at the operationalMap render site.  When absent or
+ *  `visible=false`, no overlay is rendered.  When `visible=true && planId
+ *  !== null`, ModernHeroMap fetches the PNG from
+ *    GET /api/engineering-plans/{plan_id}/page/{page_index}/image?dpi=<48-300>
+ *  via apiFetch (Bearer auth; 401 → silent refresh + retry) and renders it on
+ *  the `pdfOverlayPane` (z=150, below all operational layers).  Default OFF
+ *  every session.  Backend 404 (TRUELINE_PLAN_OVERLAY_IMAGE off) and 500
+ *  (page out of range) fail silently — no overlay rendered; operator self-
+ *  corrects via Prev/Next page controls in the parent UI.
+ *
+ *  Authoritative design: wiki/sprints/visual-overlay/vo-2b-frontend-pdf-image-overlay-plan.md
+ */
+export type EngineeringPlanOverlayState = {
+  visible: boolean;
+  planId: string | null;
+  pageIndex: number;
+  /** Opacity ∈ [0, 0.8]; values outside this range are clamped at render time. */
+  opacity: number;
+  /** DPI passed to the backend page-image endpoint; valid range [48, 300]. */
+  dpi: number;
+};
+
 type ModernHeroMapProps = {
   projectId?: string;
   /** Mirrors the selection of the field-submissions inbox owned by RedlineMap.
@@ -49,6 +72,8 @@ type ModernHeroMapProps = {
    *  When provided, pre-fetches the render payload without requiring the user to
    *  toggle the KMZ context layer on first. */
   kmzSemantic?: SemanticKmz | null;
+  /** VO.2b — PDF page-image overlay state (see type doc above). */
+  engineeringPlanOverlay?: EngineeringPlanOverlayState;
 };
 
 function cleanCoords(coords: number[][] | undefined | null): Array<[number, number]> {
@@ -480,6 +505,7 @@ export default function ModernHeroMap({
   refreshVersion = 0,
   bridgedGpsPhotos = [],
   kmzSemantic,
+  engineeringPlanOverlay,
 }: ModernHeroMapProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<ReturnType<LeafletNS["map"]> | null>(null);
@@ -1052,6 +1078,18 @@ export default function ModernHeroMap({
         standardTilesRef.current = standard;
         satelliteTilesRef.current = satellite;
 
+        // VO.2b — create the PDF overlay pane once when the map is initialized.
+        // z=150 places the overlay strictly BELOW every existing operational pane
+        // (kmzContextPolygonPane=200 etc., overlayPane~400) so redlines / stations /
+        // photos remain visually dominant.  pointerEvents:none lets clicks pass
+        // through to the operational layer so it stays interactive.
+        const PDF_OVERLAY_PANE = "pdfOverlayPane";
+        if (!map.getPane(PDF_OVERLAY_PANE)) {
+          const pdfPane = map.createPane(PDF_OVERLAY_PANE);
+          pdfPane.style.zIndex = "150";
+          pdfPane.style.pointerEvents = "none";
+        }
+
         satellite.addTo(map);
         map.invalidateSize();
         if (!cancelled) setMapZoom(map.getZoom());
@@ -1101,6 +1139,132 @@ export default function ModernHeroMap({
       kmzLinePermLabelLayersRef.current = [];
     };
   }, []);
+
+  // VO.2b — refs for the PDF page-image overlay lifecycle.  Stored on refs
+  // (not state) so opacity updates can sync onto the existing overlay without
+  // triggering a re-fetch.
+  const pdfOverlayRef = useRef<ReturnType<LeafletNS["imageOverlay"]> | null>(null);
+  const pdfObjectUrlRef = useRef<string | null>(null);
+  const pdfOverlayOpacityRef = useRef<number>(0.45);
+
+  // VO.2b — keep the overlay opacity in sync without re-fetching the image.
+  // The PNG is cached server-side per (plan_id, page_index, dpi) so re-fetches
+  // are cheap, but the slider should feel instant; ref-based sync avoids the
+  // network round-trip entirely.
+  useEffect(() => {
+    const opacity = Math.min(0.8, Math.max(0, engineeringPlanOverlay?.opacity ?? 0.45));
+    pdfOverlayOpacityRef.current = opacity;
+    const overlay = pdfOverlayRef.current;
+    if (overlay && typeof overlay.setOpacity === "function") {
+      try { overlay.setOpacity(opacity); } catch { /* noop */ }
+    }
+  }, [engineeringPlanOverlay?.opacity]);
+
+  // VO.2b — PDF page-image overlay lifecycle.  Pure read; never mutates STATE.
+  // Fetches via apiFetch (Bearer auth, 401 → silent refresh + retry).  Renders
+  // only when overlay state is `visible && planId !== null` AND a non-empty
+  // fit-to-route bounding box can be computed from kmzSnapPolylines.
+  // Backend 404 (TRUELINE_PLAN_OVERLAY_IMAGE off) and 500 (page out of range)
+  // fail silently → no overlay rendered; operator self-corrects via Prev/Next.
+  useEffect(() => {
+    // Tear down any previous overlay before deciding whether to mount a new one.
+    const prevOverlay = pdfOverlayRef.current;
+    const prevObjectUrl = pdfObjectUrlRef.current;
+    pdfOverlayRef.current = null;
+    pdfObjectUrlRef.current = null;
+    if (prevOverlay) { try { prevOverlay.remove(); } catch { /* noop */ } }
+    if (prevObjectUrl) { try { URL.revokeObjectURL(prevObjectUrl); } catch { /* noop */ } }
+
+    const L = leafletRef.current;
+    const map = mapRef.current;
+    if (!L || !map) return;
+    if (!engineeringPlanOverlay) return;
+    if (!engineeringPlanOverlay.visible) return;
+    if (!engineeringPlanOverlay.planId) return;
+
+    const PDF_OVERLAY_PANE = "pdfOverlayPane";
+    if (!map.getPane(PDF_OVERLAY_PANE)) return; // pane should exist post-init; bail safe
+
+    // Fit-to-active-route bounds from already-memoized kmzSnapPolylines.
+    let minLat = Infinity, maxLat = -Infinity, minLng = Infinity, maxLng = -Infinity;
+    let anyPoint = false;
+    for (const poly of kmzSnapPolylines) {
+      for (const pt of poly) {
+        const lat = pt[0];
+        const lng = pt[1];
+        if (!Number.isFinite(lat) || !Number.isFinite(lng)) continue;
+        if (lat < minLat) minLat = lat;
+        if (lat > maxLat) maxLat = lat;
+        if (lng < minLng) minLng = lng;
+        if (lng > maxLng) maxLng = lng;
+        anyPoint = true;
+      }
+    }
+    if (!anyPoint) return; // no KMZ uploaded yet → overlay deferred
+    const bounds: [[number, number], [number, number]] = [
+      [minLat, minLng],
+      [maxLat, maxLng],
+    ];
+
+    // Construct the page-image URL.  Direct-to-Render via NEXT_PUBLIC_API_BASE
+    // when defined (mirrors the upload flow at RedlineMap.handleEngineeringPlansUpload);
+    // falls back to same-origin when the env is unset (dev/local without proxy).
+    const RENDER_BASE = (
+      process.env.NEXT_PUBLIC_API_BASE ||
+      process.env.NEXT_PUBLIC_API_BASE_URL ||
+      ""
+    ).replace(/\/+$/, "");
+    const baseUrl = RENDER_BASE || API_BASE;
+    const planId = engineeringPlanOverlay.planId;
+    const pageIndex = Math.max(0, Math.floor(engineeringPlanOverlay.pageIndex));
+    const dpi = Math.min(300, Math.max(48, Math.floor(engineeringPlanOverlay.dpi || 96)));
+
+    let cancelled = false;
+    void (async () => {
+      try {
+        const url =
+          `${baseUrl}/api/engineering-plans/${encodeURIComponent(planId)}` +
+          `/page/${encodeURIComponent(String(pageIndex))}/image?dpi=${dpi}`;
+        const resp = await apiFetch(url, undefined, "vo2b_load_plan_page");
+        if (cancelled) return;
+        if (!resp.ok) return; // 404 / 500 / 400 → no overlay; silent (UI shows prior state)
+        const blob = await resp.blob();
+        if (cancelled) return;
+        const objectUrl = URL.createObjectURL(blob);
+        const overlay = L.imageOverlay(objectUrl, bounds, {
+          pane: PDF_OVERLAY_PANE,
+          opacity: pdfOverlayOpacityRef.current,
+          interactive: false,
+        });
+        overlay.addTo(map);
+        if (cancelled) {
+          try { overlay.remove(); } catch { /* noop */ }
+          try { URL.revokeObjectURL(objectUrl); } catch { /* noop */ }
+          return;
+        }
+        pdfOverlayRef.current = overlay;
+        pdfObjectUrlRef.current = objectUrl;
+      } catch {
+        // Pure best-effort.  Never throw out of an effect.
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      const ov = pdfOverlayRef.current;
+      const ou = pdfObjectUrlRef.current;
+      pdfOverlayRef.current = null;
+      pdfObjectUrlRef.current = null;
+      if (ov) { try { ov.remove(); } catch { /* noop */ } }
+      if (ou) { try { URL.revokeObjectURL(ou); } catch { /* noop */ } }
+    };
+  }, [
+    engineeringPlanOverlay?.visible,
+    engineeringPlanOverlay?.planId,
+    engineeringPlanOverlay?.pageIndex,
+    engineeringPlanOverlay?.dpi,
+    kmzSnapPolylines,
+  ]);
 
   // Phase 2F — Fetch KMZ render payload when context toggle turns ON.
   // Silent failure. No STATE writes. Read-only.
