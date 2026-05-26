@@ -28,7 +28,7 @@ import boto3
 import pandas as pd
 from fastapi import APIRouter, Body, Depends, FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
 from app.auth import current_tenant, get_current_tenant
 from app.auth_bridge import resolve_caller
 from app.core import plan_topology_cache
@@ -9530,6 +9530,24 @@ def _trueline_plan_overlay_payload_enabled() -> bool:
     return raw in {"1", "true", "yes", "on"}
 
 
+# ---------------------------------------------------------------------------
+# VO.2a feature flag.
+# Flag: TRUELINE_PLAN_OVERLAY_IMAGE. Default off.
+# Truthy values (case-insensitive): "1", "true", "yes", "on".
+# Read at runtime (per request), not import-time, so dev toggling does
+# not require a process restart (avoids the B-AUTH-3 antipattern).
+# When False, the page-image endpoint returns 404 with a disabled message
+# and never imports PyMuPDF (zero overhead on the flag-off path).
+# When True, the endpoint renders PDF pages on demand and caches the
+# output under <UPLOADS_DIR>/engineering_plans/<sid>/_page_cache/.
+# See: wiki/sprints/visual-overlay/vo-2-pdf-image-overlay-design-packet.md §3.1.
+# ---------------------------------------------------------------------------
+
+def _trueline_plan_overlay_image_enabled() -> bool:
+    raw = os.environ.get("TRUELINE_PLAN_OVERLAY_IMAGE", "").strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
 def _resolve_engineering_plan_pdf_paths(session_id: str) -> List[Path]:
     """Reconstruct on-disk PDF paths for a session's engineering plans.
     Uses only public_record fields (stored_filename + file_type) and the
@@ -18315,6 +18333,137 @@ async def get_engineering_plans(session_id: Optional[str] = None) -> JSONRespons
     resolved_session_id = _resolve_session_id(session_id)
     plans = _load_engineering_plan_index_for_session(resolved_session_id)
     return _ok(session_id=resolved_session_id, engineering_plans=plans)
+
+
+# ── VO.2a: engineering plan page image rendering ────────────────────────────
+#
+# Gated read-only endpoint that renders one page of an uploaded engineering
+# PDF to a PNG, caches the result on disk, and returns it via FileResponse.
+# Pure read at the design level: never invokes the parser, never writes to
+# the topology cache, never mutates STATE.  Tenant-scoped via the existing
+# _require_tenant_owns_session helper.  Inert when TRUELINE_PLAN_OVERLAY_IMAGE
+# is unset/false (returns 404; no PyMuPDF import attempted).
+#
+# Design packet: wiki/sprints/visual-overlay/vo-2-pdf-image-overlay-design-packet.md §3
+
+@protected_router.get("/api/engineering-plans/{plan_id}/page/{page_index}/image")
+async def get_engineering_plan_page_image(
+    plan_id: str,
+    page_index: int,
+    dpi: int = 96,
+    session_id: Optional[str] = None,
+    request: Request = None,
+):
+    # Gate check before any work; flag-off returns 404 with no PyMuPDF cost.
+    if not _trueline_plan_overlay_image_enabled():
+        return _err(
+            "Engineering plan page image rendering is disabled.",
+            status_code=404,
+        )
+
+    resolved_session_id = _resolve_session_id(session_id)
+    _require_tenant_owns_session(resolved_session_id, request)
+
+    # Argument validation: tight bounds + clear 400s.
+    if not isinstance(dpi, int) or dpi < 48 or dpi > 300:
+        return _err(
+            f"dpi must be an integer in [48, 300]; got {dpi!r}.",
+            status_code=400,
+            session_id=resolved_session_id,
+        )
+    if not isinstance(page_index, int) or page_index < 0:
+        return _err(
+            f"page_index must be a non-negative integer; got {page_index!r}.",
+            status_code=400,
+            session_id=resolved_session_id,
+        )
+    target_plan_id = str(plan_id or "").strip()
+    if not target_plan_id:
+        return _err(
+            "plan_id is required.",
+            status_code=400,
+            session_id=resolved_session_id,
+        )
+
+    # Locate the plan record via the existing tenant-scoped index reader.
+    plans = _load_engineering_plan_index_for_session(resolved_session_id)
+    matched: Optional[Dict[str, Any]] = None
+    for plan in plans:
+        if str(plan.get("plan_id") or "").strip() == target_plan_id:
+            matched = plan
+            break
+    if matched is None:
+        return _err(
+            "Engineering plan not found.",
+            status_code=404,
+            session_id=resolved_session_id,
+        )
+
+    file_type = str(matched.get("file_type") or "").strip().lower()
+    if file_type != "application/pdf":
+        return _err(
+            "Engineering plan is not a PDF; page image rendering is only "
+            "supported for PDFs.",
+            status_code=400,
+            session_id=resolved_session_id,
+        )
+
+    stored_path_str = str(matched.get("stored_path") or "").strip()
+    if not stored_path_str or not os.path.exists(stored_path_str):
+        return _err(
+            "Engineering plan file was not found on disk.",
+            status_code=404,
+            session_id=resolved_session_id,
+        )
+
+    # Lazy imports: keep flag-off path free of PyMuPDF cost; keep cache-hit
+    # path free of unnecessary import work (the helpers are tiny but still).
+    from app.core import plan_page_image_cache
+    from app.core.plan_page_renderer import (
+        PlanPageRenderError,
+        render_plan_page_to_png_bytes,
+    )
+
+    session_folder = ENGINEERING_PLAN_ROOT / _safe_filename(resolved_session_id)
+    cache_file = plan_page_image_cache.resolve_cache_file(
+        session_folder=session_folder,
+        plan_id=target_plan_id,
+        page_index=int(page_index),
+        dpi=int(dpi),
+    )
+
+    if plan_page_image_cache.cache_read(cache_file) is None:
+        # Cache miss — render and persist (best-effort cache write).
+        try:
+            png_bytes = render_plan_page_to_png_bytes(
+                Path(stored_path_str),
+                int(page_index),
+                int(dpi),
+            )
+        except PlanPageRenderError as e:
+            logging.warning(
+                "plan page render failed plan_id=%s page=%d dpi=%d err=%s",
+                target_plan_id, page_index, dpi, e,
+            )
+            return _err(
+                "Engineering plan page could not be rendered.",
+                status_code=500,
+                session_id=resolved_session_id,
+            )
+        if not plan_page_image_cache.cache_write(cache_file, png_bytes):
+            # Cache write failed (disk full, permission, etc.); serve the
+            # in-memory bytes so the caller still gets the rendered page.
+            return Response(
+                content=png_bytes,
+                media_type="image/png",
+                headers={"Cache-Control": "no-store"},
+            )
+
+    return FileResponse(
+        str(cache_file),
+        media_type="image/png",
+        filename=f"{target_plan_id}_p{int(page_index)}.png",
+    )
 
 
 # ── Nova override decision endpoints ─────────────────────────────────────────
