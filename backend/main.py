@@ -9513,6 +9513,23 @@ def _trueline_plan_pdf_parse_enabled() -> bool:
     return raw in {"1", "true", "yes", "on"}
 
 
+# ---------------------------------------------------------------------------
+# VO.1a feature flag.
+# Flag: TRUELINE_PLAN_OVERLAY_PAYLOAD. Default off.
+# Truthy values (case-insensitive): "1", "true", "yes", "on".
+# Read at runtime (per payload build), not import-time, so dev toggling
+# does not require a process restart (avoids the B-AUTH-3 antipattern).
+# When False, _summary_payload OMITS the engineering_plan_overlay field
+# entirely — pre-VO byte-identical payload shape preserved.
+# When True, the field is always present (empty envelope on cache miss).
+# See: wiki/sprints/visual-overlay/vo-0-design-packet.md §7.
+# ---------------------------------------------------------------------------
+
+def _trueline_plan_overlay_payload_enabled() -> bool:
+    raw = os.environ.get("TRUELINE_PLAN_OVERLAY_PAYLOAD", "").strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
 def _resolve_engineering_plan_pdf_paths(session_id: str) -> List[Path]:
     """Reconstruct on-disk PDF paths for a session's engineering plans.
     Uses only public_record fields (stored_filename + file_type) and the
@@ -12959,9 +12976,17 @@ def _summary_payload(include_debug: bool = False) -> Dict[str, Any]:
             "closeout_lock": _normalize_closeout_lock(STATE.get("closeout_lock")),
             **_closeout_flat_fields(),
         }
+        # VO.1a — gated read-only overlay envelope. Field absent from payload
+        # when TRUELINE_PLAN_OVERLAY_PAYLOAD is off (default). Lazy import
+        # keeps zero overhead on the flag-off path.
+        if _trueline_plan_overlay_payload_enabled():
+            from app.core.plan_overlay import build_engineering_plan_overlay_envelope
+            payload["engineering_plan_overlay"] = build_engineering_plan_overlay_envelope(
+                STATE.get("_session_id_hint", "") or ""
+            )
         return payload
 
-    return {
+    _payload = {
         "route_id": route_id,
         "suggested_route_id": route_id,
         "selected_route_id": route_id,
@@ -13044,6 +13069,15 @@ def _summary_payload(include_debug: bool = False) -> Dict[str, Any]:
         "closeout_lock": _normalize_closeout_lock(STATE.get("closeout_lock")),
         **_closeout_flat_fields(),
     }
+    # VO.1a — gated read-only overlay envelope. Field absent from payload
+    # when TRUELINE_PLAN_OVERLAY_PAYLOAD is off (default). Lazy import
+    # keeps zero overhead on the flag-off path.
+    if _trueline_plan_overlay_payload_enabled():
+        from app.core.plan_overlay import build_engineering_plan_overlay_envelope
+        _payload["engineering_plan_overlay"] = build_engineering_plan_overlay_envelope(
+            STATE.get("_session_id_hint", "") or ""
+        )
+    return _payload
 
 
 @protected_router.post("/api/upload-design")

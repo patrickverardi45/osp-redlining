@@ -141,6 +141,68 @@ def cache_read(
     return normalized
 
 
+def cache_read_full(cache_file: Path) -> Optional[Dict[str, Any]]:
+    """VO.1a — return the full cache payload dict if readable; else None.
+
+    Mirrors cache_read MISS classification (ABSENT / IO / CORRUPT / SCHEMA /
+    INVALID) but does NOT compare plan_set_signature against an expected
+    value — the caller is responsible for signature validation.  This is a
+    looser contract than cache_read because VO.1a needs to surface the
+    cache contents for read-only display and classify staleness via the
+    envelope's topology_source field rather than treating stale as a miss.
+
+    On hit, returns the entire on-disk payload dict including ``schema``,
+    ``session_id``, ``plan_set_signature``, ``plan_count``,
+    ``generated_at``, ``topology`` (with int keys normalized to match
+    cache_read semantics), ``pdf_outcomes``, and ``per_page_outcomes``.
+
+    Strictly additive: does not modify cache_read, cache_write, or any
+    other public surface.  Pure read; no side effects on miss.
+    """
+    try:
+        if not cache_file.exists():
+            return None  # MISS_ABSENT
+    except OSError:
+        return None  # MISS_IO
+
+    try:
+        body = cache_file.read_text(encoding="utf-8")
+    except OSError:
+        _logger.warning("topology cache read failed: %s", cache_file)
+        return None  # MISS_IO
+
+    try:
+        payload = json.loads(body)
+    except json.JSONDecodeError:
+        _logger.warning("topology cache corrupt JSON: %s", cache_file)
+        return None  # MISS_CORRUPT
+
+    if not isinstance(payload, dict):
+        return None  # MISS_INVALID
+
+    if payload.get("schema") != SCHEMA_VERSION:
+        return None  # MISS_SCHEMA
+
+    topology = payload.get("topology")
+    if not isinstance(topology, dict):
+        return None  # MISS_INVALID
+
+    # JSON serializes dict int keys as strings; normalize back to ints
+    # to match cache_read's semantic contract.
+    normalized: Dict[int, Dict[str, Any]] = {}
+    try:
+        for key, value in topology.items():
+            normalized[int(key)] = value
+    except (ValueError, TypeError):
+        return None  # MISS_INVALID
+
+    # Shallow copy so callers cannot accidentally mutate the in-memory
+    # parse result of subsequent reads.
+    result = dict(payload)
+    result["topology"] = normalized
+    return result
+
+
 def cache_write(
     cache_file: Path,
     signature: str,
