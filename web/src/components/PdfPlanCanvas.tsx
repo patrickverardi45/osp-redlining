@@ -44,14 +44,21 @@ import type {
   PdfPoint,
   PdfRouteTrace,
   PdfRouteTracePayload,
+  PdfSegmentsEnvelope,
   PdfStationAnchor,
+  PdfStationSegment,
+  PdfStationSegmentPayload,
   PlanIndexPage,
   PlanIndexResponse,
 } from "@/lib/types/pdfPlan";
 import {
+  anchorsWithCumulativeDistance,
+  cumulativePolylineLengths,
+  extractPolylineSubpath,
   formatStationFt,
   nearestPointOnPolyline,
   parseStationLabel,
+  stationFtToPolylineDistance,
 } from "@/lib/pdfPlanMath";
 
 const _RAW_API_BASE =
@@ -102,6 +109,18 @@ type SaveState =
   | { kind: "idle" }
   | { kind: "saving" }
   | { kind: "saved"; at: string }
+  | { kind: "error"; message: string };
+
+// Step 3A — manual station segments
+type SegmentsState =
+  | { kind: "loading" }
+  | { kind: "ok"; envelope: PdfSegmentsEnvelope }
+  | { kind: "error"; message: string }
+  | { kind: "disabled" };
+
+type SegmentOpState =
+  | { kind: "idle" }
+  | { kind: "saving" }
   | { kind: "error"; message: string };
 
 const CLASSIFICATION_STYLE: Record<
@@ -157,6 +176,17 @@ export default function PdfPlanCanvas({ projectId, planId }: PdfPlanCanvasProps)
   const [draftAnchors, setDraftAnchors] = useState<PdfStationAnchor[]>([]);
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState<boolean>(false);
   const [saveState, setSaveState] = useState<SaveState>({ kind: "idle" });
+
+  // Step 3A — manual station segments
+  const [segmentsState, setSegmentsState] = useState<SegmentsState>({ kind: "loading" });
+  const [segmentOpState, setSegmentOpState] = useState<SegmentOpState>({ kind: "idle" });
+  const [segmentDraftOpen, setSegmentDraftOpen] = useState<boolean>(false);
+  const [segmentDraft, setSegmentDraft] = useState<{
+    label: string;
+    start: string;
+    end: string;
+    notes: string;
+  }>({ label: "", start: "", end: "", notes: "" });
 
   const activeObjectUrlRef = useRef<string | null>(null);
   const svgRef = useRef<SVGSVGElement | null>(null);
@@ -424,6 +454,82 @@ export default function PdfPlanCanvas({ projectId, planId }: PdfPlanCanvasProps)
       }
     })();
 
+    return () => {
+      cancelled = true;
+    };
+  }, [metadata, pageIndex]);
+
+  // -------------------------------------------------------------------------
+  // Step 3A — load saved manual segments for this (plan, page)
+  // -------------------------------------------------------------------------
+  useEffect(() => {
+    if (metadata.kind !== "ok") return;
+    const plan = metadata.plan;
+    const targetPageIndex = pageIndex;
+    let cancelled = false;
+
+    void (async () => {
+      // Reset draft dialog on page change.
+      setSegmentDraftOpen(false);
+      setSegmentDraft({ label: "", start: "", end: "", notes: "" });
+      setSegmentOpState({ kind: "idle" });
+      setSegmentsState({ kind: "loading" });
+      try {
+        const url =
+          `${RENDER_BASE}/api/engineering-plans/${encodeURIComponent(plan.plan_id)}` +
+          `/segments?page_index=${encodeURIComponent(String(targetPageIndex))}` +
+          `&session_id=${encodeURIComponent(plan.session_id)}`;
+        const resp = await apiFetch(url, { cache: "no-store" }, "pdf_plan_segments_load");
+        if (cancelled) return;
+        if (resp.status === 404) {
+          // Same heuristic as trace load: distinguish flag-off vs absent.
+          const data = (await resp.json().catch(() => null)) as
+            | { error?: string }
+            | null;
+          const msg = (data?.error || "").toLowerCase();
+          if (msg.includes("disabled")) {
+            setSegmentsState({ kind: "disabled" });
+          } else {
+            // No envelope at all is unusual (GET always returns 200 with
+            // empty envelope) but treat as empty for safety.
+            setSegmentsState({
+              kind: "ok",
+              envelope: emptySegmentsEnvelope(plan.plan_id, plan.session_id, targetPageIndex),
+            });
+          }
+          return;
+        }
+        if (!resp.ok) {
+          setSegmentsState({
+            kind: "error",
+            message: `Failed to load segments (HTTP ${resp.status}).`,
+          });
+          return;
+        }
+        const data = (await resp.json().catch(() => null)) as
+          | { envelope?: PdfSegmentsEnvelope }
+          | null;
+        if (cancelled) return;
+        const env = data?.envelope;
+        if (!env || !Array.isArray(env.segments)) {
+          setSegmentsState({
+            kind: "ok",
+            envelope: emptySegmentsEnvelope(plan.plan_id, plan.session_id, targetPageIndex),
+          });
+          return;
+        }
+        setSegmentsState({ kind: "ok", envelope: env });
+      } catch (err) {
+        if (cancelled) return;
+        setSegmentsState({
+          kind: "error",
+          message:
+            err instanceof Error
+              ? err.message
+              : "Unexpected error while loading segments.",
+        });
+      }
+    })();
     return () => {
       cancelled = true;
     };
@@ -727,6 +833,215 @@ export default function PdfPlanCanvas({ projectId, planId }: PdfPlanCanvasProps)
   }, [draftAnchors]);
 
   // -------------------------------------------------------------------------
+  // Step 3A — segment rendering: precompute cumulative lengths + anchor-to-
+  // distance map once per (trace, anchors) update; segment subpaths derive
+  // from these.  All math lives in pdfPlanMath; this just wires it up.
+  // -------------------------------------------------------------------------
+  const segmentGeometry = useMemo(() => {
+    if (traceState.kind !== "loaded") return null;
+    const t = traceState.trace;
+    if (!t.points || t.points.length < 2) return null;
+    const cumLengths = cumulativePolylineLengths(t.points);
+    const totalLength = cumLengths[cumLengths.length - 1];
+    const sortedAnchors = anchorsWithCumulativeDistance(
+      t.anchors || [],
+      t.points,
+      cumLengths,
+    );
+    return { points: t.points, cumLengths, totalLength, sortedAnchors };
+  }, [traceState]);
+
+  const renderableSegments = useMemo(() => {
+    if (segmentsState.kind !== "ok") return [];
+    if (!segmentGeometry) return [];
+    if (segmentGeometry.sortedAnchors.length < 2) return [];
+    const out: Array<{
+      segment: PdfStationSegment;
+      subpath: PdfPoint[];
+      midpoint: PdfPoint | null;
+      computable: boolean;
+    }> = [];
+    for (const seg of segmentsState.envelope.segments) {
+      const startDist = stationFtToPolylineDistance(
+        seg.start_station_ft,
+        segmentGeometry.sortedAnchors,
+        segmentGeometry.totalLength,
+      );
+      const endDist = stationFtToPolylineDistance(
+        seg.end_station_ft,
+        segmentGeometry.sortedAnchors,
+        segmentGeometry.totalLength,
+      );
+      if (startDist === null || endDist === null) {
+        out.push({ segment: seg, subpath: [], midpoint: null, computable: false });
+        continue;
+      }
+      const subpath = extractPolylineSubpath(
+        segmentGeometry.points,
+        segmentGeometry.cumLengths,
+        startDist,
+        endDist,
+      );
+      const midDist = (startDist + endDist) / 2;
+      const midSubpath = extractPolylineSubpath(
+        segmentGeometry.points,
+        segmentGeometry.cumLengths,
+        midDist,
+        midDist,
+      );
+      const midpoint = midSubpath.length > 0 ? midSubpath[0] : null;
+      out.push({ segment: seg, subpath, midpoint, computable: true });
+    }
+    return out;
+  }, [segmentsState, segmentGeometry]);
+
+  const segmentsRenderable = segmentGeometry !== null && segmentGeometry.sortedAnchors.length >= 2;
+  const segmentsRequireAnchors =
+    traceState.kind === "loaded" &&
+    (!segmentGeometry || segmentGeometry.sortedAnchors.length < 2);
+
+  // -------------------------------------------------------------------------
+  // Step 3A — segment add / delete handlers
+  // -------------------------------------------------------------------------
+
+  const openAddSegment = useCallback(() => {
+    setSegmentDraft({ label: "", start: "", end: "", notes: "" });
+    setSegmentDraftOpen(true);
+    setSegmentOpState({ kind: "idle" });
+  }, []);
+
+  const closeAddSegment = useCallback(() => {
+    setSegmentDraftOpen(false);
+  }, []);
+
+  const submitSegment = useCallback(async () => {
+    if (metadata.kind !== "ok") return;
+    const plan = metadata.plan;
+    const labelTrim = segmentDraft.label.trim();
+    const startTrim = segmentDraft.start.trim();
+    const endTrim = segmentDraft.end.trim();
+    if (!labelTrim) {
+      setSegmentOpState({ kind: "error", message: "Label is required." });
+      return;
+    }
+    const startFt = parseStationLabel(startTrim);
+    const endFt = parseStationLabel(endTrim);
+    if (startFt === null) {
+      setSegmentOpState({
+        kind: "error",
+        message: `Start station "${startTrim}" is not a valid station (use 11+60, STA 14+20, or raw feet 2047).`,
+      });
+      return;
+    }
+    if (endFt === null) {
+      setSegmentOpState({
+        kind: "error",
+        message: `End station "${endTrim}" is not a valid station.`,
+      });
+      return;
+    }
+    setSegmentOpState({ kind: "saving" });
+    try {
+      const payload: PdfStationSegmentPayload = {
+        label: labelTrim,
+        start_station_ft: startFt,
+        end_station_ft: endFt,
+        start_label: startTrim,
+        end_label: endTrim,
+        notes: segmentDraft.notes.trim() || undefined,
+      };
+      const url =
+        `${RENDER_BASE}/api/engineering-plans/${encodeURIComponent(plan.plan_id)}` +
+        `/segments?page_index=${encodeURIComponent(String(pageIndex))}` +
+        `&session_id=${encodeURIComponent(plan.session_id)}`;
+      const resp = await apiFetch(
+        url,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        },
+        "pdf_plan_segment_add",
+      );
+      if (!resp.ok) {
+        const body = (await resp.json().catch(() => null)) as
+          | { error?: string }
+          | null;
+        setSegmentOpState({
+          kind: "error",
+          message: body?.error || `Add segment failed (HTTP ${resp.status}).`,
+        });
+        return;
+      }
+      const data = (await resp.json().catch(() => null)) as
+        | { envelope?: PdfSegmentsEnvelope }
+        | null;
+      const env = data?.envelope;
+      if (env) {
+        setSegmentsState({ kind: "ok", envelope: env });
+      }
+      setSegmentOpState({ kind: "idle" });
+      setSegmentDraftOpen(false);
+      setSegmentDraft({ label: "", start: "", end: "", notes: "" });
+    } catch (err) {
+      setSegmentOpState({
+        kind: "error",
+        message:
+          err instanceof Error ? err.message : "Unexpected error while adding segment.",
+      });
+    }
+  }, [metadata, segmentDraft, pageIndex]);
+
+  const deleteSegmentById = useCallback(
+    async (segmentId: string) => {
+      if (metadata.kind !== "ok") return;
+      const plan = metadata.plan;
+      if (
+        typeof window !== "undefined" &&
+        !window.confirm("Delete this manual station segment? This cannot be undone.")
+      ) {
+        return;
+      }
+      setSegmentOpState({ kind: "saving" });
+      try {
+        const url =
+          `${RENDER_BASE}/api/engineering-plans/${encodeURIComponent(plan.plan_id)}` +
+          `/segments/${encodeURIComponent(segmentId)}` +
+          `?page_index=${encodeURIComponent(String(pageIndex))}` +
+          `&session_id=${encodeURIComponent(plan.session_id)}`;
+        const resp = await apiFetch(url, { method: "DELETE" }, "pdf_plan_segment_delete");
+        if (!resp.ok) {
+          const body = (await resp.json().catch(() => null)) as
+            | { error?: string }
+            | null;
+          setSegmentOpState({
+            kind: "error",
+            message: body?.error || `Delete segment failed (HTTP ${resp.status}).`,
+          });
+          return;
+        }
+        const data = (await resp.json().catch(() => null)) as
+          | { envelope?: PdfSegmentsEnvelope }
+          | null;
+        const env = data?.envelope;
+        if (env) {
+          setSegmentsState({ kind: "ok", envelope: env });
+        }
+        setSegmentOpState({ kind: "idle" });
+      } catch (err) {
+        setSegmentOpState({
+          kind: "error",
+          message:
+            err instanceof Error
+              ? err.message
+              : "Unexpected error while deleting segment.",
+        });
+      }
+    },
+    [metadata, pageIndex],
+  );
+
+  // -------------------------------------------------------------------------
   // Render
   // -------------------------------------------------------------------------
   return (
@@ -867,6 +1182,25 @@ export default function PdfPlanCanvas({ projectId, planId }: PdfPlanCanvasProps)
         />
       )}
 
+      {/* Step 3A — manual station segments panel */}
+      {metadata.kind === "ok" && pageState.kind === "ready" && (
+        <SegmentsPanel
+          segmentsState={segmentsState}
+          segmentOpState={segmentOpState}
+          traceState={traceState}
+          segmentsRenderable={segmentsRenderable}
+          segmentsRequireAnchors={segmentsRequireAnchors}
+          renderable={renderableSegments}
+          draftOpen={segmentDraftOpen}
+          draft={segmentDraft}
+          onDraftChange={setSegmentDraft}
+          onOpenAdd={openAddSegment}
+          onCloseAdd={closeAddSegment}
+          onSubmit={submitSegment}
+          onDelete={deleteSegmentById}
+        />
+      )}
+
       {/* Optional banner for boundary / error notices */}
       {(pageState.kind === "error" ||
         (atKnownMaxByProbe && pageState.kind !== "loading")) && (
@@ -991,6 +1325,7 @@ export default function PdfPlanCanvas({ projectId, planId }: PdfPlanCanvasProps)
               svgRef={svgRef}
               onSvgClick={handleSvgClick}
               onRemoveAnchor={removeAnchor}
+              renderableSegments={renderableSegments}
             />
           )}
         </section>
@@ -1115,6 +1450,7 @@ function CanvasWithOverlay({
   svgRef,
   onSvgClick,
   onRemoveAnchor,
+  renderableSegments,
 }: {
   objectUrl: string;
   imageAlt: string;
@@ -1127,6 +1463,12 @@ function CanvasWithOverlay({
   svgRef: React.RefObject<SVGSVGElement | null>;
   onSvgClick: (e: React.MouseEvent<SVGSVGElement>) => void;
   onRemoveAnchor: (anchorId: string) => void;
+  renderableSegments: Array<{
+    segment: PdfStationSegment;
+    subpath: PdfPoint[];
+    midpoint: PdfPoint | null;
+    computable: boolean;
+  }>;
 }) {
   const pathD = useMemo(() => buildPolylinePath(draftPoints), [draftPoints]);
   const cursorStyle =
@@ -1202,6 +1544,67 @@ function CanvasWithOverlay({
               strokeWidth={Math.max(1.5, renderedDimensions.w / 720)}
             />
           ))}
+          {/* Step 3A — manual station segments rendered as red overlays
+               on top of the operator trace.  Segments below the trace
+               in the z-stack would be obscured by the trace stroke; we
+               render thicker on top so the manual redline reads clearly
+               on busy plan sheets. */}
+          {renderableSegments.map(({ segment, subpath, midpoint, computable }) => {
+            if (!computable || subpath.length < 2) return null;
+            const segPath = buildPolylinePath(subpath);
+            const segStroke = Math.max(4, renderedDimensions.w / 200);
+            return (
+              <g key={`seg-${segment.segment_id}`}>
+                {/* White halo for legibility on dark line work */}
+                <path
+                  d={segPath}
+                  fill="none"
+                  stroke="#ffffff"
+                  strokeWidth={segStroke + 4}
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  opacity={0.65}
+                />
+                {/* Primary segment stroke — red, semi-opaque */}
+                <path
+                  d={segPath}
+                  fill="none"
+                  stroke="#dc2626"
+                  strokeWidth={segStroke}
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  opacity={0.85}
+                />
+                {midpoint && (
+                  <g pointerEvents="none">
+                    <rect
+                      x={midpoint[0] - segment.label.length * (renderedDimensions.w / 180)}
+                      y={midpoint[1] - renderedDimensions.w / 60}
+                      width={segment.label.length * (renderedDimensions.w / 90) + 12}
+                      height={renderedDimensions.w / 36}
+                      rx={4}
+                      ry={4}
+                      fill="#fecaca"
+                      stroke="#dc2626"
+                      strokeWidth={Math.max(1, renderedDimensions.w / 960)}
+                      opacity={0.92}
+                    />
+                    <text
+                      x={midpoint[0]}
+                      y={midpoint[1] + renderedDimensions.w / 240}
+                      textAnchor="middle"
+                      fill="#7f1d1d"
+                      fontSize={Math.max(12, renderedDimensions.w / 90)}
+                      fontWeight={700}
+                      fontFamily="ui-sans-serif, system-ui, sans-serif"
+                    >
+                      {segment.label}
+                    </text>
+                  </g>
+                )}
+              </g>
+            );
+          })}
           {/* Station anchors — vertical marker line + label box */}
           {draftAnchors.map((a) => {
             const r = Math.max(6, renderedDimensions.w / 240);
@@ -1915,6 +2318,461 @@ function buildPolylinePath(points: PdfPoint[]): string {
     parts.push(`${cmd}${points[i][0].toFixed(2)},${points[i][1].toFixed(2)}`);
   }
   return parts.join(" ");
+}
+
+function emptySegmentsEnvelope(
+  planId: string,
+  sessionId: string,
+  pageIndex: number,
+): PdfSegmentsEnvelope {
+  const now = new Date().toISOString();
+  return {
+    schema_version: "pdf-plan-segments-1",
+    plan_id: planId,
+    session_id: sessionId,
+    page_index: pageIndex,
+    trace_id: null,
+    segments: [],
+    created_at: now,
+    updated_at: now,
+  };
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// Step 3A — manual station segments panel
+// ───────────────────────────────────────────────────────────────────────────
+
+function SegmentsPanel({
+  segmentsState,
+  segmentOpState,
+  traceState,
+  segmentsRenderable,
+  segmentsRequireAnchors,
+  renderable,
+  draftOpen,
+  draft,
+  onDraftChange,
+  onOpenAdd,
+  onCloseAdd,
+  onSubmit,
+  onDelete,
+}: {
+  segmentsState: SegmentsState;
+  segmentOpState: SegmentOpState;
+  traceState: TraceState;
+  segmentsRenderable: boolean;
+  segmentsRequireAnchors: boolean;
+  renderable: Array<{
+    segment: PdfStationSegment;
+    subpath: PdfPoint[];
+    midpoint: PdfPoint | null;
+    computable: boolean;
+  }>;
+  draftOpen: boolean;
+  draft: { label: string; start: string; end: string; notes: string };
+  onDraftChange: (
+    d: { label: string; start: string; end: string; notes: string },
+  ) => void;
+  onOpenAdd: () => void;
+  onCloseAdd: () => void;
+  onSubmit: () => void;
+  onDelete: (segmentId: string) => void;
+}) {
+  const traceLoaded = traceState.kind === "loaded";
+  const segmentsCount =
+    segmentsState.kind === "ok" ? segmentsState.envelope.segments.length : 0;
+  const disabled =
+    segmentsState.kind === "disabled" || segmentsState.kind === "loading";
+  const addDisabled =
+    disabled || !traceLoaded || !segmentsRenderable || segmentOpState.kind === "saving";
+
+  const headerMessage = (() => {
+    if (segmentsState.kind === "loading") return "Loading segments…";
+    if (segmentsState.kind === "disabled")
+      return "Manual segments are disabled on the backend.";
+    if (segmentsState.kind === "error") return segmentsState.message;
+    if (!traceLoaded)
+      return "Save a trace + at least 2 station anchors to enable manual segments.";
+    if (segmentsRequireAnchors)
+      return "Add at least 2 station anchors via the trace toolbar to enable manual segments.";
+    if (segmentsCount === 0)
+      return "No manual segments yet. Click + Add Segment to map a station range to the trace.";
+    return `${segmentsCount} manual segment${segmentsCount === 1 ? "" : "s"} on this page (draft — manual entries until bore-log import).`;
+  })();
+  const headerTone: "info" | "warn" | "error" = (() => {
+    if (segmentsState.kind === "error") return "error";
+    if (
+      segmentsState.kind === "disabled" ||
+      !traceLoaded ||
+      segmentsRequireAnchors
+    )
+      return "warn";
+    return "info";
+  })();
+  const headerColor =
+    headerTone === "error"
+      ? "#dc2626"
+      : headerTone === "warn"
+      ? "#92400e"
+      : "var(--tl-text-muted)";
+
+  return (
+    <div
+      style={{
+        padding: "8px 22px",
+        borderBottom: "1px solid var(--tl-border)",
+        background: "var(--tl-surface)",
+      }}
+    >
+      <div
+        style={{
+          maxWidth: 1600,
+          margin: "0 auto",
+          display: "flex",
+          flexDirection: "column",
+          gap: 8,
+          fontSize: 12,
+        }}
+      >
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 10,
+            flexWrap: "wrap",
+          }}
+        >
+          <span
+            style={{
+              fontSize: 11,
+              fontWeight: 700,
+              letterSpacing: "0.04em",
+              textTransform: "uppercase",
+              color: "var(--tl-text)",
+            }}
+          >
+            Station Segments
+          </span>
+          <span
+            style={{
+              fontSize: 10,
+              padding: "2px 6px",
+              background: "rgba(220, 38, 38, 0.10)",
+              color: "#b91c1c",
+              border: "1px solid rgba(220, 38, 38, 0.30)",
+              borderRadius: 4,
+              fontWeight: 700,
+              letterSpacing: "0.04em",
+              textTransform: "uppercase",
+            }}
+          >
+            Manual / Draft
+          </span>
+          <ToolbarButton
+            onClick={onOpenAdd}
+            disabled={addDisabled}
+            variant="primary"
+            title="Enter start/end stations to draw a draft segment along the saved trace"
+          >
+            + Add Segment
+          </ToolbarButton>
+          <span
+            role="status"
+            style={{
+              color: headerColor,
+              fontWeight: 500,
+              fontSize: 12,
+              flex: 1,
+              minWidth: 240,
+              textAlign: "right",
+            }}
+          >
+            {headerMessage}
+          </span>
+        </div>
+
+        {draftOpen && (
+          <SegmentDraftForm
+            draft={draft}
+            onChange={onDraftChange}
+            onSubmit={onSubmit}
+            onCancel={onCloseAdd}
+            opState={segmentOpState}
+          />
+        )}
+
+        {segmentsState.kind === "ok" && segmentsCount > 0 && (
+          <ol
+            style={{
+              listStyle: "none",
+              padding: 0,
+              margin: 0,
+              display: "grid",
+              gap: 4,
+              borderTop: "1px solid var(--tl-border)",
+              paddingTop: 8,
+            }}
+          >
+            {segmentsState.envelope.segments.map((seg) => {
+              const computed = renderable.find(
+                (r) => r.segment.segment_id === seg.segment_id,
+              );
+              const isComputable = computed?.computable ?? segmentsRenderable;
+              return (
+                <li key={seg.segment_id}>
+                  <SegmentListEntry
+                    segment={seg}
+                    computable={isComputable}
+                    onDelete={onDelete}
+                  />
+                </li>
+              );
+            })}
+          </ol>
+        )}
+
+        {segmentOpState.kind === "error" && !draftOpen && (
+          <div
+            style={{
+              fontSize: 11,
+              color: "#dc2626",
+              background: "rgba(220, 38, 38, 0.06)",
+              border: "1px solid rgba(220, 38, 38, 0.25)",
+              borderRadius: 6,
+              padding: "6px 10px",
+            }}
+          >
+            {segmentOpState.message}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function SegmentDraftForm({
+  draft,
+  onChange,
+  onSubmit,
+  onCancel,
+  opState,
+}: {
+  draft: { label: string; start: string; end: string; notes: string };
+  onChange: (
+    d: { label: string; start: string; end: string; notes: string },
+  ) => void;
+  onSubmit: () => void;
+  onCancel: () => void;
+  opState: SegmentOpState;
+}) {
+  const submitting = opState.kind === "saving";
+  return (
+    <form
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (!submitting) onSubmit();
+      }}
+      style={{
+        display: "grid",
+        gridTemplateColumns: "1fr 1fr 1fr 2fr auto auto",
+        gap: 6,
+        alignItems: "end",
+        padding: "8px",
+        border: "1px solid rgba(29, 78, 216, 0.30)",
+        borderRadius: 8,
+        background: "rgba(29, 78, 216, 0.04)",
+      }}
+    >
+      <SegmentField
+        label="Label"
+        value={draft.label}
+        placeholder="e.g. Bore 1"
+        onChange={(v) => onChange({ ...draft, label: v })}
+        autoFocus
+        disabled={submitting}
+      />
+      <SegmentField
+        label="Start station"
+        value={draft.start}
+        placeholder="11+60"
+        onChange={(v) => onChange({ ...draft, start: v })}
+        disabled={submitting}
+      />
+      <SegmentField
+        label="End station"
+        value={draft.end}
+        placeholder="14+20"
+        onChange={(v) => onChange({ ...draft, end: v })}
+        disabled={submitting}
+      />
+      <SegmentField
+        label="Notes (optional)"
+        value={draft.notes}
+        placeholder="Crew, date, scope, …"
+        onChange={(v) => onChange({ ...draft, notes: v })}
+        disabled={submitting}
+      />
+      <ToolbarButton
+        onClick={onSubmit}
+        disabled={submitting}
+        variant="primary"
+      >
+        {submitting ? "Saving…" : "Save Segment"}
+      </ToolbarButton>
+      <ToolbarButton onClick={onCancel} disabled={submitting} variant="ghost">
+        Cancel
+      </ToolbarButton>
+      {opState.kind === "error" && (
+        <div
+          style={{
+            gridColumn: "1 / -1",
+            fontSize: 11,
+            color: "#dc2626",
+          }}
+        >
+          {opState.message}
+        </div>
+      )}
+    </form>
+  );
+}
+
+function SegmentField({
+  label,
+  value,
+  placeholder,
+  onChange,
+  autoFocus,
+  disabled,
+}: {
+  label: string;
+  value: string;
+  placeholder?: string;
+  onChange: (value: string) => void;
+  autoFocus?: boolean;
+  disabled?: boolean;
+}) {
+  return (
+    <label
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        gap: 2,
+        fontSize: 11,
+        color: "var(--tl-text-muted)",
+        fontWeight: 600,
+      }}
+    >
+      {label}
+      <input
+        type="text"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder}
+        autoFocus={autoFocus}
+        disabled={disabled}
+        style={{
+          padding: "5px 8px",
+          fontSize: 12,
+          borderRadius: 6,
+          border: "1px solid #cbd5e1",
+          background: disabled ? "#f1f5f9" : "#ffffff",
+          color: "var(--tl-text)",
+          fontFamily: "inherit",
+        }}
+      />
+    </label>
+  );
+}
+
+function SegmentListEntry({
+  segment,
+  computable,
+  onDelete,
+}: {
+  segment: PdfStationSegment;
+  computable: boolean;
+  onDelete: (segmentId: string) => void;
+}) {
+  const lengthFt = segment.end_station_ft - segment.start_station_ft;
+  const lengthAbs = Math.abs(lengthFt);
+  return (
+    <div
+      style={{
+        display: "grid",
+        gridTemplateColumns: "auto 1fr auto auto auto",
+        gap: 8,
+        alignItems: "center",
+        padding: "6px 8px",
+        background: "rgba(15, 23, 42, 0.02)",
+        border: "1px solid var(--tl-border)",
+        borderRadius: 6,
+        fontSize: 12,
+      }}
+    >
+      <span
+        title="Manual draft segment indicator"
+        style={{
+          width: 8,
+          height: 8,
+          borderRadius: "50%",
+          background: computable ? "#dc2626" : "#cbd5e1",
+        }}
+      />
+      <div style={{ display: "flex", flexDirection: "column", gap: 1, minWidth: 0 }}>
+        <span style={{ fontWeight: 700, color: "var(--tl-text)" }}>
+          {segment.label}
+        </span>
+        {segment.notes && (
+          <span
+            style={{
+              fontSize: 11,
+              color: "var(--tl-text-muted)",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+            }}
+            title={segment.notes}
+          >
+            {segment.notes}
+          </span>
+        )}
+      </div>
+      <span
+        style={{
+          fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+          color: "var(--tl-text)",
+          whiteSpace: "nowrap",
+        }}
+      >
+        {segment.start_label} → {segment.end_label}
+      </span>
+      <span
+        style={{
+          fontSize: 11,
+          color: "var(--tl-text-muted)",
+          whiteSpace: "nowrap",
+        }}
+      >
+        {lengthAbs.toFixed(0)} ft
+        {!computable && (
+          <span
+            title="Cannot render on the trace — need at least 2 station anchors."
+            style={{ color: "#92400e", marginLeft: 6 }}
+          >
+            (no anchors)
+          </span>
+        )}
+      </span>
+      <ToolbarButton
+        onClick={() => onDelete(segment.segment_id)}
+        variant="danger-ghost"
+        title="Delete this manual segment"
+      >
+        Delete
+      </ToolbarButton>
+    </div>
+  );
 }
 
 function generateAnchorId(): string {

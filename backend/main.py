@@ -18892,6 +18892,252 @@ async def delete_engineering_plan_trace(
     )
 
 
+# ── PDF Plan Mode Step 3A: manual station segments (per page) ────────────────
+#
+# Operator-entered station-ft ranges bound to a saved PDF trace.  Three
+# endpoints: list (GET) / add (POST) / remove (DELETE).  All gated by
+# TRUELINE_PLAN_OVERLAY_IMAGE for consistency with the rest of the PDF
+# Plan Mode lane.  Same auth + tenant + closeout-lock contracts as the
+# trace endpoints.  Manual / DRAFT until bore-log import (later step).
+#
+# Schema: pdf-plan-segments-1 (see app/core/pdf_plan_segment_store.py).
+# Stored at:
+#   {ENGINEERING_PLAN_ROOT}/{session_id}/traces/
+#       {plan_id}_p{NNN}_segments.json
+
+@protected_router.get("/api/engineering-plans/{plan_id}/segments")
+async def get_engineering_plan_segments(
+    plan_id: str,
+    page_index: int,
+    session_id: Optional[str] = None,
+    request: Request = None,
+):
+    if not _trueline_plan_overlay_image_enabled():
+        return _err(
+            "Engineering plan segments endpoint is disabled.",
+            status_code=404,
+        )
+    resolved_session_id = _resolve_session_id(session_id)
+    _require_tenant_owns_session(resolved_session_id, request)
+
+    if not isinstance(page_index, int) or page_index < 0:
+        return _err(
+            f"page_index must be a non-negative integer; got {page_index!r}",
+            status_code=400,
+            session_id=resolved_session_id,
+        )
+
+    _matched, err = _pdf_plan_trace_lookup_or_404(plan_id, resolved_session_id)
+    if err is not None:
+        return err
+
+    from app.core.pdf_plan_segment_store import (
+        PdfPlanSegmentStoreError,
+        load_segments,
+    )
+
+    try:
+        envelope = load_segments(
+            ENGINEERING_PLAN_ROOT,
+            resolved_session_id,
+            str(plan_id).strip(),
+            int(page_index),
+        )
+    except PdfPlanSegmentStoreError as e:
+        logging.warning(
+            "segments load failed plan_id=%s page=%d err=%s", plan_id, page_index, e
+        )
+        return _err(
+            "Segments could not be loaded.",
+            status_code=500,
+            session_id=resolved_session_id,
+        )
+
+    return _ok(
+        session_id=resolved_session_id,
+        plan_id=str(plan_id).strip(),
+        page_index=int(page_index),
+        envelope=envelope,
+    )
+
+
+@protected_router.post("/api/engineering-plans/{plan_id}/segments")
+async def post_engineering_plan_segment(
+    plan_id: str,
+    page_index: int,
+    session_id: Optional[str] = None,
+    payload: Optional[Dict[str, Any]] = Body(default=None),
+    request: Request = None,
+):
+    if not _trueline_plan_overlay_image_enabled():
+        return _err(
+            "Engineering plan segments endpoint is disabled.",
+            status_code=404,
+        )
+    resolved_session_id = _resolve_session_id(session_id)
+    _require_tenant_owns_session(resolved_session_id, request)
+
+    with _session_scope(resolved_session_id):
+        if _is_closeout_locked():
+            return _json_closeout_locked_response()
+
+    if not isinstance(page_index, int) or page_index < 0:
+        return _err(
+            f"page_index must be a non-negative integer; got {page_index!r}",
+            status_code=400,
+            session_id=resolved_session_id,
+        )
+    if not isinstance(payload, dict):
+        return _err(
+            "Request body must be a JSON object with segment fields.",
+            status_code=400,
+            session_id=resolved_session_id,
+        )
+
+    _matched, err = _pdf_plan_trace_lookup_or_404(plan_id, resolved_session_id)
+    if err is not None:
+        return err
+
+    # Require that a trace exists for this page before any segments can be
+    # added — segments are meaningless without a polyline to render along.
+    from app.core.pdf_plan_trace_store import load_trace
+    try:
+        trace = load_trace(
+            ENGINEERING_PLAN_ROOT,
+            resolved_session_id,
+            str(plan_id).strip(),
+            int(page_index),
+        )
+    except Exception as e:
+        logging.warning(
+            "trace load for segment add failed plan_id=%s page=%d err=%s",
+            plan_id, page_index, e,
+        )
+        trace = None
+    if trace is None:
+        return _err(
+            "No trace exists for this page yet. Save a trace + station "
+            "anchors before adding manual station segments.",
+            status_code=409,
+            session_id=resolved_session_id,
+        )
+    if len(trace.get("anchors") or []) < 2:
+        return _err(
+            "At least two station anchors are required before adding "
+            "manual segments. Add anchors via the trace toolbar first.",
+            status_code=409,
+            session_id=resolved_session_id,
+        )
+
+    from app.core.pdf_plan_segment_store import (
+        PdfPlanSegmentStoreError,
+        add_segment,
+    )
+
+    try:
+        envelope = add_segment(
+            ENGINEERING_PLAN_ROOT,
+            resolved_session_id,
+            str(plan_id).strip(),
+            int(page_index),
+            payload,
+            trace_id=str(trace.get("trace_id") or "").strip() or None,
+        )
+    except PdfPlanSegmentStoreError as e:
+        return _err(
+            f"Invalid segment payload: {e}",
+            status_code=400,
+            session_id=resolved_session_id,
+        )
+    except Exception as e:
+        logging.warning(
+            "segment add failed plan_id=%s page=%d err=%s", plan_id, page_index, e
+        )
+        return _err(
+            "Segment could not be added.",
+            status_code=500,
+            session_id=resolved_session_id,
+        )
+
+    return _ok(
+        session_id=resolved_session_id,
+        plan_id=str(plan_id).strip(),
+        page_index=int(page_index),
+        envelope=envelope,
+    )
+
+
+@protected_router.delete("/api/engineering-plans/{plan_id}/segments/{segment_id}")
+async def delete_engineering_plan_segment(
+    plan_id: str,
+    segment_id: str,
+    page_index: int,
+    session_id: Optional[str] = None,
+    request: Request = None,
+):
+    if not _trueline_plan_overlay_image_enabled():
+        return _err(
+            "Engineering plan segments endpoint is disabled.",
+            status_code=404,
+        )
+    resolved_session_id = _resolve_session_id(session_id)
+    _require_tenant_owns_session(resolved_session_id, request)
+
+    with _session_scope(resolved_session_id):
+        if _is_closeout_locked():
+            return _json_closeout_locked_response()
+
+    if not isinstance(page_index, int) or page_index < 0:
+        return _err(
+            f"page_index must be a non-negative integer; got {page_index!r}",
+            status_code=400,
+            session_id=resolved_session_id,
+        )
+
+    _matched, err = _pdf_plan_trace_lookup_or_404(plan_id, resolved_session_id)
+    if err is not None:
+        return err
+
+    from app.core.pdf_plan_segment_store import (
+        PdfPlanSegmentStoreError,
+        delete_segment,
+    )
+
+    try:
+        removed, envelope = delete_segment(
+            ENGINEERING_PLAN_ROOT,
+            resolved_session_id,
+            str(plan_id).strip(),
+            int(page_index),
+            str(segment_id).strip(),
+        )
+    except PdfPlanSegmentStoreError as e:
+        return _err(
+            f"Invalid segment id or storage error: {e}",
+            status_code=400,
+            session_id=resolved_session_id,
+        )
+    except Exception as e:
+        logging.warning(
+            "segment delete failed plan_id=%s page=%d seg=%s err=%s",
+            plan_id, page_index, segment_id, e,
+        )
+        return _err(
+            "Segment could not be deleted.",
+            status_code=500,
+            session_id=resolved_session_id,
+        )
+
+    return _ok(
+        session_id=resolved_session_id,
+        plan_id=str(plan_id).strip(),
+        page_index=int(page_index),
+        segment_id=str(segment_id).strip(),
+        removed=removed,
+        envelope=envelope,
+    )
+
+
 # ── Nova override decision endpoints ─────────────────────────────────────────
 
 @protected_router.get("/api/nova-overrides")

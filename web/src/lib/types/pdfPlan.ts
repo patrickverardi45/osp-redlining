@@ -85,3 +85,42 @@ export type PdfRouteTracePayload = {
     created_at?: string;
   }>;
 };
+
+// ───────────────────────────────────────────────────────────────────────────
+// Step 3A — manual station segments
+// ───────────────────────────────────────────────────────────────────────────
+
+export type PdfStationSegment = {
+  segment_id: string;
+  label: string;
+  start_station_ft: number;
+  end_station_ft: number;
+  start_label: string;
+  end_label: string;
+  notes: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type PdfSegmentsEnvelope = {
+  schema_version: string; // "pdf-plan-segments-1"
+  plan_id: string;
+  session_id: string;
+  page_index: number;
+  trace_id: string | null;
+  segments: PdfStationSegment[];
+  created_at: string;
+  updated_at: string;
+};
+
+/** Payload shape the client POSTs to /api/engineering-plans/{plan_id}/segments
+ *  to add ONE new segment.  At least one of {start_station_ft, start_label}
+ *  and one of {end_station_ft, end_label} must be present. */
+export type PdfStationSegmentPayload = {
+  label: string;
+  start_station_ft?: number;
+  end_station_ft?: number;
+  start_label?: string;
+  end_label?: string;
+  notes?: string;
+};
