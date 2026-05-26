@@ -1235,9 +1235,16 @@ export default function ModernHeroMap({
     let cancelled = false;
     void (async () => {
       try {
-        const url =
+        // Scope the page-image fetch to the same workspace session_id used by
+        // the upload (appendSessionIdToForm at RedlineMap.handleEngineeringPlansUpload).
+        // Without this query param, _resolve_session_id(None) on the backend
+        // mints a fresh uuid4 hex per request — guaranteeing a 404 because no
+        // plan was ever stored under that random id. Read-only variant: never
+        // mints a session as a side-effect of a GET.
+        const baseImageUrl =
           `${baseUrl}/api/engineering-plans/${encodeURIComponent(planId)}` +
           `/page/${encodeURIComponent(String(pageIndex))}/image?dpi=${dpi}`;
+        const url = appendSessionIdReadOnly(baseImageUrl, projectId);
         const resp = await apiFetch(url, undefined, "vo2b_load_plan_page");
         if (cancelled) return;
         if (!resp.ok) return; // 404 / 500 / 400 → no overlay; silent (UI shows prior state)
