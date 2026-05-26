@@ -38,7 +38,11 @@ type BaseStyle = "standard" | "satellite";
  *  !== null`, ModernHeroMap fetches the PNG from
  *    GET /api/engineering-plans/{plan_id}/page/{page_index}/image?dpi=<48-300>
  *  via apiFetch (Bearer auth; 401 → silent refresh + retry) and renders it on
- *  the `pdfOverlayPane` (z=150, below all operational layers).  Default OFF
+ *  the `pdfOverlayPane` (z=205, above the basemap tilePane (200) and below
+ *  every KMZ engineering / operational layer (210+).  R8 fix: zIndex was
+ *  originally 150 but that placed the overlay BELOW Leaflet's default
+ *  tilePane (200), so the basemap tiles fully occluded the PDF — the fetch
+ *  succeeded but nothing was visible.).  Default OFF
  *  every session.  Backend 404 (TRUELINE_PLAN_OVERLAY_IMAGE off) and 500
  *  (page out of range) fail silently — no overlay rendered; operator self-
  *  corrects via Prev/Next page controls in the parent UI.
@@ -1087,14 +1091,20 @@ export default function ModernHeroMap({
         satelliteTilesRef.current = satellite;
 
         // VO.2b — create the PDF overlay pane once when the map is initialized.
-        // z=150 places the overlay strictly BELOW every existing operational pane
-        // (kmzContextPolygonPane=200 etc., overlayPane~400) so redlines / stations /
-        // photos remain visually dominant.  pointerEvents:none lets clicks pass
-        // through to the operational layer so it stays interactive.
+        // VO.2b R8: z=205 places the overlay ABOVE the basemap tilePane (Leaflet
+        // default z=200) so the PDF is visible at all, and ABOVE the boundary-
+        // polygon pane (kmzContextPolygonPane z=200, hidden by default per F7
+        // Final Gate 3), but BELOW every engineering / operational pane
+        // (kmzContextLinePane=210, kmzRefDesignPane=280, kmzContextPointPane=320,
+        // default overlayPane~400) so KMZ engineering linework + redlines +
+        // stations + photos remain visually dominant.  The original z=150 placed
+        // the overlay BELOW the tile pane and the basemap fully occluded it.
+        // pointerEvents:none lets clicks pass through to the operational layer
+        // so it stays interactive.
         const PDF_OVERLAY_PANE = "pdfOverlayPane";
         if (!map.getPane(PDF_OVERLAY_PANE)) {
           const pdfPane = map.createPane(PDF_OVERLAY_PANE);
-          pdfPane.style.zIndex = "150";
+          pdfPane.style.zIndex = "205";
           pdfPane.style.pointerEvents = "none";
         }
 
