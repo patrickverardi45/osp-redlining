@@ -1185,7 +1185,12 @@ export default function ModernHeroMap({
     const PDF_OVERLAY_PANE = "pdfOverlayPane";
     if (!map.getPane(PDF_OVERLAY_PANE)) return; // pane should exist post-init; bail safe
 
-    // Fit-to-active-route bounds from already-memoized kmzSnapPolylines.
+    // Fit-to-active-route bounds when KMZ geometry is available; otherwise
+    // fall back to the current map viewport so reference / standalone PDFs
+    // (ODOT etc.) render without requiring KMZ, bore-logs, redlines, or any
+    // active route geometry. Preserves byte-identical KMZ-bounds behavior on
+    // sessions that already have operational geometry; only the previously
+    // dead-end no-geometry branch changes.
     let minLat = Infinity, maxLat = -Infinity, minLng = Infinity, maxLng = -Infinity;
     let anyPoint = false;
     for (const poly of kmzSnapPolylines) {
@@ -1200,11 +1205,19 @@ export default function ModernHeroMap({
         anyPoint = true;
       }
     }
-    if (!anyPoint) return; // no KMZ uploaded yet → overlay deferred
-    const bounds: [[number, number], [number, number]] = [
-      [minLat, minLng],
-      [maxLat, maxLng],
-    ];
+    let bounds: [[number, number], [number, number]];
+    if (anyPoint) {
+      bounds = [
+        [minLat, minLng],
+        [maxLat, maxLng],
+      ];
+    } else {
+      const mb = map.getBounds();
+      bounds = [
+        [mb.getSouth(), mb.getWest()],
+        [mb.getNorth(), mb.getEast()],
+      ];
+    }
 
     // Construct the page-image URL.  Direct-to-Render via NEXT_PUBLIC_API_BASE
     // when defined (mirrors the upload flow at RedlineMap.handleEngineeringPlansUpload);
