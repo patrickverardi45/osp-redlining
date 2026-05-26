@@ -18638,6 +18638,260 @@ async def get_engineering_plan_index(
     )
 
 
+# ── PDF Plan Mode Step 2B: operator trace + station anchors (per page) ──────
+#
+# CRUD for the operator-traced route polyline and station-ft anchors on a
+# single PDF page.  One trace per (plan_id, page_index) in this step.
+# Stored as a single JSON file per page under
+#   {ENGINEERING_PLAN_ROOT}/{session_id}/traces/{plan_id}_p{NNN}.json
+#
+# Gated by TRUELINE_PLAN_OVERLAY_IMAGE for consistency with the page-image
+# and plan-index endpoints (same PDF Plan Mode lane; same kill switch).
+#
+# Auth + tenant scoping: same pattern as the page-image endpoint.
+# Closeout lock: write paths (PUT / DELETE) refuse when locked; GET works
+# even when locked (read-only).
+#
+# Schema: pdf-plan-trace-1 (see backend/app/core/pdf_plan_trace_store.py).
+
+def _pdf_plan_trace_lookup_or_404(
+    plan_id: str, resolved_session_id: str
+) -> Tuple[Optional[Dict[str, Any]], Optional[JSONResponse]]:
+    """Shared lookup for the trace endpoints — returns (matched, None) on
+    success or (None, error_response) on any failure.  Mirrors the
+    page-image / index endpoints' R6 RAW-index pattern."""
+    target_plan_id = str(plan_id or "").strip()
+    if not target_plan_id:
+        return None, _err(
+            "plan_id is required.",
+            status_code=400,
+            session_id=resolved_session_id,
+        )
+    index_data = _load_engineering_plan_index()
+    matched: Optional[Dict[str, Any]] = None
+    for plan in index_data.get("plans", []):
+        if not _engineering_plan_record_matches_session(plan, resolved_session_id):
+            continue
+        if str(plan.get("plan_id") or "").strip() == target_plan_id:
+            matched = plan
+            break
+    if matched is None:
+        return None, _err(
+            "Engineering plan not found.",
+            status_code=404,
+            session_id=resolved_session_id,
+        )
+    file_type = str(matched.get("file_type") or "").strip().lower()
+    if file_type != "application/pdf":
+        return None, _err(
+            "Engineering plan is not a PDF; trace operations are only "
+            "supported for PDFs.",
+            status_code=400,
+            session_id=resolved_session_id,
+        )
+    return matched, None
+
+
+@protected_router.get("/api/engineering-plans/{plan_id}/trace")
+async def get_engineering_plan_trace(
+    plan_id: str,
+    page_index: int,
+    session_id: Optional[str] = None,
+    request: Request = None,
+):
+    if not _trueline_plan_overlay_image_enabled():
+        return _err(
+            "Engineering plan trace endpoint is disabled.",
+            status_code=404,
+        )
+    resolved_session_id = _resolve_session_id(session_id)
+    _require_tenant_owns_session(resolved_session_id, request)
+
+    if not isinstance(page_index, int) or page_index < 0:
+        return _err(
+            f"page_index must be a non-negative integer; got {page_index!r}",
+            status_code=400,
+            session_id=resolved_session_id,
+        )
+
+    _matched, err = _pdf_plan_trace_lookup_or_404(plan_id, resolved_session_id)
+    if err is not None:
+        return err
+
+    from app.core.pdf_plan_trace_store import (
+        PdfPlanTraceStoreError,
+        load_trace,
+    )
+
+    try:
+        trace = load_trace(
+            ENGINEERING_PLAN_ROOT,
+            resolved_session_id,
+            str(plan_id).strip(),
+            int(page_index),
+        )
+    except PdfPlanTraceStoreError as e:
+        logging.warning(
+            "trace load failed plan_id=%s page=%d err=%s", plan_id, page_index, e
+        )
+        return _err(
+            "Trace could not be loaded.",
+            status_code=500,
+            session_id=resolved_session_id,
+        )
+
+    if trace is None:
+        # 404 with a clear body — operator UI distinguishes "no trace yet"
+        # from other failures using the error message string.
+        return _err(
+            "No trace saved for this page.",
+            status_code=404,
+            session_id=resolved_session_id,
+        )
+
+    return _ok(
+        session_id=resolved_session_id,
+        plan_id=str(plan_id).strip(),
+        page_index=int(page_index),
+        trace=trace,
+    )
+
+
+@protected_router.put("/api/engineering-plans/{plan_id}/trace")
+async def put_engineering_plan_trace(
+    plan_id: str,
+    page_index: int,
+    session_id: Optional[str] = None,
+    payload: Optional[Dict[str, Any]] = Body(default=None),
+    request: Request = None,
+):
+    if not _trueline_plan_overlay_image_enabled():
+        return _err(
+            "Engineering plan trace endpoint is disabled.",
+            status_code=404,
+        )
+    resolved_session_id = _resolve_session_id(session_id)
+    _require_tenant_owns_session(resolved_session_id, request)
+
+    # Closeout lock: writes are refused once a job is locked.
+    with _session_scope(resolved_session_id):
+        if _is_closeout_locked():
+            return _json_closeout_locked_response()
+
+    if not isinstance(page_index, int) or page_index < 0:
+        return _err(
+            f"page_index must be a non-negative integer; got {page_index!r}",
+            status_code=400,
+            session_id=resolved_session_id,
+        )
+    if not isinstance(payload, dict):
+        return _err(
+            "Request body must be a JSON object with trace payload.",
+            status_code=400,
+            session_id=resolved_session_id,
+        )
+
+    _matched, err = _pdf_plan_trace_lookup_or_404(plan_id, resolved_session_id)
+    if err is not None:
+        return err
+
+    from app.core.pdf_plan_trace_store import (
+        PdfPlanTraceStoreError,
+        save_trace,
+    )
+
+    try:
+        saved = save_trace(
+            ENGINEERING_PLAN_ROOT,
+            resolved_session_id,
+            str(plan_id).strip(),
+            int(page_index),
+            payload,
+        )
+    except PdfPlanTraceStoreError as e:
+        return _err(
+            f"Invalid trace payload: {e}",
+            status_code=400,
+            session_id=resolved_session_id,
+        )
+    except Exception as e:
+        logging.warning(
+            "trace save failed plan_id=%s page=%d err=%s", plan_id, page_index, e
+        )
+        return _err(
+            "Trace could not be saved.",
+            status_code=500,
+            session_id=resolved_session_id,
+        )
+
+    return _ok(
+        session_id=resolved_session_id,
+        plan_id=str(plan_id).strip(),
+        page_index=int(page_index),
+        trace=saved,
+    )
+
+
+@protected_router.delete("/api/engineering-plans/{plan_id}/trace")
+async def delete_engineering_plan_trace(
+    plan_id: str,
+    page_index: int,
+    session_id: Optional[str] = None,
+    request: Request = None,
+):
+    if not _trueline_plan_overlay_image_enabled():
+        return _err(
+            "Engineering plan trace endpoint is disabled.",
+            status_code=404,
+        )
+    resolved_session_id = _resolve_session_id(session_id)
+    _require_tenant_owns_session(resolved_session_id, request)
+
+    with _session_scope(resolved_session_id):
+        if _is_closeout_locked():
+            return _json_closeout_locked_response()
+
+    if not isinstance(page_index, int) or page_index < 0:
+        return _err(
+            f"page_index must be a non-negative integer; got {page_index!r}",
+            status_code=400,
+            session_id=resolved_session_id,
+        )
+
+    _matched, err = _pdf_plan_trace_lookup_or_404(plan_id, resolved_session_id)
+    if err is not None:
+        return err
+
+    from app.core.pdf_plan_trace_store import (
+        PdfPlanTraceStoreError,
+        delete_trace,
+    )
+
+    try:
+        removed = delete_trace(
+            ENGINEERING_PLAN_ROOT,
+            resolved_session_id,
+            str(plan_id).strip(),
+            int(page_index),
+        )
+    except PdfPlanTraceStoreError as e:
+        logging.warning(
+            "trace delete failed plan_id=%s page=%d err=%s", plan_id, page_index, e
+        )
+        return _err(
+            "Trace could not be deleted.",
+            status_code=500,
+            session_id=resolved_session_id,
+        )
+
+    return _ok(
+        session_id=resolved_session_id,
+        plan_id=str(plan_id).strip(),
+        page_index=int(page_index),
+        removed=removed,
+    )
+
+
 # ── Nova override decision endpoints ─────────────────────────────────────────
 
 @protected_router.get("/api/nova-overrides")
