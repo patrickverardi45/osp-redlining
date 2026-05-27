@@ -103,6 +103,41 @@ function readManualToolsFlag(): boolean {
   }
 }
 
+/**
+ * PDF Extraction E4 (2026-05-27): auto-redline review preview UI.
+ *
+ * Default OFF.  Two ways to enable:
+ *   1. Build-time: `NEXT_PUBLIC_TRUELINE_PDF_PLAN_REVIEW=1`
+ *      (Vercel env panel; requires rebuild to flip).
+ *   2. Per-session URL override: append `?review=1` to the Plan Viewer URL.
+ *
+ * The review panel calls three existing backend endpoints in sequence and
+ * renders the response as a non-persisted overlay on top of the PDF page:
+ *
+ *   GET  /api/engineering-plans/{plan_id}/extraction/route-candidates
+ *        (E2b, bucket=proposed_red)
+ *   POST /api/engineering-plans/{plan_id}/extraction/auto-redline
+ *        (E3 + E3.0.5; dry-run only — v1 NEVER persists)
+ *
+ * If any of the underlying extraction flags is OFF the endpoints return
+ * 404 and the panel surfaces an "extraction disabled" notice gracefully.
+ * No persistence button exists.  Any future Accept/Persist affordance
+ * MUST be labelled "Persistence not enabled yet." until E3.1 ships.
+ */
+const _BUILD_TIME_PDF_REVIEW_ENABLED =
+  process.env.NEXT_PUBLIC_TRUELINE_PDF_PLAN_REVIEW === "1";
+
+function readReviewFlag(): boolean {
+  if (_BUILD_TIME_PDF_REVIEW_ENABLED) return true;
+  if (typeof window === "undefined") return false;
+  try {
+    const sp = new URLSearchParams(window.location.search);
+    return sp.get("review") === "1";
+  } catch {
+    return false;
+  }
+}
+
 // Anchor snap radius in PDF pixels.  Beyond this distance the click is
 // treated as an anchor on the trace at the nearest snapped point — we
 // always snap, never place free-floating anchors, because the geometric
@@ -159,6 +194,79 @@ type SegmentOpState =
   | { kind: "saving" }
   | { kind: "error"; message: string };
 
+// ─── E4 — auto-redline review preview types ─────────────────────────────────
+// Inline because PdfPlanCanvas is the only frontend consumer of these
+// endpoints today.  If a second consumer appears (e.g., a sidebar review
+// list) these should move to lib/types/pdfExtraction.ts.
+
+type PdfExtractionRouteCandidate = {
+  candidate_id: string;
+  total_length_pt: number;
+  path_count: number;
+  segment_count: number;
+  confidence_kind?: string | null;
+  dominant_orientation?: string | null;
+  bbox?: [number, number, number, number] | null;
+};
+
+type RouteCandidatesState =
+  | { kind: "idle" }
+  | { kind: "loading" }
+  | { kind: "ok"; candidates: PdfExtractionRouteCandidate[] }
+  | { kind: "empty"; message: string }
+  | { kind: "disabled"; message: string }
+  | { kind: "error"; message: string };
+
+type ReviewRowDraft = {
+  start: string;
+  end: string;
+  notes: string;
+};
+
+type AutoRedlineSegmentReview = {
+  rule_id?: string | null;
+  source?: string | null;
+  geometry_type?: string | null;
+  geometry_confidence?: string | null;
+  coverage_confidence?: string | null;
+  projection_method?: string | null;
+  polyline_points?: Array<[number, number]> | null;
+  bbox?: [number, number, number, number] | null;
+  geometry_warnings?: string[] | null;
+  warnings?: string[] | null;
+  start_station_ft?: number | null;
+  end_station_ft?: number | null;
+  matched_anchor_count?: number | null;
+};
+
+type AutoRedlineResponse = {
+  schema_version: string;
+  route_candidate_id: string;
+  route_polyline_built?: boolean | null;
+  route_polyline_points?: Array<[number, number]> | null;
+  route_polyline_total_length_pt?: number | null;
+  anchor_projections?: Array<Record<string, unknown>> | null;
+  generated_segments?: AutoRedlineSegmentReview[] | null;
+  rejected_rows?: Array<Record<string, unknown>> | null;
+  meta?: {
+    persisted?: boolean;
+    persistence_enabled_in_v1?: boolean;
+    persistence_note?: string;
+    generated_segment_count?: number;
+    rejected_row_count?: number;
+    anchor_projection_count?: number;
+    available_anchor_count?: number;
+    [key: string]: unknown;
+  } | null;
+};
+
+type ReviewPreviewState =
+  | { kind: "idle" }
+  | { kind: "loading" }
+  | { kind: "ok"; response: AutoRedlineResponse }
+  | { kind: "disabled"; message: string }
+  | { kind: "error"; message: string };
+
 const CLASSIFICATION_STYLE: Record<
   PageClassification,
   { label: string; bg: string; fg: string; border: string }
@@ -202,6 +310,22 @@ export default function PdfPlanCanvas({ projectId, planId }: PdfPlanCanvasProps)
   // traces/anchors/segments still display on the PDF.  Lazy useState so SSR
   // gets a stable initial value and the URL-override is read once on mount.
   const [manualToolsEnabled] = useState<boolean>(readManualToolsFlag);
+
+  // E4 — auto-redline review preview (dry-run only; no persistence).
+  const [reviewEnabled] = useState<boolean>(readReviewFlag);
+  const [routeCandidates, setRouteCandidates] = useState<RouteCandidatesState>({
+    kind: "idle",
+  });
+  const [reviewSelectedRcId, setReviewSelectedRcId] = useState<string | null>(null);
+  const [reviewRowDraft, setReviewRowDraft] = useState<ReviewRowDraft>({
+    start: "",
+    end: "",
+    notes: "",
+  });
+  const [reviewRows, setReviewRows] = useState<ReviewRowDraft[]>([]);
+  const [reviewPreview, setReviewPreview] = useState<ReviewPreviewState>({
+    kind: "idle",
+  });
 
   const [metadata, setMetadata] = useState<MetadataState>({ kind: "loading" });
   const [pageIndex, setPageIndex] = useState<number>(0);
@@ -609,6 +733,203 @@ export default function PdfPlanCanvas({ projectId, planId }: PdfPlanCanvasProps)
       cancelled = true;
     };
   }, [metadata, pageIndex]);
+
+  // -------------------------------------------------------------------------
+  // E4 — load E2b route candidates for review preview (when enabled)
+  // -------------------------------------------------------------------------
+  useEffect(() => {
+    if (!reviewEnabled) return;
+    if (metadata.kind !== "ok") return;
+    const plan = metadata.plan;
+    const targetPageIndex = pageIndex;
+    let cancelled = false;
+
+    void (async () => {
+      // Reset preview state inside the async IIFE so the setters execute
+      // after the synchronous effect body completes (avoids the
+      // react-hooks/set-state-in-effect lint, same pattern as the
+      // segments-load effect above).
+      setReviewSelectedRcId(null);
+      setReviewRows([]);
+      setReviewRowDraft({ start: "", end: "", notes: "" });
+      setReviewPreview({ kind: "idle" });
+      setRouteCandidates({ kind: "loading" });
+      try {
+        const url =
+          `${RENDER_BASE}/api/engineering-plans/${encodeURIComponent(plan.plan_id)}` +
+          `/extraction/route-candidates?page_index=${encodeURIComponent(String(targetPageIndex))}` +
+          `&session_id=${encodeURIComponent(plan.session_id)}` +
+          `&bucket=proposed_red`;
+        const resp = await apiFetch(url, { cache: "no-store" }, "pdf_extraction_route_candidates");
+        if (cancelled) return;
+        if (resp.status === 404) {
+          const data = (await resp.json().catch(() => null)) as
+            | { error?: string }
+            | null;
+          const msg = (data?.error || "").toLowerCase();
+          if (msg.includes("disabled")) {
+            setRouteCandidates({
+              kind: "disabled",
+              message:
+                "PDF extraction is disabled on the backend. Flip " +
+                "TRUELINE_PDF_EXTRACTION_RAW_ENABLED / CLASSIFY / ROUTES on Render.",
+            });
+          } else {
+            setRouteCandidates({
+              kind: "error",
+              message: data?.error || `Route candidates not available (HTTP 404).`,
+            });
+          }
+          return;
+        }
+        if (!resp.ok) {
+          setRouteCandidates({
+            kind: "error",
+            message: `Failed to load route candidates (HTTP ${resp.status}).`,
+          });
+          return;
+        }
+        const data = (await resp.json().catch(() => null)) as
+          | { route_candidates?: PdfExtractionRouteCandidate[] }
+          | null;
+        if (cancelled) return;
+        const cands = Array.isArray(data?.route_candidates) ? data!.route_candidates : [];
+        if (cands.length === 0) {
+          setRouteCandidates({
+            kind: "empty",
+            message: "No route candidates on this page in bucket=proposed_red.",
+          });
+          return;
+        }
+        // Sort by total_length_pt desc so the longest candidate appears first.
+        const sorted = [...cands].sort(
+          (a, b) => (Number(b.total_length_pt) || 0) - (Number(a.total_length_pt) || 0),
+        );
+        setRouteCandidates({ kind: "ok", candidates: sorted });
+      } catch (err) {
+        if (cancelled) return;
+        setRouteCandidates({
+          kind: "error",
+          message:
+            err instanceof Error
+              ? err.message
+              : "Unexpected error while loading route candidates.",
+        });
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [reviewEnabled, metadata, pageIndex]);
+
+  // -------------------------------------------------------------------------
+  // E4 — handlers for the review preview panel
+  // -------------------------------------------------------------------------
+  const addReviewRow = useCallback(() => {
+    const start = reviewRowDraft.start.trim();
+    const end = reviewRowDraft.end.trim();
+    if (!start || !end) return;
+    setReviewRows((prev) => [
+      ...prev,
+      { start, end, notes: reviewRowDraft.notes.trim() },
+    ]);
+    setReviewRowDraft({ start: "", end: "", notes: "" });
+  }, [reviewRowDraft]);
+
+  const removeReviewRow = useCallback((idx: number) => {
+    setReviewRows((prev) => prev.filter((_, i) => i !== idx));
+  }, []);
+
+  const clearReviewPreview = useCallback(() => {
+    setReviewPreview({ kind: "idle" });
+  }, []);
+
+  const submitReviewPreview = useCallback(async () => {
+    if (metadata.kind !== "ok") return;
+    if (!reviewSelectedRcId) return;
+    if (reviewRows.length === 0) return;
+    const plan = metadata.plan;
+    setReviewPreview({ kind: "loading" });
+    try {
+      const url =
+        `${RENDER_BASE}/api/engineering-plans/${encodeURIComponent(plan.plan_id)}` +
+        `/extraction/auto-redline`;
+      const body = {
+        session_id:           plan.session_id,
+        page_index:           pageIndex,
+        bucket:               "proposed_red",
+        route_candidate_id:   reviewSelectedRcId,
+        rows: reviewRows.map((r) => ({
+          start_station: r.start,
+          end_station:   r.end,
+          notes:         r.notes || undefined,
+        })),
+        // Explicit dry_run=true; v1 backend ignores this flag and never
+        // persists regardless, but the explicit value documents intent
+        // for E3.1's future persistence gate.
+        dry_run: true,
+      };
+      const resp = await apiFetch(
+        url,
+        {
+          method:  "POST",
+          headers: { "Content-Type": "application/json" },
+          body:    JSON.stringify(body),
+        },
+        "pdf_extraction_auto_redline_preview",
+      );
+      if (resp.status === 404) {
+        const data = (await resp.json().catch(() => null)) as
+          | { error?: string }
+          | null;
+        const msg = (data?.error || "").toLowerCase();
+        if (msg.includes("disabled")) {
+          setReviewPreview({
+            kind: "disabled",
+            message:
+              "Auto-redline endpoint is disabled. Flip " +
+              "TRUELINE_PDF_EXTRACTION_BINDINGS_ENABLED + " +
+              "TRUELINE_PDF_AUTO_REDLINE_ENABLED on Render.",
+          });
+        } else {
+          setReviewPreview({
+            kind: "error",
+            message: data?.error || "Auto-redline preview returned 404.",
+          });
+        }
+        return;
+      }
+      if (!resp.ok) {
+        const data = (await resp.json().catch(() => null)) as
+          | { error?: string }
+          | null;
+        setReviewPreview({
+          kind: "error",
+          message:
+            data?.error || `Auto-redline preview failed (HTTP ${resp.status}).`,
+        });
+        return;
+      }
+      const data = (await resp.json().catch(() => null)) as AutoRedlineResponse | null;
+      if (!data || typeof data !== "object") {
+        setReviewPreview({
+          kind: "error",
+          message: "Server returned an empty or unparseable response body.",
+        });
+        return;
+      }
+      setReviewPreview({ kind: "ok", response: data });
+    } catch (err) {
+      setReviewPreview({
+        kind: "error",
+        message:
+          err instanceof Error
+            ? err.message
+            : "Unexpected error while requesting auto-redline preview.",
+      });
+    }
+  }, [metadata, pageIndex, reviewSelectedRcId, reviewRows]);
 
   // -------------------------------------------------------------------------
   // Step 3B — hydrate / persist bore-log-style rows in localStorage
@@ -1693,6 +2014,28 @@ export default function PdfPlanCanvas({ projectId, planId }: PdfPlanCanvasProps)
         </div>
       )}
 
+      {/* E4 — auto-redline review preview panel (dry-run only, gated by
+          NEXT_PUBLIC_TRUELINE_PDF_PLAN_REVIEW=1 or ?review=1).  Renders
+          between the placeholder banner and the manual tools section so
+          it sits in the operator's eye-line when manual tools are off. */}
+      {reviewEnabled && metadata.kind === "ok" && pageState.kind === "ready" && (
+        <AutoRedlineReviewPanel
+          plan={metadata.plan}
+          pageIndex={pageIndex}
+          routeCandidatesState={routeCandidates}
+          selectedRcId={reviewSelectedRcId}
+          onSelectRc={setReviewSelectedRcId}
+          rowDraft={reviewRowDraft}
+          onRowDraftChange={setReviewRowDraft}
+          rows={reviewRows}
+          onAddRow={addReviewRow}
+          onRemoveRow={removeReviewRow}
+          previewState={reviewPreview}
+          onPreview={submitReviewPreview}
+          onClearPreview={clearReviewPreview}
+        />
+      )}
+
       {/* Step 2B — trace toolbar (gated by pivot flag) */}
       {manualToolsEnabled && metadata.kind === "ok" && pageState.kind === "ready" && (
         <TraceToolbar
@@ -1879,6 +2222,11 @@ export default function PdfPlanCanvas({ projectId, planId }: PdfPlanCanvasProps)
               onSvgClick={handleSvgClick}
               onRemoveAnchor={removeAnchor}
               renderableSegments={renderableSegments}
+              reviewPreview={
+                reviewEnabled && reviewPreview.kind === "ok"
+                  ? reviewPreview.response
+                  : null
+              }
             />
           )}
         </section>
@@ -2005,6 +2353,7 @@ function CanvasWithOverlay({
   onSvgClick,
   onRemoveAnchor,
   renderableSegments,
+  reviewPreview,
 }: {
   objectUrl: string;
   imageAlt: string;
@@ -2023,6 +2372,7 @@ function CanvasWithOverlay({
     midpoint: PdfPoint | null;
     computable: boolean;
   }>;
+  reviewPreview: AutoRedlineResponse | null;
 }) {
   const pathD = useMemo(() => buildPolylinePath(draftPoints), [draftPoints]);
   const cursorStyle =
@@ -2334,6 +2684,120 @@ function CanvasWithOverlay({
               </g>
             );
           })}
+
+          {/* ─── E4 — auto-redline dry-run preview overlay ───────────────
+              Painted last so it sits ABOVE saved historical segments.
+              All review geometry is suggestion-grade and dry-run; nothing
+              is persisted by the v1 backend regardless of payload. */}
+          {reviewPreview && renderedDimensions && (() => {
+            const rp = reviewPreview;
+            const routePoints = Array.isArray(rp.route_polyline_points)
+              ? rp.route_polyline_points
+              : [];
+            const segments = Array.isArray(rp.generated_segments)
+              ? rp.generated_segments
+              : [];
+            const routeD = buildPolylinePath(routePoints as PdfPoint[]);
+            const confidenceStroke = (c: string | null | undefined): string => {
+              switch ((c || "").toLowerCase()) {
+                case "high":   return "#10b981"; // emerald
+                case "medium": return "#f59e0b"; // amber
+                case "low":    return "#ef4444"; // red
+                default:       return "#94a3b8"; // slate (none/unknown)
+              }
+            };
+            return (
+              <g data-tl-e4-review-overlay="dry-run">
+                {/* Route polyline context (dashed bright blue). */}
+                {routeD && rp.route_polyline_built && (
+                  <path
+                    d={routeD}
+                    fill="none"
+                    stroke="#2563eb"
+                    strokeWidth={Math.max(1.5, renderedDimensions.w / 600)}
+                    strokeOpacity={0.55}
+                    strokeDasharray={`${Math.max(6, renderedDimensions.w / 280)} ${Math.max(4, renderedDimensions.w / 360)}`}
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                )}
+                {/* Per-segment overlay. */}
+                {segments.map((seg, idx) => {
+                  const gtype = (seg.geometry_type || "").toLowerCase();
+                  const stroke = confidenceStroke(seg.geometry_confidence);
+                  const polyD =
+                    Array.isArray(seg.polyline_points) && seg.polyline_points.length >= 2
+                      ? buildPolylinePath(seg.polyline_points as PdfPoint[])
+                      : null;
+                  if (gtype === "polyline" && polyD) {
+                    return (
+                      <g key={`e4_seg_${idx}`}>
+                        {/* Halo for visibility on busy plan sheets. */}
+                        <path
+                          d={polyD}
+                          fill="none"
+                          stroke="#ffffff"
+                          strokeWidth={Math.max(10, renderedDimensions.w / 110)}
+                          strokeOpacity={0.85}
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        />
+                        <path
+                          d={polyD}
+                          fill="none"
+                          stroke={stroke}
+                          strokeWidth={Math.max(6, renderedDimensions.w / 160)}
+                          strokeOpacity={0.95}
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        />
+                      </g>
+                    );
+                  }
+                  if (gtype === "bbox_fallback" && Array.isArray(seg.bbox) && seg.bbox.length === 4) {
+                    const [x0, y0, x1, y1] = seg.bbox;
+                    return (
+                      <g key={`e4_seg_${idx}`} data-tl-e4-bbox-fallback="1">
+                        <rect
+                          x={Math.min(x0, x1)}
+                          y={Math.min(y0, y1)}
+                          width={Math.abs(x1 - x0)}
+                          height={Math.abs(y1 - y0)}
+                          fill="rgba(148, 163, 184, 0.18)"
+                          stroke="#64748b"
+                          strokeWidth={Math.max(1.5, renderedDimensions.w / 720)}
+                          strokeDasharray={`${Math.max(6, renderedDimensions.w / 240)} ${Math.max(4, renderedDimensions.w / 320)}`}
+                        />
+                      </g>
+                    );
+                  }
+                  return null;
+                })}
+                {/* Top-left corner "PREVIEW · DRY RUN" badge. */}
+                <g transform={`translate(${Math.max(6, renderedDimensions.w / 200)},${Math.max(18, renderedDimensions.w / 90)})`}>
+                  <rect
+                    x={0}
+                    y={-Math.max(14, renderedDimensions.w / 130)}
+                    width={Math.max(180, renderedDimensions.w / 9)}
+                    height={Math.max(20, renderedDimensions.w / 86)}
+                    fill="rgba(220, 38, 38, 0.92)"
+                    rx={3}
+                  />
+                  <text
+                    x={Math.max(8, renderedDimensions.w / 220)}
+                    y={Math.max(2, renderedDimensions.w / 540)}
+                    fontFamily="ui-sans-serif, system-ui, -apple-system, sans-serif"
+                    fontSize={Math.max(11, renderedDimensions.w / 130)}
+                    fontWeight={700}
+                    fill="#ffffff"
+                    letterSpacing="0.04em"
+                  >
+                    PREVIEW · DRY RUN · NO PERSISTENCE
+                  </text>
+                </g>
+              </g>
+            );
+          })()}
         </svg>
       )}
     </div>
@@ -4040,3 +4504,543 @@ function generateAnchorId(): string {
 // referenced from docs — keep the constant exported in case Step 3 wants
 // it.  No-op suppression that doesn't ship runtime cost.
 void ANCHOR_SNAP_HINT_PX;
+
+// ---------------------------------------------------------------------------
+// E4 — AutoRedlineReviewPanel (dry-run preview UI)
+// ---------------------------------------------------------------------------
+
+function AutoRedlineReviewPanel({
+  plan,
+  pageIndex,
+  routeCandidatesState,
+  selectedRcId,
+  onSelectRc,
+  rowDraft,
+  onRowDraftChange,
+  rows,
+  onAddRow,
+  onRemoveRow,
+  previewState,
+  onPreview,
+  onClearPreview,
+}: {
+  plan: EngineeringPlan;
+  pageIndex: number;
+  routeCandidatesState: RouteCandidatesState;
+  selectedRcId: string | null;
+  onSelectRc: (id: string | null) => void;
+  rowDraft: ReviewRowDraft;
+  onRowDraftChange: (d: ReviewRowDraft) => void;
+  rows: ReviewRowDraft[];
+  onAddRow: () => void;
+  onRemoveRow: (idx: number) => void;
+  previewState: ReviewPreviewState;
+  onPreview: () => void;
+  onClearPreview: () => void;
+}) {
+  const previewing = previewState.kind === "loading";
+  const previewReady = previewState.kind === "ok";
+  const canPreview =
+    selectedRcId !== null && rows.length > 0 && !previewing;
+
+  return (
+    <div
+      data-tl-e4-panel="auto-redline-review"
+      style={{
+        padding: "12px 22px",
+        borderBottom: "1px solid var(--tl-border)",
+        background: "rgba(220, 38, 38, 0.04)",
+      }}
+    >
+      <div style={{ maxWidth: 1600, margin: "0 auto" }}>
+        {/* Dry-run banner */}
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 10,
+            marginBottom: 10,
+          }}
+        >
+          <span
+            style={{
+              padding: "3px 9px",
+              borderRadius: 4,
+              background: "#dc2626",
+              color: "#ffffff",
+              fontSize: 11,
+              fontWeight: 700,
+              letterSpacing: "0.04em",
+            }}
+          >
+            PREVIEW · DRY RUN
+          </span>
+          <span style={{ fontSize: 12, color: "var(--tl-text-muted)" }}>
+            Auto-Redline Review Preview — page {pageIndex + 1} of{" "}
+            <code style={{ fontSize: 11 }}>{plan.original_filename}</code>.
+            Nothing is written to disk.  E3.1 persistence is not enabled.
+          </span>
+        </div>
+
+        {/* Route candidates */}
+        <div style={{ marginBottom: 10 }}>
+          <div
+            style={{
+              fontSize: 11,
+              fontWeight: 600,
+              color: "var(--tl-text)",
+              marginBottom: 4,
+              letterSpacing: "0.04em",
+            }}
+          >
+            ROUTE CANDIDATES (bucket=proposed_red)
+          </div>
+          {routeCandidatesState.kind === "loading" && (
+            <div style={{ fontSize: 12, color: "var(--tl-text-muted)" }}>
+              Loading route candidates…
+            </div>
+          )}
+          {routeCandidatesState.kind === "disabled" && (
+            <div style={{ fontSize: 12, color: "#92400e" }}>
+              {routeCandidatesState.message}
+            </div>
+          )}
+          {routeCandidatesState.kind === "empty" && (
+            <div style={{ fontSize: 12, color: "var(--tl-text-muted)" }}>
+              {routeCandidatesState.message}
+            </div>
+          )}
+          {routeCandidatesState.kind === "error" && (
+            <div style={{ fontSize: 12, color: "#dc2626" }}>
+              {routeCandidatesState.message}
+            </div>
+          )}
+          {routeCandidatesState.kind === "ok" && (
+            <div
+              style={{
+                maxHeight: 140,
+                overflowY: "auto",
+                border: "1px solid var(--tl-border)",
+                borderRadius: 3,
+                background: "var(--tl-bg)",
+              }}
+            >
+              <table
+                style={{
+                  width: "100%",
+                  fontSize: 12,
+                  borderCollapse: "collapse",
+                }}
+              >
+                <thead
+                  style={{
+                    position: "sticky",
+                    top: 0,
+                    background: "var(--tl-bg-grid)",
+                    fontSize: 11,
+                    color: "var(--tl-text-muted)",
+                  }}
+                >
+                  <tr>
+                    <th style={{ textAlign: "left", padding: "4px 8px" }}>Pick</th>
+                    <th style={{ textAlign: "left", padding: "4px 8px" }}>candidate_id</th>
+                    <th style={{ textAlign: "right", padding: "4px 8px" }}>length (pt)</th>
+                    <th style={{ textAlign: "right", padding: "4px 8px" }}>paths</th>
+                    <th style={{ textAlign: "right", padding: "4px 8px" }}>segments</th>
+                    <th style={{ textAlign: "left", padding: "4px 8px" }}>kind</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {routeCandidatesState.candidates.map((c) => {
+                    const checked = selectedRcId === c.candidate_id;
+                    return (
+                      <tr
+                        key={c.candidate_id}
+                        style={{
+                          background: checked ? "rgba(37, 99, 235, 0.08)" : "transparent",
+                          cursor: "pointer",
+                        }}
+                        onClick={() => onSelectRc(c.candidate_id)}
+                      >
+                        <td style={{ padding: "4px 8px" }}>
+                          <input
+                            type="radio"
+                            name="e4_rc_pick"
+                            checked={checked}
+                            onChange={() => onSelectRc(c.candidate_id)}
+                            aria-label={`Select ${c.candidate_id}`}
+                          />
+                        </td>
+                        <td style={{ padding: "4px 8px", fontFamily: "ui-monospace, monospace" }}>
+                          {c.candidate_id}
+                        </td>
+                        <td style={{ padding: "4px 8px", textAlign: "right" }}>
+                          {Number(c.total_length_pt).toFixed(1)}
+                        </td>
+                        <td style={{ padding: "4px 8px", textAlign: "right" }}>
+                          {c.path_count ?? "—"}
+                        </td>
+                        <td style={{ padding: "4px 8px", textAlign: "right" }}>
+                          {c.segment_count ?? "—"}
+                        </td>
+                        <td style={{ padding: "4px 8px", color: "var(--tl-text-muted)" }}>
+                          {c.confidence_kind || c.dominant_orientation || "—"}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+
+        {/* Row entry form */}
+        <div style={{ marginBottom: 10 }}>
+          <div
+            style={{
+              fontSize: 11,
+              fontWeight: 600,
+              color: "var(--tl-text)",
+              marginBottom: 4,
+              letterSpacing: "0.04em",
+            }}
+          >
+            REVIEW ROWS (station ranges to dry-run)
+          </div>
+          <div
+            style={{
+              display: "flex",
+              gap: 6,
+              flexWrap: "wrap",
+              alignItems: "center",
+            }}
+          >
+            <input
+              type="text"
+              placeholder="start_station (e.g. 11+60)"
+              value={rowDraft.start}
+              onChange={(e) => onRowDraftChange({ ...rowDraft, start: e.target.value })}
+              style={{
+                fontSize: 12,
+                padding: "4px 6px",
+                border: "1px solid var(--tl-border)",
+                borderRadius: 3,
+                width: 170,
+              }}
+            />
+            <input
+              type="text"
+              placeholder="end_station (e.g. 12+40)"
+              value={rowDraft.end}
+              onChange={(e) => onRowDraftChange({ ...rowDraft, end: e.target.value })}
+              style={{
+                fontSize: 12,
+                padding: "4px 6px",
+                border: "1px solid var(--tl-border)",
+                borderRadius: 3,
+                width: 170,
+              }}
+            />
+            <input
+              type="text"
+              placeholder="notes (optional)"
+              value={rowDraft.notes}
+              onChange={(e) => onRowDraftChange({ ...rowDraft, notes: e.target.value })}
+              style={{
+                fontSize: 12,
+                padding: "4px 6px",
+                border: "1px solid var(--tl-border)",
+                borderRadius: 3,
+                flex: 1,
+                minWidth: 180,
+              }}
+            />
+            <button
+              type="button"
+              onClick={onAddRow}
+              disabled={!rowDraft.start.trim() || !rowDraft.end.trim()}
+              style={{
+                fontSize: 12,
+                padding: "4px 10px",
+                border: "1px solid var(--tl-border)",
+                borderRadius: 3,
+                background: "var(--tl-bg)",
+                cursor: rowDraft.start.trim() && rowDraft.end.trim() ? "pointer" : "not-allowed",
+              }}
+            >
+              + Add row
+            </button>
+          </div>
+          {rows.length > 0 && (
+            <div
+              style={{
+                marginTop: 6,
+                border: "1px solid var(--tl-border)",
+                borderRadius: 3,
+                background: "var(--tl-bg)",
+              }}
+            >
+              <table style={{ width: "100%", fontSize: 12, borderCollapse: "collapse" }}>
+                <thead style={{ background: "var(--tl-bg-grid)", fontSize: 11 }}>
+                  <tr>
+                    <th style={{ textAlign: "left", padding: "4px 8px" }}>#</th>
+                    <th style={{ textAlign: "left", padding: "4px 8px" }}>start</th>
+                    <th style={{ textAlign: "left", padding: "4px 8px" }}>end</th>
+                    <th style={{ textAlign: "left", padding: "4px 8px" }}>notes</th>
+                    <th style={{ textAlign: "right", padding: "4px 8px" }}></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map((r, idx) => (
+                    <tr key={`row_${idx}`}>
+                      <td style={{ padding: "4px 8px", color: "var(--tl-text-muted)" }}>{idx + 1}</td>
+                      <td style={{ padding: "4px 8px", fontFamily: "ui-monospace, monospace" }}>{r.start}</td>
+                      <td style={{ padding: "4px 8px", fontFamily: "ui-monospace, monospace" }}>{r.end}</td>
+                      <td style={{ padding: "4px 8px" }}>{r.notes || "—"}</td>
+                      <td style={{ padding: "4px 8px", textAlign: "right" }}>
+                        <button
+                          type="button"
+                          onClick={() => onRemoveRow(idx)}
+                          style={{
+                            fontSize: 11,
+                            padding: "2px 6px",
+                            border: "1px solid var(--tl-border)",
+                            borderRadius: 3,
+                            background: "var(--tl-bg)",
+                            cursor: "pointer",
+                          }}
+                          aria-label={`Remove row ${idx + 1}`}
+                        >
+                          Remove
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+
+        {/* Preview + clear controls */}
+        <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8 }}>
+          <button
+            type="button"
+            onClick={onPreview}
+            disabled={!canPreview}
+            style={{
+              fontSize: 12,
+              padding: "6px 14px",
+              border: "1px solid var(--tl-border)",
+              borderRadius: 3,
+              background: canPreview ? "#2563eb" : "var(--tl-bg)",
+              color: canPreview ? "#ffffff" : "var(--tl-text-muted)",
+              cursor: canPreview ? "pointer" : "not-allowed",
+              fontWeight: 600,
+            }}
+          >
+            {previewing ? "Generating preview…" : "Preview Auto-Redline"}
+          </button>
+          {(previewReady || previewState.kind === "error" || previewState.kind === "disabled") && (
+            <button
+              type="button"
+              onClick={onClearPreview}
+              style={{
+                fontSize: 12,
+                padding: "6px 12px",
+                border: "1px solid var(--tl-border)",
+                borderRadius: 3,
+                background: "var(--tl-bg)",
+                cursor: "pointer",
+              }}
+            >
+              Clear preview
+            </button>
+          )}
+          <button
+            type="button"
+            disabled
+            title="Persistence not enabled yet"
+            style={{
+              fontSize: 12,
+              padding: "6px 12px",
+              border: "1px dashed var(--tl-border)",
+              borderRadius: 3,
+              background: "transparent",
+              color: "var(--tl-text-faint)",
+              cursor: "not-allowed",
+            }}
+          >
+            Accept &amp; Persist (Persistence not enabled yet)
+          </button>
+        </div>
+
+        {previewState.kind === "loading" && (
+          <div style={{ fontSize: 12, color: "var(--tl-text-muted)" }}>
+            Posting to /api/engineering-plans/{plan.plan_id}/extraction/auto-redline…
+          </div>
+        )}
+        {previewState.kind === "error" && (
+          <div style={{ fontSize: 12, color: "#dc2626" }}>
+            Preview error: {previewState.message}
+          </div>
+        )}
+        {previewState.kind === "disabled" && (
+          <div style={{ fontSize: 12, color: "#92400e" }}>
+            {previewState.message}
+          </div>
+        )}
+
+        {/* Response summary */}
+        {previewReady && (() => {
+          const r = (previewState as { kind: "ok"; response: AutoRedlineResponse }).response;
+          const segs = Array.isArray(r.generated_segments) ? r.generated_segments : [];
+          const rej = Array.isArray(r.rejected_rows) ? r.rejected_rows : [];
+          const persisted = r.meta?.persisted === true;
+          return (
+            <div
+              style={{
+                marginTop: 8,
+                padding: 10,
+                border: "1px solid var(--tl-border)",
+                borderRadius: 3,
+                background: "var(--tl-bg)",
+              }}
+            >
+              <div
+                style={{
+                  display: "flex",
+                  gap: 12,
+                  flexWrap: "wrap",
+                  alignItems: "center",
+                  marginBottom: 8,
+                  fontSize: 12,
+                }}
+              >
+                <span>
+                  <strong>route_polyline_built:</strong>{" "}
+                  <code style={{ color: r.route_polyline_built ? "#047857" : "#92400e" }}>
+                    {String(!!r.route_polyline_built)}
+                  </code>
+                </span>
+                <span>
+                  <strong>generated_segments:</strong> <code>{segs.length}</code>
+                </span>
+                <span>
+                  <strong>rejected_rows:</strong> <code>{rej.length}</code>
+                </span>
+                <span>
+                  <strong>anchor_projections:</strong>{" "}
+                  <code>{Array.isArray(r.anchor_projections) ? r.anchor_projections.length : 0}</code>
+                </span>
+                <span>
+                  <strong>route_candidate_id:</strong>{" "}
+                  <code style={{ fontFamily: "ui-monospace, monospace" }}>
+                    {r.route_candidate_id}
+                  </code>
+                </span>
+                <span>
+                  <strong>meta.persisted:</strong>{" "}
+                  <code style={{ color: persisted ? "#dc2626" : "#047857", fontWeight: 700 }}>
+                    {String(persisted)}
+                  </code>
+                </span>
+              </div>
+
+              {segs.length > 0 && (
+                <div>
+                  <div
+                    style={{
+                      fontSize: 11,
+                      fontWeight: 600,
+                      letterSpacing: "0.04em",
+                      color: "var(--tl-text)",
+                      marginBottom: 4,
+                    }}
+                  >
+                    GENERATED SEGMENTS
+                  </div>
+                  <table style={{ width: "100%", fontSize: 12, borderCollapse: "collapse" }}>
+                    <thead style={{ background: "var(--tl-bg-grid)", fontSize: 11 }}>
+                      <tr>
+                        <th style={{ textAlign: "left", padding: "4px 8px" }}>#</th>
+                        <th style={{ textAlign: "left", padding: "4px 8px" }}>station_ft range</th>
+                        <th style={{ textAlign: "left", padding: "4px 8px" }}>geometry_type</th>
+                        <th style={{ textAlign: "left", padding: "4px 8px" }}>confidence</th>
+                        <th style={{ textAlign: "right", padding: "4px 8px" }}>anchors</th>
+                        <th style={{ textAlign: "left", padding: "4px 8px" }}>warnings</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {segs.map((s, i) => {
+                        const warns = [
+                          ...(Array.isArray(s.geometry_warnings) ? s.geometry_warnings : []),
+                          ...(Array.isArray(s.warnings) ? s.warnings : []),
+                        ];
+                        const conf = (s.geometry_confidence || "").toLowerCase();
+                        const confColor =
+                          conf === "high" ? "#047857"
+                          : conf === "medium" ? "#92400e"
+                          : conf === "low" ? "#dc2626"
+                          : "var(--tl-text-muted)";
+                        return (
+                          <tr key={`out_seg_${i}`}>
+                            <td style={{ padding: "4px 8px", color: "var(--tl-text-muted)" }}>{i + 1}</td>
+                            <td style={{ padding: "4px 8px", fontFamily: "ui-monospace, monospace" }}>
+                              {s.start_station_ft != null && s.end_station_ft != null
+                                ? `${s.start_station_ft} → ${s.end_station_ft}`
+                                : "—"}
+                            </td>
+                            <td style={{ padding: "4px 8px" }}>{s.geometry_type || "—"}</td>
+                            <td style={{ padding: "4px 8px", color: confColor, fontWeight: 600 }}>
+                              {s.geometry_confidence || "—"}
+                            </td>
+                            <td style={{ padding: "4px 8px", textAlign: "right" }}>
+                              {s.matched_anchor_count ?? "—"}
+                            </td>
+                            <td style={{ padding: "4px 8px", color: warns.length ? "#92400e" : "var(--tl-text-faint)" }}>
+                              {warns.length ? warns.join("; ") : "—"}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
+              {rej.length > 0 && (
+                <div style={{ marginTop: 8 }}>
+                  <div
+                    style={{
+                      fontSize: 11,
+                      fontWeight: 600,
+                      letterSpacing: "0.04em",
+                      color: "#dc2626",
+                      marginBottom: 4,
+                    }}
+                  >
+                    REJECTED ROWS
+                  </div>
+                  <ul style={{ margin: 0, paddingLeft: 18, fontSize: 12, color: "var(--tl-text-muted)" }}>
+                    {rej.map((rr, i) => {
+                      const reason = (rr as { reason?: string }).reason || "(no reason)";
+                      const rule = (rr as { rule_id?: string }).rule_id || "";
+                      return (
+                        <li key={`rej_${i}`}>
+                          <code style={{ fontFamily: "ui-monospace, monospace" }}>{rule}</code>
+                          {" — "}{reason}
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </div>
+              )}
+            </div>
+          );
+        })()}
+      </div>
+    </div>
+  );
+}
