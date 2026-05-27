@@ -72,6 +72,37 @@ const _RAW_API_BASE =
   "";
 const RENDER_BASE = _RAW_API_BASE.replace(/\/+$/, "");
 
+/**
+ * PDF Plan Mode pivot (2026-05-26): manual drawing surfaces (trace toolbar,
+ * station anchors, manual segment add, bore-log-style rows panel, Excel
+ * import button) are gated behind a build-time flag so the product can
+ * pivot to an extraction-first review workflow without dropping any
+ * previously-saved manual data.  Default OFF.
+ *
+ * Two ways to enable:
+ *   1. Build-time: `NEXT_PUBLIC_TRUELINE_PDF_PLAN_MANUAL_TOOLS=1`
+ *      (set in Vercel env panel; requires rebuild to flip).
+ *   2. Per-session URL override: append `?manual=1` to the Plan Viewer URL.
+ *      Useful for cleaning up legacy saved data without a deploy.
+ *
+ * Saved-data RENDERING (existing traces, anchors, segments drawn on the PDF)
+ * is NOT gated — the SVG overlay continues to display historical data even
+ * when the manual TOOLS are hidden.
+ */
+const _BUILD_TIME_MANUAL_TOOLS_ENABLED =
+  process.env.NEXT_PUBLIC_TRUELINE_PDF_PLAN_MANUAL_TOOLS === "1";
+
+function readManualToolsFlag(): boolean {
+  if (_BUILD_TIME_MANUAL_TOOLS_ENABLED) return true;
+  if (typeof window === "undefined") return false;
+  try {
+    const sp = new URLSearchParams(window.location.search);
+    return sp.get("manual") === "1";
+  } catch {
+    return false;
+  }
+}
+
 // Anchor snap radius in PDF pixels.  Beyond this distance the click is
 // treated as an anchor on the trace at the nearest snapped point — we
 // always snap, never place free-floating anchors, because the geometric
@@ -165,6 +196,13 @@ const CLASSIFICATION_STYLE: Record<
 };
 
 export default function PdfPlanCanvas({ projectId, planId }: PdfPlanCanvasProps) {
+  // Pivot flag (2026-05-26): when false, manual drawing UI (trace toolbar,
+  // station-anchor placement, add-segment form, bore-log row panel + Excel
+  // import) is hidden. Saved-data RENDERING continues regardless so existing
+  // traces/anchors/segments still display on the PDF.  Lazy useState so SSR
+  // gets a stable initial value and the URL-override is read once on mount.
+  const [manualToolsEnabled] = useState<boolean>(readManualToolsFlag);
+
   const [metadata, setMetadata] = useState<MetadataState>({ kind: "loading" });
   const [pageIndex, setPageIndex] = useState<number>(0);
   const [pageState, setPageState] = useState<PageState>({ kind: "idle" });
@@ -1610,8 +1648,53 @@ export default function PdfPlanCanvas({ projectId, planId }: PdfPlanCanvasProps)
       {/* Step 2A — per-page metadata strip */}
       {currentPageEntry && <PageMetadataStrip page={currentPageEntry} />}
 
-      {/* Step 2B — trace toolbar */}
-      {metadata.kind === "ok" && pageState.kind === "ready" && (
+      {/* Pivot placeholder (2026-05-26): when manual tools are hidden, surface
+          the new direction so the operator sees why the drawing tools are
+          gone. */}
+      {metadata.kind === "ok" && pageState.kind === "ready" && !manualToolsEnabled && (
+        <div
+          style={{
+            padding: "10px 22px",
+            borderBottom: "1px solid var(--tl-border)",
+            background: "var(--tl-bg-grid)",
+          }}
+        >
+          <div
+            style={{
+              maxWidth: 1600,
+              margin: "0 auto",
+              fontSize: 12,
+              lineHeight: 1.5,
+              color: "var(--tl-text-muted)",
+            }}
+          >
+            <strong style={{ color: "var(--tl-text)", letterSpacing: "0.02em" }}>
+              PDF Plan Mode — Extraction-First (work in progress)
+            </strong>
+            <br />
+            Manual drawing tools (trace, station anchors, manual segments,
+            bore-log row entry, Excel import) are hidden pending the new
+            PDF Extraction Intelligence pipeline. Saved traces, anchors,
+            and segments from prior sessions continue to render on the
+            page as reference. If you need the legacy manual tools for
+            data cleanup or migration, append{" "}
+            <code
+              style={{
+                padding: "1px 5px",
+                background: "rgba(15,23,42,0.06)",
+                borderRadius: 3,
+                fontSize: 11,
+              }}
+            >
+              ?manual=1
+            </code>{" "}
+            to this page URL.
+          </div>
+        </div>
+      )}
+
+      {/* Step 2B — trace toolbar (gated by pivot flag) */}
+      {manualToolsEnabled && metadata.kind === "ok" && pageState.kind === "ready" && (
         <TraceToolbar
           editMode={editMode}
           traceState={traceState}
@@ -1629,8 +1712,8 @@ export default function PdfPlanCanvas({ projectId, planId }: PdfPlanCanvasProps)
         />
       )}
 
-      {/* Step 3B — bore-log-style rows panel (drives segment generation) */}
-      {metadata.kind === "ok" && pageState.kind === "ready" && (
+      {/* Step 3B — bore-log-style rows panel (gated by pivot flag) */}
+      {manualToolsEnabled && metadata.kind === "ok" && pageState.kind === "ready" && (
         <BoreLogRowsPanel
           rows={boreLogRows}
           rowDraftOpen={rowDraftOpen}
@@ -1649,7 +1732,9 @@ export default function PdfPlanCanvas({ projectId, planId }: PdfPlanCanvasProps)
         />
       )}
 
-      {/* Step 3A — manual station segments panel */}
+      {/* Step 3A — manual station segments panel.  Always rendered when a
+          page is ready so saved segments stay visible + deletable; the
+          manualToolsEnabled prop hides the Add affordance internally. */}
       {metadata.kind === "ok" && pageState.kind === "ready" && (
         <SegmentsPanel
           segmentsState={segmentsState}
@@ -1665,6 +1750,7 @@ export default function PdfPlanCanvas({ projectId, planId }: PdfPlanCanvasProps)
           onCloseAdd={closeAddSegment}
           onSubmit={submitSegment}
           onDelete={deleteSegmentById}
+          manualToolsEnabled={manualToolsEnabled}
         />
       )}
 
@@ -2977,6 +3063,7 @@ function SegmentsPanel({
   onCloseAdd,
   onSubmit,
   onDelete,
+  manualToolsEnabled,
 }: {
   segmentsState: SegmentsState;
   segmentOpState: SegmentOpState;
@@ -2998,6 +3085,10 @@ function SegmentsPanel({
   onCloseAdd: () => void;
   onSubmit: () => void;
   onDelete: (segmentId: string) => void;
+  /** Pivot flag (2026-05-26): when false, the + Add Segment button and the
+   *  draft form are hidden, but the saved-segment list (with per-segment
+   *  delete buttons) stays visible so historical data can still be managed. */
+  manualToolsEnabled: boolean;
 }) {
   const traceLoaded = traceState.kind === "loaded";
   const segmentsCount =
@@ -3089,14 +3180,16 @@ function SegmentsPanel({
           >
             Manual / Draft
           </span>
-          <ToolbarButton
-            onClick={onOpenAdd}
-            disabled={addDisabled}
-            variant="primary"
-            title="Enter start/end stations to draw a draft segment along the saved trace"
-          >
-            + Add Segment
-          </ToolbarButton>
+          {manualToolsEnabled && (
+            <ToolbarButton
+              onClick={onOpenAdd}
+              disabled={addDisabled}
+              variant="primary"
+              title="Enter start/end stations to draw a draft segment along the saved trace"
+            >
+              + Add Segment
+            </ToolbarButton>
+          )}
           <span
             role="status"
             style={{
@@ -3134,7 +3227,7 @@ function SegmentsPanel({
           drawing is the visual derivative.
         </div>
 
-        {draftOpen && (
+        {manualToolsEnabled && draftOpen && (
           <SegmentDraftForm
             draft={draft}
             onChange={onDraftChange}
