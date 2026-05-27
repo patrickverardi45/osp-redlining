@@ -217,6 +217,29 @@ type RouteCandidatesState =
   | { kind: "disabled"; message: string }
   | { kind: "error"; message: string };
 
+// E4.1 — bindings data used to enrich the candidate picker.  Only the
+// station_anchors[] field is consumed; matchline / construction /
+// unbound records are surfaced to the operator in a future ship.
+type ExtractionBindingsStationAnchor = {
+  route_candidate_id?: string | null;
+  matched_text?: string | null;
+  distance_pt?: number | null;
+};
+
+type BindingsState =
+  | { kind: "idle" }
+  | { kind: "loading" }
+  | { kind: "ok"; anchors: ExtractionBindingsStationAnchor[] }
+  | { kind: "disabled"; message: string }
+  | { kind: "error"; message: string };
+
+// Enriched candidate with E2c-derived readiness signals for the picker.
+type EnrichedRouteCandidate = PdfExtractionRouteCandidate & {
+  anchor_count: number;
+  bound_stations: string[]; // unique + sorted asc
+  readiness: "ready" | "weak" | "not_ready";
+};
+
 type ReviewRowDraft = {
   start: string;
   end: string;
@@ -316,6 +339,7 @@ export default function PdfPlanCanvas({ projectId, planId }: PdfPlanCanvasProps)
   const [routeCandidates, setRouteCandidates] = useState<RouteCandidatesState>({
     kind: "idle",
   });
+  const [bindings, setBindings] = useState<BindingsState>({ kind: "idle" });
   const [reviewSelectedRcId, setReviewSelectedRcId] = useState<string | null>(null);
   const [reviewRowDraft, setReviewRowDraft] = useState<ReviewRowDraft>({
     start: "",
@@ -754,6 +778,7 @@ export default function PdfPlanCanvas({ projectId, planId }: PdfPlanCanvasProps)
       setReviewRowDraft({ start: "", end: "", notes: "" });
       setReviewPreview({ kind: "idle" });
       setRouteCandidates({ kind: "loading" });
+      setBindings({ kind: "loading" });
       try {
         const url =
           `${RENDER_BASE}/api/engineering-plans/${encodeURIComponent(plan.plan_id)}` +
@@ -814,6 +839,80 @@ export default function PdfPlanCanvas({ projectId, planId }: PdfPlanCanvasProps)
             err instanceof Error
               ? err.message
               : "Unexpected error while loading route candidates.",
+        });
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [reviewEnabled, metadata, pageIndex]);
+
+  // -------------------------------------------------------------------------
+  // E4.1 — load E2c bindings in parallel so the picker can score each
+  // route candidate by bound station_anchor count.  Best-effort: if this
+  // request fails or is gated off, the panel still renders with the raw
+  // E2b list (no readiness badges, default length-desc sort).
+  // -------------------------------------------------------------------------
+  useEffect(() => {
+    if (!reviewEnabled) return;
+    if (metadata.kind !== "ok") return;
+    const plan = metadata.plan;
+    const targetPageIndex = pageIndex;
+    let cancelled = false;
+
+    void (async () => {
+      try {
+        const url =
+          `${RENDER_BASE}/api/engineering-plans/${encodeURIComponent(plan.plan_id)}` +
+          `/extraction/bindings?page_index=${encodeURIComponent(String(targetPageIndex))}` +
+          `&session_id=${encodeURIComponent(plan.session_id)}` +
+          `&bucket=proposed_red`;
+        const resp = await apiFetch(url, { cache: "no-store" }, "pdf_extraction_bindings");
+        if (cancelled) return;
+        if (resp.status === 404) {
+          const data = (await resp.json().catch(() => null)) as
+            | { error?: string }
+            | null;
+          const msg = (data?.error || "").toLowerCase();
+          if (msg.includes("disabled")) {
+            setBindings({
+              kind: "disabled",
+              message:
+                "Bindings endpoint disabled.  Flip " +
+                "TRUELINE_PDF_EXTRACTION_BINDINGS_ENABLED on Render to enable readiness scoring.",
+            });
+          } else {
+            setBindings({
+              kind: "error",
+              message: data?.error || "Bindings endpoint returned 404.",
+            });
+          }
+          return;
+        }
+        if (!resp.ok) {
+          setBindings({
+            kind: "error",
+            message: `Failed to load bindings (HTTP ${resp.status}).`,
+          });
+          return;
+        }
+        const data = (await resp.json().catch(() => null)) as
+          | { station_anchors?: ExtractionBindingsStationAnchor[] }
+          | null;
+        if (cancelled) return;
+        const anchors = Array.isArray(data?.station_anchors)
+          ? data!.station_anchors
+          : [];
+        setBindings({ kind: "ok", anchors });
+      } catch (err) {
+        if (cancelled) return;
+        setBindings({
+          kind: "error",
+          message:
+            err instanceof Error
+              ? err.message
+              : "Unexpected error while loading bindings.",
         });
       }
     })();
@@ -2023,6 +2122,7 @@ export default function PdfPlanCanvas({ projectId, planId }: PdfPlanCanvasProps)
           plan={metadata.plan}
           pageIndex={pageIndex}
           routeCandidatesState={routeCandidates}
+          bindingsState={bindings}
           selectedRcId={reviewSelectedRcId}
           onSelectRc={setReviewSelectedRcId}
           rowDraft={reviewRowDraft}
@@ -4513,6 +4613,7 @@ function AutoRedlineReviewPanel({
   plan,
   pageIndex,
   routeCandidatesState,
+  bindingsState,
   selectedRcId,
   onSelectRc,
   rowDraft,
@@ -4527,6 +4628,7 @@ function AutoRedlineReviewPanel({
   plan: EngineeringPlan;
   pageIndex: number;
   routeCandidatesState: RouteCandidatesState;
+  bindingsState: BindingsState;
   selectedRcId: string | null;
   onSelectRc: (id: string | null) => void;
   rowDraft: ReviewRowDraft;
@@ -4542,6 +4644,85 @@ function AutoRedlineReviewPanel({
   const previewReady = previewState.kind === "ok";
   const canPreview =
     selectedRcId !== null && rows.length > 0 && !previewing;
+
+  // E4.1 — enrich the raw E2b candidate list with E2c-derived
+  // anchor_count + bound_stations + readiness label, then apply the
+  // operator-ranked sort (READY first, then length desc, then prefer
+  // horizontal/mixed orientation over vertical so tiny tick/leader
+  // candidates fall to the bottom).
+  const enrichedCandidates: EnrichedRouteCandidate[] = useMemo(() => {
+    if (routeCandidatesState.kind !== "ok") return [];
+    const anchorsByRc: Record<string, string[]> = {};
+    if (bindingsState.kind === "ok") {
+      for (const a of bindingsState.anchors) {
+        const rcId = String(a.route_candidate_id || "").trim();
+        if (!rcId) continue;
+        const label = String(a.matched_text || "").trim();
+        if (!label) continue;
+        if (!anchorsByRc[rcId]) anchorsByRc[rcId] = [];
+        anchorsByRc[rcId].push(label);
+      }
+    }
+    const orientationRank = (o: string | null | undefined): number => {
+      const v = (o || "").toLowerCase();
+      if (v === "horizontal") return 0;
+      if (v === "mixed") return 1;
+      if (v === "vertical") return 2;
+      return 3;
+    };
+    const list: EnrichedRouteCandidate[] = routeCandidatesState.candidates.map((c) => {
+      const labels = anchorsByRc[c.candidate_id] || [];
+      const unique = Array.from(new Set(labels)).sort();
+      const cnt = unique.length;
+      const readiness: "ready" | "weak" | "not_ready" =
+        cnt >= 2 ? "ready" : cnt === 1 ? "weak" : "not_ready";
+      return {
+        ...c,
+        anchor_count: cnt,
+        bound_stations: unique,
+        readiness,
+      };
+    });
+    list.sort((a, b) => {
+      if (a.anchor_count !== b.anchor_count) return b.anchor_count - a.anchor_count;
+      const la = Number(a.total_length_pt) || 0;
+      const lb = Number(b.total_length_pt) || 0;
+      if (la !== lb) return lb - la;
+      return orientationRank(a.dominant_orientation) - orientationRank(b.dominant_orientation);
+    });
+    return list;
+  }, [routeCandidatesState, bindingsState]);
+
+  const readyCount = enrichedCandidates.filter((c) => c.readiness === "ready").length;
+  const weakCount  = enrichedCandidates.filter((c) => c.readiness === "weak").length;
+  const bindingsLoading = bindingsState.kind === "loading";
+  const bindingsUnavailable =
+    bindingsState.kind === "disabled" || bindingsState.kind === "error";
+
+  const readinessBadge = (r: "ready" | "weak" | "not_ready") => {
+    const map = {
+      ready:     { label: "READY",     bg: "#10b981", fg: "#ffffff" },
+      weak:      { label: "WEAK",      bg: "#f59e0b", fg: "#ffffff" },
+      not_ready: { label: "NOT READY", bg: "#94a3b8", fg: "#ffffff" },
+    } as const;
+    const v = map[r];
+    return (
+      <span
+        style={{
+          display: "inline-block",
+          padding: "1px 6px",
+          borderRadius: 3,
+          background: v.bg,
+          color: v.fg,
+          fontSize: 10,
+          fontWeight: 700,
+          letterSpacing: "0.04em",
+        }}
+      >
+        {v.label}
+      </span>
+    );
+  };
 
   return (
     <div
@@ -4582,18 +4763,52 @@ function AutoRedlineReviewPanel({
           </span>
         </div>
 
-        {/* Route candidates */}
+        {/* Route candidates — E4.1 enriched picker */}
         <div style={{ marginBottom: 10 }}>
           <div
             style={{
-              fontSize: 11,
-              fontWeight: 600,
-              color: "var(--tl-text)",
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              flexWrap: "wrap",
               marginBottom: 4,
-              letterSpacing: "0.04em",
             }}
           >
-            ROUTE CANDIDATES (bucket=proposed_red)
+            <span
+              style={{
+                fontSize: 11,
+                fontWeight: 600,
+                color: "var(--tl-text)",
+                letterSpacing: "0.04em",
+              }}
+            >
+              ROUTE CANDIDATES (bucket=proposed_red)
+            </span>
+            {routeCandidatesState.kind === "ok" && (
+              <span style={{ fontSize: 11, color: "var(--tl-text-muted)" }}>
+                · {enrichedCandidates.length} total
+                {!bindingsLoading && (
+                  <>
+                    {" · "}
+                    <span style={{ color: readyCount > 0 ? "#047857" : "var(--tl-text-muted)" }}>
+                      {readyCount} READY
+                    </span>
+                    {" · "}
+                    <span style={{ color: weakCount > 0 ? "#92400e" : "var(--tl-text-muted)" }}>
+                      {weakCount} WEAK
+                    </span>
+                  </>
+                )}
+                {bindingsLoading && (
+                  <span style={{ color: "var(--tl-text-faint)" }}>{" · loading bindings…"}</span>
+                )}
+                {bindingsUnavailable && (
+                  <span style={{ color: "#92400e" }}>
+                    {" · bindings unavailable — readiness disabled"}
+                  </span>
+                )}
+              </span>
+            )}
           </div>
           {routeCandidatesState.kind === "loading" && (
             <div style={{ fontSize: 12, color: "var(--tl-text-muted)" }}>
@@ -4615,10 +4830,27 @@ function AutoRedlineReviewPanel({
               {routeCandidatesState.message}
             </div>
           )}
+          {routeCandidatesState.kind === "ok" && readyCount === 0 && !bindingsLoading && (
+            <div
+              style={{
+                fontSize: 11,
+                color: "#92400e",
+                background: "rgba(245, 158, 11, 0.10)",
+                border: "1px solid rgba(245, 158, 11, 0.40)",
+                borderRadius: 3,
+                padding: "4px 8px",
+                marginBottom: 4,
+              }}
+            >
+              No READY candidates on this page (each candidate needs ≥2 bound station anchors).
+              Auto-redline will fall back to bbox_fallback on any selection. Try a neighboring page
+              or expect low-confidence preview output here.
+            </div>
+          )}
           {routeCandidatesState.kind === "ok" && (
             <div
               style={{
-                maxHeight: 140,
+                maxHeight: 200,
                 overflowY: "auto",
                 border: "1px solid var(--tl-border)",
                 borderRadius: 3,
@@ -4642,24 +4874,36 @@ function AutoRedlineReviewPanel({
                   }}
                 >
                   <tr>
-                    <th style={{ textAlign: "left", padding: "4px 8px" }}>Pick</th>
-                    <th style={{ textAlign: "left", padding: "4px 8px" }}>candidate_id</th>
+                    <th style={{ textAlign: "left",  padding: "4px 8px" }}>Pick</th>
+                    <th style={{ textAlign: "left",  padding: "4px 8px" }}>Status</th>
+                    <th style={{ textAlign: "left",  padding: "4px 8px" }}>candidate_id</th>
+                    <th style={{ textAlign: "right", padding: "4px 8px" }}>anchors</th>
+                    <th style={{ textAlign: "left",  padding: "4px 8px" }}>bound stations</th>
                     <th style={{ textAlign: "right", padding: "4px 8px" }}>length (pt)</th>
                     <th style={{ textAlign: "right", padding: "4px 8px" }}>paths</th>
-                    <th style={{ textAlign: "right", padding: "4px 8px" }}>segments</th>
-                    <th style={{ textAlign: "left", padding: "4px 8px" }}>kind</th>
+                    <th style={{ textAlign: "left",  padding: "4px 8px" }}>orient</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {routeCandidatesState.candidates.map((c) => {
+                  {enrichedCandidates.map((c) => {
                     const checked = selectedRcId === c.candidate_id;
+                    const rowBg = checked
+                      ? "rgba(37, 99, 235, 0.10)"
+                      : c.readiness === "ready"
+                      ? "rgba(16, 185, 129, 0.04)"
+                      : c.readiness === "weak"
+                      ? "rgba(245, 158, 11, 0.04)"
+                      : "transparent";
+                    const labelDisplay =
+                      c.bound_stations.length === 0
+                        ? "—"
+                        : c.bound_stations.length <= 3
+                        ? c.bound_stations.join(", ")
+                        : `${c.bound_stations.slice(0, 3).join(", ")} (+${c.bound_stations.length - 3})`;
                     return (
                       <tr
                         key={c.candidate_id}
-                        style={{
-                          background: checked ? "rgba(37, 99, 235, 0.08)" : "transparent",
-                          cursor: "pointer",
-                        }}
+                        style={{ background: rowBg, cursor: "pointer" }}
                         onClick={() => onSelectRc(c.candidate_id)}
                       >
                         <td style={{ padding: "4px 8px" }}>
@@ -4671,8 +4915,47 @@ function AutoRedlineReviewPanel({
                             aria-label={`Select ${c.candidate_id}`}
                           />
                         </td>
+                        <td style={{ padding: "4px 8px" }}>
+                          {bindingsLoading ? (
+                            <span style={{ fontSize: 10, color: "var(--tl-text-faint)" }}>
+                              …
+                            </span>
+                          ) : bindingsUnavailable ? (
+                            <span style={{ fontSize: 10, color: "var(--tl-text-faint)" }}>
+                              n/a
+                            </span>
+                          ) : (
+                            readinessBadge(c.readiness)
+                          )}
+                        </td>
                         <td style={{ padding: "4px 8px", fontFamily: "ui-monospace, monospace" }}>
                           {c.candidate_id}
+                        </td>
+                        <td
+                          style={{
+                            padding: "4px 8px",
+                            textAlign: "right",
+                            fontWeight: c.anchor_count >= 2 ? 700 : 400,
+                            color:
+                              c.anchor_count >= 2
+                                ? "#047857"
+                                : c.anchor_count === 1
+                                ? "#92400e"
+                                : "var(--tl-text-muted)",
+                          }}
+                        >
+                          {bindingsLoading || bindingsUnavailable ? "—" : c.anchor_count}
+                        </td>
+                        <td
+                          style={{
+                            padding: "4px 8px",
+                            fontFamily: "ui-monospace, monospace",
+                            color: c.bound_stations.length === 0
+                              ? "var(--tl-text-muted)"
+                              : "var(--tl-text)",
+                          }}
+                        >
+                          {labelDisplay}
                         </td>
                         <td style={{ padding: "4px 8px", textAlign: "right" }}>
                           {Number(c.total_length_pt).toFixed(1)}
@@ -4680,11 +4963,8 @@ function AutoRedlineReviewPanel({
                         <td style={{ padding: "4px 8px", textAlign: "right" }}>
                           {c.path_count ?? "—"}
                         </td>
-                        <td style={{ padding: "4px 8px", textAlign: "right" }}>
-                          {c.segment_count ?? "—"}
-                        </td>
                         <td style={{ padding: "4px 8px", color: "var(--tl-text-muted)" }}>
-                          {c.confidence_kind || c.dominant_orientation || "—"}
+                          {c.dominant_orientation || c.confidence_kind || "—"}
                         </td>
                       </tr>
                     );
