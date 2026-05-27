@@ -70,11 +70,32 @@ from typing import Any, Dict, Final, List, Optional, Tuple
 SCHEMA_VERSION: Final[str] = "pdf-extraction-bindings-1"
 ROUTES_SOURCE_SCHEMA: Final[str] = "pdf-extraction-routes-1"
 RAW_SOURCE_SCHEMA: Final[str] = "pdf-extraction-raw-1"
-PARAMETERS_VERSION: Final[str] = "v1"
+PARAMETERS_VERSION: Final[str] = "v2"
 
 # Distance thresholds (PDF points; 1 pt = 1/72 inch).
+# General defaults — used by matchline + construction-keyword bindings.
+# These stay conservative because such labels sit directly on their
+# feature (handhole, bore pit, conduit annotation).
 _DEFAULT_MAX_BIND_DISTANCE_PT: Final[float] = 75.0   # ~1 inch
 _DEFAULT_BROAD_PHASE_DISTANCE_PT: Final[float] = 150.0  # ~2 inches
+
+# Station-specific defaults (E2c.1).  Real ODOT/Kelly plan sheets place
+# station tick labels in the alignment whitespace, 80-150 pt off the
+# red route polyline (connected by a thin black tick mark, which lives
+# in the base_black bucket and is therefore not part of the
+# proposed_red route candidate).  Empirically derived from
+# ODOT_TULSA_31 pages 8/10/12: page-10 unbound station distances were
+# 88.5 / 91.2 / 143.2 / 148.7 / 149.6 pt.  200 pt covers all observed
+# cases plus a ~25 pt buffer; 250 pt broad-phase admits station labels
+# that sit one full alignment-row off the route.
+_DEFAULT_STATION_MAX_BIND_DISTANCE_PT: Final[float] = 200.0
+_DEFAULT_STATION_BROAD_PHASE_DISTANCE_PT: Final[float] = 250.0
+
+# Reasons recorded on unbound records to explain why a regex/keyword hit
+# did not bind to a route candidate.
+_UNBOUND_REASON_NO_CANDIDATE: Final[str] = "no_candidate"
+_UNBOUND_REASON_BEYOND_BROAD: Final[str] = "beyond_broad_phase"
+_UNBOUND_REASON_BEYOND_BIND:  Final[str] = "beyond_bind_distance"
 
 # Per-list safety caps.
 _MAX_STATION_ANCHORS: Final[int] = 5_000
@@ -279,6 +300,8 @@ def bind_labels_to_routes(
     classified_record: Optional[Dict[str, Any]] = None,
     max_bind_distance_pt: float = _DEFAULT_MAX_BIND_DISTANCE_PT,
     broad_phase_distance_pt: float = _DEFAULT_BROAD_PHASE_DISTANCE_PT,
+    station_max_bind_distance_pt: float = _DEFAULT_STATION_MAX_BIND_DISTANCE_PT,
+    station_broad_phase_distance_pt: float = _DEFAULT_STATION_BROAD_PHASE_DISTANCE_PT,
 ) -> Dict[str, Any]:
     """Bind text labels to route candidates by perpendicular distance.
 
@@ -290,9 +313,18 @@ def bind_labels_to_routes(
         classified_record: optional E2a record.  Reserved for future
             label-color-bucket cross-references; ignored in v1.
         max_bind_distance_pt: max anchor-to-candidate distance to
-            accept a binding.  Default 75 pt (~1 inch).
+            accept a binding for matchline + construction labels.
+            Default 75 pt (~1 inch).
         broad_phase_distance_pt: anchor-to-candidate-bbox cutoff for
-            broad-phase culling.  Default 150 pt.
+            broad-phase culling of matchline + construction labels.
+            Default 150 pt.
+        station_max_bind_distance_pt: same as ``max_bind_distance_pt``
+            but applied only to station-regex hits.  Default 200 pt;
+            real ODOT/Kelly plan sheets place station tick labels in
+            the alignment whitespace.
+        station_broad_phase_distance_pt: same as
+            ``broad_phase_distance_pt`` but applied only to station-
+            regex hits.  Default 250 pt.
 
     Returns:
         Dict matching schema ``pdf-extraction-bindings-1``.
@@ -324,8 +356,16 @@ def bind_labels_to_routes(
         max_bind_distance_pt = _DEFAULT_MAX_BIND_DISTANCE_PT
     if not isinstance(broad_phase_distance_pt, (int, float)) or broad_phase_distance_pt < 0:
         broad_phase_distance_pt = _DEFAULT_BROAD_PHASE_DISTANCE_PT
+    if (not isinstance(station_max_bind_distance_pt, (int, float))
+            or station_max_bind_distance_pt < 0):
+        station_max_bind_distance_pt = _DEFAULT_STATION_MAX_BIND_DISTANCE_PT
+    if (not isinstance(station_broad_phase_distance_pt, (int, float))
+            or station_broad_phase_distance_pt < 0):
+        station_broad_phase_distance_pt = _DEFAULT_STATION_BROAD_PHASE_DISTANCE_PT
     max_bind = float(max_bind_distance_pt)
     broad = float(broad_phase_distance_pt)
+    sta_max_bind = float(station_max_bind_distance_pt)
+    sta_broad = float(station_broad_phase_distance_pt)
 
     # Build raw items lookup table.
     raw_items_by_hash: Dict[str, List[Any]] = {}
@@ -351,15 +391,39 @@ def bind_labels_to_routes(
             "raw":          c,
         })
 
-    def _bind_anchor(anchor: Tuple[float, float]) -> Tuple[Optional[str], Optional[float]]:
-        """Return (best_candidate_id, distance_pt) or (None, None) if no
-        candidate is within max_bind_distance_pt.  Broad-phase culls
-        candidates whose bbox is beyond broad_phase_distance_pt."""
+    def _bind_anchor(
+        anchor: Tuple[float, float],
+        broad_thresh: float,
+        max_bind_thresh: float,
+    ) -> Tuple[
+        Optional[str], Optional[float],
+        Optional[str], Optional[float], str,
+    ]:
+        """Bind an anchor to the closest route candidate.
+
+        Returns:
+            (bound_id, bound_distance,
+             closest_id, closest_distance, reason)
+
+        ``bound_id`` is non-None iff the closest candidate is within
+        ``max_bind_thresh``.  ``closest_id`` + ``closest_distance``
+        report the closest candidate that passed broad-phase even if
+        it lies beyond the bind threshold (useful for operator
+        diagnostics on unbound labels).
+
+        ``reason`` is one of:
+            * "bound"               — closest candidate within max_bind
+            * "no_candidate"        — zero candidates exist
+            * "beyond_broad_phase"  — every candidate beyond broad_thresh
+            * "beyond_bind_distance"— passed broad_phase but >max_bind
+        """
+        if not candidates:
+            return None, None, None, None, _UNBOUND_REASON_NO_CANDIDATE
         best_id: Optional[str] = None
         best_d: Optional[float] = None
         for c in candidates:
             bbox_d = _point_to_bbox_distance(anchor, c["bbox"])
-            if bbox_d > broad:
+            if bbox_d > broad_thresh:
                 continue
             d = _point_to_candidate_distance(anchor, c["raw"], raw_items_by_hash)
             if d is None:
@@ -368,9 +432,11 @@ def bind_labels_to_routes(
             if best_d is None or d < best_d:
                 best_d = d
                 best_id = c["candidate_id"]
-        if best_d is None or best_d > max_bind:
-            return None, best_d
-        return best_id, best_d
+        if best_d is None:
+            return None, None, None, None, _UNBOUND_REASON_BEYOND_BROAD
+        if best_d > max_bind_thresh:
+            return None, best_d, best_id, best_d, _UNBOUND_REASON_BEYOND_BIND
+        return best_id, best_d, best_id, best_d, "bound"
 
     # ──── Detect + bind per text block ──────────────────────────────────
     station_anchors: List[Dict[str, Any]] = []
@@ -384,9 +450,13 @@ def bind_labels_to_routes(
         any_match = False
 
         # Station matches (every numeric station token in the text).
+        # Uses station-specific thresholds (relaxed by default — see
+        # module-level constants for derivation).
         for m in _STATION_RE.finditer(text):
             station_str = m.group(1)
-            cand_id, distance = _bind_anchor(anchor)
+            cand_id, distance, closest_id, closest_d, reason = _bind_anchor(
+                anchor, sta_broad, sta_max_bind,
+            )
             record = {
                 "raw_text":            text,
                 "matched_text":        station_str,
@@ -405,17 +475,30 @@ def bind_labels_to_routes(
                 station_anchors.append(record)
                 any_match = True
             else:
-                # Still useful — surface in unbound list with kind hint.
-                unbound_text.append({**record, "rule_id": "station_regex_v1"})
+                # Enrich with closest-candidate diagnostics so the
+                # operator can see WHY the label did not bind.
+                unbound_text.append({
+                    **record,
+                    "rule_id": "station_regex_v1",
+                    "closest_candidate_id":           closest_id,
+                    "closest_candidate_distance_pt": (
+                        _r(closest_d) if closest_d is not None else None
+                    ),
+                    "reason":                         reason,
+                })
                 any_match = True
 
-        # Matchline matches.
+        # Matchline matches.  Uses the conservative general thresholds
+        # because matchline labels sit directly on or beside the actual
+        # match line — not in alignment whitespace.
         if _MATCHLINE_RE.search(text):
             sheet_ref_m = _MATCHLINE_SHEET_REF_RE.search(text)
             sheet_ref = int(sheet_ref_m.group(1)) if sheet_ref_m else None
             station_in_matchline_m = _STATION_RE.search(text)
             station_in_matchline = station_in_matchline_m.group(1) if station_in_matchline_m else None
-            cand_id, distance = _bind_anchor(anchor)
+            cand_id, distance, closest_id, closest_d, reason = _bind_anchor(
+                anchor, broad, max_bind,
+            )
             record = {
                 "raw_text":            text,
                 "text_bbox":           [_r(bbox[0]), _r(bbox[1]), _r(bbox[2]), _r(bbox[3])],
@@ -434,15 +517,27 @@ def bind_labels_to_routes(
             if cand_id:
                 matchline_records.append(record)
             else:
-                unbound_text.append({**record, "rule_id": "matchline_regex_v1"})
+                unbound_text.append({
+                    **record,
+                    "rule_id": "matchline_regex_v1",
+                    "closest_candidate_id":           closest_id,
+                    "closest_candidate_distance_pt": (
+                        _r(closest_d) if closest_d is not None else None
+                    ),
+                    "reason":                         reason,
+                })
             any_match = True
 
         # Construction keyword matches (one record per matched keyword
         # in the text block).  Deterministic iteration order from
-        # _CONSTRUCTION_KEYWORDS tuple.
+        # _CONSTRUCTION_KEYWORDS tuple.  Uses conservative general
+        # thresholds — these labels sit on their feature, not in
+        # whitespace.
         for kw in _CONSTRUCTION_KEYWORDS:
             if _CONSTRUCTION_RES[kw].search(text):
-                cand_id, distance = _bind_anchor(anchor)
+                cand_id, distance, closest_id, closest_d, reason = _bind_anchor(
+                    anchor, broad, max_bind,
+                )
                 record = {
                     "raw_text":            text,
                     "keyword":             kw,
@@ -459,7 +554,15 @@ def bind_labels_to_routes(
                 if cand_id:
                     construction_labels.append(record)
                 else:
-                    unbound_text.append({**record, "rule_id": f"construction_keyword_v1:{kw}"})
+                    unbound_text.append({
+                        **record,
+                        "rule_id": f"construction_keyword_v1:{kw}",
+                        "closest_candidate_id":           closest_id,
+                        "closest_candidate_distance_pt": (
+                            _r(closest_d) if closest_d is not None else None
+                        ),
+                        "reason":                         reason,
+                    })
                 any_match = True
 
         # Note: blocks with no regex/keyword match are silently ignored
@@ -509,10 +612,12 @@ def bind_labels_to_routes(
         "page_rotation":                 int(raw_record.get("page_rotation") or 0),
         "bucket":                        routes_record.get("bucket"),
         "parameters": {
-            "version":                   PARAMETERS_VERSION,
-            "max_bind_distance_pt":      _r(max_bind),
-            "broad_phase_distance_pt":   _r(broad),
-            "construction_keywords":     list(_CONSTRUCTION_KEYWORDS),
+            "version":                            PARAMETERS_VERSION,
+            "max_bind_distance_pt":               _r(max_bind),
+            "broad_phase_distance_pt":            _r(broad),
+            "station_max_bind_distance_pt":       _r(sta_max_bind),
+            "station_broad_phase_distance_pt":    _r(sta_broad),
+            "construction_keywords":              list(_CONSTRUCTION_KEYWORDS),
         },
         "station_anchors":     station_anchors,
         "matchline_records":   matchline_records,

@@ -635,5 +635,217 @@ class T15_OwnershipDelegation(_BaseEndpointTest):
             self.assertEqual(args[0], self.SESSION_ID)
 
 
+# ===========================================================================
+# E2c.1 — STATION-SPECIFIC THRESHOLDS + UNBOUND DIAGNOSTICS
+# ===========================================================================
+
+class T16_StationBindsBeyondGeneralThreshold(unittest.TestCase):
+    """A station label 100pt off a red route MUST bind under E2c.1
+    defaults (station_max_bind_distance_pt=200) even though the general
+    matchline/construction threshold (75pt) would reject it."""
+    def test_station_bound_at_100pt(self):
+        raw = _build_raw(
+            text_blocks=[
+                # Station label center is at y=205 — 100pt below route y=100.
+                _text_block("STA 11+60", bbox=(140, 200, 160, 210)),
+            ],
+            vector_paths=[
+                _raw_path("h_route", stroke="#ff0000",
+                          bbox=(50, 99, 250, 101),
+                          items=[["l", [50.0, 100.0], [250.0, 100.0]]]),
+            ],
+        )
+        out = PEB.bind_labels_to_routes(raw, _routes_for(raw))
+        self.assertEqual(len(out["station_anchors"]), 1,
+                         "Station ~100pt off the route should now bind.")
+        sa = out["station_anchors"][0]
+        self.assertEqual(sa["matched_text"], "11+60")
+        # Distance is ~105pt (50pt center→route y + 50pt offset rounded).
+        # The key invariant: it's > 75 but <= 200.
+        self.assertGreater(sa["distance_pt"], 75.0)
+        self.assertLessEqual(sa["distance_pt"], 200.0)
+
+
+class T17_ConstructionStillConservative(unittest.TestCase):
+    """A BORE construction keyword 100pt off the route MUST stay unbound
+    — the relaxed threshold is for stations only."""
+    def test_construction_at_100pt_unbound(self):
+        raw = _build_raw(
+            text_blocks=[
+                _text_block("BORE", bbox=(140, 200, 160, 210)),
+            ],
+            vector_paths=[
+                _raw_path("h_route", stroke="#ff0000",
+                          bbox=(50, 99, 250, 101),
+                          items=[["l", [50.0, 100.0], [250.0, 100.0]]]),
+            ],
+        )
+        out = PEB.bind_labels_to_routes(raw, _routes_for(raw))
+        self.assertEqual(len(out["construction_labels"]), 0)
+        # Construction keyword went to unbound_text under the general
+        # threshold (75 pt).
+        ck_unbound = [u for u in out["unbound_text"]
+                      if str(u.get("rule_id") or "").startswith(
+                          "construction_keyword_v1:BORE")]
+        self.assertEqual(len(ck_unbound), 1)
+
+
+class T18_UnboundStationHasClosestCandidateAndReason(unittest.TestCase):
+    """E2c.1 enriches unbound records with closest_candidate_id,
+    closest_candidate_distance_pt, and a reason."""
+    def test_beyond_bind_distance_reason(self):
+        # Station 300pt away → within station broad_phase (250pt? no,
+        # broad is 250 so 300 is just beyond).  Place at 220 so we're
+        # past the bind threshold (200) but inside broad_phase (250).
+        raw = _build_raw(
+            text_blocks=[
+                _text_block("STA 11+60", bbox=(140, 318, 160, 322)),
+            ],
+            vector_paths=[
+                _raw_path("h_route", stroke="#ff0000",
+                          bbox=(50, 99, 250, 101),
+                          items=[["l", [50.0, 100.0], [250.0, 100.0]]]),
+            ],
+        )
+        out = PEB.bind_labels_to_routes(raw, _routes_for(raw))
+        # Should be unbound (220pt > 200pt station_max_bind).
+        self.assertEqual(len(out["station_anchors"]), 0)
+        sta_un = [u for u in out["unbound_text"]
+                  if u.get("rule_id") == "station_regex_v1"]
+        self.assertEqual(len(sta_un), 1)
+        u = sta_un[0]
+        # Enriched diagnostic fields present.
+        self.assertIn("closest_candidate_id", u)
+        self.assertIn("closest_candidate_distance_pt", u)
+        self.assertIn("reason", u)
+        # Closest candidate identified despite being beyond bind threshold.
+        self.assertIsNotNone(u["closest_candidate_id"])
+        self.assertIsNotNone(u["closest_candidate_distance_pt"])
+        # Reason: passed broad_phase (250pt) but failed bind (200pt).
+        self.assertEqual(u["reason"], "beyond_bind_distance")
+        self.assertGreater(u["closest_candidate_distance_pt"], 200.0)
+
+    def test_beyond_broad_phase_reason(self):
+        # Station 400pt away — beyond even station broad_phase (250pt).
+        raw = _build_raw(
+            text_blocks=[
+                _text_block("STA 11+60", bbox=(140, 498, 160, 502)),
+            ],
+            vector_paths=[
+                _raw_path("h_route", stroke="#ff0000",
+                          bbox=(50, 99, 250, 101),
+                          items=[["l", [50.0, 100.0], [250.0, 100.0]]]),
+            ],
+        )
+        out = PEB.bind_labels_to_routes(raw, _routes_for(raw))
+        sta_un = [u for u in out["unbound_text"]
+                  if u.get("rule_id") == "station_regex_v1"]
+        self.assertEqual(len(sta_un), 1)
+        u = sta_un[0]
+        self.assertEqual(u["reason"], "beyond_broad_phase")
+        # Closest-candidate fields are None because no candidate passed
+        # broad-phase.
+        self.assertIsNone(u["closest_candidate_id"])
+        self.assertIsNone(u["closest_candidate_distance_pt"])
+
+    def test_no_candidate_reason(self):
+        # No route candidates → reason = "no_candidate".
+        raw = _build_raw(
+            text_blocks=[
+                _text_block("STA 11+60", bbox=(140, 100, 160, 112)),
+            ],
+        )
+        out = PEB.bind_labels_to_routes(raw, _routes_for(raw))
+        sta_un = [u for u in out["unbound_text"]
+                  if u.get("rule_id") == "station_regex_v1"]
+        self.assertEqual(len(sta_un), 1)
+        self.assertEqual(sta_un[0]["reason"], "no_candidate")
+        self.assertIsNone(sta_un[0]["closest_candidate_id"])
+        self.assertIsNone(sta_un[0]["closest_candidate_distance_pt"])
+
+
+class T19_DeterministicOrderingWithEnrichment(unittest.TestCase):
+    """Enriched unbound records preserve byte-identical determinism
+    across repeated runs."""
+    def test_byte_identical_twice(self):
+        raw = _build_raw(
+            text_blocks=[
+                _text_block("STA 11+60", bbox=(140, 318, 160, 322), block_no=0),
+                _text_block("STA 14+20", bbox=(140, 498, 160, 502), block_no=1),
+                _text_block("BORE",      bbox=(140, 105, 160, 117), block_no=2),
+            ],
+            vector_paths=[
+                _raw_path("h_route", stroke="#ff0000",
+                          bbox=(50, 99, 250, 101),
+                          items=[["l", [50.0, 100.0], [250.0, 100.0]]]),
+            ],
+        )
+        routes = _routes_for(raw)
+        o1 = PEB.bind_labels_to_routes(raw, routes)
+        o2 = PEB.bind_labels_to_routes(raw, routes)
+        self.assertEqual(json.dumps(o1, sort_keys=True),
+                         json.dumps(o2, sort_keys=True))
+
+
+class T20_CustomStationThresholdsParam(unittest.TestCase):
+    """Caller-provided station threshold overrides are honored."""
+    def test_tighter_station_threshold_rejects(self):
+        raw = _build_raw(
+            text_blocks=[
+                _text_block("STA 11+60", bbox=(140, 200, 160, 210)),
+            ],
+            vector_paths=[
+                _raw_path("h_route", stroke="#ff0000",
+                          bbox=(50, 99, 250, 101),
+                          items=[["l", [50.0, 100.0], [250.0, 100.0]]]),
+            ],
+        )
+        # Lock back down to 50pt — should NOT bind a 100pt-distant label.
+        out = PEB.bind_labels_to_routes(
+            raw, _routes_for(raw),
+            station_max_bind_distance_pt=50.0,
+        )
+        self.assertEqual(len(out["station_anchors"]), 0)
+
+    def test_looser_general_threshold_via_station_param(self):
+        # Verify the new station params are read independently of the
+        # general max_bind/broad_phase params.
+        raw = _build_raw(
+            text_blocks=[
+                _text_block("STA 11+60", bbox=(140, 200, 160, 210)),
+            ],
+            vector_paths=[
+                _raw_path("h_route", stroke="#ff0000",
+                          bbox=(50, 99, 250, 101),
+                          items=[["l", [50.0, 100.0], [250.0, 100.0]]]),
+            ],
+        )
+        # Keep general 75/150 but raise station to 300 → binds.
+        out = PEB.bind_labels_to_routes(
+            raw, _routes_for(raw),
+            max_bind_distance_pt=75.0,
+            broad_phase_distance_pt=150.0,
+            station_max_bind_distance_pt=300.0,
+            station_broad_phase_distance_pt=350.0,
+        )
+        self.assertEqual(len(out["station_anchors"]), 1)
+
+
+class T21_ParametersEnvelopeCarriesNewKeys(unittest.TestCase):
+    """The parameters envelope must surface the two new station-specific
+    threshold values so downstream consumers can audit them."""
+    def test_envelope_has_station_params(self):
+        raw = _build_raw()
+        out = PEB.bind_labels_to_routes(raw, _routes_for(raw))
+        params = out["parameters"]
+        self.assertIn("station_max_bind_distance_pt", params)
+        self.assertIn("station_broad_phase_distance_pt", params)
+        self.assertEqual(params["station_max_bind_distance_pt"], 200.0)
+        self.assertEqual(params["station_broad_phase_distance_pt"], 250.0)
+        self.assertEqual(params["max_bind_distance_pt"], 75.0)
+        self.assertEqual(params["broad_phase_distance_pt"], 150.0)
+        self.assertEqual(params["version"], "v2")
+
+
 if __name__ == "__main__":
     unittest.main()
