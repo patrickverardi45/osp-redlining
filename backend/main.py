@@ -9616,6 +9616,21 @@ def _trueline_pdf_extraction_bindings_enabled() -> bool:
     return raw in {"1", "true", "yes", "on"}
 
 
+# ---------------------------------------------------------------------------
+# PDF Extraction E3 feature flag.
+# Flag: TRUELINE_PDF_AUTO_REDLINE_ENABLED. Default off.
+# Truthy values (case-insensitive): "1", "true", "yes", "on".
+# Independent kill switch for the auto-redline endpoint.  Gated in
+# addition to the five E1/E2a/E2b/E2c flags.  A bug in auto-redline
+# segment generation cannot disable upstream extraction layers.
+# Read per request — env flips do not require process restart.
+# ---------------------------------------------------------------------------
+
+def _trueline_pdf_auto_redline_enabled() -> bool:
+    raw = os.environ.get("TRUELINE_PDF_AUTO_REDLINE_ENABLED", "").strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
 def _resolve_engineering_plan_pdf_paths(session_id: str) -> List[Path]:
     """Reconstruct on-disk PDF paths for a session's engineering plans.
     Uses only public_record fields (stored_filename + file_type) and the
@@ -19909,6 +19924,430 @@ async def get_engineering_plan_extraction_bindings(
         plan_id=target_plan_id,
         cache="miss",
         **bindings,
+    )
+
+
+# ── PDF Extraction E3: auto-redline segment generation ───────────────────────
+#
+# POST endpoint.  Consumes the E1 raw + E2b routes + E2c bindings
+# records (computed-then-cached on demand) plus an operator request
+# payload carrying a confirmed route_candidate_id and bore-row station
+# ranges.  Returns auto_extracted segment SPECS.
+#
+# v1 PERSISTENCE POLICY: ALWAYS DRY-RUN.  The payload accepts a
+# `dry_run` field for forward compatibility, but v1 never mutates the
+# segments store.  This protects existing manual + bore-log row flows
+# from any auto-extraction bug; real persistence ships in E3.1.
+#
+# Gated by SIX flags (any unset → 404):
+#   - TRUELINE_PLAN_OVERLAY_IMAGE              (parent)
+#   - TRUELINE_PDF_EXTRACTION_RAW_ENABLED      (E1)
+#   - TRUELINE_PDF_EXTRACTION_CLASSIFY_ENABLED (E2a)
+#   - TRUELINE_PDF_EXTRACTION_ROUTES_ENABLED   (E2b)
+#   - TRUELINE_PDF_EXTRACTION_BINDINGS_ENABLED (E2c)
+#   - TRUELINE_PDF_AUTO_REDLINE_ENABLED        (E3; this endpoint)
+#
+# Caches: reuses E1 raw + E2a classified + E2b routes + E2c bindings
+# caches transparently.  No new disk cache (auto-redline output is
+# per-request and depends on operator payload).
+#
+# Auth + tenant scoping: same pattern as the E1 / E2a / E2b / E2c
+# endpoints.  No closeout-lock bypass.  Since v1 never persists,
+# closeout-lock state is irrelevant; preserved as documentation
+# anchor for the E3.1 ship that enables real writes.
+
+@protected_router.post("/api/engineering-plans/{plan_id}/extraction/auto-redline")
+async def post_engineering_plan_extraction_auto_redline(
+    plan_id: str,
+    payload: Dict[str, Any] = Body(...),
+    request: Request = None,
+):
+    # Six-gate flag check.
+    if not _trueline_plan_overlay_image_enabled():
+        return _err("Engineering plan page extraction is disabled.", status_code=404)
+    if not _trueline_pdf_extraction_raw_enabled():
+        return _err("PDF extraction (raw) is disabled.", status_code=404)
+    if not _trueline_pdf_extraction_classify_enabled():
+        return _err("PDF extraction (classified) is disabled.", status_code=404)
+    if not _trueline_pdf_extraction_routes_enabled():
+        return _err("PDF extraction (route candidates) is disabled.", status_code=404)
+    if not _trueline_pdf_extraction_bindings_enabled():
+        return _err("PDF extraction (bindings) is disabled.", status_code=404)
+    if not _trueline_pdf_auto_redline_enabled():
+        return _err("PDF auto-redline is disabled.", status_code=404)
+
+    if not isinstance(payload, dict):
+        return _err("Request body must be a JSON object.", status_code=400)
+
+    session_id = payload.get("session_id")
+    resolved_session_id = _resolve_session_id(session_id)
+    _require_tenant_owns_session(resolved_session_id, request)
+
+    target_plan_id = str(plan_id or "").strip()
+    if not target_plan_id:
+        return _err(
+            "plan_id is required.",
+            status_code=400,
+            session_id=resolved_session_id,
+        )
+
+    page_index = payload.get("page_index")
+    if page_index is None:
+        return _err(
+            "page_index is required in the request body.",
+            status_code=400,
+            session_id=resolved_session_id,
+        )
+    try:
+        page_index_int = int(page_index)
+    except (TypeError, ValueError):
+        return _err(
+            f"page_index must be an integer, got {page_index!r}.",
+            status_code=400,
+            session_id=resolved_session_id,
+        )
+    if page_index_int < 0:
+        return _err(
+            "page_index must be >= 0.",
+            status_code=400,
+            session_id=resolved_session_id,
+        )
+
+    allowed_buckets = {
+        "proposed_red", "existing_purple", "existing_orange",
+        "existing_blue", "row_green", "base_black",
+        "template_gray", "white_mask", "other",
+    }
+    bucket_name = str(payload.get("bucket") or "proposed_red").strip()
+    if bucket_name not in allowed_buckets:
+        return _err(
+            f"bucket must be one of {sorted(allowed_buckets)}; got "
+            f"{payload.get('bucket')!r}.",
+            status_code=400,
+            session_id=resolved_session_id,
+        )
+
+    route_candidate_id = str(payload.get("route_candidate_id") or "").strip()
+    if not route_candidate_id:
+        return _err(
+            "route_candidate_id is required in the request body.",
+            status_code=400,
+            session_id=resolved_session_id,
+        )
+
+    rows = payload.get("rows")
+    if not isinstance(rows, list):
+        return _err(
+            "rows must be a list in the request body.",
+            status_code=400,
+            session_id=resolved_session_id,
+        )
+
+    # Raw-index lookup (R6 pattern).
+    index_data = _load_engineering_plan_index()
+    matched: Optional[Dict[str, Any]] = None
+    for plan in index_data.get("plans", []):
+        if not _engineering_plan_record_matches_session(plan, resolved_session_id):
+            continue
+        if str(plan.get("plan_id") or "").strip() == target_plan_id:
+            matched = plan
+            break
+    if matched is None:
+        return _err(
+            "Engineering plan not found.",
+            status_code=404,
+            session_id=resolved_session_id,
+        )
+
+    file_type = str(matched.get("file_type") or "").strip().lower()
+    if file_type != "application/pdf":
+        return _err(
+            "Engineering plan is not a PDF; auto-redline is only "
+            "supported for PDFs.",
+            status_code=400,
+            session_id=resolved_session_id,
+        )
+
+    stored_path_str = str(matched.get("stored_path") or "").strip()
+    if not stored_path_str:
+        stored_filename = str(matched.get("stored_filename") or "").strip()
+        record_session_id = str(matched.get("session_id") or "").strip()
+        if stored_filename and record_session_id:
+            stored_path_str = str(
+                ENGINEERING_PLAN_ROOT
+                / _safe_filename(record_session_id)
+                / stored_filename
+            )
+    if not stored_path_str or not os.path.exists(stored_path_str):
+        return _err(
+            "Engineering plan file was not found on disk.",
+            status_code=404,
+            session_id=resolved_session_id,
+        )
+
+    # Lazy imports.
+    from app.core.pdf_extraction_raw import (
+        PdfExtractionError,
+        SCHEMA_VERSION as _PDF_EXTRACTION_RAW_SCHEMA,
+        extract_page_raw,
+    )
+    from app.core.pdf_extraction_classify import (
+        SCHEMA_VERSION as _PDF_EXTRACTION_CLASSIFIED_SCHEMA,
+        classify_vector_paths,
+    )
+    from app.core.pdf_extraction_routes import (
+        PdfExtractionRoutesError,
+        SCHEMA_VERSION as _PDF_EXTRACTION_ROUTES_SCHEMA,
+        group_route_candidates,
+    )
+    from app.core.pdf_extraction_bindings import (
+        PdfExtractionBindingsError,
+        SCHEMA_VERSION as _PDF_EXTRACTION_BINDINGS_SCHEMA,
+        bind_labels_to_routes,
+    )
+    from app.core.pdf_extraction_auto_redline import (
+        PdfAutoRedlineError,
+        generate_auto_redline_segments,
+    )
+
+    pdf_path_obj = Path(stored_path_str)
+    session_folder = ENGINEERING_PLAN_ROOT / _safe_filename(resolved_session_id)
+    extraction_folder = session_folder / "extraction"
+
+    raw_cache_file = (
+        extraction_folder
+        / f"{target_plan_id}_p{page_index_int:03d}_{_PDF_EXTRACTION_RAW_SCHEMA}.json"
+    )
+    classified_cache_file = (
+        extraction_folder
+        / f"{target_plan_id}_p{page_index_int:03d}_{_PDF_EXTRACTION_CLASSIFIED_SCHEMA}.json"
+    )
+    routes_cache_file = (
+        extraction_folder
+        / f"{target_plan_id}_p{page_index_int:03d}_{_PDF_EXTRACTION_ROUTES_SCHEMA}_b-{bucket_name}.json"
+    )
+    bindings_cache_file = (
+        extraction_folder
+        / f"{target_plan_id}_p{page_index_int:03d}_{_PDF_EXTRACTION_BINDINGS_SCHEMA}_b-{bucket_name}.json"
+    )
+
+    # Resolve raw (E1 cache → recompute on miss).
+    raw_result: Optional[Dict[str, Any]] = None
+    try:
+        if raw_cache_file.is_file():
+            pdf_mtime = pdf_path_obj.stat().st_mtime
+            if raw_cache_file.stat().st_mtime >= pdf_mtime:
+                cached_raw = json.loads(raw_cache_file.read_text(encoding="utf-8"))
+                if (
+                    isinstance(cached_raw, dict)
+                    and cached_raw.get("schema_version") == _PDF_EXTRACTION_RAW_SCHEMA
+                ):
+                    raw_result = cached_raw
+    except Exception as e:
+        logging.warning(
+            "pdf auto-redline raw cache read failed plan_id=%s page=%s err=%s",
+            target_plan_id, page_index_int, e,
+        )
+    if raw_result is None:
+        try:
+            raw_result = extract_page_raw(pdf_path_obj, page_index_int)
+        except PdfExtractionError as e:
+            logging.warning(
+                "pdf auto-redline raw extraction failed plan_id=%s page=%s err=%s",
+                target_plan_id, page_index_int, e,
+            )
+            return _err(
+                "Engineering plan page extraction could not be computed.",
+                status_code=500,
+                session_id=resolved_session_id,
+            )
+        if raw_result.get("page_load_error") and "out of range" in str(raw_result["page_load_error"]):
+            return _err(
+                str(raw_result["page_load_error"]),
+                status_code=404,
+                session_id=resolved_session_id,
+            )
+        try:
+            extraction_folder.mkdir(parents=True, exist_ok=True)
+            raw_cache_file.write_text(
+                json.dumps(raw_result, indent=2, sort_keys=False),
+                encoding="utf-8",
+            )
+        except Exception as e:
+            logging.warning(
+                "pdf auto-redline raw cache write failed plan_id=%s page=%s err=%s",
+                target_plan_id, page_index_int, e,
+            )
+
+    # Resolve classified (E2a cache → recompute on miss).
+    classified_result: Optional[Dict[str, Any]] = None
+    try:
+        if classified_cache_file.is_file():
+            pdf_mtime = pdf_path_obj.stat().st_mtime
+            if classified_cache_file.stat().st_mtime >= pdf_mtime:
+                cached_cl = json.loads(classified_cache_file.read_text(encoding="utf-8"))
+                if (
+                    isinstance(cached_cl, dict)
+                    and cached_cl.get("schema_version") == _PDF_EXTRACTION_CLASSIFIED_SCHEMA
+                ):
+                    classified_result = cached_cl
+    except Exception as e:
+        logging.warning(
+            "pdf auto-redline classified cache read failed plan_id=%s page=%s err=%s",
+            target_plan_id, page_index_int, e,
+        )
+    if classified_result is None:
+        try:
+            classified_result = classify_vector_paths(raw_result)
+        except Exception as e:
+            logging.warning(
+                "pdf auto-redline classify failed plan_id=%s page=%s err=%s",
+                target_plan_id, page_index_int, e,
+            )
+            return _err(
+                "Engineering plan page classification could not be computed.",
+                status_code=500,
+                session_id=resolved_session_id,
+            )
+        try:
+            extraction_folder.mkdir(parents=True, exist_ok=True)
+            classified_cache_file.write_text(
+                json.dumps(classified_result, indent=2, sort_keys=False),
+                encoding="utf-8",
+            )
+        except Exception as e:
+            logging.warning(
+                "pdf auto-redline classified cache write failed plan_id=%s page=%s err=%s",
+                target_plan_id, page_index_int, e,
+            )
+
+    # Resolve routes (E2b cache → recompute on miss).
+    routes_result: Optional[Dict[str, Any]] = None
+    try:
+        if routes_cache_file.is_file():
+            pdf_mtime = pdf_path_obj.stat().st_mtime
+            if routes_cache_file.stat().st_mtime >= pdf_mtime:
+                cached_r = json.loads(routes_cache_file.read_text(encoding="utf-8"))
+                if (
+                    isinstance(cached_r, dict)
+                    and cached_r.get("schema_version") == _PDF_EXTRACTION_ROUTES_SCHEMA
+                    and cached_r.get("bucket") == bucket_name
+                ):
+                    routes_result = cached_r
+    except Exception as e:
+        logging.warning(
+            "pdf auto-redline routes cache read failed plan_id=%s page=%s bucket=%s err=%s",
+            target_plan_id, page_index_int, bucket_name, e,
+        )
+    if routes_result is None:
+        try:
+            routes_result = group_route_candidates(
+                classified_result,
+                raw_record=raw_result,
+                bucket=bucket_name,
+            )
+        except (PdfExtractionRoutesError, Exception) as e:
+            logging.warning(
+                "pdf auto-redline routes grouping failed plan_id=%s page=%s bucket=%s err=%s",
+                target_plan_id, page_index_int, bucket_name, e,
+            )
+            return _err(
+                "Engineering plan page route candidates could not be computed.",
+                status_code=500,
+                session_id=resolved_session_id,
+            )
+        try:
+            extraction_folder.mkdir(parents=True, exist_ok=True)
+            routes_cache_file.write_text(
+                json.dumps(routes_result, indent=2, sort_keys=False),
+                encoding="utf-8",
+            )
+        except Exception as e:
+            logging.warning(
+                "pdf auto-redline routes cache write failed plan_id=%s page=%s bucket=%s err=%s",
+                target_plan_id, page_index_int, bucket_name, e,
+            )
+
+    # Resolve bindings (E2c cache → recompute on miss).
+    bindings_result: Optional[Dict[str, Any]] = None
+    try:
+        if bindings_cache_file.is_file():
+            pdf_mtime = pdf_path_obj.stat().st_mtime
+            if bindings_cache_file.stat().st_mtime >= pdf_mtime:
+                cached_b = json.loads(bindings_cache_file.read_text(encoding="utf-8"))
+                if (
+                    isinstance(cached_b, dict)
+                    and cached_b.get("schema_version") == _PDF_EXTRACTION_BINDINGS_SCHEMA
+                ):
+                    bindings_result = cached_b
+    except Exception as e:
+        logging.warning(
+            "pdf auto-redline bindings cache read failed plan_id=%s page=%s bucket=%s err=%s",
+            target_plan_id, page_index_int, bucket_name, e,
+        )
+    if bindings_result is None:
+        try:
+            bindings_result = bind_labels_to_routes(
+                raw_result, routes_result, classified_record=classified_result,
+            )
+        except (PdfExtractionBindingsError, Exception) as e:
+            logging.warning(
+                "pdf auto-redline bindings failed plan_id=%s page=%s bucket=%s err=%s",
+                target_plan_id, page_index_int, bucket_name, e,
+            )
+            return _err(
+                "Engineering plan page bindings could not be computed.",
+                status_code=500,
+                session_id=resolved_session_id,
+            )
+        try:
+            extraction_folder.mkdir(parents=True, exist_ok=True)
+            bindings_cache_file.write_text(
+                json.dumps(bindings_result, indent=2, sort_keys=False),
+                encoding="utf-8",
+            )
+        except Exception as e:
+            logging.warning(
+                "pdf auto-redline bindings cache write failed plan_id=%s page=%s bucket=%s err=%s",
+                target_plan_id, page_index_int, bucket_name, e,
+            )
+
+    # Build the request_payload subset the helper consumes.
+    helper_payload = {
+        "route_candidate_id": route_candidate_id,
+        "rows": rows,
+        "dry_run": bool(payload.get("dry_run", True)),
+    }
+
+    # Run the auto-redline generator.
+    try:
+        result = generate_auto_redline_segments(
+            raw_result, routes_result, bindings_result, helper_payload,
+        )
+    except PdfAutoRedlineError as e:
+        # Operator-facing validation failure (e.g. unknown route_candidate_id).
+        return _err(
+            str(e),
+            status_code=400,
+            session_id=resolved_session_id,
+        )
+    except Exception as e:
+        logging.warning(
+            "pdf auto-redline unexpected error plan_id=%s page=%s err=%s",
+            target_plan_id, page_index_int, e,
+        )
+        return _err(
+            "Auto-redline segment generation failed.",
+            status_code=500,
+            session_id=resolved_session_id,
+        )
+
+    # v1 NEVER persists.  No disk write of auto-redline output (the
+    # output depends on operator payload and is computed per-request).
+    return _ok(
+        session_id=resolved_session_id,
+        plan_id=target_plan_id,
+        **result,
     )
 
 
