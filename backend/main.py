@@ -9567,6 +9567,24 @@ def _trueline_pdf_extraction_raw_enabled() -> bool:
     return raw in {"1", "true", "yes", "on"}
 
 
+# ---------------------------------------------------------------------------
+# PDF Extraction E2a feature flag.
+# Flag: TRUELINE_PDF_EXTRACTION_CLASSIFY_ENABLED. Default off.
+# Truthy values (case-insensitive): "1", "true", "yes", "on".
+# Independent kill switch for the classified-extraction endpoint.
+# Gated in ADDITION to TRUELINE_PLAN_OVERLAY_IMAGE +
+# TRUELINE_PDF_EXTRACTION_RAW_ENABLED so a bug in classification cannot
+# disable raw extraction or the rest of PDF Plan Mode.
+# Read per request — env flips do not require process restart.
+# When False, the classified endpoint returns 404 with a disabled
+# message and never imports the classifier helper.
+# ---------------------------------------------------------------------------
+
+def _trueline_pdf_extraction_classify_enabled() -> bool:
+    raw = os.environ.get("TRUELINE_PDF_EXTRACTION_CLASSIFY_ENABLED", "").strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
 def _resolve_engineering_plan_pdf_paths(session_id: str) -> List[Path]:
     """Reconstruct on-disk PDF paths for a session's engineering plans.
     Uses only public_record fields (stored_filename + file_type) and the
@@ -18853,6 +18871,266 @@ async def get_engineering_plan_extraction_raw(
         plan_id=target_plan_id,
         cache="miss",
         **result,
+    )
+
+
+# ── PDF Extraction E2a: classified vector primitives (color buckets) ─────────
+#
+# Read-only endpoint returning the classified-bucket view of one page's
+# vector primitives.  Consumes the E1 raw extraction output (computed
+# on demand or served from E1's cache) and runs the deterministic
+# classifier in `app.core.pdf_extraction_classify`.
+#
+# Output schema: pdf-extraction-classified-1.  Color buckets:
+# proposed_red / existing_purple / existing_orange / existing_blue /
+# row_green / base_black / template_gray / white_mask / other.
+# Plus a soft template_candidates flag list.
+#
+# Gated by THREE flags (any unset → 404):
+#   - TRUELINE_PLAN_OVERLAY_IMAGE            (parent PDF Plan Mode lane)
+#   - TRUELINE_PDF_EXTRACTION_RAW_ENABLED    (E1 extraction)
+#   - TRUELINE_PDF_EXTRACTION_CLASSIFY_ENABLED  (E2a classification)
+#
+# Cached on disk under {ENGINEERING_PLAN_ROOT}/{session_id}/extraction/
+# {plan_id}_p{NNN}_pdf-extraction-classified-1.json.  Mtime-invalidated
+# against the source PDF (mirrors E1 cache pattern); the raw extraction
+# is also recomputed/cached as a side effect on raw cache miss.
+#
+# Auth + tenant scoping: same pattern as the E1 + Step 2A endpoints.
+# No closeout-lock check — this is a read-only diagnostic endpoint.
+
+@protected_router.get("/api/engineering-plans/{plan_id}/extraction/classified")
+async def get_engineering_plan_extraction_classified(
+    plan_id: str,
+    page_index: Optional[int] = None,
+    session_id: Optional[str] = None,
+    request: Request = None,
+):
+    # Three-gate flag check before any work; flag-off path stays free of
+    # PyMuPDF + classifier import cost.
+    if not _trueline_plan_overlay_image_enabled():
+        return _err(
+            "Engineering plan page extraction is disabled.",
+            status_code=404,
+        )
+    if not _trueline_pdf_extraction_raw_enabled():
+        return _err(
+            "PDF extraction (raw) is disabled.",
+            status_code=404,
+        )
+    if not _trueline_pdf_extraction_classify_enabled():
+        return _err(
+            "PDF extraction (classified) is disabled.",
+            status_code=404,
+        )
+
+    resolved_session_id = _resolve_session_id(session_id)
+    _require_tenant_owns_session(resolved_session_id, request)
+
+    target_plan_id = str(plan_id or "").strip()
+    if not target_plan_id:
+        return _err(
+            "plan_id is required.",
+            status_code=400,
+            session_id=resolved_session_id,
+        )
+
+    if page_index is None:
+        return _err(
+            "page_index query parameter is required.",
+            status_code=400,
+            session_id=resolved_session_id,
+        )
+    try:
+        page_index_int = int(page_index)
+    except (TypeError, ValueError):
+        return _err(
+            f"page_index must be an integer, got {page_index!r}.",
+            status_code=400,
+            session_id=resolved_session_id,
+        )
+    if page_index_int < 0:
+        return _err(
+            "page_index must be >= 0.",
+            status_code=400,
+            session_id=resolved_session_id,
+        )
+
+    # Raw-index lookup (VO.2b R6 pattern).
+    index_data = _load_engineering_plan_index()
+    matched: Optional[Dict[str, Any]] = None
+    for plan in index_data.get("plans", []):
+        if not _engineering_plan_record_matches_session(plan, resolved_session_id):
+            continue
+        if str(plan.get("plan_id") or "").strip() == target_plan_id:
+            matched = plan
+            break
+    if matched is None:
+        return _err(
+            "Engineering plan not found.",
+            status_code=404,
+            session_id=resolved_session_id,
+        )
+
+    file_type = str(matched.get("file_type") or "").strip().lower()
+    if file_type != "application/pdf":
+        return _err(
+            "Engineering plan is not a PDF; classified extraction is only "
+            "supported for PDFs.",
+            status_code=400,
+            session_id=resolved_session_id,
+        )
+
+    stored_path_str = str(matched.get("stored_path") or "").strip()
+    if not stored_path_str:
+        stored_filename = str(matched.get("stored_filename") or "").strip()
+        record_session_id = str(matched.get("session_id") or "").strip()
+        if stored_filename and record_session_id:
+            stored_path_str = str(
+                ENGINEERING_PLAN_ROOT
+                / _safe_filename(record_session_id)
+                / stored_filename
+            )
+    if not stored_path_str or not os.path.exists(stored_path_str):
+        return _err(
+            "Engineering plan file was not found on disk.",
+            status_code=404,
+            session_id=resolved_session_id,
+        )
+
+    # Lazy imports.
+    from app.core.pdf_extraction_raw import (
+        PdfExtractionError,
+        SCHEMA_VERSION as _PDF_EXTRACTION_RAW_SCHEMA,
+        extract_page_raw,
+    )
+    from app.core.pdf_extraction_classify import (
+        SCHEMA_VERSION as _PDF_EXTRACTION_CLASSIFIED_SCHEMA,
+        classify_vector_paths,
+    )
+
+    pdf_path_obj = Path(stored_path_str)
+    session_folder = ENGINEERING_PLAN_ROOT / _safe_filename(resolved_session_id)
+    extraction_folder = session_folder / "extraction"
+    classified_cache_file = (
+        extraction_folder
+        / f"{target_plan_id}_p{page_index_int:03d}_{_PDF_EXTRACTION_CLASSIFIED_SCHEMA}.json"
+    )
+    raw_cache_file = (
+        extraction_folder
+        / f"{target_plan_id}_p{page_index_int:03d}_{_PDF_EXTRACTION_RAW_SCHEMA}.json"
+    )
+
+    # Classified cache hit: serve from disk when cache mtime >= PDF mtime.
+    try:
+        if classified_cache_file.is_file():
+            pdf_mtime = pdf_path_obj.stat().st_mtime
+            classified_mtime = classified_cache_file.stat().st_mtime
+            if classified_mtime >= pdf_mtime:
+                cached = json.loads(classified_cache_file.read_text(encoding="utf-8"))
+                if (
+                    isinstance(cached, dict)
+                    and cached.get("schema_version") == _PDF_EXTRACTION_CLASSIFIED_SCHEMA
+                    and cached.get("source_schema_version") == _PDF_EXTRACTION_RAW_SCHEMA
+                ):
+                    return _ok(
+                        session_id=resolved_session_id,
+                        plan_id=target_plan_id,
+                        cache="hit",
+                        **cached,
+                    )
+    except Exception as e:
+        logging.warning(
+            "pdf extraction classified cache read failed plan_id=%s page=%s err=%s",
+            target_plan_id, page_index_int, e,
+        )
+
+    # Raw cache hit: reuse if valid.  Otherwise re-extract.
+    raw_result: Optional[Dict[str, Any]] = None
+    try:
+        if raw_cache_file.is_file():
+            pdf_mtime = pdf_path_obj.stat().st_mtime
+            raw_mtime = raw_cache_file.stat().st_mtime
+            if raw_mtime >= pdf_mtime:
+                cached_raw = json.loads(raw_cache_file.read_text(encoding="utf-8"))
+                if (
+                    isinstance(cached_raw, dict)
+                    and cached_raw.get("schema_version") == _PDF_EXTRACTION_RAW_SCHEMA
+                ):
+                    raw_result = cached_raw
+    except Exception as e:
+        logging.warning(
+            "pdf extraction raw cache read failed (classified path) "
+            "plan_id=%s page=%s err=%s",
+            target_plan_id, page_index_int, e,
+        )
+
+    if raw_result is None:
+        try:
+            raw_result = extract_page_raw(pdf_path_obj, page_index_int)
+        except PdfExtractionError as e:
+            logging.warning(
+                "pdf extraction failed (classified path) plan_id=%s page=%s err=%s",
+                target_plan_id, page_index_int, e,
+            )
+            return _err(
+                "Engineering plan page extraction could not be computed.",
+                status_code=500,
+                session_id=resolved_session_id,
+            )
+        # Out-of-range page: surface as 404 without caching.
+        if raw_result.get("page_load_error") and "out of range" in str(raw_result["page_load_error"]):
+            return _err(
+                str(raw_result["page_load_error"]),
+                status_code=404,
+                session_id=resolved_session_id,
+            )
+        # Best-effort raw cache write (don't block classified result).
+        try:
+            extraction_folder.mkdir(parents=True, exist_ok=True)
+            raw_cache_file.write_text(
+                json.dumps(raw_result, indent=2, sort_keys=False),
+                encoding="utf-8",
+            )
+        except Exception as e:
+            logging.warning(
+                "pdf extraction raw cache write failed (classified path) "
+                "plan_id=%s page=%s err=%s",
+                target_plan_id, page_index_int, e,
+            )
+
+    # Run the classifier.
+    try:
+        classified = classify_vector_paths(raw_result)
+    except Exception as e:
+        logging.warning(
+            "pdf extraction classify failed plan_id=%s page=%s err=%s",
+            target_plan_id, page_index_int, e,
+        )
+        return _err(
+            "Engineering plan page classification could not be computed.",
+            status_code=500,
+            session_id=resolved_session_id,
+        )
+
+    # Best-effort classified cache write.
+    try:
+        extraction_folder.mkdir(parents=True, exist_ok=True)
+        classified_cache_file.write_text(
+            json.dumps(classified, indent=2, sort_keys=False),
+            encoding="utf-8",
+        )
+    except Exception as e:
+        logging.warning(
+            "pdf extraction classified cache write failed plan_id=%s page=%s err=%s",
+            target_plan_id, page_index_int, e,
+        )
+
+    return _ok(
+        session_id=resolved_session_id,
+        plan_id=target_plan_id,
+        cache="miss",
+        **classified,
     )
 
 
