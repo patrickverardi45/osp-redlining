@@ -9548,6 +9548,25 @@ def _trueline_plan_overlay_image_enabled() -> bool:
     return raw in {"1", "true", "yes", "on"}
 
 
+# ---------------------------------------------------------------------------
+# PDF Extraction E1 feature flag.
+# Flag: TRUELINE_PDF_EXTRACTION_RAW_ENABLED. Default off.
+# Truthy values (case-insensitive): "1", "true", "yes", "on".
+# Independent kill switch for the new extraction-first pipeline.  Gated
+# in addition to (not instead of) TRUELINE_PLAN_OVERLAY_IMAGE so a bug
+# in raw extraction cannot disable the rest of PDF Plan Mode.
+# Read at runtime (per request) — env flips do not require process
+# restart (avoids the B-AUTH-3 antipattern).
+# When False, the extraction-raw endpoint returns 404 with a disabled
+# message and never imports PyMuPDF (zero overhead on the flag-off path).
+# See: pivot reset plan §4 (E1 — PDF text + vector extraction primitives).
+# ---------------------------------------------------------------------------
+
+def _trueline_pdf_extraction_raw_enabled() -> bool:
+    raw = os.environ.get("TRUELINE_PDF_EXTRACTION_RAW_ENABLED", "").strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
 def _resolve_engineering_plan_pdf_paths(session_id: str) -> List[Path]:
     """Reconstruct on-disk PDF paths for a session's engineering plans.
     Uses only public_record fields (stored_filename + file_type) and the
@@ -18628,6 +18647,205 @@ async def get_engineering_plan_index(
     except Exception as e:
         logging.warning(
             "plan index cache write failed plan_id=%s err=%s", target_plan_id, e
+        )
+
+    return _ok(
+        session_id=resolved_session_id,
+        plan_id=target_plan_id,
+        cache="miss",
+        **result,
+    )
+
+
+# ── PDF Extraction E1: per-page raw text + vector primitives ────────────────
+#
+# Read-only endpoint returning the raw extraction primitives for ONE page:
+#   - text_blocks (text + bbox + font/size/color)
+#   - vector_paths (drawing operators + stroke/fill + bbox)
+# This is the foundation of the extraction-first pivot.  Downstream
+# detection layers (E2: labels, route candidates, matchlines, stations)
+# consume this output as input.
+#
+# Gated by BOTH:
+#   - TRUELINE_PLAN_OVERLAY_IMAGE  (parent PDF Plan Mode lane)
+#   - TRUELINE_PDF_EXTRACTION_RAW_ENABLED  (extraction-specific kill switch)
+#
+# Cached on disk under {ENGINEERING_PLAN_ROOT}/{session_id}/extraction/
+# {plan_id}_p{NNN}_pdf-extraction-raw-1.json.  Mtime-invalidated against
+# the source PDF (mirrors Step 2A cache pattern).
+#
+# Auth + tenant scoping: same pattern as the page-image / index endpoints.
+# No closeout-lock check — this is a read-only diagnostic endpoint.
+#
+# Schema: pdf-extraction-raw-1 (see backend/app/core/pdf_extraction_raw.py).
+
+@protected_router.get("/api/engineering-plans/{plan_id}/extraction-raw")
+async def get_engineering_plan_extraction_raw(
+    plan_id: str,
+    page_index: Optional[int] = None,
+    session_id: Optional[str] = None,
+    request: Request = None,
+):
+    # Parent lane gate first — keeps the flag-off path free of PyMuPDF cost.
+    if not _trueline_plan_overlay_image_enabled():
+        return _err(
+            "Engineering plan page extraction is disabled.",
+            status_code=404,
+        )
+    # Extraction-specific gate second.
+    if not _trueline_pdf_extraction_raw_enabled():
+        return _err(
+            "PDF extraction (raw) is disabled.",
+            status_code=404,
+        )
+
+    resolved_session_id = _resolve_session_id(session_id)
+    _require_tenant_owns_session(resolved_session_id, request)
+
+    target_plan_id = str(plan_id or "").strip()
+    if not target_plan_id:
+        return _err(
+            "plan_id is required.",
+            status_code=400,
+            session_id=resolved_session_id,
+        )
+
+    if page_index is None:
+        return _err(
+            "page_index query parameter is required.",
+            status_code=400,
+            session_id=resolved_session_id,
+        )
+    try:
+        page_index_int = int(page_index)
+    except (TypeError, ValueError):
+        return _err(
+            f"page_index must be an integer, got {page_index!r}.",
+            status_code=400,
+            session_id=resolved_session_id,
+        )
+    if page_index_int < 0:
+        return _err(
+            "page_index must be >= 0.",
+            status_code=400,
+            session_id=resolved_session_id,
+        )
+
+    # Raw-index lookup (VO.2b R6 pattern — internal stored_path visible).
+    index_data = _load_engineering_plan_index()
+    matched: Optional[Dict[str, Any]] = None
+    for plan in index_data.get("plans", []):
+        if not _engineering_plan_record_matches_session(plan, resolved_session_id):
+            continue
+        if str(plan.get("plan_id") or "").strip() == target_plan_id:
+            matched = plan
+            break
+    if matched is None:
+        return _err(
+            "Engineering plan not found.",
+            status_code=404,
+            session_id=resolved_session_id,
+        )
+
+    file_type = str(matched.get("file_type") or "").strip().lower()
+    if file_type != "application/pdf":
+        return _err(
+            "Engineering plan is not a PDF; extraction is only "
+            "supported for PDFs.",
+            status_code=400,
+            session_id=resolved_session_id,
+        )
+
+    stored_path_str = str(matched.get("stored_path") or "").strip()
+    if not stored_path_str:
+        stored_filename = str(matched.get("stored_filename") or "").strip()
+        record_session_id = str(matched.get("session_id") or "").strip()
+        if stored_filename and record_session_id:
+            stored_path_str = str(
+                ENGINEERING_PLAN_ROOT
+                / _safe_filename(record_session_id)
+                / stored_filename
+            )
+    if not stored_path_str or not os.path.exists(stored_path_str):
+        return _err(
+            "Engineering plan file was not found on disk.",
+            status_code=404,
+            session_id=resolved_session_id,
+        )
+
+    # Lazy imports: keep the flag-off path free of PyMuPDF + helper cost.
+    from app.core.pdf_extraction_raw import (
+        PdfExtractionError,
+        SCHEMA_VERSION as _PDF_EXTRACTION_RAW_SCHEMA,
+        extract_page_raw,
+    )
+
+    pdf_path_obj = Path(stored_path_str)
+    session_folder = ENGINEERING_PLAN_ROOT / _safe_filename(resolved_session_id)
+    extraction_folder = session_folder / "extraction"
+    cache_file = (
+        extraction_folder
+        / f"{target_plan_id}_p{page_index_int:03d}_{_PDF_EXTRACTION_RAW_SCHEMA}.json"
+    )
+
+    # Cache hit: serve from disk when cache mtime >= PDF mtime.
+    try:
+        if cache_file.is_file():
+            pdf_mtime = pdf_path_obj.stat().st_mtime
+            cache_mtime = cache_file.stat().st_mtime
+            if cache_mtime >= pdf_mtime:
+                cached = json.loads(cache_file.read_text(encoding="utf-8"))
+                if (
+                    isinstance(cached, dict)
+                    and cached.get("schema_version") == _PDF_EXTRACTION_RAW_SCHEMA
+                ):
+                    return _ok(
+                        session_id=resolved_session_id,
+                        plan_id=target_plan_id,
+                        cache="hit",
+                        **cached,
+                    )
+    except Exception as e:
+        logging.warning(
+            "pdf extraction cache read failed plan_id=%s page=%s err=%s",
+            target_plan_id, page_index_int, e,
+        )
+
+    # Cache miss: extract fresh.
+    try:
+        result = extract_page_raw(pdf_path_obj, page_index_int)
+    except PdfExtractionError as e:
+        logging.warning(
+            "pdf extraction failed plan_id=%s page=%s err=%s",
+            target_plan_id, page_index_int, e,
+        )
+        return _err(
+            "Engineering plan page extraction could not be computed.",
+            status_code=500,
+            session_id=resolved_session_id,
+        )
+
+    # If the page was out of range or load failed, the helper returns a
+    # record with page_load_error set; surface as 404 (range) without
+    # caching error states (PDF could grow next upload).
+    if result.get("page_load_error") and "out of range" in str(result["page_load_error"]):
+        return _err(
+            str(result["page_load_error"]),
+            status_code=404,
+            session_id=resolved_session_id,
+        )
+
+    # Best-effort cache write (failure is logged but does not block response).
+    try:
+        extraction_folder.mkdir(parents=True, exist_ok=True)
+        cache_file.write_text(
+            json.dumps(result, indent=2, sort_keys=False),
+            encoding="utf-8",
+        )
+    except Exception as e:
+        logging.warning(
+            "pdf extraction cache write failed plan_id=%s page=%s err=%s",
+            target_plan_id, page_index_int, e,
         )
 
     return _ok(
