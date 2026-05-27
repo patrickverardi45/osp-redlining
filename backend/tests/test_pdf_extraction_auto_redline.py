@@ -702,5 +702,329 @@ class T16_CacheCascadeRunsAllLayers(_BaseEndpointTest):
         self.assertFalse(body["meta"]["persisted"])
 
 
+# ===========================================================================
+# E3.0.5 GEOMETRY PROJECTION TESTS
+# ===========================================================================
+
+class T17_GeometryProjectionSucceeds(unittest.TestCase):
+    """With >=2 anchors bound to a clean horizontal route, geometry is
+    emitted as a polyline subpath."""
+    def test_two_anchors_produces_polyline(self):
+        corp = _build_route_corpus(n_anchors=4)
+        rc_id = corp["routes"]["route_candidates"][0]["candidate_id"]
+        out = PEAR.generate_auto_redline_segments(
+            corp["raw"], corp["routes"], corp["bindings"],
+            {"route_candidate_id": rc_id,
+             "rows": [{"start_station": "11+00", "end_station": "12+00"}]},
+        )
+        self.assertEqual(len(out["generated_segments"]), 1)
+        seg = out["generated_segments"][0]
+        self.assertEqual(seg["geometry_type"], "polyline")
+        self.assertEqual(seg["projection_method"], "two_anchor_linear")
+        self.assertIsNotNone(seg["polyline_points"])
+        self.assertGreaterEqual(len(seg["polyline_points"]), 2)
+        # Each polyline point is [x, y]
+        for pt in seg["polyline_points"]:
+            self.assertEqual(len(pt), 2)
+            self.assertIsInstance(pt[0], (int, float))
+            self.assertIsInstance(pt[1], (int, float))
+        # Start + end projections present.
+        self.assertIsNotNone(seg["start_projection"])
+        self.assertIsNotNone(seg["end_projection"])
+        self.assertEqual(seg["start_projection"]["source"], "interpolated")
+        self.assertEqual(seg["end_projection"]["source"], "interpolated")
+        # Confidence "high" because: anchor_span=300ft >= 50, range in
+        # span, no clipping, single segment fully consumed.
+        self.assertEqual(seg["geometry_confidence"], "high")
+        # Route polyline emitted at envelope level.
+        self.assertTrue(out["route_polyline_built"])
+        self.assertGreater(len(out["route_polyline_points"]), 0)
+        self.assertGreater(out["route_polyline_total_length_pt"], 0.0)
+        self.assertGreater(len(out["anchor_projections"]), 0)
+
+
+class T18_GeometryProjectionStartEndOrder(unittest.TestCase):
+    """For a positive-slope model (station_ft increases with polyline
+    distance), start_projection.distance < end_projection.distance."""
+    def test_start_distance_less_than_end(self):
+        corp = _build_route_corpus(n_anchors=4)
+        rc_id = corp["routes"]["route_candidates"][0]["candidate_id"]
+        out = PEAR.generate_auto_redline_segments(
+            corp["raw"], corp["routes"], corp["bindings"],
+            {"route_candidate_id": rc_id,
+             "rows": [{"start_station": "11+00", "end_station": "12+00"}]},
+        )
+        seg = out["generated_segments"][0]
+        sd = seg["start_projection"]["distance_along_route_pt"]
+        ed = seg["end_projection"]["distance_along_route_pt"]
+        self.assertLess(sd, ed)
+        # x-coordinate of start_pt should be less than x-coord of end_pt
+        # (since the route is left-to-right horizontal).
+        self.assertLess(seg["start_projection"]["point"][0],
+                        seg["end_projection"]["point"][0])
+
+
+class T19_FallbackZeroAnchors(unittest.TestCase):
+    """When NO station anchors are bound to the route, segment downgrades
+    to bbox_fallback with the appropriate warning."""
+    def test_no_anchors_falls_back(self):
+        # Route exists; text labels are 500pt away so binding fails.
+        raw_vector_paths = [
+            _raw_path("h_route", stroke="#ff0000",
+                      bbox=(50.0, 99.0, 1000.0, 101.0),
+                      items=[["l", [50.0, 100.0], [1000.0, 100.0]]]),
+        ]
+        text_blocks = [
+            _text_block("STA 11+00", bbox=(100, 700, 200, 712), block_no=1),
+        ]
+        raw = _build_raw(text_blocks=text_blocks, vector_paths=raw_vector_paths)
+        classified = PEC.classify_vector_paths(raw)
+        routes = PER.group_route_candidates(classified, raw_record=raw,
+                                            bucket="proposed_red")
+        bindings = PEB.bind_labels_to_routes(raw, routes,
+                                             classified_record=classified)
+        rc_id = routes["route_candidates"][0]["candidate_id"]
+        out = PEAR.generate_auto_redline_segments(
+            raw, routes, bindings,
+            {"route_candidate_id": rc_id,
+             "rows": [{"start_station": "11+00", "end_station": "12+00"}]},
+        )
+        seg = out["generated_segments"][0]
+        self.assertEqual(seg["geometry_type"], "bbox_fallback")
+        self.assertIsNone(seg["polyline_points"])
+        self.assertIsNone(seg["start_projection"])
+        self.assertIsNone(seg["end_projection"])
+        self.assertEqual(seg["projection_method"], "bbox_fallback")
+        self.assertEqual(seg["geometry_confidence"], "none")
+        self.assertIn("geometry_bbox_fallback_no_anchors", seg["geometry_warnings"])
+        # Route_candidate_bbox preserved for fallback rendering.
+        self.assertGreater(len(seg["route_candidate_bbox"]), 0)
+
+
+class T20_FallbackSingleAnchor(unittest.TestCase):
+    """With exactly 1 bound anchor, fall back (need >=2 for linear model)."""
+    def test_single_anchor_falls_back(self):
+        corp = _build_route_corpus(n_anchors=1)
+        rc_id = corp["routes"]["route_candidates"][0]["candidate_id"]
+        # Confirm only 1 anchor is in pool.
+        self.assertEqual(len(corp["bindings"]["station_anchors"]), 1)
+        out = PEAR.generate_auto_redline_segments(
+            corp["raw"], corp["routes"], corp["bindings"],
+            {"route_candidate_id": rc_id,
+             "rows": [{"start_station": "11+00", "end_station": "12+00"}]},
+        )
+        seg = out["generated_segments"][0]
+        self.assertEqual(seg["geometry_type"], "bbox_fallback")
+        self.assertIn("geometry_bbox_fallback_single_anchor", seg["geometry_warnings"])
+
+
+class T21_FallbackEmptyRouteGeometry(unittest.TestCase):
+    """When the route candidate's paths have no usable items, polyline
+    cannot be built; fall back."""
+    def test_empty_items_falls_back(self):
+        # Build a route candidate whose source path has empty items.
+        # E2b will still group it (it has bbox), but reconstruction fails.
+        raw_vector_paths = [
+            _raw_path("h_empty", stroke="#ff0000",
+                      bbox=(50.0, 99.0, 1000.0, 101.0),
+                      items=[]),  # EMPTY items
+        ]
+        text_blocks = [
+            _text_block("STA 11+00", bbox=(100, 102, 200, 114), block_no=1),
+            _text_block("STA 13+00", bbox=(500, 102, 600, 114), block_no=2),
+        ]
+        raw = _build_raw(text_blocks=text_blocks, vector_paths=raw_vector_paths)
+        classified = PEC.classify_vector_paths(raw)
+        routes = PER.group_route_candidates(classified, raw_record=raw,
+                                            bucket="proposed_red")
+        # Need at least one candidate for the test to be meaningful.
+        if not routes["route_candidates"]:
+            self.skipTest("E2b filtered out empty-items candidate (correct behavior)")
+        rc_id = routes["route_candidates"][0]["candidate_id"]
+        bindings = PEB.bind_labels_to_routes(raw, routes,
+                                             classified_record=classified)
+        out = PEAR.generate_auto_redline_segments(
+            raw, routes, bindings,
+            {"route_candidate_id": rc_id,
+             "rows": [{"start_station": "11+00", "end_station": "12+00"}]},
+        )
+        seg = out["generated_segments"][0]
+        self.assertEqual(seg["geometry_type"], "bbox_fallback")
+        self.assertIn(
+            "geometry_bbox_fallback_polyline_empty", seg["geometry_warnings"],
+        )
+
+
+class T22_DeterministicPolylineOutput(unittest.TestCase):
+    """Same inputs → byte-identical polyline_points + projections."""
+    def test_byte_identical_geometry(self):
+        corp = _build_route_corpus(n_anchors=4)
+        rc_id = corp["routes"]["route_candidates"][0]["candidate_id"]
+        payload = {
+            "route_candidate_id": rc_id,
+            "rows": [
+                {"start_station": "11+00", "end_station": "11+50"},
+                {"start_station": "12+00", "end_station": "12+50"},
+            ],
+        }
+        o1 = PEAR.generate_auto_redline_segments(
+            corp["raw"], corp["routes"], corp["bindings"], payload)
+        o2 = PEAR.generate_auto_redline_segments(
+            corp["raw"], corp["routes"], corp["bindings"], payload)
+        # Geometry fields are deterministic.
+        for k in ("polyline_points", "start_projection", "end_projection",
+                  "geometry_type", "projection_method", "geometry_confidence"):
+            for s1, s2 in zip(o1["generated_segments"], o2["generated_segments"]):
+                self.assertEqual(s1[k], s2[k], f"key {k!r} differs across runs")
+        # Top-level route polyline also deterministic.
+        self.assertEqual(o1["route_polyline_points"], o2["route_polyline_points"])
+        self.assertEqual(o1["anchor_projections"], o2["anchor_projections"])
+
+
+class T23_GeometryWithEndBeforeStart(unittest.TestCase):
+    """E3.0.5 doesn't break the existing end<=start rejection — projection
+    isn't even attempted because the row gets rejected upstream."""
+    def test_end_before_start_still_rejected(self):
+        corp = _build_route_corpus(n_anchors=4)
+        rc_id = corp["routes"]["route_candidates"][0]["candidate_id"]
+        out = PEAR.generate_auto_redline_segments(
+            corp["raw"], corp["routes"], corp["bindings"],
+            {"route_candidate_id": rc_id,
+             "rows": [{"start_station": "12+00", "end_station": "11+00"}]},
+        )
+        self.assertEqual(out["generated_segments"], [])
+        self.assertEqual(len(out["rejected_rows"]), 1)
+        self.assertEqual(out["rejected_rows"][0]["rule_id"],
+                         "auto_redline_v1:end_before_start")
+
+
+class T24_ExtrapolatedOutsideAnchorSpan(unittest.TestCase):
+    """A range that falls OUTSIDE the bound anchor span produces a
+    polyline (extrapolated) but emits a warning + downgrades confidence."""
+    def test_extrapolation_warned(self):
+        # Anchors at 10+00, 11+00, 12+00, 13+00.  Request range 14+00 to 15+00.
+        corp = _build_route_corpus(n_anchors=4)
+        rc_id = corp["routes"]["route_candidates"][0]["candidate_id"]
+        out = PEAR.generate_auto_redline_segments(
+            corp["raw"], corp["routes"], corp["bindings"],
+            {"route_candidate_id": rc_id,
+             "rows": [{"start_station": "14+00", "end_station": "15+00"}]},
+        )
+        seg = out["generated_segments"][0]
+        # May still produce a polyline (extrapolation is allowed); OR may
+        # clip to bounds and warn.  Either way must NOT be "high" confidence.
+        self.assertIn(seg["geometry_confidence"], {"low", "medium", "none"})
+        if seg["geometry_type"] == "polyline":
+            self.assertIn(
+                "geometry_extrapolated_outside_anchor_span",
+                seg["geometry_warnings"],
+            )
+
+
+class T25_AnchorSpanTooShortIsMedium(unittest.TestCase):
+    """With anchor span < _MIN_ANCHOR_SPAN_FT (50ft default), even a
+    clean projection is "medium" confidence."""
+    def test_short_anchor_span(self):
+        # Build a route with two anchors only 30ft apart in station_ft.
+        raw_vector_paths = [
+            _raw_path("h_route", stroke="#ff0000",
+                      bbox=(50.0, 99.0, 1000.0, 101.0),
+                      items=[["l", [50.0, 100.0], [1000.0, 100.0]]]),
+        ]
+        text_blocks = [
+            _text_block("STA 11+00", bbox=(100, 102, 200, 114), block_no=1),
+            _text_block("STA 11+30", bbox=(150, 102, 250, 114), block_no=2),
+        ]
+        raw = _build_raw(text_blocks=text_blocks, vector_paths=raw_vector_paths)
+        classified = PEC.classify_vector_paths(raw)
+        routes = PER.group_route_candidates(classified, raw_record=raw,
+                                            bucket="proposed_red")
+        bindings = PEB.bind_labels_to_routes(raw, routes,
+                                             classified_record=classified)
+        rc_id = routes["route_candidates"][0]["candidate_id"]
+        out = PEAR.generate_auto_redline_segments(
+            raw, routes, bindings,
+            {"route_candidate_id": rc_id,
+             "rows": [{"start_station": "11+10", "end_station": "11+25"}]},
+        )
+        seg = out["generated_segments"][0]
+        if seg["geometry_type"] == "polyline":
+            # Anchor span = 30ft < 50ft, so not "high" confidence.
+            self.assertNotEqual(seg["geometry_confidence"], "high")
+
+
+class T26_NoPersistenceEvenWithDryRunFalse_E305(unittest.TestCase):
+    """E3.0.5 inherits the v1 dry-run-only policy — confirm explicitly."""
+    def test_dry_run_false_no_persist(self):
+        corp = _build_route_corpus(n_anchors=4)
+        rc_id = corp["routes"]["route_candidates"][0]["candidate_id"]
+        out = PEAR.generate_auto_redline_segments(
+            corp["raw"], corp["routes"], corp["bindings"],
+            {"route_candidate_id": rc_id,
+             "rows": [{"start_station": "11+00", "end_station": "12+00"}],
+             "dry_run": False},
+        )
+        # Geometry computed but NO persistence.
+        self.assertEqual(out["generated_segments"][0]["geometry_type"], "polyline")
+        self.assertFalse(out["meta"]["persisted"])
+        self.assertFalse(out["meta"]["persistence_enabled_in_v1"])
+
+
+class T27_ProvenancePreservedWithGeometry(unittest.TestCase):
+    """Geometry additions don't displace existing provenance."""
+    def test_provenance_intact(self):
+        corp = _build_route_corpus(n_anchors=4)
+        rc_id = corp["routes"]["route_candidates"][0]["candidate_id"]
+        row = {"start_station": "11+00", "end_station": "12+00",
+               "notes": "operator note"}
+        out = PEAR.generate_auto_redline_segments(
+            corp["raw"], corp["routes"], corp["bindings"],
+            {"route_candidate_id": rc_id, "rows": [row]},
+        )
+        seg = out["generated_segments"][0]
+        # Original provenance fields all still present.
+        self.assertEqual(seg["rule_id"], "auto_redline_v1")
+        self.assertEqual(seg["provenance"]["input_row"], row)
+        self.assertEqual(seg["provenance"]["input_row_index"], 0)
+        self.assertEqual(seg["notes"], "operator note")
+        # And new geometry fields are present.
+        self.assertEqual(seg["geometry_type"], "polyline")
+
+
+class T28_SameStationAnchorsFallback(unittest.TestCase):
+    """When 2+ anchors all map to the same station_ft (anchor span = 0),
+    no linear model is buildable; fall back."""
+    def test_same_station_anchors(self):
+        # Build a route with two anchors that both read "STA 11+00"
+        # (operator may have placed duplicate labels).
+        raw_vector_paths = [
+            _raw_path("h_route", stroke="#ff0000",
+                      bbox=(50.0, 99.0, 1000.0, 101.0),
+                      items=[["l", [50.0, 100.0], [1000.0, 100.0]]]),
+        ]
+        text_blocks = [
+            _text_block("STA 11+00", bbox=(100, 102, 200, 114), block_no=1),
+            _text_block("STA 11+00", bbox=(500, 102, 600, 114), block_no=2),
+        ]
+        raw = _build_raw(text_blocks=text_blocks, vector_paths=raw_vector_paths)
+        classified = PEC.classify_vector_paths(raw)
+        routes = PER.group_route_candidates(classified, raw_record=raw,
+                                            bucket="proposed_red")
+        bindings = PEB.bind_labels_to_routes(raw, routes,
+                                             classified_record=classified)
+        rc_id = routes["route_candidates"][0]["candidate_id"]
+        out = PEAR.generate_auto_redline_segments(
+            raw, routes, bindings,
+            {"route_candidate_id": rc_id,
+             "rows": [{"start_station": "11+00", "end_station": "12+00"}]},
+        )
+        seg = out["generated_segments"][0]
+        self.assertEqual(seg["geometry_type"], "bbox_fallback")
+        self.assertIn(
+            "geometry_bbox_fallback_anchor_span_zero",
+            seg["geometry_warnings"],
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
