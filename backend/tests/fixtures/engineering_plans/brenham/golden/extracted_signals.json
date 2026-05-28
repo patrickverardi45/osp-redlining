@@ -3,6 +3,7 @@
     "date": "2026-03-23",
     "phase_hints": [],
     "plan_id": "lockdown_plan_a_filename_only",
+    "print_token_universe": "brenham_1_30_clamped",
     "print_tokens": [
       "3"
     ],
@@ -24,6 +25,7 @@
     "date": "2025-07-15",
     "phase_hints": [],
     "plan_id": "lockdown_plan_b_with_user_metadata",
+    "print_token_universe": "brenham_1_30_clamped",
     "print_tokens": [
       "1",
       "2",
@@ -54,6 +56,7 @@
       "revision"
     ],
     "plan_id": "lockdown_plan_c_revision_with_sheets",
+    "print_token_universe": "brenham_1_30_clamped",
     "print_tokens": [
       "7",
       "15"

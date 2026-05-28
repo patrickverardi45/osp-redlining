@@ -7527,6 +7527,27 @@ _EP_NOISE_TOKENS: set = {
 }
 
 
+def _trueline_kmz_stage_b1_token_universe_derived_enabled() -> bool:
+    """KMZ Hardening Stage B1 — runtime flag for token-universe widening.
+
+    Default OFF. When OFF, `_extract_engineering_plan_signals` keeps the
+    historical Brenham-PH5 1-30 clamp on print tokens harvested from PDF
+    filenames. When ON, positive integer tokens outside the 1-30 range are
+    allowed through, enabling non-Brenham packets (e.g., Lunar Infrastructure
+    work packets) to surface their own print universes.
+
+    The flag does NOT remove or modify `CURRENT_PACKET_PRINT_SHEET_INDEX`,
+    does NOT change route scoring or selection, and does NOT wire derived
+    tokens into route_id matching. The widened universe is surfaced through
+    the same `print_tokens` field this function already emits plus a new
+    `print_token_universe` attribution field for observability.
+
+    Read every call; never captured at import-time.
+    """
+    raw = os.environ.get("TRUELINE_KMZ_STAGE_B1_TOKEN_UNIVERSE_DERIVED", "").strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
 def _extract_engineering_plan_signals(plan: Dict[str, Any]) -> Dict[str, Any]:
     """Extract structured signals from a single engineering plan record.
 
@@ -7540,8 +7561,11 @@ def _extract_engineering_plan_signals(plan: Dict[str, Any]) -> Dict[str, Any]:
 
     Returns a signal dict with keys:
       plan_id, source_file, print_tokens, route_hints, phase_hints,
-      date, revision, raw_text_tokens
+      date, revision, raw_text_tokens, print_token_universe
     """
+    # KMZ Hardening Stage B1 — token universe attribution. Captured once per
+    # call so the metadata reflects the policy applied during this extraction.
+    _b1_widened = _trueline_kmz_stage_b1_token_universe_derived_enabled()
     plan_id = str(plan.get("plan_id") or "").strip()
     source_file = str(plan.get("original_filename") or "").strip()
 
@@ -7568,6 +7592,8 @@ def _extract_engineering_plan_signals(plan: Dict[str, Any]) -> Dict[str, Any]:
                     print_tokens.append(tok)
 
     # Explicit patterns in filename (only add tokens not already from metadata)
+    # Stage B1: clamp 1-30 when flag OFF (Brenham legacy); accept any positive
+    # integer when flag ON. Zero / negative tokens always rejected.
     for pat in _EP_PRINT_PATS:
         for m in pat.finditer(fname_scan):
             raw_num = m.group(1).lstrip("0") or "0"
@@ -7575,23 +7601,37 @@ def _extract_engineering_plan_signals(plan: Dict[str, Any]) -> Dict[str, Any]:
                 num_val = int(raw_num)
             except ValueError:
                 continue
-            if 1 <= num_val <= 30:
-                tok = str(num_val)
-                if tok not in print_tokens:
-                    print_tokens.append(tok)
+            if _b1_widened:
+                if num_val < 1:
+                    continue
+            else:
+                if not (1 <= num_val <= 30):
+                    continue
+            tok = str(num_val)
+            if tok not in print_tokens:
+                print_tokens.append(tok)
 
-    # Last resort: bare 1–2-digit numbers from filename when nothing else matched
+    # Last resort: bare 1-2-digit numbers from filename when nothing else matched.
+    # Stage B1: when flag ON, widen the regex to capture any positive integer
+    # length; preserve the existing 1-2-digit bare-fallback shape when OFF so
+    # Brenham behavior stays byte-identical.
     if not print_tokens:
-        for m in re.finditer(r'\b(\d{1,2})\b', fname_scan):
+        bare_pattern = r'\b(\d+)\b' if _b1_widened else r'\b(\d{1,2})\b'
+        for m in re.finditer(bare_pattern, fname_scan):
             raw_num = m.group(1).lstrip("0") or "0"
             try:
                 num_val = int(raw_num)
             except ValueError:
                 continue
-            if 1 <= num_val <= 30:
-                tok = str(num_val)
-                if tok not in print_tokens:
-                    print_tokens.append(tok)
+            if _b1_widened:
+                if num_val < 1:
+                    continue
+            else:
+                if not (1 <= num_val <= 30):
+                    continue
+            tok = str(num_val)
+            if tok not in print_tokens:
+                print_tokens.append(tok)
 
     # Sort numerically for stable output
     print_tokens = sorted(set(print_tokens), key=lambda x: int(x))
@@ -7669,6 +7709,9 @@ def _extract_engineering_plan_signals(plan: Dict[str, Any]) -> Dict[str, Any]:
         "date": extracted_date,
         "revision": extracted_revision,
         "raw_text_tokens": raw_text_tokens,
+        "print_token_universe": (
+            "stage_b1_derived_universe" if _b1_widened else "brenham_1_30_clamped"
+        ),
     }
 
 
