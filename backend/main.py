@@ -36,6 +36,11 @@ from app.core.address_point_index import parse_address_points_from_kml
 from app.core.candidate_matrix import build_expanded_candidate_pool
 from app.core.candidate_route_discovery import discover_candidate_routes_from_notes_streets
 from app.core.coverage_sanity import compute_coverage_sanity
+from app.core import brenham_plan_sheet_graph as _brenham_psg
+from app.core.brenham_plan_sheet_graph_shadow_telemetry import (
+    append_shadow_row as _brenham_psg_append_shadow_row,
+    build_row as _brenham_psg_build_shadow_row,
+)
 from app.core import kmz_anchor_builder as _kmz_r2a_helper
 from app.core.kmz_anchor_builder_shadow_telemetry import (
     append_shadow_row as _kmz_r2a_append_shadow_row,
@@ -287,6 +292,13 @@ KMZ_STAGE_R1_SHADOW_PATH = UPLOADS_DIR / "kmz_stage_r1_shadow.jsonl"
 # `kmz_anchor_builder_shadow_telemetry`). R2a is OBSERVATION ONLY — anchors
 # are NOT passed to R1; R2c is the future packet that wires them.
 KMZ_STAGE_R2A_SHADOW_PATH = UPLOADS_DIR / "kmz_stage_r2a_shadow.jsonl"
+# Brenham Plan Sheet Station Graph — diagnostic shadow telemetry (Brenham PH5
+# only). Default-OFF; only written when `TRUELINE_BRENHAM_PLAN_SHEET_GRAPH_SHADOW`
+# is enabled. Schema `brenham-plan-sheet-graph-shadow-1`. Trim policy mirrors
+# PT.ACT R3.g. DIAGNOSTIC ONLY — never changes routing / scoring / selection /
+# rendering; emits per-bore-log evidence comparing prints+stations to the
+# extracted matchline/station graph.
+BRENHAM_PLAN_SHEET_GRAPH_SHADOW_PATH = UPLOADS_DIR / "brenham_plan_sheet_graph_shadow.jsonl"
 # KMZ Matching Trust Slice C1 — operator override audit JSONL. Append-only.
 # Schema `match-override-audit-1`. Trim policy mirrors PT.ACT R3.g.
 MATCH_OVERRIDES_AUDIT_PATH = UPLOADS_DIR / "match_overrides.jsonl"
@@ -7592,6 +7604,28 @@ _EP_NOISE_TOKENS: set = {
 }
 
 
+def _trueline_brenham_plan_sheet_graph_shadow_enabled() -> bool:
+    """Brenham Plan Sheet Station Graph — runtime flag for diagnostic SHADOW
+    telemetry. Brenham PH5 only.
+
+    Default OFF. When OFF, the rebuild path's plan-sheet-graph seam is a silent
+    no-op: no helper invocation, no shadow row write. Production behavior is
+    byte-identical.
+
+    When ON, after each rebuild, the seam iterates `pipeline_diag` entries,
+    gathers each bore-log group's prints + station range from `committed_rows`,
+    evaluates them against the extracted Brenham matchline/station graph, and
+    appends one diagnostic JSONL row per group to
+    `BRENHAM_PLAN_SHEET_GRAPH_SHADOW_PATH`. NO matching / scoring / selection /
+    filter / render behavior changes regardless of flag state. Telemetry is the
+    only side effect.
+
+    Read every call; never captured at import-time.
+    """
+    raw = os.environ.get("TRUELINE_BRENHAM_PLAN_SHEET_GRAPH_SHADOW", "").strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
 def _trueline_kmz_stage_r2a_anchor_builder_shadow_enabled() -> bool:
     """KMZ Hardening Stage R2a — runtime flag for anchor builder SHADOW
     telemetry.
@@ -10789,6 +10823,111 @@ def _emit_plan_footage_shadow_diagnostic(
         return {"emitted": False, "reason": "shadow_summary_error"}
 
 
+def _emit_brenham_plan_sheet_graph_shadow_if_enabled(
+    session_id: Optional[str],
+    pipeline_diag: Optional[Sequence[Dict[str, Any]]] = None,
+    committed_rows: Optional[Sequence[Dict[str, Any]]] = None,
+) -> None:
+    """Brenham Plan Sheet Station Graph — diagnostic SHADOW emission. Brenham
+    PH5 only.
+
+    Fires once per rebuild ONLY when the plan-sheet-graph shadow flag is
+    enabled. For each bore-log group in pipeline_diag, gathers the group's
+    prints + station range from committed_rows, derives the print index's
+    expected streets, evaluates against the extracted matchline/station graph,
+    and appends one diagnostic JSONL row per group to
+    `BRENHAM_PLAN_SHEET_GRAPH_SHADOW_PATH`.
+
+    DIAGNOSTIC ONLY. NO matching / scoring / selection / filter / render change
+    regardless of flag state. NO STATE write. Telemetry is the only side
+    effect. Safe-failure: never raises; per-group errors are caught.
+    """
+    try:
+        if not _trueline_brenham_plan_sheet_graph_shadow_enabled():
+            return
+        if not session_id:
+            return
+        diag = pipeline_diag if pipeline_diag is not None else (STATE.get("pipeline_diag") or [])
+        rows = committed_rows if committed_rows is not None else (STATE.get("committed_rows") or [])
+        if not isinstance(diag, (list, tuple)) or not diag:
+            return
+        if not isinstance(rows, (list, tuple)):
+            rows = []
+
+        # Group committed_rows by source_file → prints (union) + station range.
+        by_file: Dict[str, Dict[str, Any]] = {}
+        for r in rows:
+            if not isinstance(r, dict):
+                continue
+            sf = str(r.get("source_file") or "").strip()
+            if not sf:
+                continue
+            slot = by_file.setdefault(sf, {"prints": set(), "stations": []})
+            for tok in _parse_print_tokens(r.get("print")):
+                slot["prints"].add(tok)
+            sft = r.get("station_ft")
+            if isinstance(sft, (int, float)):
+                slot["stations"].append(float(sft))
+
+        emitted_files: Set[str] = set()
+        for entry in diag:
+            try:
+                if not isinstance(entry, dict):
+                    continue
+                sf = str(entry.get("source_file") or "").strip()
+                if not sf or sf in emitted_files:
+                    continue
+                slot = by_file.get(sf)
+                if not slot or not slot["prints"]:
+                    continue
+                prints = sorted(slot["prints"])
+                stations = slot["stations"]
+                smin = min(stations) if stations else None
+                smax = max(stations) if stations else None
+
+                # Index-expected streets for these prints (read-only lookup).
+                index_streets: List[str] = []
+                for p in prints:
+                    ent = CURRENT_PACKET_PRINT_SHEET_INDEX.get(str(p))
+                    if ent:
+                        for s in ent.get("streets", []) or []:
+                            if s not in index_streets:
+                                index_streets.append(s)
+
+                # Notes streets from an existing location-evidence diag payload,
+                # if present (never re-runs extraction; read-only).
+                notes_streets = None
+                lem = entry.get("location_evidence_mismatch")
+                if isinstance(lem, dict):
+                    ns = lem.get("notes_streets")
+                    if isinstance(ns, (list, tuple)) and ns:
+                        notes_streets = list(ns)
+
+                evidence = _brenham_psg.evaluate_bore_log(
+                    prints=prints,
+                    station_min_ft=smin,
+                    station_max_ft=smax,
+                    notes_streets=notes_streets,
+                    index_streets=index_streets or None,
+                )
+                row = _brenham_psg_build_shadow_row(
+                    session_id=session_id,
+                    source_file=sf,
+                    group_id=str(entry.get("group_id") or "") or None,
+                    selected_route_id=str(entry.get("selected_route_id") or "") or None,
+                    render_allowed=entry.get("render_allowed"),
+                    evidence=evidence,
+                )
+                _brenham_psg_append_shadow_row(
+                    row, target_path=BRENHAM_PLAN_SHEET_GRAPH_SHADOW_PATH
+                )
+                emitted_files.add(sf)
+            except Exception:
+                continue
+    except Exception:
+        return
+
+
 def _emit_kmz_stage_r2a_anchor_shadow_if_enabled(
     session_id: Optional[str],
     pipeline_diag: Optional[Sequence[Dict[str, Any]]] = None,
@@ -12695,6 +12834,15 @@ def _rebuild_field_data_outputs(scope: RebuildScope = RebuildScope.FULL) -> None
         route_catalog=STATE.get("route_catalog") or [],
         kmz_semantic=STATE.get("kmz_semantic"),
         plan_records=_eng_plans_for_session,
+    )
+    # Brenham Plan Sheet Station Graph — diagnostic shadow emission. Default-OFF
+    # via TRUELINE_BRENHAM_PLAN_SHEET_GRAPH_SHADOW. When OFF, no-op + no JSONL
+    # write. Pure observation; never mutates STATE / pipeline_diag / scoring /
+    # selection / rendering. Brenham PH5 only.
+    _emit_brenham_plan_sheet_graph_shadow_if_enabled(
+        _session_id_hint,
+        pipeline_diag=STATE.get("pipeline_diag") or [],
+        committed_rows=STATE.get("committed_rows") or [],
     )
     if _perf_audit_enabled():
         try:
