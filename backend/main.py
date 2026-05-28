@@ -49,6 +49,9 @@ from app.core.kmz_stage_b2_streets import (
 )
 from app.core.evidence_resolver import resolve_evidence_for_group
 from app.core.location_mismatch_rescue import attempt_location_mismatch_rescue
+from app.core.match_review_queue import (
+    assemble_match_review_queue as _assemble_match_review_queue,
+)
 from app.core.notes_street_evidence import compute_location_evidence_mismatch
 from app.core.rebuild_scope import RebuildScope
 from app.core.route_collision_alternate_search import (
@@ -13803,6 +13806,33 @@ def debug_pipeline_diag(session_id: Optional[str] = None, source_file: Optional[
         "engineering_plan_signal_count": len(plan_signals),
         "engineering_plan_signals": plan_signals,
         _PI4B_DIAG_KEY: pi4b_attr,
+    })
+
+
+@localhost_router.get("/api/match-review-queue")
+def match_review_queue_endpoint(session_id: Optional[str] = None) -> JSONResponse:
+    """Read-only operator-review queue.
+
+    KMZ Matching Trust Slice B — projects STATE["pipeline_diag"] into a
+    prioritized list of matching outcomes that need operator attention.
+    Reads existing diagnostic fields only; never touches matching, scoring,
+    selection, rendering, KMZ export, or STATE mutation.
+
+    Mirrors the `/api/debug/pipeline-diag` tenant-scoping pattern: requires
+    an explicit `session_id` and opens `_session_scope` for tenant gating.
+    """
+    sid = str(session_id or "").strip()
+    if not sid:
+        return JSONResponse(
+            status_code=400, content={"error": "session_id is required"}
+        )
+    with _session_scope(sid):
+        diag: List[Dict[str, Any]] = list(STATE.get("pipeline_diag") or [])
+    queue = _assemble_match_review_queue(diag)
+    return JSONResponse(content={
+        "success": True,
+        "session_id": sid,
+        **queue,
     })
 
 
