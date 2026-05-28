@@ -234,11 +234,33 @@ type BindingsState =
   | { kind: "error"; message: string };
 
 // Enriched candidate with E2c-derived readiness signals for the picker.
+// E4.2 adds route_like_score, candidate_kind, and orientation_warning so
+// the operator can distinguish actual route geometry from station ticks
+// (vertical ruler lines) and stamps (engineer-seal scribbles).
+type CandidateKind = "route_like" | "tick_like" | "stamp_like" | "uncertain";
+
 type EnrichedRouteCandidate = PdfExtractionRouteCandidate & {
   anchor_count: number;
   bound_stations: string[]; // unique + sorted asc
-  readiness: "ready" | "weak" | "not_ready";
+  readiness: "ready" | "weak" | "tick_only" | "not_ready";
+  route_like_score: number; // 0..1
+  candidate_kind: CandidateKind;
+  bbox_aspect: number;      // w / h, never inf (clamped)
+  density: number;          // total_length_pt / bbox_diagonal
+  orientation_warning: string | null;
 };
+
+// E4.2 bucket selector — same 9 buckets as the backend E2a classifier.
+type ExtractionBucket =
+  | "proposed_red" | "existing_purple" | "existing_orange"
+  | "existing_blue" | "row_green" | "base_black"
+  | "template_gray" | "white_mask" | "other";
+
+const _EXTRACTION_BUCKETS: ExtractionBucket[] = [
+  "proposed_red", "existing_purple", "existing_orange",
+  "existing_blue", "row_green", "base_black",
+  "template_gray", "white_mask", "other",
+];
 
 type ReviewRowDraft = {
   start: string;
@@ -336,6 +358,10 @@ export default function PdfPlanCanvas({ projectId, planId }: PdfPlanCanvasProps)
 
   // E4 — auto-redline review preview (dry-run only; no persistence).
   const [reviewEnabled] = useState<boolean>(readReviewFlag);
+  // E4.2 — operator-selectable bucket (defaults to proposed_red but
+  // exposes the full classifier so the operator can validate the bucket
+  // assumption against real plan sheets).
+  const [reviewBucket, setReviewBucket] = useState<ExtractionBucket>("proposed_red");
   const [routeCandidates, setRouteCandidates] = useState<RouteCandidatesState>({
     kind: "idle",
   });
@@ -784,7 +810,7 @@ export default function PdfPlanCanvas({ projectId, planId }: PdfPlanCanvasProps)
           `${RENDER_BASE}/api/engineering-plans/${encodeURIComponent(plan.plan_id)}` +
           `/extraction/route-candidates?page_index=${encodeURIComponent(String(targetPageIndex))}` +
           `&session_id=${encodeURIComponent(plan.session_id)}` +
-          `&bucket=proposed_red`;
+          `&bucket=${encodeURIComponent(reviewBucket)}`;
         const resp = await apiFetch(url, { cache: "no-store" }, "pdf_extraction_route_candidates");
         if (cancelled) return;
         if (resp.status === 404) {
@@ -846,7 +872,7 @@ export default function PdfPlanCanvas({ projectId, planId }: PdfPlanCanvasProps)
     return () => {
       cancelled = true;
     };
-  }, [reviewEnabled, metadata, pageIndex]);
+  }, [reviewEnabled, metadata, pageIndex, reviewBucket]);
 
   // -------------------------------------------------------------------------
   // E4.1 — load E2c bindings in parallel so the picker can score each
@@ -867,7 +893,7 @@ export default function PdfPlanCanvas({ projectId, planId }: PdfPlanCanvasProps)
           `${RENDER_BASE}/api/engineering-plans/${encodeURIComponent(plan.plan_id)}` +
           `/extraction/bindings?page_index=${encodeURIComponent(String(targetPageIndex))}` +
           `&session_id=${encodeURIComponent(plan.session_id)}` +
-          `&bucket=proposed_red`;
+          `&bucket=${encodeURIComponent(reviewBucket)}`;
         const resp = await apiFetch(url, { cache: "no-store" }, "pdf_extraction_bindings");
         if (cancelled) return;
         if (resp.status === 404) {
@@ -920,7 +946,7 @@ export default function PdfPlanCanvas({ projectId, planId }: PdfPlanCanvasProps)
     return () => {
       cancelled = true;
     };
-  }, [reviewEnabled, metadata, pageIndex]);
+  }, [reviewEnabled, metadata, pageIndex, reviewBucket]);
 
   // -------------------------------------------------------------------------
   // E4 — handlers for the review preview panel
@@ -957,7 +983,7 @@ export default function PdfPlanCanvas({ projectId, planId }: PdfPlanCanvasProps)
       const body = {
         session_id:           plan.session_id,
         page_index:           pageIndex,
-        bucket:               "proposed_red",
+        bucket:               reviewBucket,
         route_candidate_id:   reviewSelectedRcId,
         rows: reviewRows.map((r) => ({
           start_station: r.start,
@@ -1028,7 +1054,7 @@ export default function PdfPlanCanvas({ projectId, planId }: PdfPlanCanvasProps)
             : "Unexpected error while requesting auto-redline preview.",
       });
     }
-  }, [metadata, pageIndex, reviewSelectedRcId, reviewRows]);
+  }, [metadata, pageIndex, reviewSelectedRcId, reviewRows, reviewBucket]);
 
   // -------------------------------------------------------------------------
   // Step 3B — hydrate / persist bore-log-style rows in localStorage
@@ -2121,6 +2147,13 @@ export default function PdfPlanCanvas({ projectId, planId }: PdfPlanCanvasProps)
         <AutoRedlineReviewPanel
           plan={metadata.plan}
           pageIndex={pageIndex}
+          bucket={reviewBucket}
+          onBucketChange={(b) => {
+            setReviewBucket(b);
+            // Bucket change resets all dependent picker state; the
+            // (plan, page, bucket) effect re-fetches automatically.
+            setReviewSelectedRcId(null);
+          }}
           routeCandidatesState={routeCandidates}
           bindingsState={bindings}
           selectedRcId={reviewSelectedRcId}
@@ -4612,6 +4645,8 @@ void ANCHOR_SNAP_HINT_PX;
 function AutoRedlineReviewPanel({
   plan,
   pageIndex,
+  bucket,
+  onBucketChange,
   routeCandidatesState,
   bindingsState,
   selectedRcId,
@@ -4627,6 +4662,8 @@ function AutoRedlineReviewPanel({
 }: {
   plan: EngineeringPlan;
   pageIndex: number;
+  bucket: ExtractionBucket;
+  onBucketChange: (b: ExtractionBucket) => void;
   routeCandidatesState: RouteCandidatesState;
   bindingsState: BindingsState;
   selectedRcId: string | null;
@@ -4645,11 +4682,13 @@ function AutoRedlineReviewPanel({
   const canPreview =
     selectedRcId !== null && rows.length > 0 && !previewing;
 
-  // E4.1 — enrich the raw E2b candidate list with E2c-derived
-  // anchor_count + bound_stations + readiness label, then apply the
-  // operator-ranked sort (READY first, then length desc, then prefer
-  // horizontal/mixed orientation over vertical so tiny tick/leader
-  // candidates fall to the bottom).
+  // E4.1 / E4.2 — enrich the raw E2b candidate list with E2c-derived
+  // anchor signals AND route-quality signals (bbox aspect / density /
+  // candidate_kind / route_like_score) so the operator can distinguish
+  // real route geometry from station-ruler ticks and engineer-seal
+  // stamps.  Diagnosis: ODOT_TULSA_31 pages 10/12 had vertical ruler
+  // candidates (12pt x 757pt columns) AND tiny-bbox stamp candidates
+  // (19x17 with length=829.8) outranking the actual route fragments.
   const enrichedCandidates: EnrichedRouteCandidate[] = useMemo(() => {
     if (routeCandidatesState.kind !== "ok") return [];
     const anchorsByRc: Record<string, string[]> = {};
@@ -4663,46 +4702,170 @@ function AutoRedlineReviewPanel({
         anchorsByRc[rcId].push(label);
       }
     }
-    const orientationRank = (o: string | null | undefined): number => {
-      const v = (o || "").toLowerCase();
-      if (v === "horizontal") return 0;
-      if (v === "mixed") return 1;
-      if (v === "vertical") return 2;
-      return 3;
+
+    // Per-candidate quality computation.
+    const computeQuality = (
+      c: PdfExtractionRouteCandidate,
+    ): {
+      aspect: number;
+      density: number;
+      score: number;
+      kind: CandidateKind;
+      warning: string | null;
+    } => {
+      const bbox = Array.isArray(c.bbox) && c.bbox.length === 4 ? c.bbox : null;
+      const bw = bbox ? Math.max(0, bbox[2] - bbox[0]) : 0;
+      const bh = bbox ? Math.max(0, bbox[3] - bbox[1]) : 0;
+      const aspect = (bw + 0.01) / (bh + 0.01);
+      const diag = Math.sqrt(bw * bw + bh * bh);
+      const length = Number(c.total_length_pt) || 0;
+      const density = length / Math.max(diag, 1.0);
+      const segs = Number(c.segment_count) || 0;
+      const paths = Number(c.path_count) || 0;
+
+      // Aspect score: prefer non-extreme (real routes are H or M).
+      let aspectScore: number;
+      if (aspect >= 0.3 && aspect <= 3.3) {
+        aspectScore = 1.0;
+      } else if (aspect > 3.3) {
+        aspectScore = Math.max(0.4, 1.0 - Math.min(0.6, (aspect - 3.3) / 12.0));
+      } else if (aspect >= 0.15) {
+        aspectScore = 0.55;
+      } else {
+        aspectScore = 0.18;
+      }
+
+      // Density score: routes have density 1-5; stamps have density >> 5.
+      let densityScore: number;
+      if (density >= 0.9 && density <= 5.0) {
+        densityScore = 1.0;
+      } else if (density > 5.0) {
+        densityScore = Math.max(0.0, 1.0 - (density - 5.0) / 20.0);
+      } else {
+        densityScore = Math.max(0.0, density / 0.9);
+      }
+
+      // Length score: log-scaled, more length = more route-like up to a cap.
+      const lengthScore = Math.min(1.0, Math.log(length + 1) / Math.log(2500));
+
+      // Structure score: real routes have multiple segments/paths.
+      const structureScore = Math.min(1.0, (segs + paths * 2) / 25.0);
+
+      const score = Math.max(
+        0.0,
+        Math.min(
+          1.0,
+          0.32 * densityScore +
+            0.26 * aspectScore +
+            0.22 * lengthScore +
+            0.20 * structureScore,
+        ),
+      );
+
+      // Classification rules.  Order matters — stamp_like first because
+      // dense small marks would otherwise mistakenly score as
+      // route-like by aspect alone.
+      let kind: CandidateKind;
+      const smallBbox = bbox && Math.max(bw, bh) < 60;
+      if (density > 8.0 && smallBbox) {
+        kind = "stamp_like";
+      } else if (
+        (aspect < 0.15 || aspect > 12.0) &&
+        segs <= 4 &&
+        density < 1.5
+      ) {
+        kind = "tick_like";
+      } else if (score >= 0.55 && segs >= 3) {
+        kind = "route_like";
+      } else {
+        kind = "uncertain";
+      }
+
+      // Orientation warning surfaces the most common operator
+      // misinterpretation: a vertical candidate that picked up station
+      // anchors is almost always a ruler, not a route.
+      let warning: string | null = null;
+      if (kind === "tick_like") {
+        warning = "Vertical/tick-like geometry; likely a station-ruler line, not a route.";
+      } else if (kind === "stamp_like") {
+        warning = "Dense scribble in a tiny region; likely a stamp/seal, not a route.";
+      }
+
+      return { aspect, density, score, kind, warning };
     };
+
     const list: EnrichedRouteCandidate[] = routeCandidatesState.candidates.map((c) => {
       const labels = anchorsByRc[c.candidate_id] || [];
       const unique = Array.from(new Set(labels)).sort();
       const cnt = unique.length;
-      const readiness: "ready" | "weak" | "not_ready" =
-        cnt >= 2 ? "ready" : cnt === 1 ? "weak" : "not_ready";
+      const q = computeQuality(c);
+      // Readiness now considers BOTH anchor_count AND kind.  Tick-like
+      // candidates with anchors get a distinct "tick_only" readiness so
+      // the operator sees the anchors are ruler-bound, not route-bound.
+      let readiness: "ready" | "weak" | "tick_only" | "not_ready";
+      if (cnt >= 2 && (q.kind === "route_like" || q.kind === "uncertain")) {
+        readiness = "ready";
+      } else if (cnt >= 2 && q.kind === "tick_like") {
+        readiness = "tick_only";
+      } else if (cnt >= 1 && (q.kind === "route_like" || q.kind === "uncertain")) {
+        readiness = "weak";
+      } else if (cnt >= 1 && q.kind === "tick_like") {
+        readiness = "tick_only";
+      } else {
+        readiness = "not_ready";
+      }
       return {
         ...c,
-        anchor_count: cnt,
-        bound_stations: unique,
+        anchor_count:        cnt,
+        bound_stations:      unique,
         readiness,
+        route_like_score:    q.score,
+        candidate_kind:      q.kind,
+        bbox_aspect:         q.aspect,
+        density:             q.density,
+        orientation_warning: q.warning,
       };
     });
+
+    // E4.2 new sort: ROUTE-LIKE before TICK-LIKE, then by anchor_count,
+    // then by score, then by length.  This keeps anchored real routes at
+    // the top and pushes vertical-ruler tick candidates below them even
+    // when the rulers have more bound anchors (rulers attract anchors
+    // by proximity, not by being the actual route).
+    const kindRank: Record<CandidateKind, number> = {
+      route_like: 0,
+      uncertain:  1,
+      tick_like:  2,
+      stamp_like: 3,
+    };
     list.sort((a, b) => {
+      const ka = kindRank[a.candidate_kind];
+      const kb = kindRank[b.candidate_kind];
+      if (ka !== kb) return ka - kb;
       if (a.anchor_count !== b.anchor_count) return b.anchor_count - a.anchor_count;
+      if (a.route_like_score !== b.route_like_score) {
+        return b.route_like_score - a.route_like_score;
+      }
       const la = Number(a.total_length_pt) || 0;
       const lb = Number(b.total_length_pt) || 0;
-      if (la !== lb) return lb - la;
-      return orientationRank(a.dominant_orientation) - orientationRank(b.dominant_orientation);
+      return lb - la;
     });
     return list;
   }, [routeCandidatesState, bindingsState]);
 
-  const readyCount = enrichedCandidates.filter((c) => c.readiness === "ready").length;
-  const weakCount  = enrichedCandidates.filter((c) => c.readiness === "weak").length;
+  const readyCount    = enrichedCandidates.filter((c) => c.readiness === "ready").length;
+  const weakCount     = enrichedCandidates.filter((c) => c.readiness === "weak").length;
+  const tickOnlyCount = enrichedCandidates.filter((c) => c.readiness === "tick_only").length;
+  const routeLikeCount = enrichedCandidates.filter((c) => c.candidate_kind === "route_like").length;
   const bindingsLoading = bindingsState.kind === "loading";
   const bindingsUnavailable =
     bindingsState.kind === "disabled" || bindingsState.kind === "error";
 
-  const readinessBadge = (r: "ready" | "weak" | "not_ready") => {
+  const readinessBadge = (r: "ready" | "weak" | "tick_only" | "not_ready") => {
     const map = {
       ready:     { label: "READY",     bg: "#10b981", fg: "#ffffff" },
       weak:      { label: "WEAK",      bg: "#f59e0b", fg: "#ffffff" },
+      tick_only: { label: "TICK ONLY", bg: "#dc2626", fg: "#ffffff" },
       not_ready: { label: "NOT READY", bg: "#94a3b8", fg: "#ffffff" },
     } as const;
     const v = map[r];
@@ -4718,6 +4881,39 @@ function AutoRedlineReviewPanel({
           fontWeight: 700,
           letterSpacing: "0.04em",
         }}
+      >
+        {v.label}
+      </span>
+    );
+  };
+
+  const kindBadge = (k: CandidateKind) => {
+    const map: Record<CandidateKind, { label: string; bg: string }> = {
+      route_like: { label: "ROUTE",  bg: "#0284c7" },
+      tick_like:  { label: "TICK",   bg: "#dc2626" },
+      stamp_like: { label: "STAMP",  bg: "#7c3aed" },
+      uncertain:  { label: "?",      bg: "#64748b" },
+    };
+    const v = map[k];
+    return (
+      <span
+        style={{
+          display: "inline-block",
+          padding: "1px 5px",
+          borderRadius: 3,
+          background: v.bg,
+          color: "#ffffff",
+          fontSize: 10,
+          fontWeight: 700,
+          marginLeft: 4,
+          letterSpacing: "0.04em",
+        }}
+        title={
+          k === "route_like" ? "Geometry shape consistent with an actual route polyline."
+          : k === "tick_like" ? "Geometry consistent with a station-ruler tick line (very high aspect ratio, low segment count)."
+          : k === "stamp_like" ? "Dense scribble in a tiny bbox (engineer's seal / logo / stamp)."
+          : "Geometry shape inconclusive."
+        }
       >
         {v.label}
       </span>
@@ -4763,7 +4959,53 @@ function AutoRedlineReviewPanel({
           </span>
         </div>
 
-        {/* Route candidates — E4.1 enriched picker */}
+        {/* E4.2 — bucket selector + diagnostic header. */}
+        <div
+          style={{
+            display: "flex",
+            gap: 12,
+            alignItems: "center",
+            flexWrap: "wrap",
+            marginBottom: 6,
+            fontSize: 11,
+          }}
+        >
+          <label
+            style={{
+              display: "flex",
+              gap: 6,
+              alignItems: "center",
+              color: "var(--tl-text)",
+              fontWeight: 600,
+              letterSpacing: "0.04em",
+            }}
+          >
+            BUCKET:
+            <select
+              value={bucket}
+              onChange={(e) => onBucketChange(e.target.value as ExtractionBucket)}
+              style={{
+                fontSize: 12,
+                padding: "3px 6px",
+                border: "1px solid var(--tl-border)",
+                borderRadius: 3,
+                background: "var(--tl-bg)",
+                fontFamily: "ui-monospace, monospace",
+              }}
+            >
+              {_EXTRACTION_BUCKETS.map((b) => (
+                <option key={b} value={b}>{b}</option>
+              ))}
+            </select>
+          </label>
+          <span style={{ color: "var(--tl-text-muted)" }}>
+            Switch buckets if the actual route geometry is not in proposed_red.
+            base_black often contains template borders only; existing_blue/orange/purple
+            usually contain as-built ROW/utility linework.
+          </span>
+        </div>
+
+        {/* Route candidates — E4.2 quality-aware picker */}
         <div style={{ marginBottom: 10 }}>
           <div
             style={{
@@ -4782,11 +5024,11 @@ function AutoRedlineReviewPanel({
                 letterSpacing: "0.04em",
               }}
             >
-              ROUTE CANDIDATES (bucket=proposed_red)
+              ROUTE CANDIDATES (bucket={bucket})
             </span>
             {routeCandidatesState.kind === "ok" && (
               <span style={{ fontSize: 11, color: "var(--tl-text-muted)" }}>
-                · {enrichedCandidates.length} total
+                · {enrichedCandidates.length} total · {routeLikeCount} ROUTE-like
                 {!bindingsLoading && (
                   <>
                     {" · "}
@@ -4796,6 +5038,10 @@ function AutoRedlineReviewPanel({
                     {" · "}
                     <span style={{ color: weakCount > 0 ? "#92400e" : "var(--tl-text-muted)" }}>
                       {weakCount} WEAK
+                    </span>
+                    {" · "}
+                    <span style={{ color: tickOnlyCount > 0 ? "#dc2626" : "var(--tl-text-muted)" }}>
+                      {tickOnlyCount} TICK-only
                     </span>
                   </>
                 )}
@@ -4842,9 +5088,14 @@ function AutoRedlineReviewPanel({
                 marginBottom: 4,
               }}
             >
-              No READY candidates on this page (each candidate needs ≥2 bound station anchors).
-              Auto-redline will fall back to bbox_fallback on any selection. Try a neighboring page
-              or expect low-confidence preview output here.
+              No READY candidates in <code>{bucket}</code>: no ROUTE-like candidate has ≥2 bound
+              station anchors here.
+              {tickOnlyCount > 0 && (
+                <> {tickOnlyCount} TICK-only candidate{tickOnlyCount === 1 ? "" : "s"} have anchors
+                  but are vertical station-ruler lines, not real routes.</>
+              )}
+              {" "}Try switching the BUCKET selector above (the real route geometry may live in a
+              different layer on this PDF), or try a neighboring page.
             </div>
           )}
           {routeCandidatesState.kind === "ok" && (
@@ -4876,11 +5127,13 @@ function AutoRedlineReviewPanel({
                   <tr>
                     <th style={{ textAlign: "left",  padding: "4px 8px" }}>Pick</th>
                     <th style={{ textAlign: "left",  padding: "4px 8px" }}>Status</th>
+                    <th style={{ textAlign: "left",  padding: "4px 8px" }}>Kind</th>
+                    <th style={{ textAlign: "right", padding: "4px 8px" }} title="route_like_score (0-1)">score</th>
                     <th style={{ textAlign: "left",  padding: "4px 8px" }}>candidate_id</th>
                     <th style={{ textAlign: "right", padding: "4px 8px" }}>anchors</th>
                     <th style={{ textAlign: "left",  padding: "4px 8px" }}>bound stations</th>
                     <th style={{ textAlign: "right", padding: "4px 8px" }}>length (pt)</th>
-                    <th style={{ textAlign: "right", padding: "4px 8px" }}>paths</th>
+                    <th style={{ textAlign: "right", padding: "4px 8px" }} title="bbox aspect ratio (width / height)">aspect</th>
                     <th style={{ textAlign: "left",  padding: "4px 8px" }}>orient</th>
                   </tr>
                 </thead>
@@ -4891,6 +5144,8 @@ function AutoRedlineReviewPanel({
                       ? "rgba(37, 99, 235, 0.10)"
                       : c.readiness === "ready"
                       ? "rgba(16, 185, 129, 0.04)"
+                      : c.readiness === "tick_only"
+                      ? "rgba(220, 38, 38, 0.04)"
                       : c.readiness === "weak"
                       ? "rgba(245, 158, 11, 0.04)"
                       : "transparent";
@@ -4905,6 +5160,7 @@ function AutoRedlineReviewPanel({
                         key={c.candidate_id}
                         style={{ background: rowBg, cursor: "pointer" }}
                         onClick={() => onSelectRc(c.candidate_id)}
+                        title={c.orientation_warning || undefined}
                       >
                         <td style={{ padding: "4px 8px" }}>
                           <input
@@ -4927,6 +5183,24 @@ function AutoRedlineReviewPanel({
                           ) : (
                             readinessBadge(c.readiness)
                           )}
+                        </td>
+                        <td style={{ padding: "4px 8px" }}>
+                          {kindBadge(c.candidate_kind)}
+                        </td>
+                        <td
+                          style={{
+                            padding: "4px 8px",
+                            textAlign: "right",
+                            fontFamily: "ui-monospace, monospace",
+                            color:
+                              c.route_like_score >= 0.55
+                                ? "#047857"
+                                : c.route_like_score >= 0.35
+                                ? "#92400e"
+                                : "var(--tl-text-muted)",
+                          }}
+                        >
+                          {c.route_like_score.toFixed(2)}
                         </td>
                         <td style={{ padding: "4px 8px", fontFamily: "ui-monospace, monospace" }}>
                           {c.candidate_id}
@@ -4960,8 +5234,8 @@ function AutoRedlineReviewPanel({
                         <td style={{ padding: "4px 8px", textAlign: "right" }}>
                           {Number(c.total_length_pt).toFixed(1)}
                         </td>
-                        <td style={{ padding: "4px 8px", textAlign: "right" }}>
-                          {c.path_count ?? "—"}
+                        <td style={{ padding: "4px 8px", textAlign: "right", color: "var(--tl-text-muted)" }}>
+                          {c.bbox_aspect >= 100 ? ">100" : c.bbox_aspect.toFixed(2)}
                         </td>
                         <td style={{ padding: "4px 8px", color: "var(--tl-text-muted)" }}>
                           {c.dominant_orientation || c.confidence_kind || "—"}
