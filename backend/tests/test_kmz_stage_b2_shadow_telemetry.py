@@ -50,7 +50,11 @@ class TestBuildRow(unittest.TestCase):
             title_block_streets=[],
         )
         self.assertEqual(row["schema_version"], TEL.SCHEMA_VERSION)
-        self.assertEqual(row["schema_version"], "kmz-stage-b2-shadow-1")
+        # B2b shipped "kmz-stage-b2-shadow-1"; B2b.1 bumps to v2 because
+        # the per_page projection adds tier_a_count + length_cap_drops +
+        # filler_ratio_drops + single_letter_drops + reverse_text_indicators.
+        # All pre-existing v1 fields preserved.
+        self.assertEqual(row["schema_version"], "kmz-stage-b2-shadow-2")
 
     def test_confidence_tally(self):
         comparisons = [
@@ -109,7 +113,7 @@ class TestBuildRow(unittest.TestCase):
         )
         # Must serialize without raising.
         s = json.dumps(row)
-        self.assertIn("kmz-stage-b2-shadow-1", s)
+        self.assertIn("kmz-stage-b2-shadow-2", s)
 
 
 class TestAppendShadowRow(unittest.TestCase):
@@ -136,7 +140,7 @@ class TestAppendShadowRow(unittest.TestCase):
         self.assertTrue(ok)
         self.assertTrue(self.path.exists())
         text = self.path.read_text(encoding="utf-8")
-        self.assertIn("kmz-stage-b2-shadow-1", text)
+        self.assertIn("kmz-stage-b2-shadow-2", text)
         self.assertTrue(text.endswith("\n"))
 
     def test_append_multiple_rows_are_jsonl(self):
@@ -153,7 +157,7 @@ class TestAppendShadowRow(unittest.TestCase):
         for line in lines:
             # Each line must be a valid JSON object.
             parsed = json.loads(line)
-            self.assertEqual(parsed["schema_version"], "kmz-stage-b2-shadow-1")
+            self.assertEqual(parsed["schema_version"], "kmz-stage-b2-shadow-2")
 
     def test_append_returns_false_on_bad_row(self):
         self.assertFalse(TEL.append_shadow_row(None, target_path=self.path))  # type: ignore[arg-type]
@@ -381,7 +385,7 @@ class TestB2EmissionSeamFlagOnAgainstBrenhamPDF(unittest.TestCase):
         ]
         self.assertEqual(len(lines), 1)
         row = json.loads(lines[0])
-        self.assertEqual(row["schema_version"], "kmz-stage-b2-shadow-1")
+        self.assertEqual(row["schema_version"], "kmz-stage-b2-shadow-2")
         self.assertEqual(row["session_id"], "sess_b2_brenham_test")
         self.assertEqual(row["plan_id"], "test_plan_b2_brenham")
         # Should have iterated all 4 Brenham pages.

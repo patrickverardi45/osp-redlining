@@ -26,7 +26,14 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
 
 
-SCHEMA_VERSION = "kmz-stage-b2-shadow-1"
+SCHEMA_VERSION = "kmz-stage-b2-shadow-2"
+# Schema history:
+#   kmz-stage-b2-shadow-1 (shipped at 05572a2 with B2b)
+#   kmz-stage-b2-shadow-2 (B2b.1) — additive per_page fields:
+#     `tier_a_count`, `length_cap_drops`, `filler_ratio_drops`,
+#     `single_letter_drops`, `reverse_text_indicators`. All pre-existing
+#     fields preserved with identical semantics. Readers of v1 can ignore
+#     the new fields safely.
 
 # Telemetry file shape constants. Mirror PT.ACT R3.g constraints.
 DEFAULT_MAX_ROWS = 5000
@@ -78,19 +85,27 @@ def build_row(
             pages_bounded = list(all_records[:200]) + list(all_records[-100:])
 
     # Project per-page records into compact form (strip large fields).
+    # B2b.1 — adds tier_a_count + length_cap_drops + filler_ratio_drops +
+    # single_letter_drops + reverse_text_indicators alongside the existing
+    # B2b fields. All B2b field names preserved for v1 -> v2 readability.
     pages_compact: List[Dict[str, Any]] = []
     for rec in pages_bounded:
         pages_compact.append({
             "page": int(rec.get("page") or 0),
             "raw_candidate_count": len(rec.get("raw_candidates") or []),
+            "tier_a_count": len(rec.get("tier_a_callouts") or []),
             "filtered_count": len(rec.get("filtered_streets") or []),
             "final_count": len(rec.get("final_streets") or []),
             "reverse_text_skipped": bool(rec.get("reverse_text_skipped", False)),
+            "reverse_text_indicators": list(rec.get("reverse_text_indicators") or [])[:6],
             "construction_leader_drops": int(rec.get("construction_leader_drops") or 0),
             "numeric_prefix_strips": int(rec.get("numeric_prefix_strips") or 0),
             "frequency_filter_drops": int(rec.get("frequency_filter_drops") or 0),
             "title_block_drops": int(rec.get("title_block_drops") or 0),
             "title_block_subtracted": bool(rec.get("title_block_subtracted", False)),
+            "length_cap_drops": int(rec.get("length_cap_drops") or 0),
+            "filler_ratio_drops": int(rec.get("filler_ratio_drops") or 0),
+            "single_letter_drops": int(rec.get("single_letter_drops") or 0),
             "final_streets": list(rec.get("final_streets") or [])[:25],
         })
 

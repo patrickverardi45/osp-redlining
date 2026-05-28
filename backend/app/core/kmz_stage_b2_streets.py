@@ -59,17 +59,62 @@ _CONSTRUCTION_LEADERS: frozenset = frozenset({
 
 
 # Reverse-text indicators: known engineering-context words whose REVERSED
-# form appearing in extracted text proves the page was extracted in reverse
+# form appearing in extracted text suggests the page was extracted in reverse
 # reading order (rotated title-block stamp, columnar disruption, etc.).
-# When detected, the page text is unreliable and the whole page is skipped.
+#
+# B2b.1 — graduated detection. The previous B2b version skipped any page on
+# a single substring hit, which discarded 50-100% of Brenham + ODOT_CREEK
+# pages because `ENILHCTAM` (MATCHLINE reversed) can incidentally appear in
+# column-shuffled MATCHLINE text on legitimate plan pages. New policy:
+# require ≥2 DISTINCT indicators OR a single indicator appearing ≥3 times
+# before declaring the page reversed. Short / typo'd indicators removed
+# (TFARD too short; the prior EERHTHCTAEP was a typo of PEACHTREE-reversed
+# and matched nothing real — dropped).
 _REVERSE_TEXT_INDICATORS: frozenset = frozenset({
     "LANOISSEFORP",      # PROFESSIONAL reversed
-    "TFARD",             # DRAFT reversed
     "DESOPORP",          # PROPOSED reversed
     "GNITSIXE",          # EXISTING reversed
     "ENILHCTAM",         # MATCHLINE reversed
-    "EERHTHCTAEP",       # weird Brenham fragment
 })
+
+_REVERSE_TEXT_DISTINCT_INDICATORS_FLOOR = 2
+_REVERSE_TEXT_SAME_INDICATOR_OCCURRENCE_FLOOR = 3
+
+
+# B2b.1 — expanded boilerplate vocabulary. Engineering-plan text contains
+# many uppercase noun phrases that end in a road-type suffix (`...CT`, `...ST`,
+# etc.) but are NOT street names. The B2b probe surfaced multi-paragraph
+# captures starting with words like `DRAWING INDEX HECTOR ELIZONDO ...
+# E STONE ST`. B2b.1 scans every non-final token (not just the leader) and
+# uses an expanded vocabulary.
+_BOILERPLATE_TOKENS: frozenset = frozenset(_CONSTRUCTION_LEADERS | {
+    # Engineering-plan organization
+    "DRAWING", "INDEX", "CONTRACTOR", "COORDINATOR", "MANAGER", "DIRECTOR",
+    "OFFICE", "PERMIT", "PROJECT", "DEPARTMENT", "OPERATIONS",
+    # Construction context (extends the leader set)
+    "INSTALLATION", "INSPECTION", "MAINTENANCE", "EMERGENCY",
+    "RESPONSIBILITY", "COMPLIANCE", "STAGE",
+    # Geography that's never a street body
+    "BRENHAM", "CITY", "COUNTY", "STATE", "TEXAS", "OKLAHOMA",
+})
+
+
+# B2b.1 — hard caps on candidate shape. Real US street names are short noun
+# phrases; engineering-plan note blocks captured by the generic STREET_PATTERN
+# can be 30+ tokens / hundreds of chars. Cap to plausible street-name shapes.
+_MAX_TOKEN_COUNT = 5
+_MAX_CHAR_LENGTH = 40
+
+# B2b.1 — filler ratio. If >40% of the non-final tokens (i.e. excluding the
+# road-type suffix) are common filler/glue words, the candidate is paragraph
+# noise rather than a street label.
+_FILLER_RATIO_THRESHOLD = 0.40
+
+# B2b.1 — single-letter sequence rejection. Column-shuffled PDF text can
+# produce sequences like `L D A N V D E R A I C ... CT` where each token is
+# one or two letters glued together by spaces. Reject candidates containing
+# ≥3 adjacent single-letter tokens before the suffix.
+_SINGLE_LETTER_RUN_FLOOR = 3
 
 
 # Frequency-filter floor: if a candidate street appears on more than this
@@ -102,6 +147,10 @@ def has_construction_leader(candidate: str) -> bool:
     """Return True iff the candidate's leading non-numeric token is a
     construction-context word (PROPOSED / EXISTING / DEPTH / etc.). These
     matches are filler glued to a real label and should be dropped.
+
+    NOTE: B2b shipped this as a leader-only check. B2b.1 keeps the function
+    for back-compat but the primary boilerplate filter is now
+    `has_boilerplate_anywhere`, which scans every non-final token.
     """
     if not isinstance(candidate, str):
         return False
@@ -111,52 +160,336 @@ def has_construction_leader(candidate: str) -> bool:
     return tokens[0] in _CONSTRUCTION_LEADERS
 
 
-def page_text_is_reversed(text: str) -> bool:
-    """Return True iff the page text contains any known REVERSED engineering
-    word. Reversed text is a pdfplumber-extraction artifact for rotated
-    title-block stamps; the whole page should be skipped because the order
-    is unreliable.
+def has_boilerplate_anywhere(candidate: str) -> bool:
+    """B2b.1 — return True iff ANY non-final token of the candidate is in
+    `_BOILERPLATE_TOKENS`. Catches greedy multi-word captures like
+    `DRAWING INDEX HECTOR ELIZONDO ... E STONE ST` where the original
+    leader-only check missed because `DRAWING` was the first token but
+    wasn't in `_CONSTRUCTION_LEADERS`. B2b.1 expanded the vocabulary AND
+    expanded the scan to every word before the road-type suffix.
     """
-    if not isinstance(text, str):
+    if not isinstance(candidate, str):
         return False
+    tokens = candidate.upper().split()
+    if len(tokens) < 2:
+        return False
+    # Inspect all tokens BEFORE the final suffix word.
+    body = tokens[:-1]
+    for tok in body:
+        if tok in _BOILERPLATE_TOKENS:
+            return True
+    return False
+
+
+def candidate_exceeds_size_caps(candidate: str) -> bool:
+    """B2b.1 — return True iff the candidate is longer than the hard caps
+    on plausible street-name shape (max 5 tokens / max 40 chars).
+    """
+    if not isinstance(candidate, str) or not candidate:
+        return False
+    if len(candidate) > _MAX_CHAR_LENGTH:
+        return True
+    if len(candidate.split()) > _MAX_TOKEN_COUNT:
+        return True
+    return False
+
+
+def candidate_has_adjacent_single_letters(candidate: str) -> bool:
+    """B2b.1 — return True iff the candidate body contains a run of
+    >= `_SINGLE_LETTER_RUN_FLOOR` adjacent single-letter tokens. Detects
+    column-shuffled PDF artifacts like `L D A N V D E R A I C ... CT`.
+    """
+    if not isinstance(candidate, str):
+        return False
+    tokens = candidate.upper().split()
+    if len(tokens) < 2:
+        return False
+    body = tokens[:-1]
+    run = 0
+    for tok in body:
+        if len(tok) == 1 and tok.isalpha():
+            run += 1
+            if run >= _SINGLE_LETTER_RUN_FLOOR:
+                return True
+        else:
+            run = 0
+    return False
+
+
+def candidate_filler_ratio(candidate: str) -> float:
+    """B2b.1 — return the fraction of non-final tokens that are in the
+    filler/glue word set `_FILLER_WORDS`. Real street names have ≤ 0
+    filler tokens in the body; paragraph noise often has >0.4.
+    """
+    if not isinstance(candidate, str):
+        return 0.0
+    tokens = candidate.upper().split()
+    if len(tokens) < 2:
+        return 0.0
+    body = tokens[:-1]
+    if not body:
+        return 0.0
+    filler_count = sum(1 for tok in body if tok in _FILLER_WORDS)
+    return filler_count / len(body)
+
+
+def page_reverse_text_signal(text: str) -> Dict[str, Any]:
+    """B2b.1 — graduated reverse-text detection. Returns a dict describing
+    which indicators matched, with what counts, and whether the page should
+    be skipped under the policy:
+      - >= 2 DISTINCT indicators, OR
+      - any single indicator appearing >= 3 times.
+
+    A single incidental substring no longer triggers a skip — that was the
+    B2b over-aggression that discarded 50-100% of legitimate Brenham + ODOT
+    pages because `ENILHCTAM` (MATCHLINE reversed) can appear in column-
+    shuffled MATCHLINE callouts on real plan sheets.
+
+    Returns:
+      {
+        "should_skip": bool,
+        "indicators_matched": List[str],  # sorted, deduplicated
+        "indicator_counts": Dict[str, int],
+        "distinct_indicator_count": int,
+        "max_indicator_occurrences": int,
+      }
+
+    Pure. Never raises. Never mutates input.
+    """
+    out: Dict[str, Any] = {
+        "should_skip": False,
+        "indicators_matched": [],
+        "indicator_counts": {},
+        "distinct_indicator_count": 0,
+        "max_indicator_occurrences": 0,
+    }
+    if not isinstance(text, str) or not text:
+        return out
     upper = text.upper()
-    return any(needle in upper for needle in _REVERSE_TEXT_INDICATORS)
+    counts: Dict[str, int] = {}
+    for needle in _REVERSE_TEXT_INDICATORS:
+        n = upper.count(needle)
+        if n > 0:
+            counts[needle] = n
+    if not counts:
+        return out
+    matched = sorted(counts.keys())
+    distinct = len(matched)
+    max_occ = max(counts.values())
+    out["indicators_matched"] = matched
+    out["indicator_counts"] = counts
+    out["distinct_indicator_count"] = distinct
+    out["max_indicator_occurrences"] = max_occ
+    out["should_skip"] = (
+        distinct >= _REVERSE_TEXT_DISTINCT_INDICATORS_FLOOR
+        or max_occ >= _REVERSE_TEXT_SAME_INDICATOR_OCCURRENCE_FLOOR
+    )
+    return out
+
+
+def page_text_is_reversed(text: str) -> bool:
+    """Back-compat wrapper around `page_reverse_text_signal`. Returns the
+    `should_skip` decision. Use `page_reverse_text_signal` directly for
+    diagnostic detail.
+    """
+    return bool(page_reverse_text_signal(text).get("should_skip", False))
+
+
+# ── Tier A: constrained engineering-plan callout patterns ─────────────────
+#
+# B2b.1 — engineering plans have predictable label conventions. Instead of
+# running a greedy regex over the entire page text (Tier B), extract only
+# matches that appear in known contexts: profile labels, plan labels,
+# sheet-title labels, station-line callouts, matchline-adjacent labels, and
+# street-and-cross patterns. These produce HIGH-context-confidence rows.
+
+_TIER_A_STREET_BODY = (
+    r"(?:[NSEW]\s+)?[A-Z][A-Z0-9'.-]{0,30}"
+    r"(?:\s+[A-Z][A-Z0-9'.-]{0,30}){0,4}"
+)
+_TIER_A_STREET_SUFFIX = (
+    r"(?:ST|STREET|RD|ROAD|DR|DRIVE|LN|LANE|AVE|AVENUE|BLVD|BOULEVARD|"
+    r"CT|COURT|CIR|CIRCLE|TRL|TRAIL|PKWY|PARKWAY|WAY|PL|PLACE|HWY|HIGHWAY)"
+)
+_TIER_A_STREET = rf"{_TIER_A_STREET_BODY}\s+{_TIER_A_STREET_SUFFIX}\b"
+
+_TIER_A_PATTERNS: List[Tuple[str, re.Pattern]] = [
+    (
+        "profile",
+        re.compile(
+            rf"\bPROFILE\s*[-–:]?\s*({_TIER_A_STREET})",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "plan",
+        re.compile(
+            rf"\bPLAN\s*[-–:]?\s*({_TIER_A_STREET})",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "sheet_title",
+        re.compile(
+            rf"\bSHEET\s+\d{{1,3}}(?:\s+OF\s+\d{{1,3}})?[^\n]{{0,40}}?({_TIER_A_STREET})",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "station_line",
+        re.compile(
+            rf"({_TIER_A_STREET})\s*[-–]\s*STA\s+\d+\+\d{{2}}",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "matchline_adjacent",
+        re.compile(
+            rf"\bMATCHLINE\s+STA\s+\d+\+\d{{2}}(?:/\d+\+\d{{2}})?"
+            rf"\s*-?\s*SEE\s+SHEET\s+\d+[^\n]{{0,40}}?({_TIER_A_STREET})",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "street_and_cross",
+        re.compile(
+            rf"({_TIER_A_STREET})\s*(?:&|\bAND\b)\s*({_TIER_A_STREET})",
+            re.IGNORECASE,
+        ),
+    ),
+]
+
+
+def extract_tier_a_callouts(text: str) -> List[Dict[str, str]]:
+    """B2b.1 — Tier A constrained extraction. Scan the page text for
+    explicit engineering-plan callout patterns (profile / plan / sheet
+    title / station line / matchline-adjacent / street-and-cross). Each
+    matched street is returned with its CONTEXT label so downstream
+    confidence calibration can reason about HOW it was found, not just
+    that it was.
+
+    Returns a list of `{street, context, raw_match}` dicts. Streets are
+    normalized via `_normalize_street`. Empty list if text is invalid or
+    no patterns match.
+
+    Pure. Never raises. Never mutates input.
+    """
+    out: List[Dict[str, str]] = []
+    if not isinstance(text, str) or not text:
+        return out
+    try:
+        for context_label, pat in _TIER_A_PATTERNS:
+            for m in pat.finditer(text):
+                groups = [g for g in m.groups() if g]
+                for g in groups:
+                    street = _normalize_street(g)
+                    if not street:
+                        continue
+                    # Apply the same B2b.1 hard-cap filters even to Tier A
+                    # captures so a pathological context doesn't smuggle in
+                    # a noise paragraph.
+                    if candidate_exceeds_size_caps(street):
+                        continue
+                    if has_boilerplate_anywhere(street):
+                        continue
+                    if candidate_has_adjacent_single_letters(street):
+                        continue
+                    if candidate_filler_ratio(street) > _FILLER_RATIO_THRESHOLD:
+                        continue
+                    out.append({
+                        "street": street,
+                        "context": context_label,
+                        "raw_match": (m.group(0) or "")[:80],
+                    })
+    except Exception:
+        return out
+    # Dedupe while preserving first-seen order + first context.
+    seen: Set[str] = set()
+    deduped: List[Dict[str, str]] = []
+    for item in out:
+        key = item["street"]
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(item)
+    return deduped
 
 
 def extract_page_street_labels_from_text(text: str) -> Dict[str, Any]:
-    """Pure helper — run STREET_PATTERN against a single page's text and
-    apply the per-page denoise pipeline that does NOT require cross-page
-    context (title-block subtraction + frequency filter are applied later).
+    """Pure helper — extract per-page street candidates with the B2b.1
+    two-tier denoise pipeline.
 
-    Returns a dict with:
-      - "raw_candidates": List[str] (untrimmed STREET_PATTERN hits)
-      - "filtered_streets": List[str] (post per-page denoise)
+    Pipeline:
+      1. Graduated reverse-text guard (`page_reverse_text_signal`): skip
+         only when ≥2 distinct indicators OR a single indicator ≥3 times.
+      2. Tier A: constrained engineering-plan callouts
+         (`extract_tier_a_callouts`). HIGH-context-confidence matches.
+      3. Tier B: generic STREET_PATTERN over the page text, then per-
+         candidate denoise: numeric-prefix strip, hard size caps, boiler-
+         plate-anywhere scan, single-letter sequence rejection, filler-
+         ratio cap.
+
+    Returns a dict with (additive over B2b; existing field names preserved):
+      - "raw_candidates": List[str] (Tier B raw STREET_PATTERN hits)
+      - "tier_a_callouts": List[Dict] (NEW B2b.1; from `extract_tier_a_callouts`)
+      - "filtered_streets": List[str] (UNION of Tier A streets + Tier B
+        candidates that passed every per-page filter)
       - "reverse_text_skipped": bool
-      - "construction_leader_drops": int (how many candidates dropped)
-      - "numeric_prefix_strips": int (how many candidates had a numeric prefix removed)
+      - "reverse_text_indicators": List[str] (NEW B2b.1; the indicators
+        whose presence triggered the skip, or that matched without triggering)
+      - "construction_leader_drops": int (PRESERVED; now counts the
+        broader boilerplate-anywhere drops in B2b.1 — same int field, same
+        semantic of "boilerplate filter dropped this candidate")
+      - "numeric_prefix_strips": int
       - "empty_after_strip_drops": int
+      - "length_cap_drops": int (NEW B2b.1)
+      - "filler_ratio_drops": int (NEW B2b.1)
+      - "single_letter_drops": int (NEW B2b.1)
 
     Pure. Never raises. Never mutates input.
     """
     out: Dict[str, Any] = {
         "raw_candidates": [],
+        "tier_a_callouts": [],
         "filtered_streets": [],
         "reverse_text_skipped": False,
+        "reverse_text_indicators": [],
         "construction_leader_drops": 0,
         "numeric_prefix_strips": 0,
         "empty_after_strip_drops": 0,
+        "length_cap_drops": 0,
+        "filler_ratio_drops": 0,
+        "single_letter_drops": 0,
     }
     if not isinstance(text, str) or not text:
         return out
 
-    if page_text_is_reversed(text):
+    reverse_signal = page_reverse_text_signal(text)
+    out["reverse_text_indicators"] = list(reverse_signal.get("indicators_matched") or [])
+    if reverse_signal.get("should_skip"):
         out["reverse_text_skipped"] = True
         return out
 
+    # ── Tier A: constrained callouts ─────────────────────────────────────
+    tier_a = extract_tier_a_callouts(text)
+    out["tier_a_callouts"] = tier_a
+    tier_a_streets: List[str] = []
+    seen_tier_a: Set[str] = set()
+    for item in tier_a:
+        s = item.get("street") if isinstance(item, dict) else None
+        if not isinstance(s, str):
+            continue
+        norm = _normalize_street(s)
+        if not norm or norm in seen_tier_a:
+            continue
+        seen_tier_a.add(norm)
+        tier_a_streets.append(norm)
+
+    # ── Tier B: generic STREET_PATTERN + hard-cap denoise ────────────────
     try:
         raw_hits = STREET_PATTERN.findall(text)
     except Exception:
-        return out
+        raw_hits = []
 
     raw_uniq: List[str] = []
     seen_raw: Set[str] = set()
@@ -170,8 +503,8 @@ def extract_page_street_labels_from_text(text: str) -> Dict[str, Any]:
         raw_uniq.append(norm)
     out["raw_candidates"] = raw_uniq
 
-    filtered: List[str] = []
-    seen_filtered: Set[str] = set()
+    filtered: List[str] = list(tier_a_streets)
+    seen_filtered: Set[str] = set(tier_a_streets)
     for candidate in raw_uniq:
         original = candidate
         stripped = strip_numeric_prefix(candidate)
@@ -180,16 +513,31 @@ def extract_page_street_labels_from_text(text: str) -> Dict[str, Any]:
         if not stripped:
             out["empty_after_strip_drops"] += 1
             continue
-        if has_construction_leader(stripped):
+
+        # B2b.1 — hard caps first (cheapest checks).
+        if candidate_exceeds_size_caps(stripped):
+            out["length_cap_drops"] += 1
+            continue
+        if candidate_has_adjacent_single_letters(stripped):
+            out["single_letter_drops"] += 1
+            continue
+        # B2b.1 — boilerplate-anywhere scan (replaces the prior leader-only
+        # check; same int counter field name for telemetry continuity).
+        if has_boilerplate_anywhere(stripped):
             out["construction_leader_drops"] += 1
             continue
-        # Also drop candidates whose every token is a filler word (no real
-        # street body left after the trailing road-type suffix is conceptual).
+        if candidate_filler_ratio(stripped) > _FILLER_RATIO_THRESHOLD:
+            out["filler_ratio_drops"] += 1
+            continue
+        # Drop candidates whose body is entirely filler (no real street
+        # noun-token left). Counted under construction_leader_drops for
+        # telemetry continuity.
         tokens = stripped.upper().split()
         non_filler = [t for t in tokens[:-1] if t not in _FILLER_WORDS]
         if len(tokens) > 1 and not non_filler:
             out["construction_leader_drops"] += 1
             continue
+
         stripped_norm = _normalize_street(stripped)
         if not stripped_norm:
             continue
@@ -333,7 +681,15 @@ def apply_cross_page_denoise(
             page_freq = street_page_count.get(norm, 0)
             # `pages_with_text` == 0 means degenerate (no text-bearing pages);
             # bypass frequency filter. Floor is inclusive.
-            if pages_with_text > 1 and page_freq >= floor_count:
+            # A street appearing on only ONE page cannot be boilerplate by
+            # definition — boilerplate is cross-page repetition. Require
+            # at least 2 page occurrences before the frequency filter can
+            # drop a street.
+            if (
+                pages_with_text > 1
+                and page_freq >= floor_count
+                and page_freq >= 2
+            ):
                 new_rec["frequency_filter_drops"] += 1
                 continue
             final.append(norm)
