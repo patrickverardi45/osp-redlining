@@ -801,11 +801,13 @@ def _print_sheet_hints(print_tokens: Sequence[str]) -> Dict[str, Any]:
     streets: List[str] = []
     sheet_numbers: List[int] = []
     route_ids: List[str] = []
+    any_token_resolved = False
 
     for token in tokens:
         entry = CURRENT_PACKET_PRINT_SHEET_INDEX.get(token)
         if not entry:
             continue
+        any_token_resolved = True
         sheet = entry.get("sheet")
         if isinstance(sheet, int) and sheet not in sheet_numbers:
             sheet_numbers.append(sheet)
@@ -816,11 +818,21 @@ def _print_sheet_hints(print_tokens: Sequence[str]) -> Dict[str, Any]:
             if route_id not in route_ids:
                 route_ids.append(route_id)
 
+    # KMZ Hardening Stage A — additive observability. Identifies whether the
+    # print/sheet hints came from the Brenham PH5-calibrated constant, a future
+    # PI.4A-derived per-session catalog, or a future operator manual override.
+    # Stage A only activates the constant + unavailable values; the other two
+    # are reserved namespace for Stage B and Stage E.
+    print_sheet_index_source = (
+        "hardcoded_brenham" if any_token_resolved else "no_print_index_available"
+    )
+
     return {
         "print_tokens": tokens,
         "sheet_numbers": sheet_numbers,
         "street_hints": streets,
         "allowed_route_ids": route_ids,
+        "print_sheet_index_source": print_sheet_index_source,
     }
 
 
@@ -4204,6 +4216,7 @@ def _route_filter_for_print_tokens(print_tokens: Sequence[str], route_catalog: S
             "sheet_numbers": [],
             "street_hints": [],
             "allowed_route_ids": [],
+            "print_sheet_index_source": "no_print_index_available",
             "reason": "No print tokens were present on the bore-log group.",
         }
 
@@ -4211,6 +4224,9 @@ def _route_filter_for_print_tokens(print_tokens: Sequence[str], route_catalog: S
     allowed_route_ids = list(hint_meta.get("allowed_route_ids") or [])
     street_hints = list(hint_meta.get("street_hints") or [])
     sheet_numbers = list(hint_meta.get("sheet_numbers") or [])
+    print_sheet_index_source = str(
+        hint_meta.get("print_sheet_index_source") or "no_print_index_available"
+    )
 
     if not allowed_route_ids:
         return list(route_catalog), {
@@ -4220,6 +4236,7 @@ def _route_filter_for_print_tokens(print_tokens: Sequence[str], route_catalog: S
             "sheet_numbers": sheet_numbers,
             "street_hints": street_hints,
             "allowed_route_ids": [],
+            "print_sheet_index_source": print_sheet_index_source,
             "reason": "No print-to-street extraction hints were available for this print set.",
         }
 
@@ -4234,6 +4251,7 @@ def _route_filter_for_print_tokens(print_tokens: Sequence[str], route_catalog: S
             "sheet_numbers": sheet_numbers,
             "street_hints": street_hints,
             "allowed_route_ids": allowed_route_ids,
+            "print_sheet_index_source": print_sheet_index_source,
             "reason": "Print-to-street extraction resolved to route ids, but none were present in the current KMZ catalog.",
         }
 
@@ -4244,6 +4262,7 @@ def _route_filter_for_print_tokens(print_tokens: Sequence[str], route_catalog: S
         "sheet_numbers": sheet_numbers,
         "street_hints": street_hints,
         "allowed_route_ids": allowed_route_ids,
+        "print_sheet_index_source": print_sheet_index_source,
         "reason": "Candidate routes were narrowed by print-to-street extraction calibrated from the detailed engineering sheets.",
     }
 
