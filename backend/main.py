@@ -36,6 +36,11 @@ from app.core.address_point_index import parse_address_points_from_kml
 from app.core.candidate_matrix import build_expanded_candidate_pool
 from app.core.candidate_route_discovery import discover_candidate_routes_from_notes_streets
 from app.core.coverage_sanity import compute_coverage_sanity
+from app.core import kmz_anchor_builder as _kmz_r2a_helper
+from app.core.kmz_anchor_builder_shadow_telemetry import (
+    append_shadow_row as _kmz_r2a_append_shadow_row,
+    build_row as _kmz_r2a_build_shadow_row,
+)
 from app.core import kmz_auto_redline as _kmz_r1_helper
 from app.core.kmz_auto_redline_shadow_telemetry import (
     append_shadow_row as _kmz_r1_append_shadow_row,
@@ -275,6 +280,13 @@ KMZ_STAGE_B2_SHADOW_PATH = UPLOADS_DIR / "kmz_stage_b2_shadow.jsonl"
 # (see DEFAULT_MAX_ROWS + DEFAULT_TRIM_TRIGGER_BYTES in
 # `kmz_auto_redline_shadow_telemetry`).
 KMZ_STAGE_R1_SHADOW_PATH = UPLOADS_DIR / "kmz_stage_r1_shadow.jsonl"
+# KMZ Hardening Stage R2a — anchor builder shadow telemetry. Default-OFF;
+# only written to when `TRUELINE_KMZ_STAGE_R2A_ANCHOR_BUILDER_SHADOW` is
+# enabled. Schema `kmz-stage-r2a-shadow-1`. Trim policy mirrors PT.ACT R3.g
+# (see DEFAULT_MAX_ROWS + DEFAULT_TRIM_TRIGGER_BYTES in
+# `kmz_anchor_builder_shadow_telemetry`). R2a is OBSERVATION ONLY — anchors
+# are NOT passed to R1; R2c is the future packet that wires them.
+KMZ_STAGE_R2A_SHADOW_PATH = UPLOADS_DIR / "kmz_stage_r2a_shadow.jsonl"
 # KMZ Matching Trust Slice C1 — operator override audit JSONL. Append-only.
 # Schema `match-override-audit-1`. Trim policy mirrors PT.ACT R3.g.
 MATCH_OVERRIDES_AUDIT_PATH = UPLOADS_DIR / "match_overrides.jsonl"
@@ -7580,6 +7592,30 @@ _EP_NOISE_TOKENS: set = {
 }
 
 
+def _trueline_kmz_stage_r2a_anchor_builder_shadow_enabled() -> bool:
+    """KMZ Hardening Stage R2a — runtime flag for anchor builder SHADOW
+    telemetry.
+
+    Default OFF. When OFF, the rebuild path's R2a seam is a silent no-op:
+    no helper invocation, no shadow row write. Production behavior is
+    byte-identical to pre-R2a.
+
+    When ON, after each rebuild, the seam iterates `pipeline_diag` entries
+    with a confirmed `selected_route_id` and `render_allowed=True`, looks
+    up the route polyline from the route catalog, invokes the R2a helper
+    against the session's `kmz_semantic.features`, and appends one JSONL
+    row per (session, route_id) to `KMZ_STAGE_R2A_SHADOW_PATH`. NO matching
+    / scoring / selection / filter behavior changes regardless of flag
+    state. **R2a output is NOT passed into R1's seam** — R2a is parallel
+    observation only; R2c is the future packet that wires R2a output into
+    R1. Telemetry is the only side effect.
+
+    Read every call; never captured at import-time.
+    """
+    raw = os.environ.get("TRUELINE_KMZ_STAGE_R2A_ANCHOR_BUILDER_SHADOW", "").strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
 def _trueline_kmz_stage_r1_auto_redline_shadow_enabled() -> bool:
     """KMZ Hardening Stage R1 — runtime flag for auto-redline projection
     SHADOW telemetry.
@@ -10753,6 +10789,134 @@ def _emit_plan_footage_shadow_diagnostic(
         return {"emitted": False, "reason": "shadow_summary_error"}
 
 
+def _emit_kmz_stage_r2a_anchor_shadow_if_enabled(
+    session_id: Optional[str],
+    pipeline_diag: Optional[Sequence[Dict[str, Any]]] = None,
+    route_catalog: Optional[Sequence[Dict[str, Any]]] = None,
+    kmz_semantic: Optional[Dict[str, Any]] = None,
+    plan_records: Optional[Sequence[Dict[str, Any]]] = None,
+) -> None:
+    """KMZ Hardening Stage R2a — anchor builder SHADOW emission.
+
+    Fires once per rebuild ONLY when the R2a shadow flag is enabled. For
+    each bore-log group in pipeline_diag with `selected_route_id` and
+    `render_allowed=True`, the seam:
+
+      * looks up the matched route's polyline from the route_catalog
+      * invokes the R2a anchor-builder helper against the session's
+        `STATE["kmz_semantic"]["features"]`
+      * appends one JSONL row per (session, route_id) to
+        `KMZ_STAGE_R2A_SHADOW_PATH`
+
+    NO matching / scoring / selection / filter behavior changes regardless
+    of flag state. **R2a output is NOT passed into R1's seam** — that's
+    R2c (future packet). R2a is parallel observation only.
+
+    Safe-failure: never raises. Per-group helper errors are caught and the
+    next group continues; outer try/except guards the whole seam so the
+    rebuild path is never disturbed.
+    """
+    try:
+        if not _trueline_kmz_stage_r2a_anchor_builder_shadow_enabled():
+            return
+        if not session_id:
+            return
+
+        diag = pipeline_diag if pipeline_diag is not None else (STATE.get("pipeline_diag") or [])
+        catalog = route_catalog if route_catalog is not None else (STATE.get("route_catalog") or [])
+        semantic = kmz_semantic if kmz_semantic is not None else STATE.get("kmz_semantic")
+        plans = plan_records if plan_records is not None else []
+
+        if not isinstance(diag, (list, tuple)) or not diag:
+            return
+
+        # Extract semantic features list once. R2a tolerates an empty list;
+        # diagnostics will record `kmz_semantic_unavailable` warning.
+        semantic_features: List[Dict[str, Any]] = []
+        if isinstance(semantic, dict):
+            raw_feats = semantic.get("features")
+            if isinstance(raw_feats, list):
+                semantic_features = raw_feats
+
+        # Index route_catalog by route_id for O(1) polyline lookups.
+        route_index: Dict[str, Dict[str, Any]] = {}
+        if isinstance(catalog, (list, tuple)):
+            for r in catalog:
+                if not isinstance(r, dict):
+                    continue
+                rid = str(r.get("route_id") or "").strip()
+                if rid:
+                    route_index[rid] = r
+
+        # Best-effort plan_id pick: first plan record's id.
+        plan_id: Optional[str] = None
+        if isinstance(plans, (list, tuple)) and plans:
+            head = plans[0] if isinstance(plans[0], dict) else None
+            if head:
+                plan_id = str(head.get("plan_id") or "").strip() or None
+
+        # Per-route emission. Dedupe by route_id so multi-group same-route
+        # selections only emit one R2a row per route (R2a output is
+        # group-independent; only `request_meta.group_id` would differ).
+        emitted_route_ids: set = set()
+
+        for entry in diag:
+            try:
+                if not isinstance(entry, dict):
+                    continue
+                if not entry.get("render_allowed"):
+                    continue
+                route_id = str(entry.get("selected_route_id") or "").strip()
+                if not route_id:
+                    continue
+                if route_id in emitted_route_ids:
+                    continue
+                route_record = route_index.get(route_id)
+                if not isinstance(route_record, dict):
+                    continue
+
+                coords = route_record.get("coords") or []
+                if not isinstance(coords, (list, tuple)) or len(coords) < 2:
+                    continue
+
+                request = {
+                    "route_id": route_id,
+                    "route_polyline_lonlat": list(coords),
+                    "kmz_semantic_features": semantic_features,
+                    "request_meta": {
+                        "session_id": session_id,
+                        "plan_id": plan_id,
+                        "group_id": str(entry.get("group_id") or "") or None,
+                        "source_file": str(entry.get("source_file") or "") or None,
+                    },
+                }
+
+                try:
+                    response = _kmz_r2a_helper.generate_kmz_station_anchors(request)
+                except _kmz_r2a_helper.KmzAnchorBuilderError:
+                    continue
+                except Exception:
+                    continue
+
+                row = _kmz_r2a_build_shadow_row(
+                    session_id=session_id,
+                    plan_id=plan_id,
+                    route_id=route_id,
+                    request_meta=request.get("request_meta"),
+                    diagnostics=response.get("diagnostics") or {},
+                    anchor_records=response.get("anchor_records") or [],
+                    parameters_version=str(response.get("parameters_version") or "v1"),
+                )
+                _kmz_r2a_append_shadow_row(row, target_path=KMZ_STAGE_R2A_SHADOW_PATH)
+                emitted_route_ids.add(route_id)
+            except Exception:
+                # Per-group failure is silent; continue with the next group.
+                continue
+    except Exception:
+        # Catch-all so the rebuild path is never disturbed.
+        return
+
+
 def _emit_kmz_stage_r1_redline_shadow_if_enabled(
     session_id: Optional[str],
     pipeline_diag: Optional[Sequence[Dict[str, Any]]] = None,
@@ -12517,6 +12681,19 @@ def _rebuild_field_data_outputs(scope: RebuildScope = RebuildScope.FULL) -> None
         _session_id_hint,
         pipeline_diag=STATE.get("pipeline_diag") or [],
         route_catalog=STATE.get("route_catalog") or [],
+        plan_records=_eng_plans_for_session,
+    )
+    # KMZ Hardening Stage R2a — anchor builder shadow emission. Default-OFF
+    # via TRUELINE_KMZ_STAGE_R2A_ANCHOR_BUILDER_SHADOW. When OFF, this is a
+    # no-op and no helper invocation / shadow row write occurs. Pure
+    # observation; never mutates STATE; **anchors NOT passed into R1's
+    # seam** — R2c is the future packet that wires them. R2a runs in
+    # parallel with R1's seam and the two telemetry streams are independent.
+    _emit_kmz_stage_r2a_anchor_shadow_if_enabled(
+        _session_id_hint,
+        pipeline_diag=STATE.get("pipeline_diag") or [],
+        route_catalog=STATE.get("route_catalog") or [],
+        kmz_semantic=STATE.get("kmz_semantic"),
         plan_records=_eng_plans_for_session,
     )
     if _perf_audit_enabled():
