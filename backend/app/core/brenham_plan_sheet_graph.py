@@ -377,3 +377,86 @@ def evaluate_bore_log(
         "status": status,
         "status_reasons": reasons,
     }
+
+
+# ── operator-review precision filter ────────────────────────────────────────
+#
+# The Match Review Queue (MRQ) only wants the ACTIONABLE PSG statuses. The
+# common/low-discrimination statuses (within_corridor, multi_corridor_span) and
+# the precedence-masked outside_corridor_extent are intentionally EXCLUDED — the
+# first real Brenham telemetry review (2026-05-28) showed multi_corridor_span on
+# 57% of groups, so surfacing it would be noise, not signal.
+REVIEW_EVIDENCE_SCHEMA_VERSION = "plan-sheet-graph-evidence-1"
+
+MRQ_ACTIONABLE_STATUSES: FrozenSet[str] = frozenset({
+    STATUS_STATION_PRINT_DISJOINT,
+    STATUS_EXTERNAL_PACKET_MISMATCH,
+    STATUS_UNKNOWN,
+})
+
+
+def _actionability_for(status: str) -> str:
+    """Actionability label for an actionable status. Pure."""
+    if status in (STATUS_STATION_PRINT_DISJOINT, STATUS_EXTERNAL_PACKET_MISMATCH):
+        return "high"
+    if status == STATUS_UNKNOWN:
+        return "data_quality"
+    return "low"
+
+
+def build_review_evidence(
+    *,
+    prints: Any,
+    station_min_ft: Optional[float] = None,
+    station_max_ft: Optional[float] = None,
+    notes_streets: Optional[Sequence[str]] = None,
+    index_streets: Optional[Sequence[str]] = None,
+) -> Optional[Dict[str, Any]]:
+    """Evaluate a bore-log group and return a COMPACT operator-review evidence
+    dict — but ONLY when the resulting status is actionable enough to warrant
+    operator attention (see ``MRQ_ACTIONABLE_STATUSES``).
+
+    Returns ``None`` for the common/noisy statuses (``within_corridor``,
+    ``multi_corridor_span``) and for ``outside_corridor_extent`` (masked by
+    precedence on real corpora). This is the precision filter that gates PSG
+    evidence into the Match Review Queue.
+
+    Pure, deterministic, never raises. DIAGNOSTIC / OBSERVATION ONLY — never
+    mutates routing state, scoring, selection, or rendering. Schema version
+    ``plan-sheet-graph-evidence-1``.
+    """
+    try:
+        ev = evaluate_bore_log(
+            prints=prints,
+            station_min_ft=station_min_ft,
+            station_max_ft=station_max_ft,
+            notes_streets=notes_streets,
+            index_streets=index_streets,
+        )
+    except Exception:
+        return None
+    status = ev.get("status")
+    if status not in MRQ_ACTIONABLE_STATUSES:
+        return None
+
+    out: Dict[str, Any] = {
+        "schema_version": REVIEW_EVIDENCE_SCHEMA_VERSION,
+        "status": status,
+        "actionability": _actionability_for(status),
+        "reasons": list(ev.get("status_reasons") or []),
+        "prints": list(ev.get("prints") or []),
+        "sheets": list(ev.get("sheets") or []),
+        "corridors": [list(c) for c in (ev.get("corridors") or [])],
+        "station_range": ev.get("station_range"),
+    }
+    # Echo the streets that drove an external-packet mismatch when available.
+    # Read-only: never derives new streets; only reflects what was passed in.
+    if index_streets:
+        idx = [str(s) for s in index_streets if str(s).strip()]
+        if idx:
+            out["index_streets"] = idx
+    if notes_streets:
+        ns = [str(s) for s in notes_streets if str(s).strip()]
+        if ns:
+            out["notes_streets"] = ns
+    return out

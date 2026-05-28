@@ -25,7 +25,9 @@ input list of diag dicts. It does not import from `main.py`.
 from __future__ import annotations
 
 from copy import deepcopy
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Mapping, Optional, Sequence
+
+from app.core import brenham_plan_sheet_graph as _psg
 
 
 SCHEMA_VERSION = "match-review-queue-1"
@@ -298,6 +300,8 @@ def _build_row(entry: Dict[str, Any], status: str) -> Dict[str, Any]:
 
 def assemble_match_review_queue(
     pipeline_diag: Optional[Sequence[Dict[str, Any]]],
+    *,
+    plan_sheet_graph_inputs: Optional[Mapping[str, Mapping[str, Any]]] = None,
 ) -> Dict[str, Any]:
     """Assemble the operator-review queue from a `pipeline_diag` list.
 
@@ -315,6 +319,18 @@ def assemble_match_review_queue(
 
     Pure. Never raises (returns empty queue on bad input). Never mutates
     the input.
+
+    ``plan_sheet_graph_inputs`` (optional; default-OFF Brenham PSG precision
+    evidence): a read-only ``{source_file: {prints, station_min_ft,
+    station_max_ft, index_streets, notes_streets}}`` map. When provided (and
+    non-empty), each queue row whose ``source_file`` resolves to an ACTIONABLE
+    Brenham plan-sheet-graph status (``station_print_disjoint`` /
+    ``external_packet_mismatch_possible`` / ``unknown``) gains a read-only
+    ``plan_sheet_graph_evidence`` field. The noisy statuses (``within_corridor``,
+    ``multi_corridor_span``) never attach a field. When the arg is ``None`` /
+    empty, behavior — including the absence of the field — is byte-identical to
+    pre-slice. This NEVER changes status classification, priority, counts,
+    sort order, scoring, selection, or rendering. Observation only.
     """
     out: Dict[str, Any] = {
         "schema_version": SCHEMA_VERSION,
@@ -336,6 +352,22 @@ def assemble_match_review_queue(
         # Defensive deepcopy at projection boundary so the row references
         # cannot leak back into STATE via dict mutation upstream.
         row = _build_row(deepcopy(entry), status)
+        # Brenham PSG precision evidence (default-OFF; attached only when the
+        # caller passes inputs AND the status is actionable). Read-only field;
+        # never alters classification / priority / counts / sort / routing.
+        if plan_sheet_graph_inputs:
+            sf = row.get("source_file")
+            psg_in = plan_sheet_graph_inputs.get(sf) if sf else None
+            if isinstance(psg_in, Mapping):
+                evidence = _psg.build_review_evidence(
+                    prints=psg_in.get("prints"),
+                    station_min_ft=psg_in.get("station_min_ft"),
+                    station_max_ft=psg_in.get("station_max_ft"),
+                    notes_streets=psg_in.get("notes_streets"),
+                    index_streets=psg_in.get("index_streets"),
+                )
+                if evidence is not None:
+                    row["plan_sheet_graph_evidence"] = evidence
         rows.append(row)
 
     rows.sort(key=lambda r: (

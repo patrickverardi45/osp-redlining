@@ -7626,6 +7626,25 @@ def _trueline_brenham_plan_sheet_graph_shadow_enabled() -> bool:
     return raw in {"1", "true", "yes", "on"}
 
 
+def _trueline_mrq_plan_sheet_graph_evidence_enabled() -> bool:
+    """Match Review Queue — runtime flag for Brenham PSG precision evidence.
+    Brenham PH5 only. Default OFF.
+
+    When OFF, the `/api/match-review-queue` endpoint never gathers PSG inputs
+    and never calls the PSG helper; the queue response (including the absence of
+    `plan_sheet_graph_evidence`) is byte-identical to pre-slice behavior. When
+    ON, the endpoint gathers per-source_file prints + station range + index /
+    notes streets and the MRQ builder attaches a read-only
+    `plan_sheet_graph_evidence` field ONLY for the actionable statuses
+    (station_print_disjoint / external_packet_mismatch_possible / unknown).
+    NO scoring / selection / rendering / KMZ-export change either way.
+
+    Read every call; never captured at import-time.
+    """
+    raw = os.environ.get("TRUELINE_MRQ_PLAN_SHEET_GRAPH_EVIDENCE", "").strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
 def _trueline_kmz_stage_r2a_anchor_builder_shadow_enabled() -> bool:
     """KMZ Hardening Stage R2a — runtime flag for anchor builder SHADOW
     telemetry.
@@ -10926,6 +10945,80 @@ def _emit_brenham_plan_sheet_graph_shadow_if_enabled(
                 continue
     except Exception:
         return
+
+
+def _gather_mrq_plan_sheet_graph_inputs(
+    pipeline_diag: Optional[Sequence[Dict[str, Any]]],
+    committed_rows: Optional[Sequence[Dict[str, Any]]],
+) -> Dict[str, Dict[str, Any]]:
+    """Gather per-source_file Brenham PSG inputs (prints, station range, index
+    streets, notes streets) for the Match Review Queue precision-evidence field.
+
+    Mirrors `_emit_brenham_plan_sheet_graph_shadow_if_enabled`'s derivation
+    EXACTLY so the MRQ evidence matches the shadow telemetry: prints + station
+    range come from `committed_rows` grouped by source_file; index streets come
+    from `CURRENT_PACKET_PRINT_SHEET_INDEX`; notes streets come from the existing
+    `location_evidence_mismatch` diag payload (read-only — never re-extracts).
+
+    Read-only. Never mutates STATE / inputs. Never raises (returns whatever was
+    gathered so far on error). DIAGNOSTIC ONLY — no scoring / selection /
+    rendering effect. The caller decides whether to invoke this (flag-gated).
+    """
+    out: Dict[str, Dict[str, Any]] = {}
+    try:
+        rows = committed_rows if isinstance(committed_rows, (list, tuple)) else []
+        diag = pipeline_diag if isinstance(pipeline_diag, (list, tuple)) else []
+
+        by_file: Dict[str, Dict[str, Any]] = {}
+        for r in rows:
+            if not isinstance(r, dict):
+                continue
+            sf = str(r.get("source_file") or "").strip()
+            if not sf:
+                continue
+            slot = by_file.setdefault(sf, {"prints": set(), "stations": []})
+            for tok in _parse_print_tokens(r.get("print")):
+                slot["prints"].add(tok)
+            sft = r.get("station_ft")
+            if isinstance(sft, (int, float)):
+                slot["stations"].append(float(sft))
+
+        # Notes streets from the existing location-evidence diag (read-only).
+        notes_by_sf: Dict[str, List[str]] = {}
+        for entry in diag:
+            if not isinstance(entry, dict):
+                continue
+            sf = str(entry.get("source_file") or "").strip()
+            if not sf or sf in notes_by_sf:
+                continue
+            lem = entry.get("location_evidence_mismatch")
+            if isinstance(lem, dict):
+                ns = lem.get("notes_streets")
+                if isinstance(ns, (list, tuple)) and ns:
+                    notes_by_sf[sf] = [str(s) for s in ns]
+
+        for sf, slot in by_file.items():
+            if not slot["prints"]:
+                continue
+            prints = sorted(slot["prints"])
+            index_streets: List[str] = []
+            for p in prints:
+                ent = CURRENT_PACKET_PRINT_SHEET_INDEX.get(str(p))
+                if ent:
+                    for s in ent.get("streets", []) or []:
+                        if s not in index_streets:
+                            index_streets.append(s)
+            stations = slot["stations"]
+            out[sf] = {
+                "prints": prints,
+                "station_min_ft": min(stations) if stations else None,
+                "station_max_ft": max(stations) if stations else None,
+                "index_streets": index_streets or None,
+                "notes_streets": notes_by_sf.get(sf),
+            }
+    except Exception:
+        return out
+    return out
 
 
 def _emit_kmz_stage_r2a_anchor_shadow_if_enabled(
@@ -14348,9 +14441,20 @@ def match_review_queue_endpoint(session_id: Optional[str] = None) -> JSONRespons
         return JSONResponse(
             status_code=400, content={"error": "session_id is required"}
         )
+    _psg_inputs: Optional[Dict[str, Dict[str, Any]]] = None
     with _session_scope(sid):
         diag: List[Dict[str, Any]] = list(STATE.get("pipeline_diag") or [])
-    queue = _assemble_match_review_queue(diag)
+        # Brenham PSG precision evidence (default-OFF via
+        # TRUELINE_MRQ_PLAN_SHEET_GRAPH_EVIDENCE). When OFF: no gather, no PSG
+        # helper call, queue response byte-identical to pre-slice. Read-only.
+        if _trueline_mrq_plan_sheet_graph_evidence_enabled():
+            _psg_inputs = _gather_mrq_plan_sheet_graph_inputs(
+                diag, STATE.get("committed_rows") or []
+            )
+    if _psg_inputs:
+        queue = _assemble_match_review_queue(diag, plan_sheet_graph_inputs=_psg_inputs)
+    else:
+        queue = _assemble_match_review_queue(diag)
     return JSONResponse(content={
         "success": True,
         "session_id": sid,
