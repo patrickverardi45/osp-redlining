@@ -36,6 +36,17 @@ from app.core.address_point_index import parse_address_points_from_kml
 from app.core.candidate_matrix import build_expanded_candidate_pool
 from app.core.candidate_route_discovery import discover_candidate_routes_from_notes_streets
 from app.core.coverage_sanity import compute_coverage_sanity
+from app.core.kmz_stage_b2_shadow_telemetry import (
+    append_shadow_row as _kmz_b2_append_shadow_row,
+    build_row as _kmz_b2_build_shadow_row,
+)
+from app.core.kmz_stage_b2_streets import (
+    compare_derived_to_constant as _kmz_b2_compare_derived_to_constant,
+    compute_title_block_address_streets as _kmz_b2_compute_title_block_address_streets,
+    derive_print_to_sheet_streets as _kmz_b2_derive_print_to_sheet_streets,
+    derive_sheet_to_streets as _kmz_b2_derive_sheet_to_streets,
+    extract_page_street_labels as _kmz_b2_extract_page_street_labels,
+)
 from app.core.evidence_resolver import resolve_evidence_for_group
 from app.core.location_mismatch_rescue import attempt_location_mismatch_rescue
 from app.core.notes_street_evidence import compute_location_evidence_mismatch
@@ -232,6 +243,11 @@ MATCH_SHADOW_COMPARE_MAX_ROWS = 5000
 # selection, anchoring, validation, ranking, or geometry. Emits only when at
 # least one plausibility layer ran in shadow mode for the pass.
 PLAUSIBILITY_SHADOW_PATH = UPLOADS_DIR / "plausibility_shadow.jsonl"
+# KMZ Hardening Stage B2b — derived-streets shadow telemetry. Default-OFF;
+# only written to when `TRUELINE_KMZ_STAGE_B2_STREETS_SHADOW` is enabled.
+# Mirrors PT.ACT R3.g size-trigger trim semantics (see DEFAULT_MAX_ROWS +
+# DEFAULT_TRIM_TRIGGER_BYTES in `kmz_stage_b2_shadow_telemetry`).
+KMZ_STAGE_B2_SHADOW_PATH = UPLOADS_DIR / "kmz_stage_b2_shadow.jsonl"
 PLAUSIBILITY_SHADOW_MAX_ROWS = 5000
 # Size-trigger trim threshold. After each append, the helper performs a single
 # read+truncate cycle ONLY when the file exceeds this many bytes. Avoids the
@@ -7527,6 +7543,27 @@ _EP_NOISE_TOKENS: set = {
 }
 
 
+def _trueline_kmz_stage_b2_streets_shadow_enabled() -> bool:
+    """KMZ Hardening Stage B2b — runtime flag for derived-streets SHADOW
+    telemetry.
+
+    Default OFF. When OFF, no PDF re-parse for street derivation occurs;
+    no shadow row is written; pipeline output is byte-identical to post-B1.
+
+    When ON, the rebuild path opens each session engineering-plan PDF,
+    runs the B2b denoise pipeline against per-page text, derives sheet ->
+    streets + per-token streets, compares against the Brenham constant,
+    and appends one JSONL row per (session, plan_id) to
+    `KMZ_STAGE_B2_SHADOW_PATH`. NO routing / scoring / selection / filter
+    behavior changes regardless of flag state. Telemetry is the only side
+    effect.
+
+    Read every call; never captured at import-time.
+    """
+    raw = os.environ.get("TRUELINE_KMZ_STAGE_B2_STREETS_SHADOW", "").strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
 def _trueline_kmz_stage_b1_token_universe_derived_enabled() -> bool:
     """KMZ Hardening Stage B1 — runtime flag for token-universe widening.
 
@@ -10655,6 +10692,167 @@ def _emit_plan_footage_shadow_diagnostic(
         return {"emitted": False, "reason": "shadow_summary_error"}
 
 
+def _emit_kmz_stage_b2_streets_shadow_if_enabled(
+    session_id: Optional[str],
+    plan_records: List[Dict[str, Any]],
+    plan_signals: List[Dict[str, Any]],
+) -> None:
+    """KMZ Hardening Stage B2b — SHADOW-ONLY street-hint derivation emission.
+
+    Fires once per rebuild ONLY when the B2b shadow flag is enabled. For each
+    engineering-plan PDF in the session, opens it independently of the
+    existing PE.4 topology cache, runs the B2b denoise pipeline against
+    per-page text, derives per-sheet + per-token streets, compares per-token
+    derived streets against the Brenham constant, and appends one JSONL row
+    per (session, plan_id) to `KMZ_STAGE_B2_SHADOW_PATH`.
+
+    NO matching / scoring / selection / filter behavior changes regardless
+    of flag state. NO STATE write. NO route_id derivation. Telemetry-only.
+
+    Safe-failure: never raises. On any per-PDF parse error, that PDF is
+    skipped silently. On any import/path/IO error, the whole emission is
+    a no-op.
+
+    The function receives `plan_signals` only to harvest the observed
+    print_tokens; it never mutates them.
+    """
+    try:
+        if not _trueline_kmz_stage_b2_streets_shadow_enabled():
+            return
+        if _engineering_plan_parser is None:
+            return
+        if not session_id:
+            return
+
+        # Use the raw index so `stored_path` is available (the public projection
+        # at `_load_engineering_plan_index_for_session` strips it).
+        try:
+            index_data = _load_engineering_plan_index()
+        except Exception:
+            return
+        if not isinstance(index_data, dict):
+            return
+        raw_records = index_data.get("plans") or []
+        if not isinstance(raw_records, list):
+            return
+
+        # Filter to records owned by this session AND also present in the
+        # already-loaded public list — keeps tenant scoping aligned with the
+        # rebuild path's view of the session.
+        public_ids = {
+            str(r.get("plan_id") or "").strip()
+            for r in plan_records
+            if isinstance(r, dict)
+        }
+        session_raw_records: List[Dict[str, Any]] = []
+        for rec in raw_records:
+            if not isinstance(rec, dict):
+                continue
+            try:
+                if not _engineering_plan_record_matches_session(rec, session_id):
+                    continue
+            except Exception:
+                continue
+            rid = str(rec.get("plan_id") or "").strip()
+            if rid and public_ids and rid not in public_ids:
+                continue
+            session_raw_records.append(rec)
+        if not session_raw_records:
+            return
+
+        # Harvest observed print tokens once for the session.
+        observed_tokens: List[str] = []
+        seen_tokens: Set[str] = set()
+        for sig in plan_signals:
+            if not isinstance(sig, dict):
+                continue
+            for tok in sig.get("print_tokens") or []:
+                if not isinstance(tok, str):
+                    continue
+                if tok not in seen_tokens:
+                    seen_tokens.add(tok)
+                    observed_tokens.append(tok)
+
+        for rec in session_raw_records:
+            try:
+                stored_path = str(rec.get("stored_path") or "").strip()
+                if not stored_path or not os.path.exists(stored_path):
+                    continue
+
+                # Existing PI.4A primitives. Each is safe-failure.
+                try:
+                    title_block = _engineering_plan_parser.extract_title_block(stored_path)
+                except Exception:
+                    title_block = {}
+                try:
+                    sheet_labels = _engineering_plan_parser.extract_sheet_labels(stored_path)
+                except Exception:
+                    sheet_labels = []
+                try:
+                    matchlines = _engineering_plan_parser.extract_matchlines(stored_path)
+                except Exception:
+                    matchlines = []
+                try:
+                    drawing_index = _engineering_plan_parser.extract_drawing_index(stored_path)
+                except Exception:
+                    drawing_index = []
+                try:
+                    metadata = _engineering_plan_parser.extract_metadata(stored_path)
+                except Exception:
+                    metadata = {}
+                try:
+                    page_to_sheet = _engineering_plan_parser.derive_page_to_sheet_index(
+                        metadata, title_block, drawing_index, matchlines, sheet_labels,
+                    )
+                except Exception:
+                    page_to_sheet = {}
+
+                # NEW B2 primitives.
+                page_streets = _kmz_b2_extract_page_street_labels(stored_path, title_block)
+                sheet_to_streets = _kmz_b2_derive_sheet_to_streets(page_streets, page_to_sheet)
+                per_token_streets = _kmz_b2_derive_print_to_sheet_streets(
+                    sheet_to_streets, observed_tokens,
+                )
+
+                # Per-token comparison vs the Brenham constant.
+                comparisons: List[Dict[str, Any]] = []
+                for tok in observed_tokens:
+                    constant_entry = CURRENT_PACKET_PRINT_SHEET_INDEX.get(tok)
+                    derived = per_token_streets.get(tok)
+                    cmp_dict = _kmz_b2_compare_derived_to_constant(
+                        tok, derived, constant_entry,
+                    )
+                    comparisons.append(cmp_dict)
+
+                n_pages_total = len(page_streets)
+                n_pages_reverse_skipped = sum(
+                    1 for p in page_streets if isinstance(p, dict) and p.get("reverse_text_skipped")
+                )
+                try:
+                    tb_streets = _kmz_b2_compute_title_block_address_streets(title_block)
+                except Exception:
+                    tb_streets = []
+
+                row = _kmz_b2_build_shadow_row(
+                    session_id=session_id,
+                    plan_id=str(rec.get("plan_id") or "") or None,
+                    source_file=str(rec.get("original_filename") or "") or None,
+                    per_page_records=page_streets,
+                    sheet_to_streets=sheet_to_streets,
+                    per_token_comparisons=comparisons,
+                    n_pages_total=n_pages_total,
+                    n_pages_reverse_skipped=n_pages_reverse_skipped,
+                    title_block_streets=tb_streets,
+                )
+                _kmz_b2_append_shadow_row(row, target_path=KMZ_STAGE_B2_SHADOW_PATH)
+            except Exception:
+                # Per-PDF failure is silent; continue with next PDF.
+                continue
+    except Exception:
+        # Catch-all so the rebuild path is never disturbed.
+        return
+
+
 def _rebuild_field_data_outputs(scope: RebuildScope = RebuildScope.FULL) -> None:
     # RI.1: scope is accepted but not yet consumed by the function body.
     # RI.2 adds the plan topology cache lookup; RI.4 branches on scope for
@@ -10684,6 +10882,15 @@ def _rebuild_field_data_outputs(scope: RebuildScope = RebuildScope.FULL) -> None
     except Exception:
         _plan_signals = []
     STATE["engineering_plan_signals"] = _plan_signals
+
+    # KMZ Hardening Stage B2b — derived-streets shadow emission. Default-OFF
+    # via TRUELINE_KMZ_STAGE_B2_STREETS_SHADOW. When OFF, this is a no-op and
+    # no PDF re-parse / shadow row write occurs. Pure observation; never
+    # mutates STATE, rankings, scoring, or selection. Tenant-scoped via the
+    # session_id_hint + `_engineering_plan_record_matches_session` filter.
+    _emit_kmz_stage_b2_streets_shadow_if_enabled(
+        _session_id_hint, _eng_plans_for_session, _plan_signals,
+    )
 
     # Phase P5.3 (diagnostic-only) — parse session PDFs and derive sheet
     # topology when the TRUELINE_PLAN_PDF_PARSE flag is on. Otherwise leave
