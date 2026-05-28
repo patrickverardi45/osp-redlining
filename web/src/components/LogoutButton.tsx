@@ -8,7 +8,15 @@ function clearWorkspaceLocalStorage(): void {
   if (typeof window === "undefined" || !window.localStorage) return;
   window.localStorage.removeItem("trueline_projects");
   window.localStorage.removeItem("osp_session_id");
-  const prefixes = ["osp_session_id:", "osp_project_planned_footage:", "osp_pdf_overlay:"];
+  window.localStorage.removeItem("osp_walk_form_v1");
+  const prefixes = [
+    "osp_session_id:",
+    "osp_project_planned_footage:",
+    "osp_pdf_overlay:",
+    "osp_session_review:",
+    "osp_session_review_note:",
+    "osp_cleared_engineering_plans",
+  ];
   const toRemove: string[] = [];
   for (let i = 0; i < window.localStorage.length; i++) {
     const key = window.localStorage.key(i);
