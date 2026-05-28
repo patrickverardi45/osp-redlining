@@ -16,16 +16,44 @@ import type {
   MatchReviewRow,
 } from "@/lib/types/matchReviewQueue";
 
-const lowTone: React.CSSProperties = {
+// Priority is sorting / context metadata, not an alarm. Render it as a quiet
+// neutral chip with a small ordering dot — warning tone is reserved for the
+// Plan Sheet Evidence badge so the rows that actually need review stand out.
+const neutralChip: React.CSSProperties = {
   background: "var(--tl-bg-raised, rgba(255,255,255,0.04))",
   border: "1px solid var(--tl-border)",
   color: "var(--tl-text-muted)",
 };
-const PRIORITY_TONE: Record<string, React.CSSProperties> = {
-  high: { background: "#2a1212", border: "1px solid #7f1d1d", color: "#fca5a5" },
-  medium: { background: "#1f1a06", border: "1px solid #854d0e", color: "#fcd34d" },
-  low: lowTone,
+const PRIORITY_DOT: Record<string, string> = {
+  high: "#d4a72c",
+  medium: "#7a7f87",
+  low: "#4b5563",
 };
+
+// Friendly labels for the raw pipeline status enum — operators never see
+// snake_case. Unknown values fall back to Title Case.
+const STATUS_LABEL: Record<string, string> = {
+  placed_with_low_confidence: "Placed, low confidence",
+  rescued_v4: "Auto-recovered",
+  abstained: "Not placed",
+  ambiguous: "Ambiguous",
+  collision_resolved: "Conflict resolved",
+  placed: "Placed",
+  unknown: "Unknown",
+};
+
+function titleCase(value: string): string {
+  return value
+    .split(/[_\s]+/)
+    .filter(Boolean)
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(" ");
+}
+
+function friendlyStatus(status: string): string {
+  if (!status) return "—";
+  return STATUS_LABEL[status] ?? titleCase(status);
+}
 
 export default function MatchReviewQueuePanel({
   sessionId,
@@ -74,6 +102,8 @@ export default function MatchReviewQueuePanel({
 
   const rows: MatchReviewRow[] = data?.rows ?? [];
   const withEvidence = rows.filter((r) => r.plan_sheet_graph_evidence).length;
+  const rowCount = data?.row_count ?? rows.length;
+  const otherCount = Math.max(0, rowCount - withEvidence);
 
   return (
     <section className="tl-card tl-card-padded">
@@ -124,11 +154,21 @@ export default function MatchReviewQueuePanel({
 
       {sid && !error && (
         <>
-          <p className="tl-subtle" style={{ margin: "0 0 12px", fontSize: 13 }}>
-            {data?.row_count ?? 0} rows &middot; {withEvidence} with plan-sheet evidence
-            {withEvidence === 0 &&
-              " · the plan-sheet evidence field is backend-gated (TRUELINE_MRQ_PLAN_SHEET_GRAPH_EVIDENCE); enable it to populate"}
-          </p>
+          {withEvidence > 0 ? (
+            <p className="tl-subtle" style={{ margin: "0 0 12px", fontSize: 13 }}>
+              <strong style={{ color: "var(--tl-text)" }}>
+                {withEvidence} row{withEvidence === 1 ? "" : "s"} {withEvidence === 1 ? "has" : "have"}{" "}
+                plan-sheet evidence to review.
+              </strong>{" "}
+              The other {otherCount} {otherCount === 1 ? "row is" : "rows are"} routing outcomes shown for
+              context, not errors.
+            </p>
+          ) : (
+            <p className="tl-subtle" style={{ margin: "0 0 12px", fontSize: 13 }}>
+              No plan-sheet evidence is currently attached to this session. The {rowCount}{" "}
+              {rowCount === 1 ? "row" : "rows"} below are routing outcomes shown for context, not errors.
+            </p>
+          )}
 
           {rows.length === 0 ? (
             <p className="tl-subtle" style={{ margin: 0 }}>
@@ -146,7 +186,8 @@ export default function MatchReviewQueuePanel({
               }}
             >
               {rows.map((r, i) => {
-                const tone = PRIORITY_TONE[r.priority] ?? lowTone;
+                const ev = r.plan_sheet_graph_evidence;
+                const accent = ev ? (ev.actionability === "high" ? "#b8860b" : "#6b7280") : null;
                 return (
                   <li
                     key={`${r.source_file ?? "row"}-${r.group_id ?? i}`}
@@ -154,6 +195,7 @@ export default function MatchReviewQueuePanel({
                       padding: "10px 12px",
                       borderRadius: 8,
                       border: "1px solid var(--tl-border)",
+                      borderLeft: accent ? `3px solid ${accent}` : "1px solid var(--tl-border)",
                       background: "var(--tl-bg-raised, rgba(255,255,255,0.02))",
                     }}
                   >
@@ -162,17 +204,32 @@ export default function MatchReviewQueuePanel({
                         {r.source_file ?? "—"}
                       </span>
                       <span
+                        title={`Priority: ${titleCase(r.priority)}`}
                         style={{
+                          display: "inline-flex",
+                          alignItems: "center",
+                          gap: 6,
                           padding: "1px 8px",
                           borderRadius: 4,
                           fontSize: 11,
-                          fontWeight: 600,
-                          ...tone,
+                          fontWeight: 500,
+                          ...neutralChip,
                         }}
                       >
-                        {r.priority}
+                        <span
+                          aria-hidden="true"
+                          style={{
+                            width: 6,
+                            height: 6,
+                            borderRadius: "50%",
+                            background: PRIORITY_DOT[r.priority] ?? "#4b5563",
+                          }}
+                        />
+                        {titleCase(r.priority)}
                       </span>
-                      <span style={{ fontSize: 12, color: "var(--tl-text-muted)" }}>{r.status}</span>
+                      <span style={{ fontSize: 12, color: "var(--tl-text-muted)" }}>
+                        {friendlyStatus(r.status)}
+                      </span>
                       {r.selected_route_id && (
                         <span style={{ fontSize: 12, color: "var(--tl-text-muted)", marginLeft: "auto" }}>
                           → {r.selected_route_id}
@@ -180,7 +237,7 @@ export default function MatchReviewQueuePanel({
                         </span>
                       )}
                     </div>
-                    <PlanSheetGraphEvidenceBadge evidence={r.plan_sheet_graph_evidence} />
+                    <PlanSheetGraphEvidenceBadge evidence={ev} />
                   </li>
                 );
               })}

@@ -96,7 +96,7 @@ export default function PlanSheetGraphEvidenceBadge({
           style={{ padding: "0 6px", borderRadius: 4, fontSize: 10, background: "rgba(0,0,0,0.25)" }}
           title={isHigh ? "High actionability" : "Data-quality note"}
         >
-          {isHigh ? "high" : "data quality"}
+          {isHigh ? "High" : "Data quality"}
         </span>
         {hasDetail && (
           <button
