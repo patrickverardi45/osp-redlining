@@ -49,6 +49,19 @@ from app.core.kmz_stage_b2_streets import (
 )
 from app.core.evidence_resolver import resolve_evidence_for_group
 from app.core.location_mismatch_rescue import attempt_location_mismatch_rescue
+from app.core.match_override import (
+    OverrideValidationError as _OverrideValidationError,
+    STATUS_ACTIVE as _OVR_STATUS_ACTIVE,
+    STATUS_CLEARED as _OVR_STATUS_CLEARED,
+    STATUS_SUPERSEDED as _OVR_STATUS_SUPERSEDED,
+    append_audit_event as _ovr_append_audit_event,
+    build_audit_event as _ovr_build_audit_event,
+    build_override_record as _ovr_build_override_record,
+    classify_overrides_for_listing as _ovr_classify_for_listing,
+    is_idempotent_retry as _ovr_is_idempotent_retry,
+    snapshot_engine_selection as _ovr_snapshot_engine_selection,
+    validate_override_payload as _ovr_validate_payload,
+)
 from app.core.match_review_queue import (
     assemble_match_review_queue as _assemble_match_review_queue,
 )
@@ -251,6 +264,9 @@ PLAUSIBILITY_SHADOW_PATH = UPLOADS_DIR / "plausibility_shadow.jsonl"
 # Mirrors PT.ACT R3.g size-trigger trim semantics (see DEFAULT_MAX_ROWS +
 # DEFAULT_TRIM_TRIGGER_BYTES in `kmz_stage_b2_shadow_telemetry`).
 KMZ_STAGE_B2_SHADOW_PATH = UPLOADS_DIR / "kmz_stage_b2_shadow.jsonl"
+# KMZ Matching Trust Slice C1 — operator override audit JSONL. Append-only.
+# Schema `match-override-audit-1`. Trim policy mirrors PT.ACT R3.g.
+MATCH_OVERRIDES_AUDIT_PATH = UPLOADS_DIR / "match_overrides.jsonl"
 PLAUSIBILITY_SHADOW_MAX_ROWS = 5000
 # Size-trigger trim threshold. After each append, the helper performs a single
 # read+truncate cycle ONLY when the file exceeds this many bytes. Avoids the
@@ -564,6 +580,8 @@ def _reset_workspace_state() -> None:
             "matching_debug": [],
             "engineering_plans": [],
             "engineering_plan_signals": [],
+            # KMZ Matching Trust Slice C1 — operator override map; record-only.
+            "match_overrides": {},
             "walk_active": False,
             "walk_meta": {},
             "walk_breadcrumbs": [],
@@ -624,6 +642,8 @@ def _default_session_state() -> Dict[str, Any]:
         "matching_debug": [],
         "engineering_plans": [],
         "engineering_plan_signals": [],
+        # KMZ Matching Trust Slice C1 — operator override map; record-only.
+        "match_overrides": {},
         "walk_active": False,
         "walk_meta": {},
         "walk_breadcrumbs": [],
@@ -644,6 +664,9 @@ def _default_session_state() -> Dict[str, Any]:
         # Sprint J tenant ownership
         "tenant_id": None,
         "tenant_bound_at": None,
+        # KMZ Matching Trust Slice C1 — operator override map keyed by group_id.
+        # Default empty. Slice C1 records overrides only; Slice C2 will apply.
+        "match_overrides": {},
     }
 
 
@@ -13833,6 +13856,240 @@ def match_review_queue_endpoint(session_id: Optional[str] = None) -> JSONRespons
         "success": True,
         "session_id": sid,
         **queue,
+    })
+
+
+@localhost_router.post("/api/match-review-queue/override")
+def match_review_queue_override_post(
+    body: Dict[str, Any], request: Request
+) -> JSONResponse:
+    """KMZ Matching Trust Slice C1 — record an operator route override.
+
+    Body:
+        {"session_id": "<sid>", "group_id": "<gid>",
+         "override_route_id": "<route_id>" | null,
+         "reason": "<non-empty operator justification>"}
+
+    Slice C1 is RECORD-ONLY. The override is persisted into
+    STATE["match_overrides"] keyed by group_id and an audit row is appended
+    to `MATCH_OVERRIDES_AUDIT_PATH`, but **no matching behavior changes**:
+    the override is NOT applied to selected_route_id / render_allowed /
+    render_block_reasons during rebuild. The apply seam is reserved for
+    Slice C2 behind a default-OFF flag.
+
+    Tenant scoping: opens `_session_scope(sid)`, which validates tenant
+    ownership of the session via the existing `_require_tenant_owns_session`
+    chain.
+    """
+    sid = str((body or {}).get("session_id") or "").strip()
+    if not sid:
+        return JSONResponse(
+            status_code=400, content={"error": "session_id required"}
+        )
+
+    with _session_scope(sid):
+        # Closeout-locked sessions reject writes (preserves the existing
+        # closeout immutability contract).
+        if _is_closeout_locked():
+            return _json_closeout_locked_response()
+
+        pipeline_diag = list(STATE.get("pipeline_diag") or [])
+        route_catalog = list(STATE.get("route_catalog") or [])
+
+        try:
+            payload = _ovr_validate_payload(body, pipeline_diag, route_catalog)
+        except _OverrideValidationError as exc:
+            return JSONResponse(
+                status_code=exc.status_code, content={"error": str(exc)}
+            )
+
+        group_id = payload["group_id"]
+        overrides = STATE.get("match_overrides")
+        if not isinstance(overrides, dict):
+            overrides = {}
+            STATE["match_overrides"] = overrides
+
+        existing = overrides.get(group_id)
+        existing_emit_id: Optional[str] = None
+        if isinstance(existing, dict):
+            existing_emit_id = str(existing.get("emit_id") or "") or None
+
+        # Idempotent retry: identical override already active. No-op write.
+        if _ovr_is_idempotent_retry(existing, payload):
+            engine_selection = _ovr_snapshot_engine_selection(
+                pipeline_diag, group_id
+            )
+            audit_row = _ovr_build_audit_event(
+                "no_op_idempotent", existing,
+                engine_selection=engine_selection,
+            )
+            _ovr_append_audit_event(audit_row, target_path=MATCH_OVERRIDES_AUDIT_PATH)
+            return JSONResponse(content={
+                "success": True,
+                "session_id": sid,
+                "idempotent": True,
+                "override": existing,
+            })
+
+        # Auth tenant_id / operator_email (best-effort).
+        tenant_id: Optional[str] = None
+        operator_email: Optional[str] = None
+        try:
+            caller = current_tenant()
+        except Exception:
+            caller = None
+        if caller is not None:
+            tenant_id = getattr(caller, "tenant_id", None)
+            operator_email = getattr(caller, "email", None)
+
+        # If the existing record is active, mark it superseded before
+        # writing the new one.
+        supersede_was_active = (
+            isinstance(existing, dict)
+            and existing.get("status") == _OVR_STATUS_ACTIVE
+        )
+        if supersede_was_active:
+            superseded = dict(existing)
+            superseded["status"] = _OVR_STATUS_SUPERSEDED
+            superseded_audit = _ovr_build_audit_event(
+                "supersede", superseded,
+                engine_selection=_ovr_snapshot_engine_selection(
+                    pipeline_diag, group_id
+                ),
+            )
+            _ovr_append_audit_event(
+                superseded_audit, target_path=MATCH_OVERRIDES_AUDIT_PATH
+            )
+
+        new_record = _ovr_build_override_record(
+            payload,
+            tenant_id=tenant_id,
+            session_id=sid,
+            operator_email=operator_email,
+            supersedes_emit_id=existing_emit_id if supersede_was_active else None,
+        )
+        overrides[group_id] = new_record
+        STATE["match_overrides"] = overrides
+
+        engine_selection = _ovr_snapshot_engine_selection(
+            pipeline_diag, group_id
+        )
+        create_audit = _ovr_build_audit_event(
+            "create", new_record,
+            supersedes_emit_id=existing_emit_id if supersede_was_active else None,
+            engine_selection=engine_selection,
+        )
+        _ovr_append_audit_event(
+            create_audit, target_path=MATCH_OVERRIDES_AUDIT_PATH
+        )
+
+    return JSONResponse(
+        status_code=201,
+        content={
+            "success": True,
+            "session_id": sid,
+            "schema_version": "match-override-1",
+            "emit_id": new_record.get("emit_id"),
+            "supersedes_emit_id": new_record.get("supersedes_emit_id"),
+            "override": new_record,
+            "engine_selection_at_write": engine_selection,
+        },
+    )
+
+
+@localhost_router.get("/api/match-review-queue/overrides")
+def match_review_queue_overrides_get(
+    session_id: Optional[str] = None,
+) -> JSONResponse:
+    """KMZ Matching Trust Slice C1 — list active + orphaned operator overrides
+    for a session. Read-only; no STATE mutation.
+    """
+    sid = str(session_id or "").strip()
+    if not sid:
+        return JSONResponse(
+            status_code=400, content={"error": "session_id is required"}
+        )
+    with _session_scope(sid):
+        overrides_state = STATE.get("match_overrides") or {}
+        route_catalog = list(STATE.get("route_catalog") or [])
+        active, orphaned = _ovr_classify_for_listing(
+            overrides_state, route_catalog
+        )
+    return JSONResponse(content={
+        "success": True,
+        "session_id": sid,
+        "schema_version": "match-override-list-1",
+        "override_count": len(active) + len(orphaned),
+        "active_overrides": active,
+        "orphaned_overrides": orphaned,
+    })
+
+
+@localhost_router.delete("/api/match-review-queue/override")
+def match_review_queue_override_delete(
+    session_id: Optional[str] = None,
+    group_id: Optional[str] = None,
+) -> JSONResponse:
+    """KMZ Matching Trust Slice C1 — clear an operator override.
+
+    Transitions the record to `status="cleared"` and appends an audit row.
+    Cleared overrides are excluded from the GET listing.
+    """
+    sid = str(session_id or "").strip()
+    gid = str(group_id or "").strip()
+    if not sid:
+        return JSONResponse(
+            status_code=400, content={"error": "session_id is required"}
+        )
+    if not gid:
+        return JSONResponse(
+            status_code=400, content={"error": "group_id is required"}
+        )
+
+    with _session_scope(sid):
+        if _is_closeout_locked():
+            return _json_closeout_locked_response()
+
+        overrides = STATE.get("match_overrides")
+        if not isinstance(overrides, dict) or gid not in overrides:
+            return JSONResponse(
+                status_code=404,
+                content={"error": f"no override for group_id '{gid}'"},
+            )
+        existing = overrides[gid]
+        if not isinstance(existing, dict):
+            return JSONResponse(
+                status_code=404,
+                content={"error": f"no override for group_id '{gid}'"},
+            )
+        if existing.get("status") == _OVR_STATUS_CLEARED:
+            return JSONResponse(content={
+                "success": True,
+                "session_id": sid,
+                "already_cleared": True,
+                "override": existing,
+            })
+
+        cleared = dict(existing)
+        cleared["status"] = _OVR_STATUS_CLEARED
+        overrides[gid] = cleared
+        STATE["match_overrides"] = overrides
+
+        engine_selection = _ovr_snapshot_engine_selection(
+            list(STATE.get("pipeline_diag") or []), gid
+        )
+        audit_row = _ovr_build_audit_event(
+            "clear", cleared,
+            engine_selection=engine_selection,
+        )
+        _ovr_append_audit_event(
+            audit_row, target_path=MATCH_OVERRIDES_AUDIT_PATH
+        )
+
+    return JSONResponse(content={
+        "success": True,
+        "session_id": sid,
+        "override": cleared,
     })
 
 
