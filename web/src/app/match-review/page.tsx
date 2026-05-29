@@ -15,7 +15,11 @@ import MatchReviewQueuePanel from "@/components/MatchReviewQueuePanel";
 function MatchReviewInner() {
   const params = useSearchParams();
   const sessionId = params.get("session_id");
-  return <MatchReviewQueuePanel sessionId={sessionId} />;
+  // Optional ?projectId=<slug> enables read-only "View on map" deep-links into
+  // the live ModernHeroMap (/projects/<projectId>?focus=<source_file>). When
+  // absent, the panel simply omits the link — projectId is never guessed.
+  const projectId = params.get("projectId");
+  return <MatchReviewQueuePanel sessionId={sessionId} projectId={projectId} />;
 }
 
 export default function MatchReviewPage() {

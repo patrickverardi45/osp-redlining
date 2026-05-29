@@ -8,6 +8,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
 import { apiFetch } from "@/lib/apiFetch";
 import { peekSessionId } from "@/lib/session";
 import PlanSheetGraphEvidenceBadge from "@/components/PlanSheetGraphEvidenceBadge";
@@ -57,8 +58,13 @@ function friendlyStatus(status: string): string {
 
 export default function MatchReviewQueuePanel({
   sessionId,
+  projectId,
 }: {
   sessionId?: string | null;
+  // When provided (via /match-review?projectId=<slug>), each row with a
+  // source_file gets a read-only "View on map" deep-link. Omitted entirely when
+  // absent — never inferred. Read-only: no effect on fetch/order/scoring.
+  projectId?: string | null;
 }) {
   const [data, setData] = useState<MatchReviewQueueResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -238,6 +244,18 @@ export default function MatchReviewQueuePanel({
                       )}
                     </div>
                     <PlanSheetGraphEvidenceBadge evidence={ev} />
+                    {projectId && r.source_file && (
+                      <div style={{ marginTop: 8 }}>
+                        <Link
+                          href={`/projects/${projectId}?focus=${encodeURIComponent(r.source_file)}`}
+                          prefetch={false}
+                          className="tl-btn tl-btn-ghost"
+                          style={{ fontSize: 12, padding: "2px 10px" }}
+                        >
+                          View on map →
+                        </Link>
+                      </div>
+                    )}
                   </li>
                 );
               })}
