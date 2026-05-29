@@ -73,8 +73,14 @@ export default function MatchReviewQueuePanel({
 
   useEffect(() => {
     const next = (sessionId ?? "").trim();
-    setSid(next ? next : peekSessionId());
-  }, [sessionId]);
+    // Fallback to the PROJECT-SCOPED session (osp_session_id:<projectId>) so
+    // /match-review?projectId=<slug> binds to the same workspace session the
+    // live map uses — ModernHeroMap loads /api/current-state via
+    // appendSessionId(url, projectId). Explicit ?session_id= still wins (next).
+    // projectId absent → peekSessionId(undefined) reads the global key (prior
+    // behavior). Read-only: peekSessionId never mints a session.
+    setSid(next ? next : peekSessionId(projectId ?? undefined));
+  }, [sessionId, projectId]);
 
   const load = useCallback(async () => {
     if (!sid) {
