@@ -363,6 +363,27 @@ class TestRowShape(unittest.TestCase):
             any(a["was_selected"] for a in row["top_3_alternates"] if a["route_id"] == "route_477")
         )
 
+    def test_allowed_route_ids_from_real_diag_strict_field(self):
+        # Real pipeline_diag entries (main.py `_diag`) carry the print-filter
+        # result at top-level `strict_allowed_route_ids` / `print_tokens` and have
+        # NO `print_filter` sub-dict. evidence_summary must read those so the PDF
+        # route verdict can be Consistent/Suspect instead of always Not proven.
+        entry = {
+            "group_id": "g_real",
+            "source_file": "bore_log99.xlsx",
+            "print_tokens": ["7", "15"],
+            "strict_allowed_route_ids": ["route_475", "route_476"],
+            "selected_route_id": "route_475",
+            "selected_route_name": "E Stone backbone",
+            "render_allowed": True,
+            "strict_top5": [{"route_id": "route_475", "score": 0.30}],
+        }
+        out = assemble_match_review_queue([entry])
+        self.assertEqual(out["row_count"], 1)
+        ev = out["rows"][0]["evidence_summary"]
+        self.assertEqual(ev["allowed_route_ids"], ["route_475", "route_476"])
+        self.assertEqual(ev["print_tokens"], ["7", "15"])
+
 
 class TestInputImmutability(unittest.TestCase):
     def test_does_not_mutate_input(self):

@@ -218,7 +218,9 @@ def _evidence_summary(entry: Dict[str, Any]) -> Dict[str, Any]:
 
     return {
         "print_tokens": [
-            _safe_str(t) for t in _safe_list(print_filter.get("print_tokens"))
+            _safe_str(t) for t in _safe_list(
+                print_filter.get("print_tokens") or entry.get("print_tokens")
+            )
             if _safe_str(t)
         ],
         "print_sheet_index_source": _safe_str(
@@ -230,7 +232,14 @@ def _evidence_summary(entry: Dict[str, Any]) -> Dict[str, Any]:
             if _safe_str(s)
         ],
         "allowed_route_ids": [
-            _safe_str(r) for r in _safe_list(print_filter.get("allowed_route_ids"))
+            # Real pipeline_diag entries expose the print-filter result at the
+            # top-level `strict_allowed_route_ids` (main.py `_diag`), NOT under a
+            # `print_filter` sub-dict. Prefer print_filter (forward-compat /
+            # synthetic test entries), then fall back to the actual diag field —
+            # without this every live row has an empty set and reads Not proven.
+            _safe_str(r) for r in _safe_list(
+                print_filter.get("allowed_route_ids") or entry.get("strict_allowed_route_ids")
+            )
             if _safe_str(r)
         ],
         "notes_streets": notes_streets,
