@@ -18,6 +18,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
 import { apiFetch } from "@/lib/apiFetch";
 import { peekSessionId } from "@/lib/session";
 import type {
@@ -44,7 +45,9 @@ const PROOF_LABEL: Record<ProofStatus, string> = {
 };
 const PROOF_ACCENT: Record<ProofStatus, string | null> = {
   proven: "#2f6b3a",
-  missing_proof: "#b8860b",
+  // missing_proof is the dangerous "silent placement" class — red accent so
+  // these rows stand out immediately among proven/abstained rows.
+  missing_proof: "#ef4444",
   abstained: null,
 };
 
@@ -360,19 +363,21 @@ export default function TrustLedgerPanel({
 
       {sid && !error && enabledWithData && (
         <>
-          {/* Counts summary — proof verdicts + the silent-placement + PSG counts. */}
+          {/* Counts summary — proof verdicts + the silent-placement + PSG counts.
+               Missing proof uses red (not amber) — it is the dangerous silent-
+               placement class, not a mere warning. */}
           <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 12 }}>
             <StatPill label="Proven" value={counts.proven} valueColor="#86efac" />
             <StatPill label="Abstained" value={counts.abstained} />
             <StatPill
               label="Missing proof"
               value={counts.missing_proof}
-              valueColor={counts.missing_proof > 0 ? "#fcd34d" : undefined}
+              valueColor={counts.missing_proof > 0 ? "#fca5a5" : undefined}
             />
             <StatPill
               label="Silent placements"
               value={silentCount}
-              valueColor={silentCount > 0 ? "#fcd34d" : undefined}
+              valueColor={silentCount > 0 ? "#fca5a5" : undefined}
             />
             <StatPill
               label="PSG warnings"
@@ -672,6 +677,38 @@ export default function TrustLedgerPanel({
                         <Detail label="Anchors:">{r.selected_anchor_reasons.join(", ")}</Detail>
                       )}
                     </div>
+
+                    {/* "View on map" deep-link — mirrors Match Review pattern.
+                        Only shown for placed rows (proven / missing_proof where
+                        render_allowed is true + source_file exists + projectId
+                        known). Abstained rows have no rendered geometry on the
+                        map; we omit the link rather than send the operator to a
+                        focus that lands on the "no drawable geometry" chip. */}
+                    {r.proof_status !== "abstained" &&
+                      projectId &&
+                      r.source_file && (
+                        <div style={{ marginTop: 10 }}>
+                          <Link
+                            href={`/projects/${projectId}?focus=${encodeURIComponent(r.source_file)}`}
+                            prefetch={false}
+                            className="tl-btn tl-btn-ghost"
+                            style={{ fontSize: 12, padding: "2px 10px" }}
+                          >
+                            View on map →
+                          </Link>
+                          {r.proof_status === "missing_proof" && (
+                            <span
+                              style={{
+                                marginLeft: 10,
+                                fontSize: 11,
+                                color: "#fca5a5",
+                              }}
+                            >
+                              Placed but proof chain incomplete — review geometry
+                            </span>
+                          )}
+                        </div>
+                      )}
                   </li>
                 );
               })}
