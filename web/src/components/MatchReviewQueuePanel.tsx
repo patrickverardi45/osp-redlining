@@ -12,6 +12,7 @@ import Link from "next/link";
 import { apiFetch } from "@/lib/apiFetch";
 import { peekSessionId } from "@/lib/session";
 import PlanSheetGraphEvidenceBadge from "@/components/PlanSheetGraphEvidenceBadge";
+import MatchReviewEvidence from "@/components/MatchReviewEvidence";
 import type {
   MatchReviewQueueResponse,
   MatchReviewRow,
@@ -249,6 +250,13 @@ export default function MatchReviewQueuePanel({
                         </span>
                       )}
                     </div>
+                    {r.evidence_summary && (
+                      <MatchReviewEvidence
+                        evidence={r.evidence_summary}
+                        selectedRouteId={r.selected_route_id}
+                        selectedRouteName={r.selected_route_name}
+                      />
+                    )}
                     <PlanSheetGraphEvidenceBadge evidence={ev} />
                     {projectId && r.source_file && (
                       <div style={{ marginTop: 8 }}>

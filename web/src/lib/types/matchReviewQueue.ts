@@ -29,6 +29,32 @@ export interface PlanSheetGraphEvidence {
   notes_streets?: string[];
 }
 
+// Read-only projection of the backend `evidence_summary` (KMZ Matching Trust
+// Slice B). Surfaces the PDF print-index dimension: print/sheet tokens, the
+// expected route set the print/sheet index maps those prints to, street hints,
+// and notes streets. The backend owns the canonical shape; the UI reads a
+// subset (extra runtime fields like evidence_resolver_tag are ignored).
+export interface MatchReviewEvidenceSummary {
+  print_tokens?: string[];
+  print_sheet_index_source?: string | null;
+  filter_applied?: boolean;
+  street_hints?: string[];
+  allowed_route_ids?: string[];
+  notes_streets?: string[];
+  // Present (truthy object) when the matcher flagged a notes-vs-index street
+  // mismatch; null/absent otherwise. The UI only reads its presence.
+  location_evidence_mismatch?: Record<string, unknown> | null;
+}
+
+// One of the top-3 scored route alternates for a group (read-only projection).
+export interface MatchReviewAlternate {
+  route_id: string | null;
+  route_name: string | null;
+  score: number | null;
+  route_length_ft: number | null;
+  was_selected: boolean;
+}
+
 export interface MatchReviewRow {
   source_file: string | null;
   group_id: string | null;
@@ -39,6 +65,8 @@ export interface MatchReviewRow {
   render_allowed: boolean | null;
   abstain_reason?: string | null;
   ambiguity_resolution_status?: string | null;
+  evidence_summary?: MatchReviewEvidenceSummary;
+  top_3_alternates?: MatchReviewAlternate[];
   plan_sheet_graph_evidence?: PlanSheetGraphEvidence;
 }
 
