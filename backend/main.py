@@ -11701,6 +11701,40 @@ def _rebuild_field_data_outputs(scope: RebuildScope = RebuildScope.FULL) -> None
         _diag["strict_allowed_route_ids"] = list(filter_meta.get("allowed_route_ids") or [])
         _diag["strict_candidate_count_after_filter"] = len(list(filter_meta.get("allowed_route_ids") or [])) or None
         _diag["strict_candidate_count_after_span_gate"] = len(rankings)
+
+        # ── Diagnostic checkpoint J (PDF-AP route shadow, flag-gated) ─────────
+        # Brenham PH5 PROOF-SLICE ONLY (bore_log71/72/39/4). Read-only comparison
+        # of a PDF-evidence-derived route set against the hardcoded print-sheet
+        # index result captured HERE (pre-rescue, the pure CURRENT_PACKET_PRINT_
+        # SHEET_INDEX value). Placed at this point — before the location-mismatch
+        # abstain and every early `append(_diag); continue` exit — so the field
+        # is attached for ABSTAINING groups (bore_log71/39) too, not only placed
+        # ones. Default OFF. NEVER affects scoring / selection / render / STATE;
+        # the only side effect is this `_diag` field. Resolver never raises (it
+        # returns a reason) but we still guard defensively.
+        if (_trueline_pdf_ap_route_shadow_enabled()
+                and _pdf_ap_route.is_proof_slice_source(_diag.get("source_file"))):
+            try:
+                _pdf_ap_notes = " ".join(
+                    str(r.get("notes") or "")
+                    for r in (normalized_group.get("station_rows") or [])
+                ).strip()
+                _diag["pdf_ap_route_shadow"] = _pdf_ap_route.emit_shadow_for_group(
+                    source_file=_diag.get("source_file"),
+                    print_tokens=_diag.get("print_tokens"),
+                    notes_text=_pdf_ap_notes,
+                    pdf_paths=[str(p) for p in _resolve_engineering_plan_pdf_paths(_session_id_hint)],
+                    point_features=((STATE.get("kmz_reference") or {}).get("point_features") or []),
+                    route_catalog=(STATE.get("route_catalog") or []),
+                    hardcoded_allowed_route_ids=_diag.get("strict_allowed_route_ids"),
+                )
+            except Exception as _pdf_ap_exc:
+                _diag["pdf_ap_route_shadow"] = {
+                    "schema": _pdf_ap_route.SCHEMA_VERSION,
+                    "source_file": _diag.get("source_file"),
+                    "reason": "shadow_error:" + type(_pdf_ap_exc).__name__,
+                }
+
         # B-MATCH-LOC-EVIDENCE-1: diagnostic-only flag when bore-log notes name
         # streets disjoint from the print-filter street_hints. Never mutates
         # rankings, filter_meta, scoring, or route selection.
@@ -12370,36 +12404,6 @@ def _rebuild_field_data_outputs(scope: RebuildScope = RebuildScope.FULL) -> None
                 _diag["plan_footage_boost_shadow"] = {
                     "emitted": False,
                     "reason": "shadow_compute_error",
-                }
-
-        # ── Diagnostic checkpoint J (PDF-AP route shadow, flag-gated) ─────────
-        # Brenham PH5 PROOF-SLICE ONLY (bore_log71/72/39/4). Read-only comparison
-        # of a PDF-evidence-derived route set against the hardcoded print-sheet
-        # index. Default OFF. NEVER affects scoring / selection / render / STATE;
-        # the only side effect is this `_diag` field. Inputs assembled from the
-        # session's PDFs + STATE kmz_reference/route_catalog; resolver never
-        # raises (it returns a reason) but we still guard defensively.
-        if (_trueline_pdf_ap_route_shadow_enabled()
-                and _pdf_ap_route.is_proof_slice_source(_diag.get("source_file"))):
-            try:
-                _pdf_ap_notes = " ".join(
-                    str(r.get("notes") or "")
-                    for r in (normalized_group.get("station_rows") or [])
-                ).strip()
-                _diag["pdf_ap_route_shadow"] = _pdf_ap_route.emit_shadow_for_group(
-                    source_file=_diag.get("source_file"),
-                    print_tokens=_diag.get("print_tokens"),
-                    notes_text=_pdf_ap_notes,
-                    pdf_paths=[str(p) for p in _resolve_engineering_plan_pdf_paths(_session_id_hint)],
-                    point_features=((STATE.get("kmz_reference") or {}).get("point_features") or []),
-                    route_catalog=(STATE.get("route_catalog") or []),
-                    hardcoded_allowed_route_ids=_diag.get("strict_allowed_route_ids"),
-                )
-            except Exception as _pdf_ap_exc:
-                _diag["pdf_ap_route_shadow"] = {
-                    "schema": _pdf_ap_route.SCHEMA_VERSION,
-                    "source_file": _diag.get("source_file"),
-                    "reason": "shadow_error:" + type(_pdf_ap_exc).__name__,
                 }
 
         pipeline_diag.append(_diag)
