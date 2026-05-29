@@ -17,6 +17,9 @@ function TrustLedgerInner() {
   const params = useSearchParams();
   const sessionId = params.get("session_id");
   const projectId = params.get("projectId");
+  // Carried back from the map focus banner so the panel scrolls to + highlights
+  // that row.
+  const focusRow = params.get("focus");
   // Carry the same context (session_id / projectId) to the sibling review surface.
   const query = params.toString();
   const matchReviewHref = query ? `/match-review?${query}` : "/match-review";
@@ -27,7 +30,7 @@ function TrustLedgerInner() {
           Match Review →
         </Link>
       </div>
-      <TrustLedgerPanel sessionId={sessionId} projectId={projectId} />
+      <TrustLedgerPanel sessionId={sessionId} projectId={projectId} focusedRow={focusRow} />
     </>
   );
 }

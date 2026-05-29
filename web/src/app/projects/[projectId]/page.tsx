@@ -67,8 +67,13 @@ export default function ProjectPage({ params, searchParams }: ProjectPageProps) 
   // the session via peekSessionId(projectId) when it is absent).
   const reviewCtx = new URLSearchParams({ projectId });
   if (sessionIdParam) reviewCtx.set("session_id", sessionIdParam);
-  const trustLedgerHref = `/trust-ledger?${reviewCtx.toString()}`;
   const matchReviewHref = `/match-review?${reviewCtx.toString()}`;
+  // Trust Ledger return carries the focused source_file so the ledger scrolls to
+  // + highlights that row ("return to row"). Match Review link intentionally
+  // unchanged (no row-focus there yet).
+  const trustLedgerCtx = new URLSearchParams(reviewCtx);
+  if (focusedSourceFile) trustLedgerCtx.set("focus", focusedSourceFile);
+  const trustLedgerHref = `/trust-ledger?${trustLedgerCtx.toString()}`;
   const clearFocusHref = sessionIdParam
     ? `/projects/${projectId}?session_id=${encodeURIComponent(sessionIdParam)}`
     : `/projects/${projectId}`;

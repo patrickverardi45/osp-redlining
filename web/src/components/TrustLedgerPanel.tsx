@@ -17,7 +17,7 @@
 
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { apiFetch } from "@/lib/apiFetch";
 import { peekSessionId } from "@/lib/session";
@@ -141,6 +141,16 @@ function fmtFt(n: number | null | undefined): string {
 function fmtScore(n: number | null | undefined): string {
   if (n === null || n === undefined || Number.isNaN(n)) return "—";
   return n.toFixed(3);
+}
+
+// Normalize a source_file for ?focus= row matching — mirrors ModernHeroMap's
+// focusSourceKey so "bore_log4", "bore_log4.xlsx", and "uploads/bore_log4.XLSX"
+// all resolve to the same key.
+function sourceKey(value: string | null | undefined): string {
+  const lowered = String(value ?? "").trim().toLowerCase();
+  if (!lowered) return "";
+  const base = lowered.split(/[\\/]/).pop() ?? lowered;
+  return base.replace(/\.(xlsx|xls|csv)$/, "");
 }
 
 // ── Triage filters ───────────────────────────────────────────────────────
@@ -301,18 +311,23 @@ function LegendItem({ dot, term, def }: { dot: string; term: string; def: string
 export default function TrustLedgerPanel({
   sessionId,
   projectId,
+  focusedRow,
 }: {
   sessionId?: string | null;
   // Optional project slug; when provided, the panel binds to the same
   // project-scoped workspace session (osp_session_id:<projectId>) the live map
   // uses. Read-only: peekSessionId never mints a session.
   projectId?: string | null;
+  // Optional ?focus=<source_file> carried back from focused map review. When set,
+  // the panel scrolls to + highlights the matching row(s). Read-only.
+  focusedRow?: string | null;
 }) {
   const [data, setData] = useState<TrustLedgerResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [sid, setSid] = useState<string | null>(sessionId ?? null);
   const [filter, setFilter] = useState<FilterKey>("all");
+  const ulRef = useRef<HTMLUListElement | null>(null);
 
   useEffect(() => {
     const next = (sessionId ?? "").trim();
@@ -365,6 +380,32 @@ export default function TrustLedgerPanel({
   const hasDanger = counts.missing_proof > 0 || silentCount > 0;
   // "Map review" chip only when projectId is known (else no row can deep-link).
   const filterOrder: FilterKey[] = projectId ? [...FILTER_ORDER, "map_review"] : FILTER_ORDER;
+
+  // ── Return-to-row focus (carried back from focused map review) ─────────────
+  // Read-only: scroll to + highlight the row(s) whose source_file matches the
+  // ?focus= param the map focus banner appended. A bore log with multiple groups
+  // yields multiple rows for one source_file; all are highlighted.
+  const focusedKey = sourceKey(focusedRow);
+  const hasRowFocus = focusedKey.length > 0;
+  const focusRowExists =
+    hasRowFocus && rows.some((r) => sourceKey(r.source_file) === focusedKey);
+  const focusRowVisible =
+    hasRowFocus && filteredRows.some((r) => sourceKey(r.source_file) === focusedKey);
+  // "Clear row focus" drops ?focus=, preserving projectId + session_id when present.
+  const clearCtx = new URLSearchParams();
+  if (projectId) clearCtx.set("projectId", projectId);
+  if (sessionId) clearCtx.set("session_id", sessionId);
+  const clearRowFocusHref = clearCtx.toString()
+    ? `/trust-ledger?${clearCtx.toString()}`
+    : "/trust-ledger";
+
+  useEffect(() => {
+    if (!focusedKey || !focusRowVisible) return;
+    const el = ulRef.current?.querySelector('[data-tl-focus-row="1"]');
+    if (el && typeof el.scrollIntoView === "function") {
+      el.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+  }, [focusedKey, focusRowVisible]);
 
   return (
     <section className="tl-card tl-card-padded">
@@ -438,6 +479,65 @@ export default function TrustLedgerPanel({
 
       {sid && !error && enabledWithData && (
         <>
+          {/* Returned-from-map-review banner — shown only when a ?focus= row is
+              carried back. Scrolls to + highlights the matching row below. */}
+          {hasRowFocus && (
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 10,
+                flexWrap: "wrap",
+                padding: "8px 12px",
+                borderRadius: 8,
+                marginBottom: 12,
+                background: "var(--tl-bg-raised, rgba(255,255,255,0.04))",
+                border: "1px dashed var(--tl-text-muted, #64748b)",
+                fontSize: 12,
+                color: "var(--tl-text-muted)",
+              }}
+            >
+              <span className="tl-pill tl-pill-info">Returned from map review</span>
+              <span>
+                Focused row:{" "}
+                <span
+                  style={{
+                    fontFamily: "monospace",
+                    color: "var(--tl-text)",
+                    fontWeight: 600,
+                  }}
+                >
+                  {focusedRow}
+                </span>
+              </span>
+              {!focusRowExists && (
+                <span style={{ color: "#fca5a5" }}>
+                  not found in this session&rsquo;s ledger
+                </span>
+              )}
+              {focusRowExists && !focusRowVisible && (
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+                  <span>hidden by the {FILTER_LABELS[filter]} filter</span>
+                  <button
+                    type="button"
+                    className="tl-btn tl-btn-ghost"
+                    style={{ fontSize: 11, padding: "1px 8px" }}
+                    onClick={() => setFilter("all")}
+                  >
+                    Show all
+                  </button>
+                </span>
+              )}
+              <Link
+                href={clearRowFocusHref}
+                className="tl-link"
+                style={{ fontSize: 12, marginLeft: "auto", whiteSpace: "nowrap" }}
+              >
+                Clear row focus
+              </Link>
+            </div>
+          )}
+
           {/* Review status strip — the at-a-glance verdict. Green when every
                placement carries a complete proof chain; red when any placement
                is missing proof (the silent-placement danger class). */}
@@ -631,17 +731,27 @@ export default function TrustLedgerPanel({
                   r.group_idx !== null && r.group_idx !== undefined
                     ? `grp ${r.group_idx}`
                     : r.group_id ?? "grp —";
+                const isRowFocused =
+                  hasRowFocus && sourceKey(r.source_file) === focusedKey;
                 return (
                   <li
                     key={`${r.source_file ?? "row"}-${r.group_id ?? r.group_idx ?? i}`}
+                    data-tl-focus-row={isRowFocused ? "1" : undefined}
                     style={{
                       padding: "10px 12px",
                       borderRadius: 8,
-                      border: "1px solid var(--tl-border)",
+                      border: isRowFocused
+                        ? "1px solid #f5d020"
+                        : "1px solid var(--tl-border)",
                       borderLeft: accent
                         ? `3px solid ${accent}`
                         : "1px solid var(--tl-border)",
-                      background: "var(--tl-bg-raised, rgba(255,255,255,0.02))",
+                      background: isRowFocused
+                        ? "rgba(245,208,32,0.08)"
+                        : "var(--tl-bg-raised, rgba(255,255,255,0.02))",
+                      boxShadow: isRowFocused
+                        ? "0 0 0 2px rgba(245,208,32,0.35)"
+                        : undefined,
                     }}
                   >
                     {/* Header line: file · group · proof status · selected route */}
