@@ -1,0 +1,410 @@
+"""PDF-AP Route Shadow Resolver — Brenham PH5 proof-slice (default-OFF SHADOW).
+
+OBSERVATION ONLY. This module NEVER mutates matching, scoring, selection,
+rendering, KMZ export, STATE, or the hardcoded ``CURRENT_PACKET_PRINT_SHEET_INDEX``.
+It does not import from ``main.py``. Its sole purpose is to derive, for a
+bore-log group, a PDF-evidence-based set of candidate ``route_id`` values that
+can be COMPARED (in a diagnostic ``_diag`` field) against the hardcoded
+print-sheet index result. Placement is unaffected regardless of the flag state.
+
+Authoritative chain (proven in the 2026-05-29 PH5 proof slice):
+
+    print token  (== Brenham plan SHEET number for this packet)
+      -> PDF plan page whose OWN sheet number == that token
+         (own sheet read deterministically from the "<n> OF <total>" title-block
+          text — NOT OCR, NOT a hardcoded page offset)
+      -> AP tags printed on that page  (e.g. AP-115 / AP-117 / AP-119)
+      -> KMZ "Terminal Port Handhole" node whose name == that AP number (lat/lon)
+      -> nearest KMZ route corridor  (min haversine distance)
+      -> pdf_allowed_route_ids
+
+Safety gate: if the bore-log NOTES name a street that is ABSENT from every plan
+page in the active plan set, the resolver returns ``[]`` with
+``reason="notes_street_absent_from_plan_set"`` and does NOT fall back to the
+print-token sheets. This deliberately abstains on bore_log39 (CHERI LN), whose
+street does not appear anywhere in the Brenham PH5 plan set — it must NOT be
+force-placed onto the LAWNDALE sheets its print tokens happen to point at.
+
+Pure core: ``resolve_pdf_ap_routes`` takes plain dict/list inputs and is fully
+unit-testable without any PDF/KMZ I/O. ``build_plan_pages_from_pdf_paths`` is the
+only function that touches a PDF (lazy ``pdfplumber`` import, already a backend
+dependency); it degrades to ``[]`` if the library or files are unavailable.
+"""
+
+from __future__ import annotations
+
+import math
+import os
+import re
+from typing import Any, Dict, List, Optional, Sequence
+
+SCHEMA_VERSION = "pdf-ap-route-shadow-1"
+
+# The four proof-slice bore logs this shadow is scoped to. Matched by filename
+# stem (case-insensitive, extension-insensitive). Nothing else is ever emitted.
+PROOF_SLICE_SOURCE_FILES = frozenset({
+    "bore_log71",
+    "bore_log72",
+    "bore_log39",
+    "bore_log4",
+})
+
+EARTH_RADIUS_FT = 20_925_524.9  # mean Earth radius in feet
+
+_STREET_SUFFIX = r"(?:ST|AVE|DR|BLVD|LN|CT|RD|WAY|CIR|PL|HWY|TRL)"
+_STREET_RE = re.compile(r"\b([A-Z][A-Z0-9'.\- ]*?\s" + _STREET_SUFFIX + r")\b")
+_SHEET_OF_RE = re.compile(r"\b(\d{1,3})\s+OF\s+(\d{1,3})\b", re.IGNORECASE)
+_AP_RE = re.compile(r"\bAP[\-_ ]?(\d{2,4})\b", re.IGNORECASE)
+
+# Route source-folder substrings that are NOT bore-able corridors (drop lines to
+# a single house). Excluded from nearest-corridor ranking entirely.
+_NON_CORRIDOR_FOLDER_SUBSTRINGS = ("house drop",)
+
+# Backbone class a bore-log redline belongs on. Terminal tails physically touch
+# the AP terminal (~0 ft) but are short stubs, not the bored main line — so they
+# are reported for transparency but are NOT chosen as pdf_allowed_route_ids.
+_BACKBONE_FOLDER_SUBSTRINGS = ("underground cable",)
+
+# Default sanity radius: a bore-log's plan-sheet AP terminals proven to sit
+# 32-77 ft from their corridor in the PH5 proof slice; 250 ft is a generous
+# fail-open so genuinely-near corridors are reported even with densification gaps.
+DEFAULT_MAX_ROUTE_DIST_FT = 250.0
+
+
+def _source_stem(source_file: Optional[str]) -> str:
+    s = str(source_file or "").strip().lower()
+    if s.endswith(".xlsx"):
+        s = s[:-5]
+    return s
+
+
+def is_proof_slice_source(source_file: Optional[str]) -> bool:
+    """True only for the four scoped proof-slice bore logs."""
+    return _source_stem(source_file) in PROOF_SLICE_SOURCE_FILES
+
+
+def _haversine_ft(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    p1, p2 = math.radians(lat1), math.radians(lat2)
+    dphi = math.radians(lat2 - lat1)
+    dlmb = math.radians(lon2 - lon1)
+    a = math.sin(dphi / 2.0) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dlmb / 2.0) ** 2
+    return 2.0 * EARTH_RADIUS_FT * math.asin(min(1.0, math.sqrt(a)))
+
+
+def extract_street_names(text: Optional[str]) -> List[str]:
+    """Extract canonical "<NAME> <SUFFIX>" street labels (house numbers stripped)."""
+    if not text:
+        return []
+    out: List[str] = []
+    for raw_line in str(text).upper().splitlines():
+        for m in _STREET_RE.finditer(raw_line):
+            street = re.sub(r"^\d+\s+", "", m.group(1).strip()).strip()
+            street = re.sub(r"\s{2,}", " ", street)
+            if street and street not in out:
+                out.append(street)
+    return out
+
+
+def _street_in_set(street: str, plan_streets: set) -> bool:
+    """Loose containment so 'LAWNDALE AVE' matches a plan label 'LAWNDALE AVE'
+    and tolerates minor sub/superstring variation, without matching empties."""
+    if not street:
+        return False
+    for ps in plan_streets:
+        if not ps:
+            continue
+        if street == ps or street in ps or ps in street:
+            return True
+    return False
+
+
+def build_plan_pages_from_texts(page_texts: Sequence[Optional[str]]) -> List[Dict[str, Any]]:
+    """Pure: per-page raw text -> plan-page records.
+
+    Each record: {page_index(1-based), sheet_number|None, ap_ids[int],
+    streets[str], sheet_total|None}. ``sheet_number`` is read from the
+    "<n> OF <total>" title-block token whose total equals the modal total across
+    the document (the plan-set sheet count). No page offset is assumed.
+    """
+    parsed: List[Dict[str, Any]] = []
+    total_counts: Dict[int, int] = {}
+    for idx, txt in enumerate(page_texts):
+        t = txt or ""
+        ofs = [(int(a), int(b)) for a, b in _SHEET_OF_RE.findall(t)]
+        for _n, tot in ofs:
+            total_counts[tot] = total_counts.get(tot, 0) + 1
+        ap_ids = sorted({int(x) for x in _AP_RE.findall(t)})
+        streets = extract_street_names(t)
+        parsed.append({"page_index": idx + 1, "_ofs": ofs, "ap_ids": ap_ids, "streets": streets})
+
+    modal_total = max(total_counts, key=lambda k: total_counts[k]) if total_counts else None
+
+    pages: List[Dict[str, Any]] = []
+    for rec in parsed:
+        own = None
+        candidates = [n for (n, tot) in rec["_ofs"] if (modal_total is None or tot == modal_total)]
+        if candidates:
+            own = candidates[0]
+        pages.append({
+            "page_index": rec["page_index"],
+            "sheet_number": own,
+            "ap_ids": rec["ap_ids"],
+            "streets": rec["streets"],
+            "sheet_total": modal_total,
+        })
+    return pages
+
+
+# ---- on-demand PDF extraction (lazy pdfplumber; degrades gracefully) ---------
+
+_PLAN_PAGE_CACHE: Dict[tuple, List[Dict[str, Any]]] = {}
+
+
+def build_plan_pages_from_pdf_paths(pdf_paths: Sequence[str]) -> List[Dict[str, Any]]:
+    """Parse the given PDF paths into plan-page records (cached by path+mtime).
+
+    Returns the UNION of plan pages across all paths. Pages from every PDF are
+    merged; ``sheet_number`` is per-PDF (modal total computed per file). Returns
+    [] (never raises) if pdfplumber is unavailable or no path is readable.
+    """
+    key_parts = []
+    for p in pdf_paths or []:
+        try:
+            key_parts.append((str(p), os.path.getmtime(p)))
+        except OSError:
+            continue
+    cache_key = tuple(sorted(key_parts))
+    if not cache_key:
+        return []
+    if cache_key in _PLAN_PAGE_CACHE:
+        return _PLAN_PAGE_CACHE[cache_key]
+
+    try:
+        import pdfplumber  # lazy; already a backend dependency
+    except Exception:
+        _PLAN_PAGE_CACHE[cache_key] = []
+        return []
+
+    merged: List[Dict[str, Any]] = []
+    for path, _mtime in cache_key:
+        try:
+            with pdfplumber.open(path) as pdf:
+                texts = []
+                for page in pdf.pages:
+                    try:
+                        texts.append(page.extract_text() or "")
+                    except Exception:
+                        texts.append("")
+        except Exception:
+            continue
+        for rec in build_plan_pages_from_texts(texts):
+            rec = dict(rec)
+            rec["pdf_path"] = os.path.basename(path)
+            merged.append(rec)
+    _PLAN_PAGE_CACHE[cache_key] = merged
+    return merged
+
+
+def terminal_nodes_from_point_features(point_features: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Filter KMZ point_features down to numerically-named Terminal Port Handhole
+    nodes usable as AP anchors. Pure."""
+    out: List[Dict[str, Any]] = []
+    for pf in point_features or []:
+        folder = str(pf.get("folder_path") or "").lower()
+        name = str(pf.get("name") or "").strip()
+        if "terminal port" not in folder:
+            continue
+        if not name.isdigit():
+            continue
+        lat, lon = pf.get("lat"), pf.get("lon")
+        if lat is None or lon is None:
+            continue
+        out.append({"name": name, "lat": float(lat), "lon": float(lon),
+                    "folder_path": pf.get("folder_path")})
+    return out
+
+
+def _agreement(pdf_ids: Sequence[str], hardcoded_ids: Sequence[str]) -> str:
+    ps, hs = set(pdf_ids or []), set(hardcoded_ids or [])
+    if not ps and not hs:
+        return "both_empty"
+    if not ps:
+        return "pdf_empty_abstain"
+    if not hs:
+        return "hardcoded_empty"
+    if ps == hs:
+        return "equal"
+    if ps & hs:
+        return "overlap"
+    return "conflict"
+
+
+def resolve_pdf_ap_routes(
+    *,
+    source_file: Optional[str],
+    print_tokens: Optional[Sequence[Any]],
+    notes_text: Optional[str],
+    plan_pages: Sequence[Dict[str, Any]],
+    terminal_nodes: Sequence[Dict[str, Any]],
+    route_catalog: Sequence[Dict[str, Any]],
+    hardcoded_allowed_route_ids: Optional[Sequence[str]] = None,
+    max_route_dist_ft: float = DEFAULT_MAX_ROUTE_DIST_FT,
+) -> Dict[str, Any]:
+    """Pure PDF-evidence route resolver. Returns the shadow diagnostic dict.
+
+    Inputs are plain data (no I/O): ``plan_pages`` from
+    ``build_plan_pages_from_*``; ``terminal_nodes`` from
+    ``terminal_nodes_from_point_features``; ``route_catalog`` is STATE's catalog
+    (each route: route_id, coords[[lat,lon]...], route_name, source_folder,
+    route_role, length_ft).
+    """
+    hardcoded = [str(r) for r in (hardcoded_allowed_route_ids or [])]
+
+    def _result(**over: Any) -> Dict[str, Any]:
+        base: Dict[str, Any] = {
+            "schema": SCHEMA_VERSION,
+            "source_file": source_file,
+            "print_tokens": list(print_tokens or []),
+            "notes_streets": notes_streets,
+            "pdf_sheets": sheets,
+            "pdf_pages": [],
+            "ap_ids_found": [],
+            "ap_terminals_resolved": [],
+            "centroid": None,
+            "nearest_routes": [],
+            "pdf_allowed_route_ids": [],
+            "hardcoded_allowed_route_ids": hardcoded,
+            "agreement": None,
+            "reason": None,
+        }
+        base.update(over)
+        base["agreement"] = _agreement(base["pdf_allowed_route_ids"], hardcoded)
+        return base
+
+    # print tokens -> integer sheet numbers
+    sheets: List[int] = sorted({int(str(t).strip()) for t in (print_tokens or [])
+                                if str(t).strip().isdigit()})
+
+    notes_streets = extract_street_names(notes_text or "")
+    plan_street_set = {s for p in plan_pages for s in (p.get("streets") or [])}
+
+    # --- safety gate: notes street absent from the ENTIRE plan set -> abstain ---
+    if notes_streets and all(not _street_in_set(s, plan_street_set) for s in notes_streets):
+        return _result(
+            reason="notes_street_absent_from_plan_set:" + ",".join(notes_streets),
+        )
+
+    if not sheets:
+        return _result(reason="no_numeric_print_tokens")
+
+    pages_for_sheets = [p for p in plan_pages if p.get("sheet_number") in sheets]
+    if not pages_for_sheets:
+        return _result(reason="no_plan_pages_for_print_tokens:" + ",".join(map(str, sheets)))
+
+    pdf_pages = sorted({int(p["page_index"]) for p in pages_for_sheets})
+    ap_ids_found = sorted({int(a) for p in pages_for_sheets for a in (p.get("ap_ids") or [])})
+
+    if not ap_ids_found:
+        return _result(pdf_pages=pdf_pages, reason="no_ap_ids_on_print_token_sheets")
+
+    term_index = {str(t.get("name")).strip(): t for t in terminal_nodes
+                  if str(t.get("name")).strip()}
+    resolved: List[Dict[str, Any]] = []
+    for ap in ap_ids_found:
+        t = term_index.get(str(ap))
+        if t is not None:
+            resolved.append({"ap": ap, "name": str(t.get("name")),
+                             "lat": float(t["lat"]), "lon": float(t["lon"])})
+
+    if not resolved:
+        return _result(pdf_pages=pdf_pages, ap_ids_found=ap_ids_found,
+                       reason="no_ap_terminals_resolved")
+
+    clat = sum(t["lat"] for t in resolved) / len(resolved)
+    clon = sum(t["lon"] for t in resolved) / len(resolved)
+    centroid = {"lat": round(clat, 7), "lon": round(clon, 7), "terminal_count": len(resolved)}
+
+    # nearest corridor: min over (terminal, route vertex) haversine.
+    # Rank ALL non-house-drop routes (transparency) but choose pdf_allowed only
+    # from the BACKBONE class — a tail touches the terminal but is not the bore.
+    ranked: List[Dict[str, Any]] = []
+    ranked_backbone: List[Dict[str, Any]] = []
+    for route in route_catalog or []:
+        coords = route.get("coords") or []
+        if not coords:
+            continue
+        folder = str(route.get("source_folder") or "").lower()
+        if any(sub in folder for sub in _NON_CORRIDOR_FOLDER_SUBSTRINGS):
+            continue
+        best = min(
+            _haversine_ft(t["lat"], t["lon"], float(c[0]), float(c[1]))
+            for t in resolved for c in coords
+        )
+        entry = {
+            "route_id": route.get("route_id"),
+            "route_name": route.get("route_name"),
+            "source_folder": route.get("source_folder"),
+            "route_role": route.get("route_role"),
+            "length_ft": route.get("length_ft"),
+            "dist_ft": round(best, 1),
+        }
+        ranked.append(entry)
+        if any(sub in folder for sub in _BACKBONE_FOLDER_SUBSTRINGS):
+            ranked_backbone.append(entry)
+    ranked.sort(key=lambda r: r["dist_ft"])
+    ranked_backbone.sort(key=lambda r: r["dist_ft"])
+    nearest_routes = ranked[:5]
+
+    pdf_allowed = [r["route_id"] for r in ranked_backbone if r["dist_ft"] <= max_route_dist_ft][:2]
+    if pdf_allowed:
+        reason = "resolved_via_print_token_sheets"
+    elif ranked and ranked[0]["dist_ft"] <= max_route_dist_ft:
+        reason = "nearest_corridor_non_backbone_within_%dft" % int(max_route_dist_ft)
+    else:
+        reason = "no_corridor_within_%dft" % int(max_route_dist_ft)
+
+    return _result(
+        pdf_pages=pdf_pages,
+        ap_ids_found=ap_ids_found,
+        ap_terminals_resolved=resolved,
+        centroid=centroid,
+        nearest_routes=nearest_routes,
+        pdf_allowed_route_ids=pdf_allowed,
+        reason=reason,
+    )
+
+
+def emit_shadow_for_group(
+    *,
+    source_file: Optional[str],
+    print_tokens: Optional[Sequence[Any]],
+    notes_text: Optional[str],
+    pdf_paths: Sequence[str],
+    point_features: Sequence[Dict[str, Any]],
+    route_catalog: Sequence[Dict[str, Any]],
+    hardcoded_allowed_route_ids: Optional[Sequence[str]] = None,
+) -> Dict[str, Any]:
+    """Orchestrator used by the in-pipeline shadow seam. Assembles inputs from a
+    live session (parses PDFs on demand, filters terminal nodes) and calls the
+    pure resolver. Never raises for missing inputs — emits a reason instead."""
+    plan_pages = build_plan_pages_from_pdf_paths(pdf_paths)
+    if not plan_pages:
+        return {
+            "schema": SCHEMA_VERSION,
+            "source_file": source_file,
+            "print_tokens": list(print_tokens or []),
+            "hardcoded_allowed_route_ids": [str(r) for r in (hardcoded_allowed_route_ids or [])],
+            "pdf_allowed_route_ids": [],
+            "agreement": _agreement([], hardcoded_allowed_route_ids or []),
+            "reason": "pdf_plan_data_unavailable",
+        }
+    terminal_nodes = terminal_nodes_from_point_features(point_features)
+    return resolve_pdf_ap_routes(
+        source_file=source_file,
+        print_tokens=print_tokens,
+        notes_text=notes_text,
+        plan_pages=plan_pages,
+        terminal_nodes=terminal_nodes,
+        route_catalog=route_catalog,
+        hardcoded_allowed_route_ids=hardcoded_allowed_route_ids,
+    )

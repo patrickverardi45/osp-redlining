@@ -37,6 +37,7 @@ from app.core.candidate_matrix import build_expanded_candidate_pool
 from app.core.candidate_route_discovery import discover_candidate_routes_from_notes_streets
 from app.core.coverage_sanity import compute_coverage_sanity
 from app.core import brenham_plan_sheet_graph as _brenham_psg
+from app.core import pdf_ap_route_resolver as _pdf_ap_route
 from app.core.brenham_plan_sheet_graph_shadow_telemetry import (
     append_shadow_row as _brenham_psg_append_shadow_row,
     build_row as _brenham_psg_build_shadow_row,
@@ -7648,6 +7649,25 @@ def _trueline_mrq_plan_sheet_graph_evidence_enabled() -> bool:
     return raw in {"1", "true", "yes", "on"}
 
 
+def _trueline_pdf_ap_route_shadow_enabled() -> bool:
+    """PDF-AP Route Shadow Resolver — runtime flag for the Brenham PH5
+    proof-slice diagnostic. Default OFF. Scoped to the four proof-slice
+    bore logs only (bore_log71 / bore_log72 / bore_log39 / bore_log4).
+
+    When OFF, the rebuild's per-group seam is a silent no-op: no resolver call,
+    no PDF parse, no `_diag` key. Production behavior is byte-identical. When ON,
+    for those four source_files ONLY, a read-only `_diag["pdf_ap_route_shadow"]`
+    field is attached comparing a PDF-evidence-derived route set (print token ->
+    plan sheet -> AP tags -> KMZ terminal handholes -> nearest backbone
+    corridor) against the hardcoded print-sheet index result. NO matching /
+    scoring / selection / filter / render / STATE change either way.
+
+    Read every call; never captured at import-time.
+    """
+    raw = os.environ.get("TRUELINE_PDF_AP_ROUTE_SHADOW", "").strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
 def _trueline_trust_ledger_enabled() -> bool:
     """KMZ Automatic Redline Placement — runtime flag for the read-only Trust
     Ledger endpoint (`/api/trust-ledger`). Default OFF.
@@ -12350,6 +12370,36 @@ def _rebuild_field_data_outputs(scope: RebuildScope = RebuildScope.FULL) -> None
                 _diag["plan_footage_boost_shadow"] = {
                     "emitted": False,
                     "reason": "shadow_compute_error",
+                }
+
+        # ── Diagnostic checkpoint J (PDF-AP route shadow, flag-gated) ─────────
+        # Brenham PH5 PROOF-SLICE ONLY (bore_log71/72/39/4). Read-only comparison
+        # of a PDF-evidence-derived route set against the hardcoded print-sheet
+        # index. Default OFF. NEVER affects scoring / selection / render / STATE;
+        # the only side effect is this `_diag` field. Inputs assembled from the
+        # session's PDFs + STATE kmz_reference/route_catalog; resolver never
+        # raises (it returns a reason) but we still guard defensively.
+        if (_trueline_pdf_ap_route_shadow_enabled()
+                and _pdf_ap_route.is_proof_slice_source(_diag.get("source_file"))):
+            try:
+                _pdf_ap_notes = " ".join(
+                    str(r.get("notes") or "")
+                    for r in (normalized_group.get("station_rows") or [])
+                ).strip()
+                _diag["pdf_ap_route_shadow"] = _pdf_ap_route.emit_shadow_for_group(
+                    source_file=_diag.get("source_file"),
+                    print_tokens=_diag.get("print_tokens"),
+                    notes_text=_pdf_ap_notes,
+                    pdf_paths=[str(p) for p in _resolve_engineering_plan_pdf_paths(_session_id_hint)],
+                    point_features=((STATE.get("kmz_reference") or {}).get("point_features") or []),
+                    route_catalog=(STATE.get("route_catalog") or []),
+                    hardcoded_allowed_route_ids=_diag.get("strict_allowed_route_ids"),
+                )
+            except Exception as _pdf_ap_exc:
+                _diag["pdf_ap_route_shadow"] = {
+                    "schema": _pdf_ap_route.SCHEMA_VERSION,
+                    "source_file": _diag.get("source_file"),
+                    "reason": "shadow_error:" + type(_pdf_ap_exc).__name__,
                 }
 
         pipeline_diag.append(_diag)
