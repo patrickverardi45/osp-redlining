@@ -80,6 +80,9 @@ from app.core.match_override import (
 from app.core.match_review_queue import (
     assemble_match_review_queue as _assemble_match_review_queue,
 )
+from app.core.trust_ledger import (
+    assemble_trust_ledger as _assemble_trust_ledger,
+)
 from app.core.notes_street_evidence import compute_location_evidence_mismatch
 from app.core.rebuild_scope import RebuildScope
 from app.core.route_collision_alternate_search import (
@@ -7645,6 +7648,22 @@ def _trueline_mrq_plan_sheet_graph_evidence_enabled() -> bool:
     return raw in {"1", "true", "yes", "on"}
 
 
+def _trueline_trust_ledger_enabled() -> bool:
+    """KMZ Automatic Redline Placement — runtime flag for the read-only Trust
+    Ledger endpoint (`/api/trust-ledger`). Default OFF.
+
+    When OFF, the endpoint returns a clear disabled response and performs no
+    projection. When ON, the endpoint projects STATE["pipeline_diag"] (+
+    route_catalog + coverage_sanity + Brenham PSG inputs) into a per-group
+    proof ledger (proven / abstained / missing_proof). Read-only: NO matching /
+    scoring / selection / rendering / KMZ-export / STATE change either way.
+
+    Read every call; never captured at import-time.
+    """
+    raw = os.environ.get("TRUELINE_TRUST_LEDGER", "").strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
 def _trueline_kmz_stage_r2a_anchor_builder_shadow_enabled() -> bool:
     """KMZ Hardening Stage R2a — runtime flag for anchor builder SHADOW
     telemetry.
@@ -12261,6 +12280,37 @@ def _rebuild_field_data_outputs(scope: RebuildScope = RebuildScope.FULL) -> None
             }
         )
 
+        # ── Diagnostic checkpoint E.2 (trust-ledger proof projection) ──────────
+        # ADDITIVE ONLY. Surfaces proof-grade selection evidence already computed
+        # above onto the surviving _diag (which persists into
+        # STATE["pipeline_diag"]). Mirrors values written verbatim to the
+        # group_matches record above; does NOT recompute, score, select, or
+        # render. Written AFTER selection so it cannot influence it. Enables the
+        # read-only trust ledger (assemble_trust_ledger) without exposing the
+        # transient group_matches record. Keeps nulls honest.
+        _diag["group_id"] = normalized_group.get("group_id")
+        _diag["selected_combined_score"] = round(
+            float(selected_hypothesis.get("combined_score", 0.0) or 0.0), 6
+        )
+        _diag["selected_anchor_reasons"] = [
+            str(_ar) for _ar in (selected_hypothesis.get("anchor_reasons") or []) if _ar
+        ]
+        _diag["mapping_summary"] = {
+            "mode": (mapping or {}).get("mode"),
+            "anchor_offset_ft": (mapping or {}).get("anchor_offset_ft"),
+            "anchored_start_ft": (mapping or {}).get("anchored_start_ft"),
+            "anchored_end_ft": (mapping or {}).get("anchored_end_ft"),
+        }
+        _diag["candidate_rankings_top"] = [
+            {
+                "route_id": _cr.get("route_id"),
+                "score": round(float(_cr.get("score", 0.0) or 0.0), 6),
+                "score_breakdown": dict(_cr.get("score_breakdown") or {}),
+            }
+            for _cr in rankings[:3]
+            if isinstance(_cr, dict)
+        ]
+
         matching_debug.append(_build_matching_debug_record(normalized_group, filter_meta, rankings, anchored_hypotheses, selected_hypothesis, validation))
 
         # ── Diagnostic checkpoint F: render outcome ────────────────────────────
@@ -14459,6 +14509,62 @@ def match_review_queue_endpoint(session_id: Optional[str] = None) -> JSONRespons
         "success": True,
         "session_id": sid,
         **queue,
+    })
+
+
+@localhost_router.get("/api/trust-ledger")
+def trust_ledger_endpoint(session_id: Optional[str] = None) -> JSONResponse:
+    """Read-only proof-grade trust ledger (KMZ automatic redline placement).
+
+    For every bore-log group, projects STATE["pipeline_diag"] (+ route_catalog,
+    coverage_sanity, and Brenham PSG inputs) into a per-group verdict:
+    proven / abstained / missing_proof. "proven" = the placement is justified by
+    a complete, citable evidence chain; "missing_proof" = a route was placed but
+    the chain is incomplete (the silent-placement class, surfaced honestly).
+    Route-index evidence and the PSG warning are kept SEPARATE (orthogonal
+    signals).
+
+    Default-OFF via TRUELINE_TRUST_LEDGER. When OFF, returns a clear disabled
+    response. Mirrors the /api/match-review-queue tenant-scoping pattern. Reads
+    STATE only; never mutates matching, scoring, selection, render, KMZ export,
+    or STATE.
+    """
+    sid = str(session_id or "").strip()
+    if not sid:
+        return JSONResponse(
+            status_code=400, content={"error": "session_id is required"}
+        )
+    if not _trueline_trust_ledger_enabled():
+        return JSONResponse(content={
+            "success": False,
+            "enabled": False,
+            "session_id": sid,
+            "detail": "Trust ledger is not enabled for this deployment.",
+        })
+    _psg_inputs: Optional[Dict[str, Dict[str, Any]]] = None
+    with _session_scope(sid):
+        diag: List[Dict[str, Any]] = list(STATE.get("pipeline_diag") or [])
+        route_catalog: List[Dict[str, Any]] = list(STATE.get("route_catalog") or [])
+        coverage_sanity = STATE.get("coverage_sanity")
+        # Brenham PSG evidence is part of the proof chain; gather it read-only
+        # whenever the ledger is enabled (independent of the MRQ-PSG flag).
+        try:
+            _psg_inputs = _gather_mrq_plan_sheet_graph_inputs(
+                diag, STATE.get("committed_rows") or []
+            )
+        except Exception:
+            _psg_inputs = None
+    ledger = _assemble_trust_ledger(
+        diag,
+        route_catalog=route_catalog,
+        coverage_sanity=coverage_sanity,
+        plan_sheet_graph_inputs=_psg_inputs,
+    )
+    return JSONResponse(content={
+        "success": True,
+        "enabled": True,
+        "session_id": sid,
+        **ledger,
     })
 
 
