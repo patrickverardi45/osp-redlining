@@ -12,7 +12,7 @@ import Link from "next/link";
 import { apiFetch } from "@/lib/apiFetch";
 import { peekSessionId } from "@/lib/session";
 import PlanSheetGraphEvidenceBadge from "@/components/PlanSheetGraphEvidenceBadge";
-import MatchReviewEvidence from "@/components/MatchReviewEvidence";
+import MatchReviewEvidence, { getPdfRouteVerdict } from "@/components/MatchReviewEvidence";
 import type {
   MatchReviewQueueResponse,
   MatchReviewRow,
@@ -57,6 +57,53 @@ function friendlyStatus(status: string): string {
   return STATUS_LABEL[status] ?? titleCase(status);
 }
 
+// ── Triage filters ───────────────────────────────────────────────────────
+// Read-only operator triage. Buckets use ONLY existing row payload fields and
+// the SAME deterministic PDF route verdict (getPdfRouteVerdict) the per-row
+// evidence badge renders — so a chip's count always matches its filtered rows.
+type FilterKey = "all" | "suspect" | "not_proven" | "consistent" | "has_map_link";
+
+const FILTER_ORDER: FilterKey[] = ["all", "suspect", "not_proven", "consistent", "has_map_link"];
+
+const FILTER_LABELS: Record<FilterKey, string> = {
+  all: "All",
+  suspect: "Suspect",
+  not_proven: "Not proven",
+  consistent: "Consistent",
+  has_map_link: "Has map link",
+};
+
+function rowHasMapLink(r: MatchReviewRow, projectId?: string | null): boolean {
+  return Boolean(projectId && r.source_file);
+}
+
+function rowMatchesFilter(r: MatchReviewRow, key: FilterKey, projectId?: string | null): boolean {
+  if (key === "all") return true;
+  if (key === "has_map_link") return rowHasMapLink(r, projectId);
+  return getPdfRouteVerdict(r) === key;
+}
+
+function computeFilterCounts(
+  rows: MatchReviewRow[],
+  projectId?: string | null,
+): Record<FilterKey, number> {
+  const counts: Record<FilterKey, number> = {
+    all: rows.length,
+    suspect: 0,
+    not_proven: 0,
+    consistent: 0,
+    has_map_link: 0,
+  };
+  for (const r of rows) {
+    const verdict = getPdfRouteVerdict(r);
+    if (verdict === "suspect" || verdict === "not_proven" || verdict === "consistent") {
+      counts[verdict] += 1;
+    }
+    if (rowHasMapLink(r, projectId)) counts.has_map_link += 1;
+  }
+  return counts;
+}
+
 export default function MatchReviewQueuePanel({
   sessionId,
   projectId,
@@ -71,6 +118,9 @@ export default function MatchReviewQueuePanel({
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [sid, setSid] = useState<string | null>(sessionId ?? null);
+  // Triage filter selection. Default "all" preserves the existing row order
+  // and full queue — no reordering, purely additive client-side narrowing.
+  const [filter, setFilter] = useState<FilterKey>("all");
 
   useEffect(() => {
     const next = (sessionId ?? "").trim();
@@ -117,6 +167,9 @@ export default function MatchReviewQueuePanel({
   const withEvidence = rows.filter((r) => r.plan_sheet_graph_evidence).length;
   const rowCount = data?.row_count ?? rows.length;
   const otherCount = Math.max(0, rowCount - withEvidence);
+  // Triage counts + filtered view (read-only, order-preserving).
+  const filterCounts = computeFilterCounts(rows, projectId);
+  const filteredRows = rows.filter((r) => rowMatchesFilter(r, filter, projectId));
 
   return (
     <section className="tl-card tl-card-padded">
@@ -183,9 +236,66 @@ export default function MatchReviewQueuePanel({
             </p>
           )}
 
+          {rows.length > 0 && (
+            <div
+              role="tablist"
+              aria-label="Filter review rows"
+              style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 12 }}
+            >
+              {FILTER_ORDER.map((key) => {
+                const active = filter === key;
+                return (
+                  <button
+                    key={key}
+                    type="button"
+                    role="tab"
+                    aria-selected={active}
+                    onClick={() => setFilter(key)}
+                    className="tl-btn tl-btn-ghost"
+                    style={{
+                      fontSize: 12,
+                      padding: "3px 10px",
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 6,
+                      ...(active
+                        ? {
+                            background: "var(--tl-bg-raised, rgba(255,255,255,0.10))",
+                            border: "1px solid var(--tl-text-muted, #64748b)",
+                            color: "var(--tl-text, #e2e8f0)",
+                          }
+                        : null),
+                    }}
+                  >
+                    {FILTER_LABELS[key]}
+                    <span
+                      aria-hidden="true"
+                      style={{
+                        fontSize: 10,
+                        fontWeight: 600,
+                        opacity: 0.75,
+                        padding: "0 5px",
+                        borderRadius: 999,
+                        background: active
+                          ? "rgba(0,0,0,0.22)"
+                          : "var(--tl-bg-raised, rgba(255,255,255,0.06))",
+                      }}
+                    >
+                      {filterCounts[key]}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+
           {rows.length === 0 ? (
             <p className="tl-subtle" style={{ margin: 0 }}>
               Queue is empty for this session.
+            </p>
+          ) : filteredRows.length === 0 ? (
+            <p className="tl-subtle" style={{ margin: 0 }}>
+              No rows match the {FILTER_LABELS[filter]} filter.
             </p>
           ) : (
             <ul
@@ -198,7 +308,7 @@ export default function MatchReviewQueuePanel({
                 gap: 8,
               }}
             >
-              {rows.map((r, i) => {
+              {filteredRows.map((r, i) => {
                 const ev = r.plan_sheet_graph_evidence;
                 const accent = ev ? (ev.actionability === "high" ? "#b8860b" : "#6b7280") : null;
                 return (

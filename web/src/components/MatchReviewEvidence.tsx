@@ -20,7 +20,7 @@
 
 import type { MatchReviewEvidenceSummary } from "@/lib/types/matchReviewQueue";
 
-type VerdictKind = "consistent" | "suspect" | "not_proven";
+export type VerdictKind = "consistent" | "suspect" | "not_proven";
 
 interface Verdict {
   kind: VerdictKind;
@@ -61,6 +61,19 @@ function indexAgreementVerdict(
     word: "Suspect",
     detail: "selected route is outside the PDF-derived expected route set.",
   };
+}
+
+// Row-level PDF route verdict — the SAME deterministic logic this component
+// renders, exposed so the queue panel's triage filters bucket each row exactly
+// as its badge shows. Pure; no guessing (missing index / no route → not_proven).
+export function getPdfRouteVerdict(row: {
+  selected_route_id?: string | null;
+  evidence_summary?: MatchReviewEvidenceSummary | null;
+}): VerdictKind {
+  return indexAgreementVerdict(
+    row.selected_route_id ?? null,
+    row.evidence_summary?.allowed_route_ids,
+  ).kind;
 }
 
 // Reuses the PlanSheetGraphEvidenceBadge tone language: amber for attention,
