@@ -24,6 +24,7 @@ import unittest
 
 from backend.app.core.pdf_ap_route_resolver import (
     SCHEMA_VERSION,
+    apply_authoritative_override,
     build_plan_pages_from_texts,
     extract_street_names,
     is_proof_slice_source,
@@ -251,6 +252,54 @@ class TestProofSliceScope(unittest.TestCase):
             self.assertTrue(is_proof_slice_source(s))
         for s in ["bore_log16.xlsx", "bore_log40.xlsx", "", None, "bore_log7.xlsx"]:
             self.assertFalse(is_proof_slice_source(s))
+
+
+class TestAuthoritativeOverride(unittest.TestCase):
+    """Locks the authoritative promotion: high-confidence PDF-AP evidence wins
+    over the hardcoded route; empty/low-confidence evidence preserves behavior."""
+
+    def _find(self, rid):
+        return {"route_id": rid, "coords": [[30.1, -96.3], [30.2, -96.4]]} if rid == "route_477" else None
+
+    def _score(self, group_rows, route):
+        return {"route_id": route["route_id"], "route_name": "Underground Cable", "score": 0.71}
+
+    def test_bore_log71_promotes_route_477(self):
+        shadow = {
+            "reason": "resolved_via_print_token_sheets",
+            "pdf_allowed_route_ids": ["route_477"],
+            "agreement": "conflict",
+        }
+        out = apply_authoritative_override(shadow, [{"station_ft": 0.0}], self._find, self._score)
+        self.assertIsNotNone(out)
+        self.assertEqual(out["selected_route_id"], "route_477")
+        self.assertEqual(out["pdf_allowed_route_ids"], ["route_477"])
+        self.assertEqual(out["scored_full"]["route_id"], "route_477")
+
+    def test_bore_log39_empty_evidence_returns_none(self):
+        shadow = {
+            "reason": "notes_street_absent_from_plan_set:CHERI LN",
+            "pdf_allowed_route_ids": [],
+        }
+        self.assertIsNone(apply_authoritative_override(shadow, [], self._find, self._score))
+
+    def test_low_confidence_reason_returns_none(self):
+        shadow = {"reason": "pdf_plan_data_unavailable", "pdf_allowed_route_ids": ["route_477"]}
+        self.assertIsNone(apply_authoritative_override(shadow, [], self._find, self._score))
+
+    def test_route_not_in_catalog_returns_none(self):
+        shadow = {"reason": "resolved_via_print_token_sheets", "pdf_allowed_route_ids": ["route_999"]}
+        self.assertIsNone(apply_authoritative_override(shadow, [], self._find, self._score))
+
+    def test_non_dict_shadow_returns_none(self):
+        self.assertIsNone(apply_authoritative_override(None, [], self._find, self._score))
+        self.assertIsNone(apply_authoritative_override("nope", [], self._find, self._score))
+
+    def test_score_failure_returns_none(self):
+        shadow = {"reason": "resolved_via_print_token_sheets", "pdf_allowed_route_ids": ["route_477"]}
+        self.assertIsNone(
+            apply_authoritative_override(shadow, [], self._find, lambda g, r: {})
+        )
 
 
 if __name__ == "__main__":

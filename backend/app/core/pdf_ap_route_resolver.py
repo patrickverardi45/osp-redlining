@@ -374,6 +374,51 @@ def resolve_pdf_ap_routes(
     )
 
 
+def apply_authoritative_override(
+    shadow: Optional[Dict[str, Any]],
+    group_rows: Any,
+    find_route_callback,
+    score_callback,
+) -> Optional[Dict[str, Any]]:
+    """Promote HIGH-CONFIDENCE PDF-AP evidence to an authoritative route choice.
+
+    Returns ``{selected_route_id, scored_full, pdf_allowed_route_ids, ...}`` when
+    the shadow is high-confidence — ``reason == "resolved_via_print_token_sheets"``
+    AND ``pdf_allowed_route_ids`` is non-empty AND the first route resolves in
+    the catalog AND scores — so the caller can promote it to the top of the
+    rankings and use ``pdf_allowed_route_ids`` as the placement allow-set
+    (the PDF plan-sheet/AP route WINS over the hardcoded print-sheet route).
+
+    Returns ``None`` otherwise (empty/absent/low-confidence evidence) so the
+    caller preserves existing behavior — e.g. bore_log39 (CHERI absent →
+    pdf_allowed_route_ids == []) is never force-placed. Pure: route lookup and
+    scoring are injected as callbacks (mirrors ``attempt_location_mismatch_rescue``);
+    this function never touches geometry, scoring math, or STATE.
+    """
+    if not isinstance(shadow, dict):
+        return None
+    if shadow.get("reason") != "resolved_via_print_token_sheets":
+        return None
+    pdf_allowed = [str(r).strip() for r in (shadow.get("pdf_allowed_route_ids") or []) if str(r).strip()]
+    if not pdf_allowed:
+        return None
+    rid = pdf_allowed[0]
+    route = find_route_callback(rid)
+    if not route:
+        return None
+    scored = score_callback(group_rows, route)
+    if not isinstance(scored, dict) or not scored:
+        return None
+    return {
+        "applied": True,
+        "selected_route_id": rid,
+        "scored_full": scored,
+        "pdf_allowed_route_ids": pdf_allowed,
+        "agreement": shadow.get("agreement"),
+        "reason": shadow.get("reason"),
+    }
+
+
 def emit_shadow_for_group(
     *,
     source_file: Optional[str],

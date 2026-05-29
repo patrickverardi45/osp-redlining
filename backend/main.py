@@ -7693,6 +7693,28 @@ def _trueline_pdf_ap_route_shadow_enabled() -> bool:
     return raw in {"1", "true", "yes", "on"}
 
 
+def _trueline_pdf_ap_route_authoritative_enabled() -> bool:
+    """PDF-AP Route AUTHORITATIVE override — Brenham PH5 proof-slice only.
+    Default OFF.
+
+    When ON, a proof-slice bore log (bore_log71/72/39/4) that would otherwise
+    ABSTAIN on a hardcoded print-sheet location mismatch is instead PLACED on
+    the PDF-AP-derived route, when the evidence is high-confidence
+    (`reason == "resolved_via_print_token_sheets"` and `pdf_allowed_route_ids`
+    is non-empty). The PDF plan-sheet/AP route wins over the hardcoded
+    CURRENT_PACKET_PRINT_SHEET_INDEX route for placement, scoped to logs that
+    reach the location-mismatch abstain seam: bore_log71/72 get route_477;
+    bore_log39 (CHERI absent → empty evidence) still abstains; bore_log4 (no
+    mismatch) is never reached. Enabling this flag also forces the shadow
+    evidence to be computed. Never mints, never alters geometry/scoring math;
+    it only changes which route is selected for the gated proof slice.
+
+    Read every call; never captured at import-time.
+    """
+    raw = os.environ.get("TRUELINE_PDF_AP_ROUTE_AUTHORITATIVE", "").strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
 def _trueline_trust_ledger_enabled() -> bool:
     """KMZ Automatic Redline Placement — runtime flag for the read-only Trust
     Ledger endpoint (`/api/trust-ledger`). Default OFF.
@@ -11737,7 +11759,7 @@ def _rebuild_field_data_outputs(scope: RebuildScope = RebuildScope.FULL) -> None
         # ones. Default OFF. NEVER affects scoring / selection / render / STATE;
         # the only side effect is this `_diag` field. Resolver never raises (it
         # returns a reason) but we still guard defensively.
-        if (_trueline_pdf_ap_route_shadow_enabled()
+        if ((_trueline_pdf_ap_route_shadow_enabled() or _trueline_pdf_ap_route_authoritative_enabled())
                 and _pdf_ap_route.is_proof_slice_source(_diag.get("source_file"))):
             try:
                 _pdf_ap_notes = " ".join(
@@ -11779,7 +11801,48 @@ def _rebuild_field_data_outputs(scope: RebuildScope = RebuildScope.FULL) -> None
                 # downstream handle anchoring + segment build. If no clean
                 # candidate, fall through to abstain unchanged.
                 _expansion_applied = False
-                if os.getenv("TRUELINE_AUTO_CANDIDATE_EXPANSION", "0").strip() == "1":
+
+                # PDF-AP AUTHORITATIVE override (env-gated, proof-slice only) —
+                # HIGHEST-priority rescue. When high-confidence PDF/AP evidence
+                # is present (reason=resolved_via_print_token_sheets + non-empty
+                # pdf_allowed_route_ids, computed above at checkpoint J), the PDF
+                # plan-sheet/AP route WINS over the hardcoded print-sheet route:
+                # promote it to rankings[0] and use it as the placement allow-set
+                # instead of abstaining. bore_log39 (CHERI → empty evidence)
+                # returns None here and falls through to abstain; bore_log4 (no
+                # mismatch) never reaches this branch. Mirrors the V3/V4 swap.
+                if _trueline_pdf_ap_route_authoritative_enabled():
+                    _auth = _pdf_ap_route.apply_authoritative_override(
+                        _diag.get("pdf_ap_route_shadow"),
+                        group,
+                        _find_route_by_id,
+                        _score_route_for_group,
+                    )
+                    if _auth:
+                        _auth_rid = str(_auth["selected_route_id"])
+                        # Authoritative: RESTRICT rankings to the PDF-allowed set
+                        # so the downstream anchored-hypothesis gate cannot
+                        # re-select the hardcoded route (e.g. route_478) by
+                        # combined_score. route_477 is forced as the only
+                        # placement candidate.
+                        _pdf_set = {str(r) for r in _auth["pdf_allowed_route_ids"]}
+                        rankings = [_auth["scored_full"]] + [
+                            r for r in rankings
+                            if r.get("route_id") in _pdf_set and r.get("route_id") != _auth_rid
+                        ]
+                        filter_meta = dict(filter_meta)
+                        filter_meta["allowed_route_ids"] = list(_auth["pdf_allowed_route_ids"])
+                        _diag["strict_allowed_route_ids"] = list(filter_meta["allowed_route_ids"])
+                        _diag["pdf_ap_route_authoritative"] = {
+                            "applied": True,
+                            "selected_route_id": _auth_rid,
+                            "pdf_allowed_route_ids": list(_auth["pdf_allowed_route_ids"]),
+                            "agreement": _auth.get("agreement"),
+                            "superseded_filter_streets": list(_loc_mismatch.get("filter_streets") or []),
+                        }
+                        _expansion_applied = True
+
+                if not _expansion_applied and os.getenv("TRUELINE_AUTO_CANDIDATE_EXPANSION", "0").strip() == "1":
                     _disc = discover_candidate_routes_from_notes_streets(
                         _loc_mismatch.get("notes_streets") or [],
                         STATE.get("address_points") or [],
