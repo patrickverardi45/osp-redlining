@@ -514,6 +514,19 @@ function buildStationSummary(
   return `${station} • ${route} • ${source}`;
 }
 
+// ─── Focus-target source_file key ────────────────────────────────────────
+// Normalize a source_file into a stable comparison key for ?focus= matching:
+// case-insensitive, trimmed, path-stripped, with a trailing spreadsheet
+// extension removed, so "bore_log16", "bore_log16.xlsx", and
+// "uploads/bore_log16.XLSX" all resolve to the same key. Display labels and
+// backend data are NEVER modified — this only affects in-memory matching.
+function focusSourceKey(value: string | null | undefined): string {
+  const lowered = String(value ?? "").trim().toLowerCase();
+  if (!lowered) return "";
+  const base = lowered.split(/[\\/]/).pop() ?? lowered;
+  return base.replace(/\.(xlsx|xls|csv)$/, "");
+}
+
 export default function ModernHeroMap({
   projectId,
   selectedFieldSessionId = null,
@@ -2734,6 +2747,23 @@ export default function ModernHeroMap({
     );
   }, [fieldStations, fitToPoints]);
 
+  // Whether the active ?focus= target actually has drawable geometry on THIS
+  // map — a redline segment with ≥2 coords, or a station point. Pure derived
+  // value (no state, no effect): drives the honest "no drawable geometry" chip
+  // note so the focus chip never implies an emphasis that isn't on screen.
+  // Never fakes geometry; only reports presence/absence of an existing match.
+  const focusHasGeometry = useMemo(() => {
+    const key = focusSourceKey(focusedSourceFile);
+    if (!key) return false;
+    for (const seg of redlineSegments) {
+      if (seg.coords.length >= 2 && focusSourceKey(seg.source_file) === key) return true;
+    }
+    for (const sp of stationPoints) {
+      if (focusSourceKey(sp.source.source_file) === key) return true;
+    }
+    return false;
+  }, [focusedSourceFile, redlineSegments, stationPoints]);
+
   // ── Source-file focus (read-only deep-link target) ───────────────────────
   // When `focusedSourceFile` is set (e.g. /projects/[id]?focus=bore_log16.xlsx),
   // emphasize that source_file's redline segments on THIS live Leaflet map and
@@ -2745,7 +2775,7 @@ export default function ModernHeroMap({
   // redlineLayersRef is populated and fitToPoints is in scope. redlineLayersRef
   // is index-aligned 1:1 with redlineSegments (see the geometry draw loop).
   useEffect(() => {
-    const focusKey = String(focusedSourceFile ?? "").trim().toLowerCase();
+    const focusKey = focusSourceKey(focusedSourceFile);
     const hasFocus = focusKey.length > 0;
     const layers = redlineLayersRef.current;
     const focusPoints: Array<[number, number]> = [];
@@ -2753,9 +2783,9 @@ export default function ModernHeroMap({
     for (let i = 0; i < layers.length; i++) {
       const seg = redlineSegments[i];
       const isMatch =
-        focusKey.length > 0 &&
+        hasFocus &&
         !!seg &&
-        String(seg.source_file ?? "").trim().toLowerCase() === focusKey;
+        focusSourceKey(seg.source_file) === focusKey;
       try {
         layers[i].setStyle(
           !hasFocus
@@ -2786,7 +2816,7 @@ export default function ModernHeroMap({
     if (focusKey.length === 0) return;
 
     for (const sp of stationPoints) {
-      if (String(sp.source.source_file ?? "").trim().toLowerCase() === focusKey) {
+      if (focusSourceKey(sp.source.source_file) === focusKey) {
         focusPoints.push([sp.displayLat, sp.displayLon]);
       }
     }
@@ -3265,9 +3295,10 @@ export default function ModernHeroMap({
         </div>
 
         {/* Focus-clarity chip — names the source_file the ?focus= deep-link is
-            emphasizing. Read-only, pointer-transparent; renders only when a
-            focus target is set. Not an error surface — when the focus has no
-            drawable geometry the map simply doesn't emphasize anything. */}
+            emphasizing, and stays honest about the no-op: when the focus target
+            has no drawable geometry on this map, the accent goes neutral and a
+            muted note says so (no faked emphasis, no alarming error). Read-only,
+            pointer-transparent; renders only when a focus target is set. */}
         {focusedSourceFile && (
           <div
             aria-live="polite"
@@ -3280,23 +3311,29 @@ export default function ModernHeroMap({
               alignItems: "center",
               gap: 6,
               background: "rgba(2,8,23,0.9)",
-              border: "1px solid rgba(239,68,68,0.45)",
+              border: `1px solid ${focusHasGeometry ? "rgba(239,68,68,0.45)" : "rgba(148,163,184,0.35)"}`,
               borderRadius: 8,
               padding: "4px 10px",
               fontSize: 11,
               color: "#e2e8f0",
               fontFamily: "ui-sans-serif,system-ui,sans-serif",
               pointerEvents: "none",
-              maxWidth: 320,
+              maxWidth: 380,
             }}
           >
             <span
               aria-hidden="true"
-              style={{ width: 8, height: 8, borderRadius: "50%", background: "#ef4444", flexShrink: 0 }}
+              style={{
+                width: 8,
+                height: 8,
+                borderRadius: "50%",
+                background: focusHasGeometry ? "#ef4444" : "#64748b",
+                flexShrink: 0,
+              }}
             />
             <span
               style={{
-                color: "rgba(239,68,68,0.85)",
+                color: focusHasGeometry ? "rgba(239,68,68,0.85)" : "rgba(148,163,184,0.85)",
                 fontWeight: 700,
                 textTransform: "uppercase",
                 letterSpacing: "0.04em",
@@ -3308,6 +3345,11 @@ export default function ModernHeroMap({
             <span style={{ fontFamily: "monospace", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
               {focusedSourceFile}
             </span>
+            {!focusHasGeometry && (
+              <span style={{ color: "rgba(148,163,184,0.85)", fontStyle: "italic", fontSize: 10, whiteSpace: "nowrap" }}>
+                · no drawable geometry in this view
+              </span>
+            )}
           </div>
         )}
 
