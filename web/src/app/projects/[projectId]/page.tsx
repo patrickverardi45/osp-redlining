@@ -53,6 +53,25 @@ export default function ProjectPage({ params, searchParams }: ProjectPageProps) 
   } else if (Array.isArray(focusParam) && typeof focusParam[0] === "string") {
     focusedSourceFile = focusParam[0];
   }
+  // Optional ?session_id= passed through from the review surfaces. Preserved on
+  // the return-path links below; never minted here (read-only).
+  const sessionParam = resolvedSearch?.session_id;
+  let sessionIdParam: string | null = null;
+  if (typeof sessionParam === "string") {
+    sessionIdParam = sessionParam;
+  } else if (Array.isArray(sessionParam) && typeof sessionParam[0] === "string") {
+    sessionIdParam = sessionParam[0];
+  }
+  // Return-path links for the focused-review banner. projectId always preserved;
+  // session_id only when present in the current URL (the review surfaces resolve
+  // the session via peekSessionId(projectId) when it is absent).
+  const reviewCtx = new URLSearchParams({ projectId });
+  if (sessionIdParam) reviewCtx.set("session_id", sessionIdParam);
+  const trustLedgerHref = `/trust-ledger?${reviewCtx.toString()}`;
+  const matchReviewHref = `/match-review?${reviewCtx.toString()}`;
+  const clearFocusHref = sessionIdParam
+    ? `/projects/${projectId}?session_id=${encodeURIComponent(sessionIdParam)}`
+    : `/projects/${projectId}`;
   const [selectedFieldSessionId, setSelectedFieldSessionId] = useState<string | null>(
     null,
   );
@@ -179,6 +198,78 @@ export default function ProjectPage({ params, searchParams }: ProjectPageProps) 
           </span>
         </div>
       </div>
+
+      {/* Focused-review banner — shown only when a ?focus=<source_file> deep-link
+          is active (operator arrived from Trust Ledger or Match Review). Honest
+          language; no proof claims here. Return links preserve projectId (and
+          session_id when present); "Clear focus" drops the ?focus= param.
+          Read-only — uses the existing ModernHeroMap focus behavior. */}
+      {focusedSourceFile && (
+        <div
+          style={{
+            borderBottom: "1px solid var(--tl-border)",
+            background: "var(--tl-bg-grid)",
+          }}
+        >
+          <div
+            style={{
+              maxWidth: 1280,
+              margin: "0 auto",
+              padding: "10px 22px",
+              display: "flex",
+              alignItems: "center",
+              gap: 12,
+              flexWrap: "wrap",
+              fontSize: 12,
+            }}
+          >
+            <span className="tl-pill tl-pill-info">Focused review</span>
+            <span style={{ color: "var(--tl-text-muted)" }}>
+              Source file:{" "}
+              <span
+                style={{
+                  fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+                  color: "var(--tl-text)",
+                  fontWeight: 600,
+                }}
+              >
+                {focusedSourceFile}
+              </span>
+            </span>
+            <span
+              style={{
+                display: "inline-flex",
+                gap: 8,
+                flexWrap: "wrap",
+                alignItems: "center",
+                marginLeft: "auto",
+              }}
+            >
+              <Link
+                href={trustLedgerHref}
+                className="tl-btn tl-btn-ghost"
+                style={{ fontSize: 12, padding: "2px 10px", whiteSpace: "nowrap" }}
+              >
+                ← Back to Trust Ledger
+              </Link>
+              <Link
+                href={matchReviewHref}
+                className="tl-btn tl-btn-ghost"
+                style={{ fontSize: 12, padding: "2px 10px", whiteSpace: "nowrap" }}
+              >
+                ← Back to Match Review
+              </Link>
+              <Link
+                href={clearFocusHref}
+                className="tl-link"
+                style={{ fontSize: 12, whiteSpace: "nowrap" }}
+              >
+                Clear focus
+              </Link>
+            </span>
+          </div>
+        </div>
+      )}
 
       <div
         style={{
