@@ -2670,22 +2670,41 @@ export default function ModernHeroMap({
   // and never calls fitBounds.
   useEffect(() => {
     const layers = stationLayersRef.current;
+    // Focus Clarity v2 — while a ?focus= source_file is active, stations that
+    // do NOT belong to it are dimmed (smaller, faded glyph + faded label) so
+    // the focused bore log's stations read clearly amid the clutter. Selected
+    // and hover ALWAYS win (a clicked/hovered station is never dimmed), so the
+    // station inspector, click selection, and tooltip behavior are unchanged.
+    // No focus → exact prior styling and labels reset to default opacity.
+    const focusKey = focusSourceKey(focusedSourceFile);
+    const hasFocus = focusKey.length > 0;
     for (let i = 0; i < layers.length; i++) {
       const isSelected = i === selectedStationIndex;
       const isHovered = !isSelected && i === hoverStationIndex;
+      const isFocusOther =
+        hasFocus &&
+        !isSelected &&
+        !isHovered &&
+        focusSourceKey(stationPoints[i]?.source?.source_file) !== focusKey;
       try {
         layers[i].setStyle({
-          radius: isSelected ? 6.8 : isHovered ? 5.8 : 4.8,
+          radius: isSelected ? 6.8 : isHovered ? 5.8 : isFocusOther ? 3.2 : 4.8,
           weight: isSelected ? 2 : isHovered ? 1.5 : 1,
           color: isSelected ? "#f59e0b" : isHovered ? "#b45309" : "#0f172a",
           fillColor: "#facc15",
-          fillOpacity: isSelected ? 0.95 : isHovered ? 1 : 0.95,
+          fillOpacity: isSelected ? 0.95 : isHovered ? 1 : isFocusOther ? 0.25 : 0.95,
+          opacity: isFocusOther ? 0.35 : 1,
         });
+        // Fade the permanent station label for non-focused stations. Inline
+        // opacity on the existing tooltip element — reversible (reset to "") and
+        // independent of the zoom-gated label visibility CSS. Never unbinds.
+        const ttEl = layers[i].getTooltip?.()?.getElement?.();
+        if (ttEl) ttEl.style.opacity = isFocusOther ? "0.2" : "";
       } catch {
         // noop
       }
     }
-  }, [selectedStationIndex, hoverStationIndex, stationPoints]);
+  }, [selectedStationIndex, hoverStationIndex, stationPoints, focusedSourceFile]);
 
   // Selected/hover field station highlight: same restyle pattern as normal
   // stations. Selected wins over hover. Runs after the geometry render-effect
