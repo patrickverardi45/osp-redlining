@@ -2746,6 +2746,7 @@ export default function ModernHeroMap({
   // is index-aligned 1:1 with redlineSegments (see the geometry draw loop).
   useEffect(() => {
     const focusKey = String(focusedSourceFile ?? "").trim().toLowerCase();
+    const hasFocus = focusKey.length > 0;
     const layers = redlineLayersRef.current;
     const focusPoints: Array<[number, number]> = [];
 
@@ -2757,9 +2758,16 @@ export default function ModernHeroMap({
         String(seg.source_file ?? "").trim().toLowerCase() === focusKey;
       try {
         layers[i].setStyle(
-          isMatch
-            ? { color: "#ef4444", weight: 9, opacity: 1 }
-            : { color: "#ef4444", weight: 5.25, opacity: 0.96 },
+          !hasFocus
+            ? // No focus active → default redline appearance (restores normal
+              // look when the ?focus= param is removed).
+              { color: "#ef4444", weight: 5.25, opacity: 0.96 }
+            : isMatch
+              ? // Focused source_file → strong emphasis, kept on top.
+                { color: "#ef4444", weight: 9, opacity: 1 }
+              : // Other redlines while a focus is active → dimmed for context
+                // (still visible, never removed — layer visibility unchanged).
+                { color: "#ef4444", weight: 3, opacity: 0.3 },
         );
         if (isMatch) {
           layers[i].bringToFront();
@@ -3255,6 +3263,53 @@ export default function ModernHeroMap({
             {showStations ? "Hide Stations" : "Show Stations"}
           </button>
         </div>
+
+        {/* Focus-clarity chip — names the source_file the ?focus= deep-link is
+            emphasizing. Read-only, pointer-transparent; renders only when a
+            focus target is set. Not an error surface — when the focus has no
+            drawable geometry the map simply doesn't emphasize anything. */}
+        {focusedSourceFile && (
+          <div
+            aria-live="polite"
+            style={{
+              position: "absolute",
+              bottom: 12,
+              left: 12,
+              zIndex: 600,
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
+              background: "rgba(2,8,23,0.9)",
+              border: "1px solid rgba(239,68,68,0.45)",
+              borderRadius: 8,
+              padding: "4px 10px",
+              fontSize: 11,
+              color: "#e2e8f0",
+              fontFamily: "ui-sans-serif,system-ui,sans-serif",
+              pointerEvents: "none",
+              maxWidth: 320,
+            }}
+          >
+            <span
+              aria-hidden="true"
+              style={{ width: 8, height: 8, borderRadius: "50%", background: "#ef4444", flexShrink: 0 }}
+            />
+            <span
+              style={{
+                color: "rgba(239,68,68,0.85)",
+                fontWeight: 700,
+                textTransform: "uppercase",
+                letterSpacing: "0.04em",
+                fontSize: 10,
+              }}
+            >
+              Focused
+            </span>
+            <span style={{ fontFamily: "monospace", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {focusedSourceFile}
+            </span>
+          </div>
+        )}
 
         {/* Phase 2F — Folder filter panel. Only when KMZ context ON and payload loaded. */}
         {layerKmzContext && kmzRenderPayload && (() => {
