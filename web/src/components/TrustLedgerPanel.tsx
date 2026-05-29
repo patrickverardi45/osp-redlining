@@ -153,6 +153,93 @@ function sourceKey(value: string | null | undefined): string {
   return base.replace(/\.(xlsx|xls|csv)$/, "");
 }
 
+// Honest one-line review note for the copied summary — status-dependent, never
+// claims field-correctness. PSG is mentioned only as a separate follow-up.
+function reviewNote(r: TrustLedgerRow): string {
+  const psgNote = r.psg_warning ? " PSG warning should be reviewed separately." : "";
+  if (r.proof_status === "proven") {
+    return `Placement has a complete evidence chain.${psgNote}`.trim();
+  }
+  if (r.proof_status === "missing_proof") {
+    return `Placed but the proof chain is incomplete (silent placement); review the missing links.${psgNote}`.trim();
+  }
+  return `Not placed; proof was insufficient or conflicting.${psgNote}`.trim();
+}
+
+// Plain-text evidence summary for one row — for QA notes, office review, closeout
+// discussion, or debugging. Honest language only; route-index and PSG kept as
+// SEPARATE lines (never merged); no "correct"/"looks right" claims. Uses only the
+// existing row payload.
+function buildEvidenceSummary(r: TrustLedgerRow): string {
+  const ri = r.route_index_evidence;
+  const lines: string[] = [];
+
+  lines.push(`Source file: ${r.source_file ?? "—"}`);
+
+  const groupLabel =
+    r.group_idx !== null && r.group_idx !== undefined
+      ? `grp ${r.group_idx}`
+      : r.group_id ?? null;
+  if (groupLabel) lines.push(`Group: ${groupLabel}`);
+
+  lines.push(`Proof status: ${PROOF_LABEL[r.proof_status]}`);
+
+  if (r.selected_route_id) {
+    const name = r.selected_route_name ? ` (${r.selected_route_name})` : "";
+    const notRendered = r.render_allowed === false ? " [not rendered]" : "";
+    lines.push(`Selected route: ${r.selected_route_id}${name}${notRendered}`);
+  } else {
+    lines.push("Selected route: none");
+  }
+
+  const allowed = ri.allowed_route_ids.length ? ri.allowed_route_ids.join(", ") : "none";
+  const prints = ri.print_tokens.length ? ri.print_tokens.join(", ") : "none";
+  lines.push(
+    `Route-index: ${VERDICT_WORD[ri.verdict]} — allowed routes ${allowed}; prints ${prints}`,
+  );
+
+  if (r.psg_warning) {
+    const act = r.psg_warning.actionability ? ` (${r.psg_warning.actionability})` : "";
+    lines.push(`PSG warning: ${psgLabel(r.psg_warning.status)}${act}`);
+  } else {
+    lines.push("PSG warning: none");
+  }
+
+  lines.push(
+    `Mapping: ${
+      r.mapping_summary.mapping_present
+        ? `anchored ${fmtFt(r.mapping_summary.anchored_start_ft)} – ${fmtFt(
+            r.mapping_summary.anchored_end_ft,
+          )}`
+        : "no anchor mapping"
+    }`,
+  );
+
+  lines.push(
+    `Geometry: route ${fmtFt(r.geometry_summary.route_length_ft)}; stations ${fmtFt(
+      r.geometry_summary.min_station_ft,
+    )} – ${fmtFt(r.geometry_summary.max_station_ft)}`,
+  );
+
+  lines.push(`Candidate score: ${fmtScore(r.candidate_summary.selected_combined_score)}`);
+
+  lines.push(
+    `Abstain reason: ${
+      r.proof_status === "abstained" ? humanizeAbstainReason(r.abstain_reason) : "none"
+    }`,
+  );
+
+  lines.push(
+    `Missing links: ${
+      r.missing_links.length ? r.missing_links.map(humanizeMissingLink).join(", ") : "none"
+    }`,
+  );
+
+  lines.push(`Review note: ${reviewNote(r)}`);
+
+  return lines.join("\n");
+}
+
 // ── Triage filters ───────────────────────────────────────────────────────
 // Read-only client-side narrowing. Buckets use ONLY existing row fields; a
 // chip's count always equals its filtered rows (computed from the same source).
@@ -328,6 +415,25 @@ export default function TrustLedgerPanel({
   const [sid, setSid] = useState<string | null>(sessionId ?? null);
   const [filter, setFilter] = useState<FilterKey>("all");
   const ulRef = useRef<HTMLUListElement | null>(null);
+  // Per-row "Copy evidence summary" feedback: { id, ok } for the row just acted on.
+  const [copyState, setCopyState] = useState<{ id: string; ok: boolean } | null>(null);
+
+  const handleCopySummary = useCallback(async (rowId: string, row: TrustLedgerRow) => {
+    const text = buildEvidenceSummary(row);
+    let ok = false;
+    try {
+      if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text);
+        ok = true;
+      }
+    } catch {
+      ok = false;
+    }
+    setCopyState({ id: rowId, ok });
+    window.setTimeout(() => {
+      setCopyState((cur) => (cur && cur.id === rowId ? null : cur));
+    }, 1800);
+  }, []);
 
   useEffect(() => {
     const next = (sessionId ?? "").trim();
@@ -733,6 +839,7 @@ export default function TrustLedgerPanel({
                     : r.group_id ?? "grp —";
                 const isRowFocused =
                   hasRowFocus && sourceKey(r.source_file) === focusedKey;
+                const rowId = `${r.source_file ?? "row"}-${r.group_id ?? r.group_idx ?? i}`;
                 return (
                   <li
                     key={`${r.source_file ?? "row"}-${r.group_id ?? r.group_idx ?? i}`}
@@ -931,37 +1038,47 @@ export default function TrustLedgerPanel({
                       )}
                     </div>
 
-                    {/* "View on map" deep-link — mirrors Match Review pattern.
-                        Only shown for placed rows (proven / missing_proof where
-                        render_allowed is true + source_file exists + projectId
-                        known). Abstained rows have no rendered geometry on the
-                        map; we omit the link rather than send the operator to a
-                        focus that lands on the "no drawable geometry" chip. */}
-                    {r.proof_status !== "abstained" &&
-                      projectId &&
-                      r.source_file && (
-                        <div style={{ marginTop: 10 }}>
-                          <Link
-                            href={`/projects/${projectId}?focus=${encodeURIComponent(r.source_file)}`}
-                            prefetch={false}
-                            className="tl-btn tl-btn-ghost"
-                            style={{ fontSize: 12, padding: "2px 10px" }}
-                          >
-                            View on map →
-                          </Link>
-                          {r.proof_status === "missing_proof" && (
-                            <span
-                              style={{
-                                marginLeft: 10,
-                                fontSize: 11,
-                                color: "#fca5a5",
-                              }}
-                            >
-                              Placed but proof chain incomplete — review geometry
-                            </span>
-                          )}
-                        </div>
+                    {/* Row action bar — "View on map" deep-link (placed rows
+                        only; abstained rows have no rendered geometry, so the link
+                        is omitted) + a "Copy evidence summary" action on every row. */}
+                    <div
+                      style={{
+                        marginTop: 10,
+                        display: "flex",
+                        gap: 8,
+                        alignItems: "center",
+                        flexWrap: "wrap",
+                      }}
+                    >
+                      {r.proof_status !== "abstained" && projectId && r.source_file && (
+                        <Link
+                          href={`/projects/${projectId}?focus=${encodeURIComponent(r.source_file)}`}
+                          prefetch={false}
+                          className="tl-btn tl-btn-ghost"
+                          style={{ fontSize: 12, padding: "2px 10px" }}
+                        >
+                          View on map →
+                        </Link>
                       )}
+                      <button
+                        type="button"
+                        className="tl-btn tl-btn-ghost"
+                        style={{ fontSize: 12, padding: "2px 10px" }}
+                        onClick={() => void handleCopySummary(rowId, r)}
+                        title="Copy a plain-text evidence summary for QA / office review"
+                      >
+                        {copyState?.id === rowId
+                          ? copyState.ok
+                            ? "Copied"
+                            : "Copy failed"
+                          : "Copy evidence summary"}
+                      </button>
+                      {r.proof_status === "missing_proof" && (
+                        <span style={{ fontSize: 11, color: "#fca5a5" }}>
+                          Placed but proof chain incomplete — review geometry
+                        </span>
+                      )}
+                    </div>
                   </li>
                 );
               })}
