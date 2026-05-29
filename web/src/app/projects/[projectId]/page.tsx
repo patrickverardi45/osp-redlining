@@ -122,6 +122,13 @@ export default function ProjectPage({ params, searchParams }: ProjectPageProps) 
           </div>
 
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+            <Link
+              href={`/trust-ledger?projectId=${encodeURIComponent(projectId)}`}
+              className="tl-btn tl-btn-ghost"
+              style={{ fontSize: 13, whiteSpace: "nowrap" }}
+            >
+              Trust Ledger
+            </Link>
             <LogoutButton />
           </div>
         </div>

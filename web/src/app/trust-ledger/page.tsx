@@ -1,40 +1,38 @@
-// web/src/app/match-review/page.tsx
+// web/src/app/trust-ledger/page.tsx
 //
-// Read-only Match Review Queue review surface. Auth is enforced globally by
-// AuthGuard in the root layout. Renders the queue (Slice B + C1) with the
-// Plan Sheet Graph precision-evidence badge. No route/matching behavior here —
-// observation only.
+// Read-only Trust Ledger review surface (KMZ Automatic Redline Placement).
+// Mirrors /match-review: a thin client page that reads session_id / projectId
+// from the URL and renders the TrustLedgerPanel. AuthGuard (root layout) gates
+// access. Reached by direct URL or the cross-link on /match-review; pass
+// ?projectId=<slug> to bind to that project's workspace session.
 
 "use client";
 
 import { Suspense } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import MatchReviewQueuePanel from "@/components/MatchReviewQueuePanel";
+import TrustLedgerPanel from "@/components/TrustLedgerPanel";
 
-function MatchReviewInner() {
+function TrustLedgerInner() {
   const params = useSearchParams();
   const sessionId = params.get("session_id");
-  // Optional ?projectId=<slug> enables read-only "View on map" deep-links into
-  // the live ModernHeroMap (/projects/<projectId>?focus=<source_file>). When
-  // absent, the panel simply omits the link — projectId is never guessed.
   const projectId = params.get("projectId");
   // Carry the same context (session_id / projectId) to the sibling review surface.
   const query = params.toString();
-  const trustLedgerHref = query ? `/trust-ledger?${query}` : "/trust-ledger";
+  const matchReviewHref = query ? `/match-review?${query}` : "/match-review";
   return (
     <>
       <div style={{ marginBottom: 16 }}>
-        <Link href={trustLedgerHref} className="tl-btn tl-btn-ghost" style={{ fontSize: 12 }}>
-          Trust Ledger →
+        <Link href={matchReviewHref} className="tl-btn tl-btn-ghost" style={{ fontSize: 12 }}>
+          Match Review →
         </Link>
       </div>
-      <MatchReviewQueuePanel sessionId={sessionId} projectId={projectId} />
+      <TrustLedgerPanel sessionId={sessionId} projectId={projectId} />
     </>
   );
 }
 
-export default function MatchReviewPage() {
+export default function TrustLedgerPage() {
   return (
     <main className="tl-page">
       <div className="tl-page-inner">
@@ -50,19 +48,19 @@ export default function MatchReviewPage() {
         >
           <div>
             <div className="tl-eyebrow">Office Review</div>
-            <h1 className="tl-h1">Match Review Queue</h1>
+            <h1 className="tl-h1">Trust Ledger</h1>
             <p className="tl-subtle" style={{ margin: 0 }}>
-              Read-only operator review of route-matching outcomes for the active workspace
-              session. Plan-sheet evidence is shown only where the backend flags it.
+              Read-only proof verdict for every bore-log placement in the active workspace session:
+              proven from evidence, abstained, or missing proof. Route-index evidence and the plan-sheet
+              (PSG) warning are shown separately, never merged.
             </p>
           </div>
           <Link href="/projects" className="tl-btn tl-btn-ghost" style={{ whiteSpace: "nowrap" }}>
             ← Projects
           </Link>
         </header>
-
         <Suspense fallback={null}>
-          <MatchReviewInner />
+          <TrustLedgerInner />
         </Suspense>
       </div>
     </main>
