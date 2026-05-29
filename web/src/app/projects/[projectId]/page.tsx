@@ -15,10 +15,19 @@ const SHOW_SEMANTIC_DIAG =
   process.env.NEXT_PUBLIC_SHOW_SEMANTIC_DIAG === "1" ||
   process.env.NEXT_PUBLIC_SHOW_SEMANTIC_DIAG === "true";
 
+// Stable resolved fallback so `use()` can run unconditionally even if the page
+// is ever rendered without the (Next-provided) searchParams promise.
+const EMPTY_SEARCH_PARAMS: Promise<Record<string, string | string[] | undefined>> =
+  Promise.resolve({});
+
 type ProjectPageProps = {
   params: Promise<{
     projectId: string;
   }>;
+  // Next 16 passes searchParams to the page as a Promise (read with `use`),
+  // the same async-prop pattern as `params`. Read-only — used only for the
+  // ?focus=<source_file> hero-map deep-link; never mutated.
+  searchParams?: Promise<{ [key: string]: string | string[] | undefined }>;
 };
 
 /** e.g. brenham-phase-5 → Brenham Phase 5 */
@@ -30,9 +39,20 @@ function projectIdToDisplayName(projectId: string): string {
     .join(" ");
 }
 
-export default function ProjectPage({ params }: ProjectPageProps) {
+export default function ProjectPage({ params, searchParams }: ProjectPageProps) {
   const { projectId } = use(params);
   const projectDisplayName = projectIdToDisplayName(projectId);
+  // Read-only ?focus=<source_file> deep-link target for the live hero map.
+  // Resolved via the async searchParams prop (same `use()` pattern as params),
+  // so no useSearchParams/Suspense plumbing is required.
+  const resolvedSearch = use(searchParams ?? EMPTY_SEARCH_PARAMS);
+  const focusParam = resolvedSearch?.focus;
+  let focusedSourceFile: string | null = null;
+  if (typeof focusParam === "string") {
+    focusedSourceFile = focusParam;
+  } else if (Array.isArray(focusParam) && typeof focusParam[0] === "string") {
+    focusedSourceFile = focusParam[0];
+  }
   const [selectedFieldSessionId, setSelectedFieldSessionId] = useState<string | null>(
     null,
   );
@@ -198,6 +218,7 @@ export default function ProjectPage({ params }: ProjectPageProps) {
                 refreshVersion={modernMapRefreshVersion}
                 bridgedGpsPhotos={bridgedGpsPhotos}
                 kmzSemantic={kmzSemantic}
+                focusedSourceFile={focusedSourceFile}
               />
             }
           />

@@ -76,6 +76,11 @@ type ModernHeroMapProps = {
    *  When provided, pre-fetches the render payload without requiring the user to
    *  toggle the KMZ context layer on first. */
   kmzSemantic?: SemanticKmz | null;
+  /** Read-only deep-link focus target. When set (e.g. ?focus=bore_log16.xlsx)
+   *  the live map emphasizes + pans to that source_file's redline/station
+   *  geometry. Presentation only — no matching / scoring / render / layer-
+   *  visibility change, and never touches the legacy SVG map. */
+  focusedSourceFile?: string | null;
   /** VO.2b — PDF page-image overlay state (see type doc above). */
   engineeringPlanOverlay?: EngineeringPlanOverlayState;
   /** VO.2b R4 — plan_id → session_id lookup map.  When present, the PDF page-
@@ -516,6 +521,7 @@ export default function ModernHeroMap({
   refreshVersion = 0,
   bridgedGpsPhotos = [],
   kmzSemantic,
+  focusedSourceFile = null,
   engineeringPlanOverlay,
   engineeringPlanSessionByPlanId,
 }: ModernHeroMapProps) {
@@ -2727,6 +2733,59 @@ export default function ModernHeroMap({
       fieldStations.map((s) => [s.displayLat, s.displayLon] as [number, number]),
     );
   }, [fieldStations, fitToPoints]);
+
+  // ── Source-file focus (read-only deep-link target) ───────────────────────
+  // When `focusedSourceFile` is set (e.g. /projects/[id]?focus=bore_log16.xlsx),
+  // emphasize that source_file's redline segments on THIS live Leaflet map and
+  // pan/fit to its geometry. Presentation only on already-rendered layers:
+  // restyle (weight/opacity/z-order) — never add/remove layers, so visibility
+  // semantics are untouched; no geometry / scoring / render-generation change;
+  // and nothing here references the legacy SVG map. No-op when unset or
+  // unmatched. Declared after the geometry render-effect + fit handlers so
+  // redlineLayersRef is populated and fitToPoints is in scope. redlineLayersRef
+  // is index-aligned 1:1 with redlineSegments (see the geometry draw loop).
+  useEffect(() => {
+    const focusKey = String(focusedSourceFile ?? "").trim().toLowerCase();
+    const layers = redlineLayersRef.current;
+    const focusPoints: Array<[number, number]> = [];
+
+    for (let i = 0; i < layers.length; i++) {
+      const seg = redlineSegments[i];
+      const isMatch =
+        focusKey.length > 0 &&
+        !!seg &&
+        String(seg.source_file ?? "").trim().toLowerCase() === focusKey;
+      try {
+        layers[i].setStyle(
+          isMatch
+            ? { color: "#ef4444", weight: 9, opacity: 1 }
+            : { color: "#ef4444", weight: 5.25, opacity: 0.96 },
+        );
+        if (isMatch) {
+          layers[i].bringToFront();
+          for (const pt of seg?.coords ?? []) {
+            if (Array.isArray(pt) && pt.length >= 2) {
+              focusPoints.push([Number(pt[0]), Number(pt[1])]);
+            }
+          }
+        }
+      } catch {
+        // noop — layer not currently on the map
+      }
+    }
+
+    // No focus → emphasis has been reset to default above; do not pan.
+    if (focusKey.length === 0) return;
+
+    for (const sp of stationPoints) {
+      if (String(sp.source.source_file ?? "").trim().toLowerCase() === focusKey) {
+        focusPoints.push([sp.displayLat, sp.displayLon]);
+      }
+    }
+
+    // Graceful no-op when the source_file has no drawable geometry / no match.
+    if (focusPoints.length > 0) fitToPoints(focusPoints);
+  }, [focusedSourceFile, redlineSegments, stationPoints, fitToPoints]);
 
   const hasRenderableGeometry =
     kmzLines.length > 0 ||
