@@ -240,6 +240,93 @@ function buildEvidenceSummary(r: TrustLedgerRow): string {
   return lines.join("\n");
 }
 
+// ── CSV / JSON export (client-side, read-only) ─────────────────────────────
+// Column values reuse the same honest helpers as the on-screen rows; route-index
+// and PSG are SEPARATE columns (never merged). No "correct"/"looks right" text.
+function csvNum(n: number | null | undefined): string {
+  return n === null || n === undefined || Number.isNaN(n) ? "" : String(n);
+}
+
+function csvBool(b: boolean | null | undefined): string {
+  return b === null || b === undefined ? "" : String(b);
+}
+
+function csvCell(value: string): string {
+  return /[",\r\n]/.test(value) ? `"${value.replace(/"/g, '""')}"` : value;
+}
+
+const CSV_COLUMNS: ReadonlyArray<{ key: string; get: (r: TrustLedgerRow) => string }> = [
+  { key: "source_file", get: (r) => r.source_file ?? "" },
+  { key: "group_id", get: (r) => r.group_id ?? "" },
+  {
+    key: "group_idx",
+    get: (r) => (r.group_idx === null || r.group_idx === undefined ? "" : String(r.group_idx)),
+  },
+  { key: "proof_status", get: (r) => PROOF_LABEL[r.proof_status] },
+  { key: "evidence_chain_complete", get: (r) => csvBool(r.evidence_chain_complete) },
+  { key: "selected_route_id", get: (r) => r.selected_route_id ?? "" },
+  { key: "selected_route_name", get: (r) => r.selected_route_name ?? "" },
+  { key: "render_allowed", get: (r) => csvBool(r.render_allowed) },
+  { key: "route_index_verdict", get: (r) => VERDICT_WORD[r.route_index_evidence.verdict] },
+  { key: "allowed_route_ids", get: (r) => r.route_index_evidence.allowed_route_ids.join("; ") },
+  { key: "print_tokens", get: (r) => r.route_index_evidence.print_tokens.join("; ") },
+  { key: "psg_warning_status", get: (r) => (r.psg_warning ? psgLabel(r.psg_warning.status) : "none") },
+  { key: "psg_actionability", get: (r) => r.psg_warning?.actionability ?? "" },
+  { key: "candidate_score", get: (r) => csvNum(r.candidate_summary.selected_combined_score) },
+  {
+    key: "candidate_justification",
+    get: (r) =>
+      r.candidate_summary.selected_in_rankings
+        ? "in_rankings"
+        : r.candidate_summary.has_rescue_reason
+          ? "rescue"
+          : "none",
+  },
+  { key: "mapping_mode", get: (r) => r.mapping_summary.mode ?? "" },
+  { key: "mapping_anchored_start_ft", get: (r) => csvNum(r.mapping_summary.anchored_start_ft) },
+  { key: "mapping_anchored_end_ft", get: (r) => csvNum(r.mapping_summary.anchored_end_ft) },
+  { key: "mapping_anchor_offset_ft", get: (r) => csvNum(r.mapping_summary.anchor_offset_ft) },
+  { key: "route_length_ft", get: (r) => csvNum(r.geometry_summary.route_length_ft) },
+  { key: "route_in_catalog", get: (r) => csvBool(r.geometry_summary.route_in_catalog) },
+  { key: "min_station_ft", get: (r) => csvNum(r.geometry_summary.min_station_ft) },
+  { key: "max_station_ft", get: (r) => csvNum(r.geometry_summary.max_station_ft) },
+  {
+    key: "abstain_reason",
+    get: (r) => (r.proof_status === "abstained" ? humanizeAbstainReason(r.abstain_reason) : "none"),
+  },
+  {
+    key: "missing_links",
+    get: (r) =>
+      r.missing_links.length ? r.missing_links.map(humanizeMissingLink).join("; ") : "none",
+  },
+  { key: "review_note", get: (r) => reviewNote(r) },
+];
+
+function buildLedgerCsv(rows: TrustLedgerRow[]): string {
+  const header = CSV_COLUMNS.map((c) => csvCell(c.key)).join(",");
+  const body = rows.map((r) => CSV_COLUMNS.map((c) => csvCell(c.get(r))).join(","));
+  return [header, ...body].join("\r\n");
+}
+
+// UTF-8 BOM so spreadsheet apps (Excel) render unicode (em-dashes) correctly.
+const CSV_BOM = String.fromCharCode(0xfeff);
+
+function downloadTextFile(filename: string, mime: string, content: string): void {
+  try {
+    const blob = new Blob([content], { type: mime });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  } catch {
+    // best-effort: no-op if the browser blocks the download
+  }
+}
+
 // ── Triage filters ───────────────────────────────────────────────────────
 // Read-only client-side narrowing. Buckets use ONLY existing row fields; a
 // chip's count always equals its filtered rows (computed from the same source).
@@ -512,6 +599,35 @@ export default function TrustLedgerPanel({
       el.scrollIntoView({ behavior: "smooth", block: "center" });
     }
   }, [focusedKey, focusRowVisible]);
+
+  // Client-side export of the CURRENT filtered rows (read-only). Whatever the
+  // active filter shows is what exports; the toolbar labels the count + filter.
+  const exportBaseName = `trust-ledger_${filter}_${(sid ?? "session").slice(0, 12)}`;
+  const handleExportCsv = () => {
+    if (filteredRows.length === 0) return;
+    // UTF-8 BOM so Excel renders em-dashes / unicode correctly.
+    downloadTextFile(
+      `${exportBaseName}.csv`,
+      "text/csv;charset=utf-8",
+      CSV_BOM + buildLedgerCsv(filteredRows),
+    );
+  };
+  const handleExportJson = () => {
+    if (filteredRows.length === 0) return;
+    const payload = {
+      schema_version: data?.schema_version ?? "trust-ledger-1",
+      session_id: sid,
+      exported_filter: filter,
+      row_count: filteredRows.length,
+      counts: data?.counts ?? null,
+      rows: filteredRows,
+    };
+    downloadTextFile(
+      `${exportBaseName}.json`,
+      "application/json",
+      JSON.stringify(payload, null, 2),
+    );
+  };
 
   return (
     <section className="tl-card tl-card-padded">
@@ -804,6 +920,41 @@ export default function TrustLedgerPanel({
                   </button>
                 );
               })}
+            </div>
+          )}
+
+          {rows.length > 0 && (
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                flexWrap: "wrap",
+                marginBottom: 12,
+              }}
+            >
+              <span style={{ fontSize: 12, color: "var(--tl-text-muted)" }}>
+                Export {filteredRows.length} {filteredRows.length === 1 ? "row" : "rows"} (
+                {FILTER_LABELS[filter]}):
+              </span>
+              <button
+                type="button"
+                className="tl-btn tl-btn-ghost"
+                style={{ fontSize: 12, padding: "2px 10px" }}
+                onClick={handleExportCsv}
+                disabled={filteredRows.length === 0}
+              >
+                Export CSV
+              </button>
+              <button
+                type="button"
+                className="tl-btn tl-btn-ghost"
+                style={{ fontSize: 12, padding: "2px 10px" }}
+                onClick={handleExportJson}
+                disabled={filteredRows.length === 0}
+              >
+                Export JSON
+              </button>
             </div>
           )}
 
