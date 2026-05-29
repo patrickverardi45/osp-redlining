@@ -720,6 +720,31 @@ def _resolve_session_id(value: Any) -> str:
     return uuid.uuid4().hex
 
 
+def _resolve_engineering_plan_session_id(
+    form_session_id: Any, query_session_id: Any
+) -> Optional[str]:
+    """Resolve the session an engineering-plan upload must attach to.
+
+    Engineering plans attach to an EXISTING workspace session — never a freshly
+    minted one. Minting (the `_resolve_session_id` fallback) orphans the plan
+    onto a throwaway session, leaving the active workspace with
+    ``engineering_plans=0`` (the session-binding bug). Prefer the multipart form
+    field, then fall back to the URL query param: the query param survives the
+    direct-to-Render multipart path (PT.IU R1) where the form field can be
+    dropped, whereas KMZ/bore uploads go through the same-origin proxy and keep
+    the form field. Returns ``None`` when neither is provided so the caller
+    returns a clear error instead of minting. Tenant ownership is still enforced
+    downstream by ``_session_scope``.
+    """
+    form_sid = str(form_session_id or "").strip()
+    if form_sid:
+        return form_sid
+    query_sid = str(query_session_id or "").strip()
+    if query_sid:
+        return query_sid
+    return None
+
+
 def _get_session(session_id: str) -> Dict[str, Any]:
     with _SESSION_LOCK:
         session = _SESSIONS.get(session_id)
@@ -19633,6 +19658,7 @@ def _load_engineering_plan_index_for_session(session_id: str) -> List[Dict[str, 
 
 @protected_router.post("/api/upload-engineering-plans")
 async def upload_engineering_plans(
+    request: Request,
     files: List[UploadFile] = File(...),
     session_id: Optional[str] = Form(None),
     plan_date: Optional[str] = Form(None),
@@ -19641,7 +19667,25 @@ async def upload_engineering_plans(
     street_hints: Optional[str] = Form(None),
     notes: Optional[str] = Form(None),
 ) -> JSONResponse:
-    resolved_session_id = _resolve_session_id(session_id)
+    # Engineering plans must attach to the ACTIVE workspace session. Resolve
+    # from the form field, then the URL query param (the query param survives
+    # the direct-to-Render multipart path where the form field can be lost).
+    # Never mint a new session here — minting orphans the plan onto a throwaway
+    # session, the binding bug where the active workspace showed
+    # engineering_plans=0. See _resolve_engineering_plan_session_id.
+    _query_session_id = request.query_params.get("session_id")
+    resolved_session_id = _resolve_engineering_plan_session_id(session_id, _query_session_id)
+    print(
+        f"[ENG_PLAN_TRACE] upload_engineering_plans enter form_session_id={session_id!r} "
+        f"query_session_id={_query_session_id!r} resolved_session_id={resolved_session_id!r}",
+        flush=True,
+    )
+    if not resolved_session_id:
+        return _err(
+            "An active workspace session is required to attach engineering plans. "
+            "Open the project workspace (load the KMZ design) and try again.",
+            session_id=None,
+        )
 
     if not files:
         return _err("At least one file is required.", session_id=resolved_session_id)

@@ -4036,6 +4036,16 @@ ${redlinePlacemarks.length > 0 ? buildEngFolder("Redlines", redlinePlacemarks, 1
   async function handleEngineeringPlansUpload(files: FileList | null) {
     if (!files || files.length === 0) return;
 
+    // Engineering plans attach to the EXISTING workspace session — peek, never
+    // mint. Refuse to upload (rather than orphan the plan onto a freshly minted
+    // session) when no active workspace session exists for this project.
+    const activeSessionId = peekSessionId(projectId);
+    if (!activeSessionId) {
+      setStatusText("No active workspace session. Load the KMZ design first, then upload engineering plans.");
+      setStatusTone("error");
+      return;
+    }
+
     // PT.IU R1 — direct-to-Render upload bypasses Vercel ~4.5 MB serverless ceiling.
     // Resolves at build time via Next.js inline-replacement of NEXT_PUBLIC_* vars.
     // If unset (dev/local without env), falls back to same-origin proxy with the
@@ -4100,9 +4110,13 @@ ${redlinePlacemarks.length > 0 ? buildEngFolder("Redlines", redlinePlacemarks, 1
     setStatusTone("neutral");
     try {
       const form = new FormData();
-      appendSessionIdToForm(form, projectId);
+      // Carry the active session in BOTH the form and the URL query param so it
+      // survives the direct-to-Render multipart path (where the form field can
+      // be dropped). appendSessionIdReadOnly never mints — activeSessionId is
+      // already guaranteed non-null by the guard above.
+      form.append("session_id", activeSessionId);
       Array.from(files).forEach((f) => form.append("files", f));
-      const response = await apiFetch(uploadUrl, { method: "POST", body: form });
+      const response = await apiFetch(appendSessionIdReadOnly(uploadUrl, projectId), { method: "POST", body: form });
       // Read body once as text; backend always returns JSON via _ok()/_err(),
       // so any non-JSON body means an upstream gateway error (Vercel timeout
       // 504, payload-too-large 413, Render 5xx, etc.). Surface that raw text
