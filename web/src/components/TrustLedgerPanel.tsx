@@ -110,6 +110,29 @@ function psgLabel(status: string | null | undefined): string {
   return PSG_STATUS_LABEL[status] ?? titleCase(status);
 }
 
+// Operator-readable abstain reasons. The backend stores machine codes
+// (stopped_at / abstain reason); we surface a plain-English version and keep the
+// raw code in a tooltip. Never invents new meaning — just relabels known codes.
+const ABSTAIN_REASON_LABEL: Record<string, string> = {
+  not_placed: "Not placed",
+  same_route_anchor_collision: "Same-route collision — another bore log owns this route window",
+  abstained_location_evidence_mismatch:
+    "Location evidence mismatch — notes street not in the print index",
+  abstained_post_v2_collision: "Post-rescue collision — re-arbitrated; this group abstained",
+  render_gate_blocked: "Render gate blocked",
+};
+
+function humanizeAbstainReason(raw: string | null | undefined): string {
+  const s = String(raw ?? "").trim();
+  if (!s) return "Not placed";
+  if (ABSTAIN_REASON_LABEL[s]) return ABSTAIN_REASON_LABEL[s];
+  if (s.startsWith("render_blocked:")) {
+    const rest = s.slice("render_blocked:".length).trim();
+    return `Render blocked${rest ? ` — ${rest}` : ""}`;
+  }
+  return titleCase(s);
+}
+
 function fmtFt(n: number | null | undefined): string {
   if (n === null || n === undefined || Number.isNaN(n)) return "—";
   return `${Math.round(n).toLocaleString()} ft`;
@@ -123,8 +146,16 @@ function fmtScore(n: number | null | undefined): string {
 // ── Triage filters ───────────────────────────────────────────────────────
 // Read-only client-side narrowing. Buckets use ONLY existing row fields; a
 // chip's count always equals its filtered rows (computed from the same source).
-type FilterKey = "all" | "proven" | "abstained" | "missing_proof" | "psg_warning";
+type FilterKey =
+  | "all"
+  | "proven"
+  | "abstained"
+  | "missing_proof"
+  | "psg_warning"
+  | "map_review";
 
+// Base filters always shown. "map_review" is appended at render time ONLY when a
+// projectId is present (otherwise no row can deep-link to the map).
 const FILTER_ORDER: FilterKey[] = ["all", "proven", "abstained", "missing_proof", "psg_warning"];
 
 const FILTER_LABELS: Record<FilterKey, string> = {
@@ -133,27 +164,45 @@ const FILTER_LABELS: Record<FilterKey, string> = {
   abstained: "Abstained",
   missing_proof: "Missing proof",
   psg_warning: "PSG warnings",
+  map_review: "Map review",
 };
 
-function rowMatchesFilter(r: TrustLedgerRow, key: FilterKey): boolean {
+// A row can be reviewed on the map iff it was placed (not abstained) and we know
+// the projectId + source_file needed to build the focus deep-link. Mirrors the
+// per-row "View on map" gate exactly, so the chip count equals the visible links.
+function rowHasMapReview(r: TrustLedgerRow, projectId?: string | null): boolean {
+  return r.proof_status !== "abstained" && Boolean(projectId) && Boolean(r.source_file);
+}
+
+function rowMatchesFilter(
+  r: TrustLedgerRow,
+  key: FilterKey,
+  projectId?: string | null,
+): boolean {
   if (key === "all") return true;
   if (key === "psg_warning") return Boolean(r.psg_warning);
+  if (key === "map_review") return rowHasMapReview(r, projectId);
   return r.proof_status === key;
 }
 
-function computeFilterCounts(rows: TrustLedgerRow[]): Record<FilterKey, number> {
+function computeFilterCounts(
+  rows: TrustLedgerRow[],
+  projectId?: string | null,
+): Record<FilterKey, number> {
   const counts: Record<FilterKey, number> = {
     all: rows.length,
     proven: 0,
     abstained: 0,
     missing_proof: 0,
     psg_warning: 0,
+    map_review: 0,
   };
   for (const r of rows) {
     if (r.proof_status === "proven") counts.proven += 1;
     else if (r.proof_status === "abstained") counts.abstained += 1;
     else if (r.proof_status === "missing_proof") counts.missing_proof += 1;
     if (r.psg_warning) counts.psg_warning += 1;
+    if (rowHasMapReview(r, projectId)) counts.map_review += 1;
   }
   return counts;
 }
@@ -228,6 +277,27 @@ function Detail({ label, children }: { label: string; children: React.ReactNode 
   );
 }
 
+function LegendItem({ dot, term, def }: { dot: string; term: string; def: string }) {
+  return (
+    <span style={{ display: "inline-flex", alignItems: "baseline", gap: 6, maxWidth: 380 }}>
+      <span
+        aria-hidden="true"
+        style={{
+          width: 8,
+          height: 8,
+          borderRadius: "50%",
+          background: dot,
+          flexShrink: 0,
+          alignSelf: "center",
+        }}
+      />
+      <span>
+        <strong style={{ color: "var(--tl-text)" }}>{term}</strong> — {def}
+      </span>
+    </span>
+  );
+}
+
 export default function TrustLedgerPanel({
   sessionId,
   projectId,
@@ -287,9 +357,14 @@ export default function TrustLedgerPanel({
   const silentCount = data?.silent_placement_count ?? counts.missing_proof;
   const psgCount = data?.psg_warning_count ?? rows.filter((r) => r.psg_warning).length;
   const coverage = data?.coverage_sanity_summary ?? null;
-  const filterCounts = computeFilterCounts(rows);
-  const filteredRows = rows.filter((r) => rowMatchesFilter(r, filter));
+  const filterCounts = computeFilterCounts(rows, projectId);
+  const filteredRows = rows.filter((r) => rowMatchesFilter(r, filter, projectId));
   const enabledWithData = Boolean(data && data.enabled !== false && !isDisabled);
+  // Danger = a route was placed without a complete proof chain. PSG warnings are
+  // a SEPARATE (orthogonal) signal and do NOT flip the strip to danger.
+  const hasDanger = counts.missing_proof > 0 || silentCount > 0;
+  // "Map review" chip only when projectId is known (else no row can deep-link).
+  const filterOrder: FilterKey[] = projectId ? [...FILTER_ORDER, "map_review"] : FILTER_ORDER;
 
   return (
     <section className="tl-card tl-card-padded">
@@ -363,6 +438,49 @@ export default function TrustLedgerPanel({
 
       {sid && !error && enabledWithData && (
         <>
+          {/* Review status strip — the at-a-glance verdict. Green when every
+               placement carries a complete proof chain; red when any placement
+               is missing proof (the silent-placement danger class). */}
+          <div
+            role="status"
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 10,
+              flexWrap: "wrap",
+              padding: "10px 14px",
+              borderRadius: 8,
+              marginBottom: 12,
+              ...(hasDanger
+                ? { background: "#2a1212", border: "1px solid #7f1d1d", color: "#fca5a5" }
+                : { background: "#0e2417", border: "1px solid #2f6b3a", color: "#86efac" }),
+            }}
+          >
+            <span
+              aria-hidden="true"
+              style={{
+                width: 9,
+                height: 9,
+                borderRadius: "50%",
+                background: hasDanger ? "#ef4444" : "#22c55e",
+                flexShrink: 0,
+              }}
+            />
+            <strong style={{ fontSize: 13 }}>
+              {hasDanger
+                ? `Review needed — ${counts.missing_proof} placement${
+                    counts.missing_proof === 1 ? "" : "s"
+                  } with missing proof`
+                : "No silent placements — every placement carries a complete proof chain"}
+            </strong>
+            <span style={{ fontSize: 12, opacity: 0.85 }}>
+              {counts.proven} proven · {counts.abstained} abstained · {rowCount} rows
+              {psgCount > 0
+                ? ` · ${psgCount} PSG warning${psgCount === 1 ? "" : "s"} to review`
+                : ""}
+            </span>
+          </div>
+
           {/* Counts summary — proof verdicts + the silent-placement + PSG counts.
                Missing proof uses red (not amber) — it is the dangerous silent-
                placement class, not a mere warning. */}
@@ -387,14 +505,37 @@ export default function TrustLedgerPanel({
             <StatPill label="Rows" value={rowCount} />
           </div>
 
-          <p className="tl-subtle" style={{ margin: "0 0 12px", fontSize: 13 }}>
-            <strong style={{ color: "var(--tl-text)" }}>
-              &ldquo;Proven from evidence&rdquo; means the placement is justified by the recorded
-              evidence chain
-            </strong>{" "}
-            — route geometry, station range, anchor mapping, and a candidate or rescue
-            justification. It is not a field-correctness claim. &ldquo;Missing proof&rdquo; rows
-            were placed but the chain is incomplete (the silent-placement class), surfaced honestly.
+          {/* Legend — honest definition of each proof status. */}
+          <div
+            style={{
+              display: "flex",
+              flexWrap: "wrap",
+              gap: 14,
+              marginBottom: 10,
+              fontSize: 12,
+              color: "var(--tl-text-muted)",
+            }}
+          >
+            <LegendItem
+              dot="#86efac"
+              term="Proven from evidence"
+              def="placed with a complete proof chain (route geometry, station range, anchor mapping, candidate/rescue, route-index consistent)"
+            />
+            <LegendItem
+              dot="var(--tl-text-muted)"
+              term="Abstained"
+              def="not placed — proof was insufficient or conflicting"
+            />
+            <LegendItem
+              dot="#ef4444"
+              term="Missing proof"
+              def="placed but the proof chain is incomplete (silent placement)"
+            />
+          </div>
+          <p className="tl-subtle" style={{ margin: "0 0 12px", fontSize: 12 }}>
+            Route-index evidence and the PSG (plan-sheet) warning are separate signals — a row can be
+            route-index consistent and still carry a PSG warning. &ldquo;Proven&rdquo; is an evidence
+            claim, not a field-correctness claim.
           </p>
 
           {coverage && (
@@ -413,7 +554,7 @@ export default function TrustLedgerPanel({
               aria-label="Filter trust ledger rows"
               style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 12 }}
             >
-              {FILTER_ORDER.map((key) => {
+              {filterOrder.map((key) => {
                 const active = filter === key;
                 return (
                   <button
@@ -600,7 +741,9 @@ export default function TrustLedgerPanel({
 
                       {r.proof_status === "abstained" && (
                         <Detail label="Abstain reason:">
-                          <code style={{ fontSize: 11 }}>{r.abstain_reason ?? "not_placed"}</code>
+                          <span title={r.abstain_reason ?? "not_placed"}>
+                            {humanizeAbstainReason(r.abstain_reason)}
+                          </span>
                         </Detail>
                       )}
 
