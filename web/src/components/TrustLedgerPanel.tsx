@@ -504,6 +504,19 @@ export default function TrustLedgerPanel({
   const ulRef = useRef<HTMLUListElement | null>(null);
   // Per-row "Copy evidence summary" feedback: { id, ok } for the row just acted on.
   const [copyState, setCopyState] = useState<{ id: string; ok: boolean } | null>(null);
+  // Compact review mode: collapse each row's verbose detail block for fast
+  // scanning. Danger signals (proof badge, route-index + PSG badges, the
+  // missing-proof note) stay visible; detail is reachable per-row via "Details".
+  const [compact, setCompact] = useState(false);
+  const [expandedRows, setExpandedRows] = useState<Set<string>>(() => new Set());
+  const toggleRowExpanded = useCallback((rowId: string) => {
+    setExpandedRows((prev) => {
+      const next = new Set(prev);
+      if (next.has(rowId)) next.delete(rowId);
+      else next.add(rowId);
+      return next;
+    });
+  }, []);
 
   const handleCopySummary = useCallback(async (rowId: string, row: TrustLedgerRow) => {
     const text = buildEvidenceSummary(row);
@@ -644,14 +657,38 @@ export default function TrustLedgerPanel({
         <h2 className="tl-h2" style={{ margin: 0 }}>
           Trust ledger
         </h2>
-        <button
-          className="tl-btn tl-btn-ghost"
-          style={{ fontSize: 12, padding: "4px 12px" }}
-          onClick={() => void load()}
-          disabled={loading || !sid}
-        >
-          {loading ? "Loading…" : "Refresh"}
-        </button>
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+          {enabledWithData && rows.length > 0 && (
+            <button
+              type="button"
+              className="tl-btn tl-btn-ghost"
+              aria-pressed={compact}
+              onClick={() => setCompact((v) => !v)}
+              title="Collapse row detail for faster scanning"
+              style={{
+                fontSize: 12,
+                padding: "4px 12px",
+                ...(compact
+                  ? {
+                      background: "var(--tl-bg-raised, rgba(255,255,255,0.10))",
+                      border: "1px solid var(--tl-text-muted, #64748b)",
+                      color: "var(--tl-text, #e2e8f0)",
+                    }
+                  : null),
+              }}
+            >
+              Compact
+            </button>
+          )}
+          <button
+            className="tl-btn tl-btn-ghost"
+            style={{ fontSize: 12, padding: "4px 12px" }}
+            onClick={() => void load()}
+            disabled={loading || !sid}
+          >
+            {loading ? "Loading…" : "Refresh"}
+          </button>
+        </div>
       </div>
 
       {!sid && (
@@ -991,12 +1028,13 @@ export default function TrustLedgerPanel({
                 const isRowFocused =
                   hasRowFocus && sourceKey(r.source_file) === focusedKey;
                 const rowId = `${r.source_file ?? "row"}-${r.group_id ?? r.group_idx ?? i}`;
+                const showDetail = !compact || expandedRows.has(rowId);
                 return (
                   <li
                     key={`${r.source_file ?? "row"}-${r.group_id ?? r.group_idx ?? i}`}
                     data-tl-focus-row={isRowFocused ? "1" : undefined}
                     style={{
-                      padding: "10px 12px",
+                      padding: compact ? "7px 10px" : "10px 12px",
                       borderRadius: 8,
                       border: isRowFocused
                         ? "1px solid #f5d020"
@@ -1090,7 +1128,9 @@ export default function TrustLedgerPanel({
                       )}
                     </div>
 
-                    {/* Evidence chain detail */}
+                    {/* Evidence chain detail — collapsible in compact mode (kept
+                        reachable per-row via the "Details" toggle below). */}
+                    {showDetail && (
                     <div
                       style={{
                         display: "flex",
@@ -1188,6 +1228,7 @@ export default function TrustLedgerPanel({
                         <Detail label="Anchors:">{r.selected_anchor_reasons.join(", ")}</Detail>
                       )}
                     </div>
+                    )}
 
                     {/* Row action bar — "View on map" deep-link (placed rows
                         only; abstained rows have no rendered geometry, so the link
@@ -1201,6 +1242,17 @@ export default function TrustLedgerPanel({
                         flexWrap: "wrap",
                       }}
                     >
+                      {compact && (
+                        <button
+                          type="button"
+                          className="tl-btn tl-btn-ghost"
+                          style={{ fontSize: 12, padding: "2px 10px" }}
+                          onClick={() => toggleRowExpanded(rowId)}
+                          aria-expanded={showDetail}
+                        >
+                          {showDetail ? "Hide details" : "Details"}
+                        </button>
+                      )}
                       {r.proof_status !== "abstained" && projectId && r.source_file && (
                         <Link
                           href={`/projects/${projectId}?focus=${encodeURIComponent(r.source_file)}`}
