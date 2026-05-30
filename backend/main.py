@@ -7772,6 +7772,31 @@ def _trueline_backbone_chain_shadow_enabled() -> bool:
     return raw in {"1", "true", "yes", "on"}
 
 
+def _trueline_terminal_tail_placement_enabled() -> bool:
+    """Terminal-Tail AP-anchored PLACEMENT override — route_480 bucket, default OFF.
+
+    When ON, for bores classified as ``backbone_ap_bore`` by the terminus-type shadow
+    (bore physically drilled a Terminal Tail run to a specific AP), the rebuild
+    overrides the print-index ranking with the UNIQUE KMZ Terminal Tail route whose
+    endpoint is at that AP. The bore physically went along that tail run, not the
+    backbone corridor the print-sheet index points to.
+
+    Target #14 / bore_log7 proof slice: bore_log7 (station 55→451, print 10) currently
+    places on route_477 (E Tom Green backbone, 55 ft from AP-163). With this flag ON
+    it places on route_469 (Terminal Tail, 0.5 ft from AP-163, 459 ft ≈ 451 ft PDF run).
+    Only bore_log7 is currently classified ``backbone_ap_bore``; no other log is affected.
+
+    PLACEMENT CHANGE when ON (bore_log7 moves from route_477 to route_469). Flag OFF is
+    behavior-identical (rankings not modified). Scoped to the route_480 bucket via
+    ``is_route_480_bucket_source``. Requires ``TRUELINE_TERMINUS_TYPE_SHADOW=1`` to
+    be ON so the terminus classification is available for the gate check.
+
+    Read every call; never captured at import-time.
+    """
+    raw = os.environ.get("TRUELINE_TERMINAL_TAIL_PLACEMENT", "").strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
 def _trueline_terminus_type_shadow_enabled() -> bool:
     """Terminus-type WORK-CLASS shadow — SHADOW-ONLY diagnostic. Default OFF.
 
@@ -11622,6 +11647,123 @@ def _emit_kmz_stage_b2_streets_shadow_if_enabled(
         return
 
 
+def _apply_terminal_tail_placement_override() -> None:
+    """Target #14 — Terminal-Tail AP-anchored placement override. Default OFF.
+
+    Re-renders a route_480-bucket log that the terminus shadow classified as
+    ``backbone_ap_bore`` (its DIR.BORE run drills a Terminal Tail TO a specific AP) onto
+    the UNIQUE KMZ Terminal Tail route at that AP, instead of the print-index backbone
+    corridor. Proof slice = bore_log7 (route_477 backbone → route_469 tail, 0.5 ft from
+    AP-163, 459 ft ≈ 451 ft PDF run); only bore_log7 is classified backbone_ap_bore today.
+
+    ISOLATED POST-PASS: this runs AFTER the full rebuild (collision arbitration,
+    coverage_sanity, and the route_477 placement are all final and IDENTICAL to flag-OFF).
+    It mutates ONLY the qualifying log's STATE["station_points"]/["redline_segments"] +
+    its pipeline_diag entry. Every other log + every collision/coverage count is byte-
+    identical to flag-OFF (placement stays route_477 for arbitration; only the rendered
+    geometry of bore_log7 moves to route_469). Flag OFF → early return, no-op.
+
+    Requires TRUELINE_TERMINUS_TYPE_SHADOW so terminus_type is populated. The Terminal
+    Tail route is oriented so increasing station ends at the AP (the run label 0+00→N+NN
+    increases toward the AP), bypassing the single-route raw-coords-order builder limit.
+    Never raises (guarded) — the rebuild is never disturbed by the override.
+    """
+    if not (_trueline_terminal_tail_placement_enabled() and _trueline_terminus_type_shadow_enabled()):
+        return
+    try:
+        diag = STATE.get("pipeline_diag") or []
+        route_catalog = STATE.get("route_catalog") or []
+        point_features = (STATE.get("kmz_reference") or {}).get("point_features") or []
+        committed = STATE.get("committed_rows") or []
+        if not (diag and route_catalog and point_features and committed):
+            return
+        sp = list(STATE.get("station_points") or [])
+        seg = list(STATE.get("redline_segments") or [])
+        changed = False
+        for d in diag:
+            sf = d.get("source_file")
+            if not (sf and _pdf_ap_route.is_route_480_bucket_source(sf)):
+                continue
+            tt = d.get("terminus_type")
+            if not (isinstance(tt, dict) and tt.get("terminus_type") == "backbone_ap_bore"):
+                continue
+            eps = (tt.get("evidence") or {}).get("matched_run_endpoints") or []
+            ap = eps[0].get("ap") if eps else None
+            if ap is None:
+                continue
+            rid = _pdf_ap_route.resolve_terminal_tail_route_for_ap(
+                ap_id=ap,
+                point_features=point_features,
+                route_catalog=route_catalog,
+                run_len_ft=d.get("max_station_ft"),
+            )
+            if not rid:
+                continue
+            route = _find_route_by_id(rid)
+            coords = list((route or {}).get("coords") or [])
+            if len(coords) < 2:
+                continue
+            ap_ll = None
+            for pf in point_features:
+                if (str(pf.get("name") or "") == str(ap)
+                        and "terminal port" in str(pf.get("folder_path") or "").lower()):
+                    try:
+                        ap_ll = (float(pf["lat"]), float(pf["lon"]))
+                    except (KeyError, TypeError, ValueError):
+                        ap_ll = None
+                    break
+            if ap_ll is None:
+                continue
+            # Orient so coords[-1] is the AP end (increasing station → AP terminus).
+            d0 = _pdf_ap_route._haversine_ft(ap_ll[0], ap_ll[1], float(coords[0][0]), float(coords[0][1]))
+            dN = _pdf_ap_route._haversine_ft(ap_ll[0], ap_ll[1], float(coords[-1][0]), float(coords[-1][1]))
+            if d0 < dN:
+                coords = list(reversed(coords))
+            oriented = dict(route)
+            oriented["coords"] = coords
+            rows = [r for r in committed if str(r.get("source_file") or "") == sf]
+            new_sp: List[Dict[str, Any]] = []
+            new_seg: List[Dict[str, Any]] = []
+            for g in _group_rows_for_matching(rows):
+                # ABSOLUTE mapping: the terminal-tail run's plan stations ARE the route
+                # offsets (station 0+00 = splice/far end, station N+NN = the AP terminus),
+                # so station_ft maps directly to distance-along-route (clamped). This
+                # places the bore at offset==station, ending at the AP (NOT re-zeroed at
+                # station_min the way group_relative would).
+                _gst = [float(r["station_ft"]) for r in g if r.get("station_ft") is not None]
+                _gmin = min(_gst) if _gst else 0.0
+                _gmax = max(_gst) if _gst else 0.0
+                _abs_map = {
+                    "mode": "absolute",
+                    "anchor_offset_ft": 0.0,
+                    "min_station_ft": _gmin,
+                    "max_station_ft": _gmax,
+                    "station_range_ft": round(_gmax - _gmin, 2),
+                }
+                gsp, gmap = _build_station_points_for_group(g, oriented, [], {}, _abs_map)
+                gseg = _build_redline_segments_for_group(g, oriented, [], gmap, {})
+                new_sp.extend(gsp)
+                new_seg.extend(gseg)
+            if not new_sp or not new_seg:
+                continue  # never lose the log if the tail build is empty
+            sp = [p for p in sp if str(p.get("source_file") or "") != sf] + new_sp
+            seg = [s for s in seg if str(s.get("source_file") or "") != sf] + new_seg
+            d["selected_route_id"] = rid
+            d["selected_route_name"] = oriented.get("route_name")
+            d["strict_allowed_route_ids"] = [rid]   # keep selected ∈ allowed (no silent-placement inconsistency)
+            d["terminal_tail_placement"] = {
+                "applied": True, "source_file": sf, "ap_id": ap, "route_id": rid,
+                "station_pts": len(new_sp), "segs": len(new_seg),
+            }
+            changed = True
+        if changed:
+            STATE["station_points"] = sp
+            STATE["redline_segments"] = seg
+    except Exception:
+        # Diagnostic-fault tolerance: the override must never break the rebuild.
+        pass
+
+
 def _rebuild_field_data_outputs(scope: RebuildScope = RebuildScope.FULL) -> None:
     # RI.1: scope is accepted but not yet consumed by the function body.
     # RI.2 adds the plan topology cache lookup; RI.4 branches on scope for
@@ -13087,6 +13229,10 @@ def _rebuild_field_data_outputs(scope: RebuildScope = RebuildScope.FULL) -> None
 
     STATE["station_points"] = all_station_points
     STATE["redline_segments"] = list(all_redline_segments)
+    # Target #14 (default-OFF): isolated terminal-tail placement override. Runs after
+    # all collision arbitration is final; mutates ONLY the qualifying log's rendered
+    # geometry + diag. Flag OFF → no-op (byte-identical).
+    _apply_terminal_tail_placement_override()
     STATE["station_mapping_mode"] = ",".join(sorted(set(mapping_modes))) if mapping_modes else None
     STATE["station_mapping_min_ft"] = None
     STATE["station_mapping_max_ft"] = None

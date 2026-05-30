@@ -1011,6 +1011,61 @@ def is_route_480_bucket_source(source_file: Optional[str]) -> bool:
     return _source_stem(source_file) in ROUTE_480_BUCKET_SOURCE_FILES
 
 
+def resolve_terminal_tail_route_for_ap(
+    ap_id: Any,
+    point_features: Sequence[Dict[str, Any]],
+    route_catalog: Sequence[Dict[str, Any]],
+    *,
+    endpoint_tol_ft: float = 10.0,
+    run_len_ft: Optional[float] = None,
+    run_len_tol: float = 0.10,
+) -> Optional[str]:
+    """Pure: find the UNIQUE Terminal Tail KMZ route whose endpoint is within
+    ``endpoint_tol_ft`` of the AP terminal node ``ap_id``. When ``run_len_ft``
+    is provided, also requires the route length to be within
+    ``run_len_tol * run_len_ft``. Returns ``route_id`` or ``None`` when zero
+    or multiple routes match (no guessing — uniqueness is mandatory). Never raises.
+
+    Used by Target #14 Terminal Tail AP-anchored placement: bore_log7's 0+00→4+51
+    run drills the terminal tail TO AP-163, not along the backbone. The terminal tail
+    route that endpoint-matches the AP (+ length-matches the run) is the physically
+    correct placement route."""
+    ap_str = str(ap_id).strip()
+    # Resolve AP terminal lat/lon from point features
+    ap_lat = ap_lon = None
+    for pf in (point_features or []):
+        nm = str(pf.get("name") or "").strip()
+        folder = str(pf.get("folder_path") or "").lower()
+        if nm == ap_str and "terminal port" in folder:
+            try:
+                ap_lat, ap_lon = float(pf["lat"]), float(pf["lon"])
+            except (KeyError, TypeError, ValueError):
+                pass
+            break
+    if ap_lat is None or ap_lon is None:
+        return None
+    # Filter catalog to Terminal Tail routes with coords
+    tails = [r for r in (route_catalog or [])
+             if r.get("coords") and "terminal tail" in str(r.get("source_folder") or "").lower()]
+    if not tails:
+        return None
+    matches: List[str] = []
+    for r in tails:
+        coords = r["coords"]
+        d_ends = min(_haversine_ft(ap_lat, ap_lon, float(c[0]), float(c[1]))
+                     for c in (coords[0:1] + coords[-1:]))
+        if d_ends > endpoint_tol_ft:
+            continue
+        if run_len_ft is not None:
+            rlen = _route_length_ft(r)
+            if abs(rlen - float(run_len_ft)) > run_len_tol * float(run_len_ft):
+                continue
+        matches.append(str(r.get("route_id")))
+    if len(matches) == 1:
+        return matches[0]
+    return None   # 0 = absent/no-match; ≥2 = ambiguous; both are None (safe abstain)
+
+
 def classify_terminus_type(
     *,
     source_file: Optional[str] = None,
