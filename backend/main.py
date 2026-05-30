@@ -7772,6 +7772,26 @@ def _trueline_backbone_chain_shadow_enabled() -> bool:
     return raw in {"1", "true", "yes", "on"}
 
 
+def _trueline_terminus_type_shadow_enabled() -> bool:
+    """Terminus-type WORK-CLASS shadow — SHADOW-ONLY diagnostic. Default OFF.
+
+    When ON, for the 14 route_480-bucket bore logs ONLY (Target #10), the rebuild
+    attaches a read-only `_diag["terminus_type"]` field classifying each bore by the
+    STRUCTURE its DIR. BORE run terminates at — flower_pot_drop / backbone_ap_bore /
+    main_chain_high_station / multi_drive_unknown / unknown_insufficient — so future
+    logic can stop forcing flower-pot DROPS onto the route_480 backbone corridor.
+    BACKBONE requires a run that ENDS at a TERMINAL PORT HH (AP); an AP label alone is
+    rejected (anti-artifact). OBSERVATION ONLY: it NEVER feeds route selection /
+    placement / scoring / geometry / STATE; the only effect is this `_diag` field.
+    Flag OFF is byte-identical (no field added). Scoped to the route_480 bucket — NOT a
+    universal classifier. Diagnosed 2026-05-30 (Target #10/#11).
+
+    Read every call; never captured at import-time.
+    """
+    raw = os.environ.get("TRUELINE_TERMINUS_TYPE_SHADOW", "").strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
 def _trueline_mrq_placement_proof_enabled() -> bool:
     """Match Review Queue — per-log redline PLACEMENT PROOF. Default OFF.
 
@@ -11861,6 +11881,30 @@ def _rebuild_field_data_outputs(scope: RebuildScope = RebuildScope.FULL) -> None
                     "schema": _pdf_ap_route.SCHEMA_VERSION,
                     "source_file": _diag.get("source_file"),
                     "reason": "shadow_error:" + type(_pdf_ap_exc).__name__,
+                }
+
+        # ── Diagnostic checkpoint K (terminus-type work-class shadow, flag-gated) ─
+        # Target #11. Route_480 BUCKET ONLY (the 14 logs, is_route_480_bucket_source).
+        # Read-only classification of each bore by the STRUCTURE its DIR.BORE run
+        # terminates at (flower_pot_drop / backbone_ap_bore / main_chain_high_station /
+        # multi_drive_unknown / unknown_insufficient), so future logic can stop forcing
+        # flower-pot DROPS onto the route_480 backbone corridor. Default OFF. NEVER
+        # affects scoring / selection / render / STATE; the only side effect is this
+        # `_diag` field. Pure helper never raises; guarded defensively.
+        if (_trueline_terminus_type_shadow_enabled()
+                and _pdf_ap_route.is_route_480_bucket_source(_diag.get("source_file"))):
+            try:
+                _diag["terminus_type"] = _pdf_ap_route.classify_terminus_type(
+                    source_file=_diag.get("source_file"),
+                    print_tokens=_diag.get("print_tokens"),
+                    station_min_ft=_diag.get("min_station_ft"),
+                    station_max_ft=_diag.get("max_station_ft"),
+                )
+            except Exception as _tt_exc:
+                _diag["terminus_type"] = {
+                    "terminus_type": "unknown_insufficient",
+                    "source_file": _diag.get("source_file"),
+                    "error": "terminus_error:" + type(_tt_exc).__name__,
                 }
 
         # B-MATCH-LOC-EVIDENCE-1: diagnostic-only flag when bore-log notes name

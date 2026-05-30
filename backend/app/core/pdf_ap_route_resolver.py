@@ -954,6 +954,124 @@ def emit_backbone_corridor_chain(
     return chain
 
 
+# ---- Terminus-Type Classification (Target #11) — shadow-only; gated default-OFF -
+# Target #10 proved the "route_480 bucket" of 14 bore logs is NOT one lane: 5 are
+# flower-pot DROPS, 2 are main-chain high-station, 1 is a backbone-AP bore, 1 is
+# multi-drive-ambiguous, 5 are unknown. This pure classifier reads a bore's END
+# station + print sheets and matches the END to a DIR. BORE RUN TERMINUS in the
+# Brenham PH5 run->endpoint table, returning the terminus WORK-TYPE so future logic
+# can stop forcing flower-pot drops onto the route_480 backbone corridor.
+#
+# ANTI-ARTIFACT (the Target #9 trap): a bore is BACKBONE only if a run that ENDS at a
+# TERMINAL PORT HH (AP) matches the bore end — an AP *label* merely present on the
+# sheet does NOT count (e.g. AP-161 @ STA 5+34 on sheet 14 is a label with no run
+# terminus; AP-155 is at STA 38+10, not the 6+50 flower-pot bore_log65 ends at).
+# OBSERVATION ONLY: never feeds resolve_pdf_ap_routes / pdf_allowed_route_ids /
+# placement / route selection / scoring / geometry.
+
+TERMINUS_TYPE_TOL_FT = 15.0
+TERMINUS_MAIN_CHAIN_FT = 2500.0   # station >= this => main-chain absolute frame, not a local 0+00 drive
+TERMINUS_TYPE_SOURCE = "target10_verified_run_endpoint_table"
+
+# The 14 logs in the route_480 bucket (Target #3/#10). The terminus shadow is scoped
+# to these — it is NOT a universal "classify everything" surface.
+ROUTE_480_BUCKET_SOURCE_FILES = frozenset({
+    "bore_log5", "bore_log7", "bore_log16", "bore_log29", "bore_log30", "bore_log31",
+    "bore_log43", "bore_log46", "bore_log47", "bore_log48", "bore_log50", "bore_log57",
+    "bore_log58", "bore_log65",
+})
+
+# Brenham PH5 proof-slice DIR. BORE run TERMINI (Target #10 Agent-A verified; literal
+# run-end == co-located structure STA). Each: (sheet, run_end_ft, endpoint_type, ap).
+# endpoint_type in {"ap","flower_pot","splice","installer","matchline"}. AP *labels*
+# WITHOUT a run terminus are deliberately ABSENT (e.g. AP-161 @ STA 5+34 sheet 14).
+# Diagnostic calibration for the default-OFF terminus shadow ONLY; never placement.
+BRENHAM_PH5_RUN_ENDPOINTS = (
+    (8, 366.0, "ap", 154), (8, 387.0, "ap", 156), (8, 413.0, "ap", 157),
+    (8, 299.0, "flower_pot", None), (8, 457.0, "flower_pot", None),
+    (8, 557.0, "flower_pot", None), (8, 614.0, "flower_pot", None), (8, 3393.0, "matchline", None),
+    (9, 3543.0, "splice", None), (9, 3641.0, "flower_pot", None), (9, 3810.0, "ap", 155),
+    (9, 3890.0, "matchline", None), (9, 650.0, "flower_pot", None),
+    (10, 140.0, "ap", 165), (10, 136.0, "ap", 166), (10, 451.0, "ap", 163),
+    (10, 4408.0, "splice", None), (10, 4483.0, "installer", None), (10, 4533.0, "splice", None),
+    (10, 166.0, "matchline", None), (10, 167.0, "matchline", None), (10, 160.0, "matchline", None),
+    (10, 162.0, "matchline", None), (10, 190.0, "matchline", None), (10, 191.0, "matchline", None),
+    (10, 139.0, "matchline", None), (10, 611.0, "matchline", None),
+    (11, 189.0, "ap", 168), (11, 514.0, "flower_pot", None),
+    (12, 350.0, "ap", 167), (12, 355.0, "ap", 164), (12, 507.0, "flower_pot", None),
+    (12, 510.0, "flower_pot", None), (12, 442.0, "flower_pot", None), (12, 445.0, "flower_pot", None),
+    (13, 308.0, "matchline", None), (13, 398.0, "matchline", None),
+    (13, 390.0, "matchline", None), (13, 389.0, "matchline", None),
+    (14, 1044.0, "matchline", None), (14, 953.0, "matchline", None),
+)
+
+
+def is_route_480_bucket_source(source_file: Optional[str]) -> bool:
+    """True only for the 14 route_480-bucket bore logs the terminus shadow is scoped to."""
+    return _source_stem(source_file) in ROUTE_480_BUCKET_SOURCE_FILES
+
+
+def classify_terminus_type(
+    *,
+    source_file: Optional[str] = None,
+    print_tokens: Optional[Sequence[Any]] = None,
+    station_min_ft: Optional[float] = None,
+    station_max_ft: Optional[float] = None,
+    run_endpoints: Sequence = BRENHAM_PH5_RUN_ENDPOINTS,
+    tol_ft: float = TERMINUS_TYPE_TOL_FT,
+    high_station_ft: float = TERMINUS_MAIN_CHAIN_FT,
+) -> Dict[str, Any]:
+    """Pure terminus work-type classifier. Matches a bore's END station to a DIR. BORE
+    RUN TERMINUS on its print sheets and returns the work-type + structured evidence.
+    Never raises. OBSERVATION ONLY — never feeds placement/selection/scoring/geometry.
+
+    terminus_type: flower_pot_drop / backbone_ap_bore / main_chain_high_station /
+    multi_drive_unknown / unknown_insufficient. Backbone requires a run that ENDS at a
+    terminal-port HH (AP); an AP label alone is rejected (anti-artifact)."""
+    sheets = set()
+    for t in (print_tokens or []):
+        s = str(t).strip()
+        if s.isdigit():
+            sheets.add(int(s))
+
+    def _result(ttype, conf, *, end_hits=(), note=None):
+        ev: Dict[str, Any] = {
+            "station_end_ft": (round(float(station_max_ft), 1) if station_max_ft is not None else None),
+            "station_min_ft": (round(float(station_min_ft), 1) if station_min_ft is not None else None),
+            "print_sheets": sorted(sheets),
+            "matched_run_endpoints": [
+                {"sheet": sh, "run_end_ft": end, "endpoint_type": typ, "ap": ap}
+                for (sh, end, typ, ap) in end_hits
+            ],
+        }
+        if note:
+            ev["anti_artifact_note"] = note
+        return {"terminus_type": ttype, "confidence": conf, "evidence": ev,
+                "source": TERMINUS_TYPE_SOURCE, "source_file": source_file}
+
+    if station_max_ft is None:
+        return _result("unknown_insufficient", "low", note="no station data")
+    if station_min_ft is not None and float(station_min_ft) >= high_station_ft:
+        return _result("main_chain_high_station", "med",
+                       note="stations >= %.0f ft are main-chain absolute, not a local 0+00 drive" % high_station_ft)
+
+    end_hits = tuple((sh, end, typ, ap) for (sh, end, typ, ap) in (run_endpoints or ())
+                     if sh in sheets and abs(float(end) - float(station_max_ft)) <= tol_ft)
+    types = {h[2] for h in end_hits}
+    if not end_hits:
+        return _result("unknown_insufficient", "low",
+                       note="no DIR.BORE run ends within %.0f ft of the bore end on the print sheets" % tol_ft)
+    if types == {"flower_pot"}:
+        return _result("flower_pot_drop", "high", end_hits=end_hits)
+    if types == {"ap"}:
+        return _result("backbone_ap_bore", "med", end_hits=end_hits)
+    if "ap" in types and "flower_pot" in types:
+        return _result("multi_drive_unknown", "low", end_hits=end_hits,
+                       note="bore end matches BOTH ap and flower_pot run termini")
+    return _result("multi_drive_unknown", "low", end_hits=end_hits,
+                   note="bore end matches mixed/non-terminal run ends: " + ",".join(sorted(types)))
+
+
 def emit_shadow_for_group(
     *,
     source_file: Optional[str],
