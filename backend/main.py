@@ -7733,6 +7733,23 @@ def _trueline_pdf_ap_extract_v2_enabled() -> bool:
     return raw in {"1", "true", "yes", "on"}
 
 
+def _trueline_pdf_ap_topology_v2_enabled() -> bool:
+    """PDF-AP tail->backbone route TOPOLOGY V2 — SHADOW-ONLY diagnostic. Default OFF.
+
+    When ON, the PDF-AP shadow (`emit_shadow_for_group`, proof-slice only) adds a
+    read-only `backbone_via_topology` field: for the print-token sheets' recovered
+    AP terminals, it traces terminal -> tail/stub -> connected "underground cable"
+    backbone by EXACT shared-vertex connectivity (a deterministic single backbone,
+    or an abstain reason). OBSERVATION ONLY: it NEVER feeds resolve_pdf_ap_routes /
+    pdf_allowed_route_ids / route selection / placement / scoring / geometry. Flag
+    OFF is byte-identical (no field added). Diagnosed 2026-05-29 (Target #2).
+
+    Read every call; never captured at import-time.
+    """
+    raw = os.environ.get("TRUELINE_PDF_AP_TOPOLOGY_V2", "").strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
 def _trueline_mrq_placement_proof_enabled() -> bool:
     """Match Review Queue — per-log redline PLACEMENT PROOF. Default OFF.
 
@@ -11814,6 +11831,7 @@ def _rebuild_field_data_outputs(scope: RebuildScope = RebuildScope.FULL) -> None
                     route_catalog=(STATE.get("route_catalog") or []),
                     hardcoded_allowed_route_ids=_diag.get("strict_allowed_route_ids"),
                     extract_ap_v2=_trueline_pdf_ap_extract_v2_enabled(),
+                    topology_v2=_trueline_pdf_ap_topology_v2_enabled(),
                 )
             except Exception as _pdf_ap_exc:
                 _diag["pdf_ap_route_shadow"] = {

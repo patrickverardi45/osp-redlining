@@ -36,6 +36,7 @@ from __future__ import annotations
 import math
 import os
 import re
+from collections import deque
 from typing import Any, Dict, List, Optional, Sequence
 
 SCHEMA_VERSION = "pdf-ap-route-shadow-1"
@@ -527,6 +528,176 @@ def apply_authoritative_override(
     }
 
 
+# ---- Tail->Backbone Route Topology V2 (shadow-only; gated default-OFF) -------
+# Diagnosed 2026-05-29 (Target #2): an AP terminal sits on a tail / vacant /
+# house-drop stub, but the bored redline belongs on the connected PROPOSED
+# BACKBONE ("underground cable") route. The nearest-corridor step lands on the
+# stub (0-1 ft) and abstains (`nearest_corridor_non_backbone`) when the backbone
+# is beyond the 250 ft radius — even though the stub's far end shares an EXACT
+# vertex with that backbone. This pure layer traces terminal -> stub -> backbone
+# by shared-vertex connectivity. OBSERVATION ONLY: it never feeds
+# resolve_pdf_ap_routes / pdf_allowed_route_ids / placement.
+
+# Shared-vertex threshold. Documented from the PH5 geometry: real tail/backbone
+# junctions are EXACT 0.00 ft shared vertices (route_460 far-end == route_478
+# vertex). 2 ft is a tight float-precision tolerance, NOT a tuned proximity knob —
+# the 12 Sprint-2.5 densification-gap near-ties sit 20-65 ft from the backbone and
+# deliberately DO NOT connect at this epsilon.
+TOPOLOGY_EPSILON_FT = 2.0
+TOPOLOGY_MAX_HOPS = 3
+
+_ADJ_CACHE: Dict[tuple, Dict[str, set]] = {}
+
+
+def _is_topology_backbone(source_folder: Optional[str]) -> bool:
+    f = str(source_folder or "").lower()
+    return any(sub in f for sub in _BACKBONE_FOLDER_SUBSTRINGS)
+
+
+def _route_min_vertex_distance(a_coords, b_coords) -> float:
+    return min(_haversine_ft(float(c1[0]), float(c1[1]), float(c2[0]), float(c2[1]))
+               for c1 in a_coords for c2 in b_coords)
+
+
+def build_route_adjacency(
+    route_catalog: Sequence[Dict[str, Any]], epsilon_ft: float = TOPOLOGY_EPSILON_FT
+) -> Dict[str, set]:
+    """Pure: ``route_id -> set(route_id)`` connected by an EXACT shared vertex
+    (min vertex-to-vertex distance <= ``epsilon_ft``). Candidate pairs come from a
+    coarse coordinate-grid bucket, then are confirmed by exact haversine.
+    Deterministic + order-independent. Cached by (epsilon, route-id set)."""
+    routes = [r for r in (route_catalog or []) if r.get("coords")]
+    by_id = {str(r.get("route_id")): r for r in routes}
+    cache_key = (round(float(epsilon_ft), 4), tuple(sorted(by_id)))
+    cached = _ADJ_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
+    buckets: Dict[tuple, set] = {}
+    for rid, r in by_id.items():
+        for c in r["coords"]:
+            buckets.setdefault((round(float(c[0]), 5), round(float(c[1]), 5)), set()).add(rid)
+    adj: Dict[str, set] = {rid: set() for rid in by_id}
+    checked: set = set()
+    for rids in buckets.values():
+        if len(rids) < 2:
+            continue
+        srt = sorted(rids)
+        for i in range(len(srt)):
+            for j in range(i + 1, len(srt)):
+                a, b = srt[i], srt[j]
+                if (a, b) in checked:
+                    continue
+                checked.add((a, b))
+                if _route_min_vertex_distance(by_id[a]["coords"], by_id[b]["coords"]) <= epsilon_ft:
+                    adj[a].add(b)
+                    adj[b].add(a)
+    _ADJ_CACHE[cache_key] = adj
+    return adj
+
+
+def trace_backbone_via_topology(
+    terminal_lat: float,
+    terminal_lon: float,
+    route_catalog: Sequence[Dict[str, Any]],
+    *,
+    epsilon_ft: float = TOPOLOGY_EPSILON_FT,
+    max_hops: int = TOPOLOGY_MAX_HOPS,
+    adjacency: Optional[Dict[str, set]] = None,
+) -> Dict[str, Any]:
+    """Pure deterministic trace: from the non-backbone stub routes whose vertex is
+    within ``epsilon_ft`` of the terminal, BFS through non-backbone routes to the
+    connected "underground cable" backbone. Returns
+    ``{backbone_route_id, reason, hops, connected_count, path}`` — a SINGLE
+    backbone only when exactly one is reachable at min hops; otherwise
+    ``backbone_route_id=None`` with reason ``no_stub_at_terminal`` /
+    ``no_backbone_reachable`` / ``ambiguous_multi_backbone:<ids>``. NEVER uses a
+    nearest-distance tie-break to choose a winner (>=2 at min hops => abstain).
+    Order-independent (sorted iteration)."""
+    routes = [r for r in (route_catalog or []) if r.get("coords")]
+    by_id = {str(r.get("route_id")): r for r in routes}
+    is_bb = {rid: _is_topology_backbone(r.get("source_folder")) for rid, r in by_id.items()}
+    adj = adjacency if adjacency is not None else build_route_adjacency(routes, epsilon_ft)
+
+    def _near(coords) -> float:
+        return min((_haversine_ft(float(terminal_lat), float(terminal_lon), float(c[0]), float(c[1]))
+                    for c in coords), default=float("inf"))
+
+    stubs = sorted(rid for rid, r in by_id.items()
+                   if not is_bb.get(rid) and _near(r["coords"]) <= epsilon_ft)
+    if not stubs:
+        return {"backbone_route_id": None, "reason": "no_stub_at_terminal",
+                "hops": None, "connected_count": 0, "path": []}
+
+    reached: Dict[str, tuple] = {}
+    seen = set(stubs)
+    queue = deque((s, 1, [s]) for s in stubs)
+    while queue:
+        rid, hops, path = queue.popleft()
+        for nb in sorted(adj.get(rid, ())):
+            if is_bb.get(nb):
+                if nb not in reached or hops < reached[nb][0]:
+                    reached[nb] = (hops, path + [nb])
+            elif nb not in seen and hops < max_hops:
+                seen.add(nb)
+                queue.append((nb, hops + 1, path + [nb]))
+
+    if not reached:
+        return {"backbone_route_id": None, "reason": "no_backbone_reachable",
+                "hops": None, "connected_count": 0, "path": []}
+    min_hops = min(h for h, _ in reached.values())
+    winners = sorted(b for b, (h, _) in reached.items() if h == min_hops)
+    if len(winners) == 1:
+        w = winners[0]
+        return {"backbone_route_id": w, "reason": "deterministic_single_backbone",
+                "hops": min_hops, "connected_count": len(reached), "path": list(reached[w][1])}
+    return {"backbone_route_id": None,
+            "reason": "ambiguous_multi_backbone:" + ",".join(winners),
+            "hops": min_hops, "connected_count": len(reached), "path": []}
+
+
+def emit_backbone_via_topology(
+    *,
+    pdf_paths: Sequence[str],
+    print_tokens: Optional[Sequence[Any]],
+    terminal_nodes: Sequence[Dict[str, Any]],
+    route_catalog: Sequence[Dict[str, Any]],
+    epsilon_ft: float = TOPOLOGY_EPSILON_FT,
+    max_hops: int = TOPOLOGY_MAX_HOPS,
+) -> Dict[str, Any]:
+    """Shadow orchestrator: recover the print-token sheets' AP terminals (via the
+    V2 extractor), trace each to its connected backbone, summarize. Pure aside from
+    build_plan_pages_v2's lazy PDF read. Never raises for missing inputs."""
+    valid_ids = [str(t.get("name")).strip() for t in (terminal_nodes or [])
+                 if str(t.get("name") or "").strip()]
+    plan_pages_v2 = build_plan_pages_v2_from_pdf_paths(pdf_paths, valid_ids)
+    sheets = sorted({int(str(t).strip()) for t in (print_tokens or []) if str(t).strip().isdigit()})
+    ap_ids = recover_ap_ids_for_sheets_v2(plan_pages_v2, sheets)
+    term_index = {str(t.get("name")).strip(): t for t in (terminal_nodes or [])
+                  if str(t.get("name") or "").strip()}
+    traced_terms = [term_index[str(a)] for a in ap_ids if str(a) in term_index]
+    if not traced_terms:
+        return {"reason": "no_ap_terminals_for_topology", "ap_ids": ap_ids,
+                "epsilon_ft": epsilon_ft, "terminals_traced": 0,
+                "backbones": [], "per_terminal": []}
+    adj = build_route_adjacency(route_catalog, epsilon_ft)
+    per_terminal: List[Dict[str, Any]] = []
+    backbones = set()
+    for t in traced_terms:
+        tr = trace_backbone_via_topology(float(t["lat"]), float(t["lon"]), route_catalog,
+                                         epsilon_ft=epsilon_ft, max_hops=max_hops, adjacency=adj)
+        per_terminal.append({"ap": t.get("name"), "backbone_route_id": tr["backbone_route_id"],
+                             "reason": tr["reason"], "hops": tr["hops"]})
+        if tr["backbone_route_id"]:
+            backbones.add(tr["backbone_route_id"])
+    backbones_sorted = sorted(backbones)
+    reason = ("deterministic_single_backbone" if len(backbones_sorted) == 1
+              else "ambiguous_multi_backbone" if len(backbones_sorted) > 1
+              else "no_backbone_reachable")
+    return {"reason": reason, "ap_ids": ap_ids, "epsilon_ft": epsilon_ft,
+            "terminals_traced": len(traced_terms), "backbones": backbones_sorted,
+            "per_terminal": per_terminal}
+
+
 def emit_shadow_for_group(
     *,
     source_file: Optional[str],
@@ -537,6 +708,7 @@ def emit_shadow_for_group(
     route_catalog: Sequence[Dict[str, Any]],
     hardcoded_allowed_route_ids: Optional[Sequence[str]] = None,
     extract_ap_v2: bool = False,
+    topology_v2: bool = False,
 ) -> Dict[str, Any]:
     """Orchestrator used by the in-pipeline shadow seam. Assembles inputs from a
     live session (parses PDFs on demand, filters terminal nodes) and calls the
@@ -585,4 +757,18 @@ def emit_shadow_for_group(
         except Exception as _exc:
             result = dict(result)
             result["ap_ids_found_v2_error"] = type(_exc).__name__
+    # Tail->backbone topology — shadow-only diagnostic. Never mutates the resolve
+    # path above; only annotates the returned dict. Default-OFF in main.py.
+    if topology_v2:
+        try:
+            result = dict(result)
+            result["backbone_via_topology"] = emit_backbone_via_topology(
+                pdf_paths=pdf_paths,
+                print_tokens=print_tokens,
+                terminal_nodes=terminal_nodes,
+                route_catalog=route_catalog,
+            )
+        except Exception as _texc:
+            result = dict(result)
+            result["backbone_via_topology_error"] = type(_texc).__name__
     return result
