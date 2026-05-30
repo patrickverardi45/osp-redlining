@@ -14801,12 +14801,32 @@ def match_review_queue_endpoint(session_id: Optional[str] = None) -> JSONRespons
         # segment counts joined from the already-rendered STATE geometry (what
         # the map shows). Read-only; never recomputes matching/scoring/geometry.
         if _trueline_mrq_placement_proof_enabled():
+            # Target #12: terminus-aware LANE re-grade (default-OFF via
+            # TRUELINE_TERMINUS_TYPE_SHADOW). When that flag is ON, classify each
+            # route_480-bucket log fresh (pure helper) from its diag print/station and
+            # pass the map so placement_proof gains a read-only `terminus_lane` per row
+            # + a `terminus_regrade` lane summary. When OFF: map is None, no terminus
+            # key — placement_proof byte-identical. Read-only; never affects placement.
+            _terminus_lane_by_source: Optional[Dict[str, Any]] = None
+            if _trueline_terminus_type_shadow_enabled():
+                _terminus_lane_by_source = {}
+                for _e in diag:
+                    _sf = _e.get("source_file") if isinstance(_e, dict) else None
+                    if (_sf and _sf not in _terminus_lane_by_source
+                            and _pdf_ap_route.is_route_480_bucket_source(_sf)):
+                        _terminus_lane_by_source[_sf] = _pdf_ap_route.classify_terminus_type(
+                            source_file=_sf,
+                            print_tokens=_e.get("print_tokens"),
+                            station_min_ft=_e.get("min_station_ft"),
+                            station_max_ft=_e.get("max_station_ft"),
+                        )
             _placement_proof = _assemble_placement_proof(
                 diag,
                 counts_by_source=_placement_counts_by_source(
                     STATE.get("station_points") or [],
                     STATE.get("redline_segments") or [],
                 ),
+                terminus_lane_by_source=_terminus_lane_by_source,
             )
     if _psg_inputs:
         queue = _assemble_match_review_queue(diag, plan_sheet_graph_inputs=_psg_inputs)

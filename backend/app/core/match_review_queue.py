@@ -505,10 +505,49 @@ def classify_placement(entry: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+# Target #12 — terminus-aware LANE re-grade. Maps the Target #11 terminus work-type
+# (from classify_terminus_type) to a placement LANE + disposition for operator review.
+# Pure presentation; backbone_ap_candidate is True ONLY for backbone_ap_bore (a bore
+# whose run ENDS at a TERMINAL PORT HH). flower_pot_drop / main_chain_high_station /
+# multi_drive_unknown / unknown_insufficient are NEVER backbone-safe. The classifier
+# itself lives in pdf_ap_route_resolver; this module only buckets its result.
+_TERMINUS_REGRADE_SOURCE = "target10_verified_run_endpoint_table"
+_TERMINUS_LANE_MAP = {
+    "flower_pot_drop": ("DROP", "drop_lane_only_blocked_from_backbone"),
+    "backbone_ap_bore": ("BACKBONE_AP", "future_narrow_backbone_ap_candidate"),
+    "main_chain_high_station": ("MAIN_CHAIN_HIGH_STATION", "future_absolute_stationing_candidate"),
+    "multi_drive_unknown": ("MULTI_DRIVE_UNKNOWN", "blocked_pending_stronger_evidence"),
+    "unknown_insufficient": ("UNKNOWN", "blocked_insufficient_evidence"),
+}
+
+
+def _terminus_lane_record(classification: Optional[Mapping[str, Any]]) -> Optional[Dict[str, Any]]:
+    """Pure: map a ``classify_terminus_type`` result -> a placement-lane review record.
+    ``backbone_ap_candidate`` is True ONLY for the backbone_ap_bore work-type; every
+    other type (esp. flower_pot_drop) is blocked from backbone placement. No log is
+    placement-validated, so ``backbone_promotion_ready`` is always False (candidate !=
+    ready). Returns None for a non-dict input. Never raises."""
+    if not isinstance(classification, Mapping):
+        return None
+    ttype = str(classification.get("terminus_type") or "unknown_insufficient")
+    lane, disposition = _TERMINUS_LANE_MAP.get(ttype, ("UNKNOWN", "blocked_insufficient_evidence"))
+    return {
+        "lane": lane,
+        "terminus_type": ttype,
+        "confidence": classification.get("confidence"),
+        "disposition": disposition,
+        "backbone_ap_candidate": (lane == "BACKBONE_AP"),
+        "backbone_promotion_ready": False,
+        "evidence": classification.get("evidence"),
+        "source": classification.get("source"),
+    }
+
+
 def assemble_placement_proof(
     pipeline_diag: Optional[Sequence[Dict[str, Any]]],
     *,
     counts_by_source: Optional[Mapping[str, Mapping[str, Any]]] = None,
+    terminus_lane_by_source: Optional[Mapping[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Per-LOG redline placement-proof report over the whole session.
 
@@ -572,6 +611,12 @@ def assemble_placement_proof(
         else:
             rec["station_pts"] = None
             rec["segs"] = None
+        # Target #12: read-only terminus LANE (additive; only when the caller passes
+        # the lane map, i.e. TRUELINE_TERMINUS_TYPE_SHADOW ON). Key absent otherwise.
+        if terminus_lane_by_source is not None:
+            _tl = _terminus_lane_record(terminus_lane_by_source.get(sf))
+            if _tl is not None:
+                rec["terminus_lane"] = _tl
         rows.append(rec)
 
     rows.sort(key=lambda r: _safe_str(r.get("source_file")))
@@ -591,4 +636,26 @@ def assemble_placement_proof(
 
     out["log_count"] = len(rows)
     out["rows"] = rows
+
+    # Target #12: top-level terminus-aware LANE re-grade summary (additive; only when
+    # the caller passes the lane map). Buckets the classified logs by lane so flower-pot
+    # DROPS are never treated as backbone-promotion-ready. Read-only; no placement.
+    if terminus_lane_by_source is not None:
+        lanes: Dict[str, List[str]] = {}
+        for r in rows:
+            tl = r.get("terminus_lane")
+            if isinstance(tl, dict):
+                lanes.setdefault(_safe_str(tl.get("lane")), []).append(_safe_str(r.get("source_file")))
+        lanes = {k: sorted(v) for k, v in sorted(lanes.items())}
+        blocked = sorted(s for lane_k, sfs in lanes.items() if lane_k != "BACKBONE_AP" for s in sfs)
+        out["terminus_regrade"] = {
+            "schema": "terminus-regrade-1",
+            "source": _TERMINUS_REGRADE_SOURCE,
+            "lanes": lanes,
+            "counts": {k: len(v) for k, v in lanes.items()},
+            "backbone_ap_candidates": sorted(lanes.get("BACKBONE_AP", [])),
+            "blocked_from_backbone": blocked,
+            "note": ("read-only terminus-aware re-grade; no placement; "
+                     "flower_pot_drop never backbone-safe"),
+        }
     return out
