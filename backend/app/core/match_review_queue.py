@@ -396,3 +396,199 @@ def assemble_match_review_queue(
     out["row_count"] = len(rows)
     out["rows"] = rows
     return out
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# GAC Sprint 1 — per-log redline PLACEMENT PROOF (read-only attribution).
+#
+# Separate from the operator-review queue above (which intentionally surfaces
+# ONLY groups needing attention, so cleanly-placed logs are excluded). This
+# projection covers EVERY bore-log in pipeline_diag and answers, per log: which
+# route did the redline land on, and on WHAT EVIDENCE. It exists because the
+# production Render shell crashes — this makes per-log placement provable inside
+# the app instead of via a shell.
+#
+# Pure. Reads ONLY existing pipeline_diag `_diag` fields (never recomputes
+# matching / scoring / geometry / selection). Station-point and segment counts
+# are NOT present on `_diag`; the caller joins them in via `counts_by_source`,
+# aggregated from the already-persisted STATE["station_points"] /
+# STATE["redline_segments"] (which are exactly what the map renders). When that
+# render is absent, counts are None.
+# ─────────────────────────────────────────────────────────────────────────────
+
+PLACEMENT_PROOF_SCHEMA_VERSION = "placement-proof-1"
+
+_PLACEMENT_EVIDENCE_SOURCES = (
+    "pdf_ap_authoritative",
+    "print_index",
+    "geometry_fallback",
+    "abstained",
+)
+
+# Evidence-source precedence when a single log spans multiple print-groups
+# (placed wins over abstained; PDF-AP wins over print-index wins over geometry).
+_PLACEMENT_EVIDENCE_RANK: Dict[str, int] = {
+    "pdf_ap_authoritative": 0,
+    "print_index": 1,
+    "geometry_fallback": 2,
+    "abstained": 3,
+}
+
+
+def classify_placement(entry: Dict[str, Any]) -> Dict[str, Any]:
+    """Classify ONE pipeline_diag group into a placement-attribution record.
+
+    Pure projection of existing `_diag` fields. Precedence (highest first):
+        pdf_ap_authoritative > abstained > print_index > geometry_fallback
+
+    - ``pdf_ap_authoritative`` — ``_diag["pdf_ap_route_authoritative"].applied``
+      is truthy (the PDF plan-sheet / AP route won over the hardcoded index).
+    - ``abstained`` — a real abstain marker is set (``stopped_at`` other than the
+      placed-but-not-rendered ``render_gate_blocked``), or render was blocked
+      with no selected route.
+    - ``print_index`` — a route was selected AND the hardcoded print-sheet index
+      drove the candidate restriction (``strict_allowed_route_ids`` non-empty).
+    - ``geometry_fallback`` — a route was selected with no allow-set restriction
+      (the hardcoded index did not resolve; pure geometry proximity placed it).
+
+    Returns ``{source_file, selected_route_id, evidence_source, dist_ft,
+    abstain_reason}``. ``dist_ft`` is the nearest terminal→corridor haversine
+    from the (proof-slice-only) PDF-AP shadow when present, else ``None``.
+    """
+    d = entry or {}
+    source_file = _safe_str(d.get("source_file")) or None
+    selected_route_id = _safe_str(d.get("selected_route_id")) or None
+    render_allowed = d.get("render_allowed")
+    stopped_at = _safe_str(d.get("stopped_at"))
+    strict_allowed = _safe_list(d.get("strict_allowed_route_ids"))
+
+    auth = d.get("pdf_ap_route_authoritative")
+    auth_applied = isinstance(auth, dict) and bool(auth.get("applied"))
+
+    shadow = d.get("pdf_ap_route_shadow")
+    shadow = shadow if isinstance(shadow, dict) else {}
+    nearest = shadow.get("nearest_routes")
+    nearest = nearest if isinstance(nearest, list) else []
+    dist_ft: Optional[float] = None
+    if nearest and isinstance(nearest[0], dict):
+        dist_ft = _safe_float(nearest[0].get("dist_ft"))
+
+    # "render_gate_blocked" is placed-but-not-rendered — NOT a true abstain
+    # (mirrors the downstream convention in main.py that treats it separately).
+    is_abstain = bool(stopped_at) and stopped_at.lower() != "render_gate_blocked"
+    if not is_abstain and render_allowed is False and not selected_route_id:
+        is_abstain = True
+
+    if auth_applied:
+        evidence_source = "pdf_ap_authoritative"
+    elif is_abstain or not selected_route_id:
+        evidence_source = "abstained"
+    elif strict_allowed:
+        evidence_source = "print_index"
+    else:
+        evidence_source = "geometry_fallback"
+
+    abstain_reason: Optional[str] = None
+    if evidence_source == "abstained":
+        abstain_reason = (
+            (_safe_str(stopped_at) or None)
+            or _abstain_reason(d)
+            or (_safe_str(shadow.get("reason")) or None)
+        )
+
+    return {
+        "source_file": source_file,
+        "selected_route_id": selected_route_id if evidence_source != "abstained" else None,
+        "evidence_source": evidence_source,
+        "dist_ft": dist_ft,
+        "abstain_reason": abstain_reason,
+    }
+
+
+def assemble_placement_proof(
+    pipeline_diag: Optional[Sequence[Dict[str, Any]]],
+    *,
+    counts_by_source: Optional[Mapping[str, Mapping[str, Any]]] = None,
+) -> Dict[str, Any]:
+    """Per-LOG redline placement-proof report over the whole session.
+
+    One row per ``source_file`` (a log may span several print-groups; they are
+    aggregated to the most-authoritative classification so station-point /
+    segment counts are never double-counted). Pure projection of
+    ``pipeline_diag`` via :func:`classify_placement`. Never raises; never
+    mutates the input.
+
+    ``counts_by_source`` (optional): a read-only
+    ``{source_file: {"station_pts": int, "segs": int}}`` map the caller derives
+    from the persisted rendered geometry (``STATE["station_points"]`` /
+    ``STATE["redline_segments"]``). When provided, per-log + total counts are
+    filled in and ``totals`` reconciles to the rendered map. When ``None``,
+    counts are ``None`` (the report still classifies evidence_source).
+
+    Returns ``{schema_version, log_count, counts_by_evidence_source, totals,
+    rows}``. Observation only — NEVER affects matching / scoring / geometry /
+    selection / STATE.
+    """
+    out: Dict[str, Any] = {
+        "schema_version": PLACEMENT_PROOF_SCHEMA_VERSION,
+        "log_count": 0,
+        "counts_by_evidence_source": {s: 0 for s in _PLACEMENT_EVIDENCE_SOURCES},
+        "totals": {"placed_logs": 0, "abstained_logs": 0, "station_pts": 0, "segs": 0},
+        "rows": [],
+    }
+    if not isinstance(pipeline_diag, (list, tuple)):
+        return out
+
+    have_counts = isinstance(counts_by_source, Mapping)
+    counts: Mapping[str, Mapping[str, Any]] = counts_by_source if have_counts else {}
+
+    by_source: Dict[str, Dict[str, Any]] = {}
+    order: List[str] = []
+    for entry in pipeline_diag:
+        if not isinstance(entry, dict):
+            continue
+        rec = classify_placement(deepcopy(entry))
+        sf = rec.get("source_file") or ""
+        if sf not in by_source:
+            by_source[sf] = rec
+            order.append(sf)
+            continue
+        # Aggregate: keep the most-authoritative (lowest-rank) classification,
+        # preserving any dist_ft the other group carried.
+        cur = by_source[sf]
+        if (_PLACEMENT_EVIDENCE_RANK.get(rec.get("evidence_source"), 9)
+                < _PLACEMENT_EVIDENCE_RANK.get(cur.get("evidence_source"), 9)):
+            if rec.get("dist_ft") is None and cur.get("dist_ft") is not None:
+                rec["dist_ft"] = cur.get("dist_ft")
+            by_source[sf] = rec
+
+    rows: List[Dict[str, Any]] = []
+    for sf in order:
+        rec = dict(by_source[sf])
+        if have_counts:
+            c = counts.get(sf) if isinstance(counts.get(sf), Mapping) else {}
+            rec["station_pts"] = int(c.get("station_pts") or 0)
+            rec["segs"] = int(c.get("segs") or 0)
+        else:
+            rec["station_pts"] = None
+            rec["segs"] = None
+        rows.append(rec)
+
+    rows.sort(key=lambda r: _safe_str(r.get("source_file")))
+
+    for r in rows:
+        es = r.get("evidence_source")
+        if es in out["counts_by_evidence_source"]:
+            out["counts_by_evidence_source"][es] += 1
+        if es == "abstained":
+            out["totals"]["abstained_logs"] += 1
+        else:
+            out["totals"]["placed_logs"] += 1
+        if isinstance(r.get("station_pts"), int):
+            out["totals"]["station_pts"] += r["station_pts"]
+        if isinstance(r.get("segs"), int):
+            out["totals"]["segs"] += r["segs"]
+
+    out["log_count"] = len(rows)
+    out["rows"] = rows
+    return out

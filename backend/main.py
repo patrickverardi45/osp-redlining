@@ -80,6 +80,7 @@ from app.core.match_override import (
 )
 from app.core.match_review_queue import (
     assemble_match_review_queue as _assemble_match_review_queue,
+    assemble_placement_proof as _assemble_placement_proof,
 )
 from app.core.trust_ledger import (
     assemble_trust_ledger as _assemble_trust_ledger,
@@ -7715,6 +7716,27 @@ def _trueline_pdf_ap_route_authoritative_enabled() -> bool:
     return raw in {"1", "true", "yes", "on"}
 
 
+def _trueline_mrq_placement_proof_enabled() -> bool:
+    """Match Review Queue — per-log redline PLACEMENT PROOF. Default OFF.
+
+    GAC Sprint 1. When OFF, the `/api/match-review-queue` response is
+    byte-identical to pre-slice (no `placement_proof` key is added and no
+    geometry is aggregated). When ON, the endpoint attaches a read-only
+    top-level `placement_proof` report — one row per bore-log source_file with
+    its selected route, the EVIDENCE that placed it (pdf_ap_authoritative /
+    print_index / geometry_fallback / abstained), and station-point / segment
+    counts joined from the already-persisted STATE["station_points"] /
+    STATE["redline_segments"] (exactly what the map renders), so placement is
+    provable inside the app — the production Render shell crashes. NO matching /
+    scoring / selection / geometry / rendering / STATE change either way:
+    observation only.
+
+    Read every call; never captured at import-time.
+    """
+    raw = os.environ.get("TRUELINE_MRQ_PLACEMENT_PROOF", "").strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
 def _trueline_trust_ledger_enabled() -> bool:
     """KMZ Automatic Redline Placement — runtime flag for the read-only Trust
     Ledger endpoint (`/api/trust-ledger`). Default OFF.
@@ -14616,6 +14638,31 @@ def debug_pipeline_diag(session_id: Optional[str] = None, source_file: Optional[
     })
 
 
+def _placement_counts_by_source(
+    station_points: Sequence[Dict[str, Any]],
+    redline_segments: Sequence[Dict[str, Any]],
+) -> Dict[str, Dict[str, int]]:
+    """Aggregate rendered station-point + redline-segment counts per source_file.
+
+    Pure read-only projection of the already-persisted, already-rendered
+    STATE["station_points"] / STATE["redline_segments"] (both are gated to
+    render_allowed groups upstream — i.e. exactly what the map draws). Used only
+    by the default-OFF placement-proof report; never mutates STATE or geometry.
+    """
+    out: Dict[str, Dict[str, int]] = {}
+    for pt in station_points or []:
+        if not isinstance(pt, dict):
+            continue
+        sf = str(pt.get("source_file") or "")
+        out.setdefault(sf, {"station_pts": 0, "segs": 0})["station_pts"] += 1
+    for seg in redline_segments or []:
+        if not isinstance(seg, dict):
+            continue
+        sf = str(seg.get("source_file") or "")
+        out.setdefault(sf, {"station_pts": 0, "segs": 0})["segs"] += 1
+    return out
+
+
 @localhost_router.get("/api/match-review-queue")
 def match_review_queue_endpoint(session_id: Optional[str] = None) -> JSONResponse:
     """Read-only operator-review queue.
@@ -14634,6 +14681,7 @@ def match_review_queue_endpoint(session_id: Optional[str] = None) -> JSONRespons
             status_code=400, content={"error": "session_id is required"}
         )
     _psg_inputs: Optional[Dict[str, Dict[str, Any]]] = None
+    _placement_proof: Optional[Dict[str, Any]] = None
     with _session_scope(sid):
         diag: List[Dict[str, Any]] = list(STATE.get("pipeline_diag") or [])
         # Brenham PSG precision evidence (default-OFF via
@@ -14643,15 +14691,32 @@ def match_review_queue_endpoint(session_id: Optional[str] = None) -> JSONRespons
             _psg_inputs = _gather_mrq_plan_sheet_graph_inputs(
                 diag, STATE.get("committed_rows") or []
             )
+        # Per-log redline PLACEMENT PROOF (default-OFF via
+        # TRUELINE_MRQ_PLACEMENT_PROOF). When OFF: no aggregation, no key — the
+        # response is byte-identical to pre-slice. When ON: a top-level
+        # `placement_proof` report, one row per source_file, with station-point /
+        # segment counts joined from the already-rendered STATE geometry (what
+        # the map shows). Read-only; never recomputes matching/scoring/geometry.
+        if _trueline_mrq_placement_proof_enabled():
+            _placement_proof = _assemble_placement_proof(
+                diag,
+                counts_by_source=_placement_counts_by_source(
+                    STATE.get("station_points") or [],
+                    STATE.get("redline_segments") or [],
+                ),
+            )
     if _psg_inputs:
         queue = _assemble_match_review_queue(diag, plan_sheet_graph_inputs=_psg_inputs)
     else:
         queue = _assemble_match_review_queue(diag)
-    return JSONResponse(content={
+    _body: Dict[str, Any] = {
         "success": True,
         "session_id": sid,
         **queue,
-    })
+    }
+    if _placement_proof is not None:
+        _body["placement_proof"] = _placement_proof
+    return JSONResponse(content=_body)
 
 
 @localhost_router.get("/api/trust-ledger")
