@@ -7716,6 +7716,23 @@ def _trueline_pdf_ap_route_authoritative_enabled() -> bool:
     return raw in {"1", "true", "yes", "on"}
 
 
+def _trueline_pdf_ap_extract_v2_enabled() -> bool:
+    """PDF-AP AP-extraction V2 — SHADOW-ONLY diagnostic. Default OFF.
+
+    When ON, the PDF-AP shadow (`emit_shadow_for_group`, proof-slice only) adds a
+    read-only `ap_ids_found_v2` field showing AP ids recovered via pdfplumber
+    words+chars (validated against numeric Terminal Port Handhole node ids) for
+    the print-token sheets — recovering APs that plain `page.extract_text()`
+    drops on vector-heavy AutoCAD sheets. OBSERVATION ONLY: it NEVER feeds
+    `resolve_pdf_ap_routes` / route selection / placement / scoring / geometry.
+    Flag OFF is byte-identical (no field added). Diagnosed 2026-05-29 (Target #1).
+
+    Read every call; never captured at import-time.
+    """
+    raw = os.environ.get("TRUELINE_PDF_AP_EXTRACT_V2", "").strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
 def _trueline_mrq_placement_proof_enabled() -> bool:
     """Match Review Queue — per-log redline PLACEMENT PROOF. Default OFF.
 
@@ -11796,6 +11813,7 @@ def _rebuild_field_data_outputs(scope: RebuildScope = RebuildScope.FULL) -> None
                     point_features=((STATE.get("kmz_reference") or {}).get("point_features") or []),
                     route_catalog=(STATE.get("route_catalog") or []),
                     hardcoded_allowed_route_ids=_diag.get("strict_allowed_route_ids"),
+                    extract_ap_v2=_trueline_pdf_ap_extract_v2_enabled(),
                 )
             except Exception as _pdf_ap_exc:
                 _diag["pdf_ap_route_shadow"] = {

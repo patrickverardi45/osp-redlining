@@ -55,6 +55,11 @@ _STREET_SUFFIX = r"(?:ST|AVE|DR|BLVD|LN|CT|RD|WAY|CIR|PL|HWY|TRL)"
 _STREET_RE = re.compile(r"\b([A-Z][A-Z0-9'.\- ]*?\s" + _STREET_SUFFIX + r")\b")
 _SHEET_OF_RE = re.compile(r"\b(\d{1,3})\s+OF\s+(\d{1,3})\b", re.IGNORECASE)
 _AP_RE = re.compile(r"\bAP[\-_ ]?(\d{2,4})\b", re.IGNORECASE)
+# AP Extraction V2 (shadow-only, default-OFF) — broad recovery from words+chars
+# page text. Tolerant of a space between A and P and of separator glyphs, bounded
+# so it cannot run greedily across a page. Validation against the terminal-id set
+# (extract_ap_ids_v2) is what makes the broad match safe (drops noise like 1/4).
+_AP_RE_V2 = re.compile(r"(?i)(?<![A-Za-z0-9])A\s{0,1}P\s{0,2}[\-_.]?\s{0,2}(\d{1,4})\b")
 
 # Route source-folder substrings that are NOT bore-able corridors (drop lines to
 # a single house). Excluded from nearest-corridor ranking entirely.
@@ -202,6 +207,109 @@ def build_plan_pages_from_pdf_paths(pdf_paths: Sequence[str]) -> List[Dict[str, 
             rec["pdf_path"] = os.path.basename(path)
             merged.append(rec)
     _PLAN_PAGE_CACHE[cache_key] = merged
+    return merged
+
+
+# ---- AP Extraction V2 (shadow-only; gated default-OFF in main.py) -----------
+# Diagnosed 2026-05-29: on vector-heavy AutoCAD plan sheets, plain
+# page.extract_text() drops/scrambles the positioned AP-callout glyphs, so the
+# strict _AP_RE finds no contiguous "AP-NNN" (the abstain `no_ap_ids_on_print_
+# token_sheets`). The glyphs ARE present in page.extract_words(use_text_flow=True)
+# + page.chars. V2 recovers them and VALIDATES each recovered integer against the
+# numeric Terminal Port Handhole KMZ node ids, dropping extraction noise. This is
+# OBSERVATION-ONLY: it never feeds resolve_pdf_ap_routes / placement. The existing
+# _AP_RE + build_plan_pages_from_texts are unchanged.
+
+_PLAN_PAGE_V2_CACHE: Dict[tuple, List[Dict[str, Any]]] = {}
+
+
+def extract_ap_ids_v2(text: Optional[str], valid_terminal_ids: Sequence[Any]) -> List[int]:
+    """Pure AP-id recovery from words+chars page text, validated against the
+    numeric Terminal Port Handhole node ids. Returns sorted unique ints; ONLY ids
+    that match a known terminal (so positional-extraction noise like '1'/'4' is
+    dropped). Never raises; returns [] on empty text or empty terminal set."""
+    if not text:
+        return []
+    valid = {str(v).strip() for v in (valid_terminal_ids or ()) if str(v).strip()}
+    if not valid:
+        return []
+    out = set()
+    for d in _AP_RE_V2.findall(str(text)):
+        if d.isdigit() and d in valid:
+            out.add(int(d))
+    return sorted(out)
+
+
+def recover_ap_ids_for_sheets_v2(
+    plan_pages_v2: Sequence[Dict[str, Any]], sheets: Sequence[Any]
+) -> List[int]:
+    """Pure: union ap_ids_v2 across pages whose sheet_number is in ``sheets``."""
+    sset = {int(s) for s in (sheets or []) if str(s).strip().lstrip("-").isdigit()}
+    return sorted({int(a) for p in (plan_pages_v2 or [])
+                   if p.get("sheet_number") in sset for a in (p.get("ap_ids_v2") or [])})
+
+
+def build_plan_pages_v2_from_pdf_paths(
+    pdf_paths: Sequence[str], valid_terminal_ids: Sequence[Any]
+) -> List[Dict[str, Any]]:
+    """Like ``build_plan_pages_from_pdf_paths`` but each page record ALSO carries
+    ``ap_ids_v2`` recovered from extract_words(use_text_flow)+chars and validated
+    against ``valid_terminal_ids``. sheet_number/streets come from the SAME
+    production logic (``build_plan_pages_from_texts`` on plain extract_text).
+    Cached by (path+mtime, terminal-id set). Returns [] (never raises) if
+    pdfplumber is unavailable or no path is readable. Shadow-only — no production
+    placement consumer reads ``ap_ids_v2``."""
+    key_parts = []
+    for p in pdf_paths or []:
+        try:
+            key_parts.append((str(p), os.path.getmtime(p)))
+        except OSError:
+            continue
+    valid = frozenset(str(v).strip() for v in (valid_terminal_ids or ()) if str(v).strip())
+    if not key_parts:
+        return []
+    cache_key = (tuple(sorted(key_parts)), valid)
+    if cache_key in _PLAN_PAGE_V2_CACHE:
+        return _PLAN_PAGE_V2_CACHE[cache_key]
+
+    try:
+        import pdfplumber  # lazy; already a backend dependency
+    except Exception:
+        _PLAN_PAGE_V2_CACHE[cache_key] = []
+        return []
+
+    merged: List[Dict[str, Any]] = []
+    for path, _mtime in cache_key[0]:
+        try:
+            with pdfplumber.open(path) as pdf:
+                plain_texts: List[str] = []
+                ap_v2_lists: List[List[int]] = []
+                for page in pdf.pages:
+                    try:
+                        plain_texts.append(page.extract_text() or "")
+                    except Exception:
+                        plain_texts.append("")
+                    ap_text = ""
+                    try:
+                        ap_text += " ".join(
+                            str(w.get("text") or "")
+                            for w in page.extract_words(use_text_flow=True, keep_blank_chars=False)
+                        )
+                    except Exception:
+                        pass
+                    try:
+                        ap_text += " " + "".join(str(c.get("text") or "") for c in page.chars)
+                    except Exception:
+                        pass
+                    ap_v2_lists.append(extract_ap_ids_v2(ap_text, valid))
+        except Exception:
+            continue
+        for rec, ap_v2 in zip(build_plan_pages_from_texts(plain_texts), ap_v2_lists):
+            rec = dict(rec)
+            rec["ap_ids_v2"] = ap_v2
+            rec["pdf_path"] = os.path.basename(path)
+            merged.append(rec)
+    _PLAN_PAGE_V2_CACHE[cache_key] = merged
     return merged
 
 
@@ -428,10 +536,19 @@ def emit_shadow_for_group(
     point_features: Sequence[Dict[str, Any]],
     route_catalog: Sequence[Dict[str, Any]],
     hardcoded_allowed_route_ids: Optional[Sequence[str]] = None,
+    extract_ap_v2: bool = False,
 ) -> Dict[str, Any]:
     """Orchestrator used by the in-pipeline shadow seam. Assembles inputs from a
     live session (parses PDFs on demand, filters terminal nodes) and calls the
-    pure resolver. Never raises for missing inputs — emits a reason instead."""
+    pure resolver. Never raises for missing inputs — emits a reason instead.
+
+    When ``extract_ap_v2`` is True (gated by default-OFF flag
+    ``TRUELINE_PDF_AP_EXTRACT_V2`` in main.py), a read-only ``ap_ids_found_v2``
+    field is added showing AP ids recovered by the words+chars extractor for the
+    print-token sheets (APs that plain ``extract_text()`` drops on vector-heavy
+    sheets). OBSERVATION ONLY — it does NOT feed ``resolve_pdf_ap_routes`` /
+    placement / scoring / geometry. With ``extract_ap_v2`` False (default) the
+    output is byte-identical (no extra key)."""
     plan_pages = build_plan_pages_from_pdf_paths(pdf_paths)
     if not plan_pages:
         return {
@@ -444,7 +561,7 @@ def emit_shadow_for_group(
             "reason": "pdf_plan_data_unavailable",
         }
     terminal_nodes = terminal_nodes_from_point_features(point_features)
-    return resolve_pdf_ap_routes(
+    result = resolve_pdf_ap_routes(
         source_file=source_file,
         print_tokens=print_tokens,
         notes_text=notes_text,
@@ -453,3 +570,19 @@ def emit_shadow_for_group(
         route_catalog=route_catalog,
         hardcoded_allowed_route_ids=hardcoded_allowed_route_ids,
     )
+    # AP Extraction V2 — shadow-only diagnostic. Never mutates the resolve path
+    # above; only annotates the returned dict. Default-OFF in main.py.
+    if extract_ap_v2:
+        try:
+            valid_ids = [str(t.get("name")).strip() for t in terminal_nodes
+                         if str(t.get("name") or "").strip()]
+            plan_pages_v2 = build_plan_pages_v2_from_pdf_paths(pdf_paths, valid_ids)
+            sheets = sorted({int(str(t).strip()) for t in (print_tokens or [])
+                             if str(t).strip().isdigit()})
+            result = dict(result)
+            result["ap_ids_found_v2"] = recover_ap_ids_for_sheets_v2(plan_pages_v2, sheets)
+            result["ap_extract_v2"] = True
+        except Exception as _exc:
+            result = dict(result)
+            result["ap_ids_found_v2_error"] = type(_exc).__name__
+    return result
