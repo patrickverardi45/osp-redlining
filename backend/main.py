@@ -7750,6 +7750,28 @@ def _trueline_pdf_ap_topology_v2_enabled() -> bool:
     return raw in {"1", "true", "yes", "on"}
 
 
+def _trueline_backbone_chain_shadow_enabled() -> bool:
+    """PDF-AP backbone CORRIDOR-CHAIN — SHADOW-ONLY diagnostic. Default OFF.
+
+    When ON, the PDF-AP shadow (`emit_shadow_for_group`, proof-slice only) adds a
+    read-only `backbone_corridor_chain` field beside the topology_v2 evidence: for
+    the candidate backbone the bore resolves to (pdf_allowed_route_ids[0], else the
+    deterministic single backbone from the tail->backbone trace), it reports the
+    connected proposed-backbone ("underground cable") corridor CHAIN by EXACT
+    shared-vertex connectivity — ordered chain_route_ids, total/longest length,
+    branch_node_count, and a reason (deterministic_simple_chain / single_segment /
+    branched_corridor_abstain / ambiguous_or_cycle / chain_too_short / ...).
+    OBSERVATION ONLY: it NEVER feeds resolve_pdf_ap_routes / pdf_allowed_route_ids /
+    route selection / placement / scoring / geometry. A simple chain proves
+    CONNECTIVITY (corridor length), NOT corridor/street identity. Flag OFF is
+    byte-identical (no field added). Diagnosed 2026-05-30 (Target #4/#5).
+
+    Read every call; never captured at import-time.
+    """
+    raw = os.environ.get("TRUELINE_BACKBONE_CHAIN_SHADOW", "").strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
 def _trueline_mrq_placement_proof_enabled() -> bool:
     """Match Review Queue — per-log redline PLACEMENT PROOF. Default OFF.
 
@@ -11832,6 +11854,7 @@ def _rebuild_field_data_outputs(scope: RebuildScope = RebuildScope.FULL) -> None
                     hardcoded_allowed_route_ids=_diag.get("strict_allowed_route_ids"),
                     extract_ap_v2=_trueline_pdf_ap_extract_v2_enabled(),
                     topology_v2=_trueline_pdf_ap_topology_v2_enabled(),
+                    backbone_chain_shadow=_trueline_backbone_chain_shadow_enabled(),
                 )
             except Exception as _pdf_ap_exc:
                 _diag["pdf_ap_route_shadow"] = {

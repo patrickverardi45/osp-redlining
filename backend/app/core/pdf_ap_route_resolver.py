@@ -698,6 +698,262 @@ def emit_backbone_via_topology(
             "per_terminal": per_terminal}
 
 
+# ---- Backbone Corridor Chain (Target #5) — shadow-only; gated default-OFF -----
+# Diagnosed 2026-05-30 (Target #4 probe scripts/backbone_chain_probe.py): the
+# largest blocked bucket — 14 bore logs resolving to proposed-backbone route_480,
+# a native 131.5 ft KMZ fragment, while the bores span 169-1919 ft — is solvable
+# from KMZ topology. route_480 is the ENTRY segment of a connected proposed-
+# backbone corridor route_480 -> route_479 -> route_475 (3024 ft, simple linear
+# path, 0 branch nodes). Old matching assumed ONE route_id must hold the whole
+# bore; the corridor is a CHAIN of shared-vertex-connected "underground cable"
+# segments. This pure helper reports that chain for a candidate backbone route by
+# EXACT shared-vertex connectivity (reusing build_route_adjacency restricted to
+# "underground cable" routes). OBSERVATION ONLY: it never feeds
+# resolve_pdf_ap_routes / pdf_allowed_route_ids / placement / selection / scoring
+# / geometry.
+#
+# WHAT "deterministic_simple_chain" DOES AND DOES NOT PROVE (Target #5 risk review,
+# Agent D): a shared-vertex simple path proves the component is CONTIGUOUS and
+# LINEAR (no fork) — it proves CONNECTIVITY, not corridor/street IDENTITY. Two
+# different streets' backbones meeting end-to-end at a single DEGREE-2 corner would
+# be reported as one chain; the degree>=3 branch-abstain does NOT catch a degree-2
+# corner, and adjacency joins on ANY shared vertex (not only endpoints). So the
+# chain is corridor-LENGTH evidence only; WHICH street and WHERE-along-the-chain a
+# bore anchors stays a ground-truth-gated step, NOT done here. DO-NOT-WIDEN: this
+# never moves a redline.
+
+# Physical-containment slack: the real projector (_map_station_to_route_distance)
+# CLAMPS, never scales, so a faithful placement needs corridor_len >= bore_span.
+# 1.10 == the Target #3/#4 probe SLACK; it is a fixed containment tolerance, NOT an
+# epsilon and NOT a per-case tunable knob.
+CHAIN_SPAN_SLACK = 1.10
+# Safety cap on simple-path exploration. Real backbone components are tiny (<10
+# segments); the cap only guards a pathological cyclic graph, and we abstain on
+# cycles anyway — so a truncated longest-path only ever populates a reporting field
+# (path_truncated=True), never a verdict.
+_CHAIN_DFS_CAP = 400_000
+
+
+def _route_length_ft(route: Optional[Dict[str, Any]]) -> float:
+    try:
+        v = (route or {}).get("length_ft")
+        return float(v) if v is not None else 0.0
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _longest_simple_path_through(node_id, comp_set, adj, by_id):
+    """Longest simple path (by summed length_ft) through ``node_id``, restricted to
+    ``comp_set``. Combines the two longest disjoint arms from the node. Deterministic
+    + ORDER-INDEPENDENT: every neighbour iteration is ``sorted`` by route_id and ties
+    keep the lowest-id arm (strict ``>``); the final path is canonicalised so its
+    head <= tail by route_id. Capped DFS guards cyclic graphs. Returns
+    ``(length_ft, ordered_path, truncated)``. Do NOT 'optimise' by iterating the
+    adjacency set unsorted or by loosening ``>`` to ``>=`` — either reintroduces
+    nondeterminism."""
+    steps = [0]
+    truncated = [False]
+
+    def _len(rid):
+        return _route_length_ft(by_id.get(rid))
+
+    def dfs(node, visited):
+        best = (_len(node), [node])
+        for nb in sorted(adj.get(node, ())):
+            if nb not in comp_set or nb in visited:
+                continue
+            steps[0] += 1
+            if steps[0] > _CHAIN_DFS_CAP:
+                truncated[0] = True
+                continue
+            sub_len, sub_path = dfs(nb, visited | {nb})
+            if _len(node) + sub_len > best[0]:
+                best = (_len(node) + sub_len, [node] + sub_path)
+        return best
+
+    arms = sorted(
+        (dfs(nb, frozenset({node_id, nb}))
+         for nb in sorted(adj.get(node_id, ())) if nb in comp_set),
+        key=lambda x: x[0], reverse=True,
+    )
+    if not arms:
+        length, path = _len(node_id), [node_id]
+    elif len(arms) == 1:
+        length, path = _len(node_id) + arms[0][0], [node_id] + arms[0][1]
+    else:
+        length = _len(node_id) + arms[0][0] + arms[1][0]
+        path = list(reversed(arms[0][1])) + [node_id] + arms[1][1]
+    if len(path) >= 2 and str(path[0]) > str(path[-1]):
+        path = list(reversed(path))
+    return length, path, truncated[0]
+
+
+def build_backbone_corridor_chain(
+    candidate_route_id: Any,
+    route_catalog: Sequence[Dict[str, Any]],
+    *,
+    epsilon_ft: float = TOPOLOGY_EPSILON_FT,
+    max_span_ft: Optional[float] = None,
+) -> Dict[str, Any]:
+    """Pure deterministic backbone-corridor-chain evidence for a candidate route.
+
+    Restricts the route graph to PROPOSED-BACKBONE ("underground cable") routes
+    WITH coords, builds shared-vertex adjacency via the shipped
+    ``build_route_adjacency`` (epsilon_ft — NOT tuned to fit cases), walks the
+    candidate's connected component, and reports the linear corridor. Never raises.
+
+    Returns a dict: ``candidate_route_id``, ``chain_route_ids`` (ordered along the
+    simple path, canonical head<=tail by id), ``total_len_ft`` (sum over the
+    component), ``longest_path_len_ft`` (longest simple path through the candidate;
+    == total for a pure linear chain), ``is_simple_path`` (component is one acyclic
+    linear chain), ``branch_node_count`` (component routes with backbone-degree >= 3),
+    ``epsilon_ft``, ``max_span_ft``, ``path_truncated``, ``reason``.
+
+    reason precedence (top-down):
+      route_not_backbone          candidate missing / no coords / not underground-cable
+      single_segment              comp == {candidate}; it is the ONLY backbone route
+      no_connected_backbone_chain comp == {candidate}; other backbones exist, none share a vertex
+      ambiguous_or_cycle          component contains a cycle (edges >= nodes) — no unique corridor
+      branched_corridor_abstain   component has a fork (any backbone-degree >= 3) — won't guess the arm
+      chain_too_short             linear chain (>=2), max_span_ft > longest_path_len_ft * 1.10
+      deterministic_simple_chain  pure linear corridor (>= 2 routes), fits the span (or no span given)
+
+    Rules honoured: deterministic + order-independent (sorted throughout); branch
+    degree >= 3 always abstains; NEVER a nearest-distance tie-break; never crosses
+    into non-backbone roles (non-backbones are absent from the graph); epsilon is
+    not tuned. See module note: a simple chain proves CONNECTIVITY, not street
+    identity — it is corridor-length evidence, never a placement."""
+    cid = str(candidate_route_id).strip() if candidate_route_id is not None else ""
+
+    def _result(reason, *, chain_ids, total, longest, simple, branches, truncated=False):
+        return {
+            "candidate_route_id": cid or None,
+            "chain_route_ids": list(chain_ids),
+            "total_len_ft": (round(float(total), 1) if total is not None else None),
+            "longest_path_len_ft": (round(float(longest), 1) if longest is not None else None),
+            "is_simple_path": simple,
+            "branch_node_count": branches,
+            "epsilon_ft": float(epsilon_ft),
+            "max_span_ft": (round(float(max_span_ft), 1) if max_span_ft is not None else None),
+            "path_truncated": bool(truncated),
+            "reason": reason,
+        }
+
+    # backbone-only graph nodes: coord-bearing "underground cable" routes.
+    backbones = [r for r in (route_catalog or [])
+                 if r.get("coords") and _is_topology_backbone(r.get("source_folder"))]
+    by_id = {str(r.get("route_id")): r for r in backbones}
+
+    if not cid or cid not in by_id:
+        return _result("route_not_backbone", chain_ids=[], total=0.0,
+                       longest=0.0, simple=False, branches=0)
+
+    adj = build_route_adjacency(backbones, epsilon_ft)
+
+    # connected component of the candidate (sorted BFS — order-independent).
+    comp_set = {cid}
+    queue = deque([cid])
+    while queue:
+        cur = queue.popleft()
+        for nb in sorted(adj.get(cur, ())):
+            if nb in by_id and nb not in comp_set:
+                comp_set.add(nb)
+                queue.append(nb)
+
+    # degree measured WITHIN the component (& comp_set) — never counts non-backbone
+    # neighbours (they are not in the graph) and never leaks another component.
+    def _deg(rid):
+        return sum(1 for nb in adj.get(rid, ()) if nb in comp_set)
+
+    n_nodes = len(comp_set)
+    edges = sum(_deg(r) for r in comp_set) // 2          # adjacency stores each edge twice
+    branch_count = sum(1 for r in comp_set if _deg(r) >= 3)
+    total_len = sum(_route_length_ft(by_id[r]) for r in comp_set)
+    longest_len, longest_path, truncated = _longest_simple_path_through(cid, comp_set, adj, by_id)
+
+    # 1) lone candidate first (cannot be cyclic/branched): there is no chain to walk.
+    if n_nodes == 1:
+        reason = "single_segment" if len(by_id) == 1 else "no_connected_backbone_chain"
+        return _result(reason, chain_ids=[cid], total=total_len, longest=longest_len,
+                       simple=True, branches=0, truncated=truncated)
+    # 2) cycle => no unique corridor (connected component: tree has nodes-1 edges).
+    if edges >= n_nodes:
+        return _result("ambiguous_or_cycle", chain_ids=longest_path, total=total_len,
+                       longest=longest_len, simple=False, branches=branch_count, truncated=truncated)
+    # 3) fork anywhere in the component => won't guess which arm the bore follows.
+    if branch_count >= 1:
+        return _result("branched_corridor_abstain", chain_ids=longest_path, total=total_len,
+                       longest=longest_len, simple=False, branches=branch_count, truncated=truncated)
+    # component is now a pure linear path (>=2 nodes): longest path == whole chain.
+    # 4) physical-containment fit gate (only when a span is supplied).
+    if max_span_ft is not None and float(max_span_ft) > longest_len * CHAIN_SPAN_SLACK:
+        return _result("chain_too_short", chain_ids=longest_path, total=total_len,
+                       longest=longest_len, simple=True, branches=0, truncated=truncated)
+    # 5) deterministic linear corridor that fits.
+    return _result("deterministic_simple_chain", chain_ids=longest_path, total=total_len,
+                   longest=longest_len, simple=True, branches=0, truncated=truncated)
+
+
+def emit_backbone_corridor_chain(
+    *,
+    resolve_result: Optional[Dict[str, Any]],
+    pdf_paths: Sequence[str],
+    print_tokens: Optional[Sequence[Any]],
+    terminal_nodes: Sequence[Dict[str, Any]],
+    route_catalog: Sequence[Dict[str, Any]],
+    epsilon_ft: float = TOPOLOGY_EPSILON_FT,
+    max_span_ft: Optional[float] = None,
+) -> Dict[str, Any]:
+    """Shadow orchestrator: pick the candidate backbone the bore resolves to and
+    report its connected corridor chain via ``build_backbone_corridor_chain``.
+
+    Candidate selection (deterministic; NEVER a nearest-distance tie-break):
+      1. ``resolve_result.pdf_allowed_route_ids[0]`` when the resolve reason is
+         ``resolved_via_print_token_sheets`` (a print->sheet->AP->backbone route);
+      2. else the deterministic single backbone from the tail->backbone topology
+         trace (reused from ``resolve_result["backbone_via_topology"]`` if
+         topology_v2 already computed it, else computed here).
+    When neither yields a single backbone, returns a ``no_candidate_backbone``
+    record. Pure aside from the cached PDF read in the topology fallback."""
+    rr = resolve_result if isinstance(resolve_result, dict) else {}
+    candidate = None
+    source = None
+    pa = [str(r) for r in (rr.get("pdf_allowed_route_ids") or []) if str(r).strip()]
+    if rr.get("reason") == "resolved_via_print_token_sheets" and pa:
+        candidate, source = pa[0], "pdf_allowed_route_ids"
+    else:
+        topo = rr.get("backbone_via_topology")
+        if not isinstance(topo, dict):
+            topo = emit_backbone_via_topology(
+                pdf_paths=pdf_paths, print_tokens=print_tokens,
+                terminal_nodes=terminal_nodes, route_catalog=route_catalog,
+                epsilon_ft=epsilon_ft,
+            )
+        bbs = [str(b) for b in (topo.get("backbones") or [])]
+        if topo.get("reason") == "deterministic_single_backbone" and len(bbs) == 1:
+            candidate, source = bbs[0], "backbone_via_topology"
+
+    if not candidate:
+        return {
+            "candidate_route_id": None,
+            "candidate_source": None,
+            "chain_route_ids": [],
+            "total_len_ft": None,
+            "longest_path_len_ft": None,
+            "is_simple_path": None,
+            "branch_node_count": None,
+            "epsilon_ft": float(epsilon_ft),
+            "max_span_ft": (round(float(max_span_ft), 1) if max_span_ft is not None else None),
+            "path_truncated": False,
+            "reason": "no_candidate_backbone",
+        }
+
+    chain = build_backbone_corridor_chain(
+        candidate, route_catalog, epsilon_ft=epsilon_ft, max_span_ft=max_span_ft)
+    chain["candidate_source"] = source
+    return chain
+
+
 def emit_shadow_for_group(
     *,
     source_file: Optional[str],
@@ -709,6 +965,7 @@ def emit_shadow_for_group(
     hardcoded_allowed_route_ids: Optional[Sequence[str]] = None,
     extract_ap_v2: bool = False,
     topology_v2: bool = False,
+    backbone_chain_shadow: bool = False,
 ) -> Dict[str, Any]:
     """Orchestrator used by the in-pipeline shadow seam. Assembles inputs from a
     live session (parses PDFs on demand, filters terminal nodes) and calls the
@@ -771,4 +1028,22 @@ def emit_shadow_for_group(
         except Exception as _texc:
             result = dict(result)
             result["backbone_via_topology_error"] = type(_texc).__name__
+    # Backbone corridor chain — shadow-only diagnostic. Never mutates the resolve
+    # path above; only annotates the returned dict. Default-OFF in main.py. Reports
+    # CONNECTIVITY (corridor length), NOT corridor/street identity — see helper docs.
+    # The in-pipeline emit passes no span (max_span_ft=None), so the live reason is
+    # never `chain_too_short`; the span fit is exercised by the 14-log proof + tests.
+    if backbone_chain_shadow:
+        try:
+            result = dict(result)
+            result["backbone_corridor_chain"] = emit_backbone_corridor_chain(
+                resolve_result=result,
+                pdf_paths=pdf_paths,
+                print_tokens=print_tokens,
+                terminal_nodes=terminal_nodes,
+                route_catalog=route_catalog,
+            )
+        except Exception as _bcexc:
+            result = dict(result)
+            result["backbone_corridor_chain_error"] = type(_bcexc).__name__
     return result
