@@ -5,7 +5,7 @@
 
 ## Repo state
 - Branch: `pdf-ap-route-shadow`
-- `origin/main` = `278563e` (local HEAD tracks it). PDF-extraction chain shipped: Targets #18–#32 pushed (latest #32 sheets-8–14 endpoint table).
+- `origin/main` = `<pending>` (local HEAD tracks it). PDF-extraction chain shipped: Targets #18–#33 pushed (latest #33 cleaned endpoint table + placement readiness).
 - Tree: tracked clean; untracked diagnostics live in `scripts/` (offline probes, *_replay.py, bore_log7_*).
 
 ## Mission (non-negotiable)
@@ -167,6 +167,18 @@ MATCHLINE station → rejected; no boundary equation → **(10,136,166) NOT RECO
 SELFTEST_OK. Zero degradation of #27–#31 trusted cases. NEXT: stronger matchline/boundary exclusion (boundary-STA eqns + SEE-SHEET)
 to lift overall precision 0.58→1.00; adjacent-AP disambiguation; feed the 7-endpoint table into the #25 index as auto-derived truth.
 Full: `gac/target32_pdf_endpoint_table_sheets_8_14.md`. DO-NOT-WIDEN intact.
+
+**CLEAN ENDPOINT TABLE + PLACEMENT READINESS (Target #33) — 7 trusted endpoints, precision 1.00, 0 wrong-id; bore_log7
+re-derived + bore_log57 surfaced.** `scripts/pdf_clean_endpoint_table.py` strengthens trust to 4 corroborating gates
+(B-confirmed ∧ Target#30 structure-anchored reconstruction ∧ full TERMINAL+PORT+SPLICE phrase ∧ not-matchline/edge).
+**TRUSTED-CONFIRMED = the 7** (8:154/156/157, 10:165/163, 11:168, 12:167); 4 sheet-13 false APs EXCLUDED (3 not-reconstruction-
+corroborated @ matchline sta 389/390/398; 1 no-phrase AP-151/HDPE); 1 TRUSTED-REVIEW (13,359,160 geom-valid but absent from
+reference — adjudicate, NOT placement-trusted). All 7 → lat/lon + tail_route via #25 index, geometry_ready. **PLACEMENT READINESS:
+bore_log7 (end 451,print10)→(10,451,163)→route_469 = PLACEMENT_READY (auto-table independently re-derives the proven placement);
+bore_log57 (end 413,prints 8/10/13)→(8,413,157) = CANDIDATE (endpoint clean now, but multi-drive/uncertain-print per #23 → needs
+drive disambiguation).** No placement performed (DO-NOT-WIDEN). Self-test SELFTEST_OK. NEXT: adjudicate (13,359,160); bore_log57
+drive-disambiguation; future default-OFF placement shadow for PLACEMENT_READY bores. Full: `gac/target33_clean_endpoint_table_placement_readiness.md`.
+DO-NOT-WIDEN intact.
 
 ## Render disk caution
 `/data` can fill → upload/session/audit failures. If uploads fail, operator runs `df -h /data` BEFORE

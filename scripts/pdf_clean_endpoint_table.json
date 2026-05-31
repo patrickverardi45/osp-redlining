@@ -1,0 +1,187 @@
+{
+  "schema_version": "pdf-clean-endpoint-table-1",
+  "confirmed": [
+    [
+      8,
+      366.0,
+      154
+    ],
+    [
+      8,
+      387.0,
+      156
+    ],
+    [
+      8,
+      413.0,
+      157
+    ],
+    [
+      10,
+      140.0,
+      165
+    ],
+    [
+      10,
+      451.0,
+      163
+    ],
+    [
+      11,
+      189.0,
+      168
+    ],
+    [
+      12,
+      350.0,
+      167
+    ]
+  ],
+  "review": [
+    {
+      "sheet": 13,
+      "sta": 359.0,
+      "ap": 160,
+      "reason": "geom_valid_but_absent_from_reference_pending_adjudication"
+    }
+  ],
+  "excluded": [
+    {
+      "sheet": 13,
+      "sta": 160.0,
+      "ap": 151,
+      "reason": "no_terminal_port_splice_phrase"
+    },
+    {
+      "sheet": 13,
+      "sta": 389.0,
+      "ap": 166,
+      "reason": "not_corroborated_by_structure_anchored_reconstruction"
+    },
+    {
+      "sheet": 13,
+      "sta": 390.0,
+      "ap": 167,
+      "reason": "not_corroborated_by_structure_anchored_reconstruction"
+    },
+    {
+      "sheet": 13,
+      "sta": 398.0,
+      "ap": 162,
+      "reason": "not_corroborated_by_structure_anchored_reconstruction"
+    }
+  ],
+  "recovered_geo": [
+    {
+      "sheet": 8,
+      "sta": 366.0,
+      "ap": 154,
+      "latlon": [
+        30.15778810928553,
+        -96.38710064239635
+      ],
+      "tail_route": "route_461",
+      "geometry_ready": true
+    },
+    {
+      "sheet": 8,
+      "sta": 387.0,
+      "ap": 156,
+      "latlon": [
+        30.15826948031435,
+        -96.38622123890774
+      ],
+      "tail_route": "route_467",
+      "geometry_ready": true
+    },
+    {
+      "sheet": 8,
+      "sta": 413.0,
+      "ap": 157,
+      "latlon": [
+        30.15819526755925,
+        -96.38598520451443
+      ],
+      "tail_route": "route_465",
+      "geometry_ready": true
+    },
+    {
+      "sheet": 10,
+      "sta": 140.0,
+      "ap": 165,
+      "latlon": [
+        30.15967902440125,
+        -96.38513198137325
+      ],
+      "tail_route": "route_470",
+      "geometry_ready": true
+    },
+    {
+      "sheet": 10,
+      "sta": 451.0,
+      "ap": 163,
+      "latlon": [
+        30.15916282765615,
+        -96.38572984005854
+      ],
+      "tail_route": "route_469",
+      "geometry_ready": true
+    },
+    {
+      "sheet": 11,
+      "sta": 189.0,
+      "ap": 168,
+      "latlon": [
+        30.15963424722056,
+        -96.38376092016645
+      ],
+      "tail_route": "route_472",
+      "geometry_ready": true
+    },
+    {
+      "sheet": 12,
+      "sta": 350.0,
+      "ap": 167,
+      "latlon": [
+        30.16040142594407,
+        -96.3846357727055
+      ],
+      "tail_route": "route_473",
+      "geometry_ready": true
+    }
+  ],
+  "placement": [
+    {
+      "bore": "bore_log57",
+      "end": 413.0,
+      "prints": [
+        8,
+        10,
+        13
+      ],
+      "matches": [
+        [
+          8,
+          413.0,
+          157
+        ]
+      ],
+      "verdict": "PLACEMENT_READY_CANDIDATE"
+    },
+    {
+      "bore": "bore_log7",
+      "end": 451.0,
+      "prints": [
+        10
+      ],
+      "matches": [
+        [
+          10,
+          451.0,
+          163
+        ]
+      ],
+      "verdict": "PLACEMENT_READY_CANDIDATE"
+    }
+  ]
+}
