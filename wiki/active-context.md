@@ -5,7 +5,7 @@
 
 ## Repo state
 - Branch: `pdf-ap-route-shadow`
-- `origin/main` = `f0fbcc8` (local HEAD tracks it; Targets #18/#19/#20/#21 pushed). Target #22 probe/docs pushed on top.
+- `origin/main` = `85285d1` (local HEAD tracks it). PDF-extraction chain shipped: Targets #18–#29 pushed (latest #29 Primitive C run-polyline tracer).
 - Tree: tracked clean; untracked diagnostics live in `scripts/` (offline probes, *_replay.py, bore_log7_*).
 
 ## Mission (non-negotiable)
