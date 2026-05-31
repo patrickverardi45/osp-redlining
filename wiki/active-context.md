@@ -5,7 +5,7 @@
 
 ## Repo state
 - Branch: `pdf-ap-route-shadow`
-- `origin/main` = `cbcb34c` (local HEAD tracks it). PDF-extraction chain shipped: Targets #18–#38 pushed. **#37 = first extractor fix: Primitive-A phantom-competitor gate → AP-164 PROMOTE_TRUSTED + AP-155 recovered; 9 confirmed endpoints, precision 1.00, recall 0.90.** **#38 = bore_log57 bore→drive binding HARD_BLOCKED (.FS sheet proven absent); placement frontier = exactly 1 deterministically placeable bore (bore_log7).** #35 AP-160 KEEP_TRUSTED_REVIEW.
+- `origin/main` = `ed0f40c` (local HEAD tracks it). PDF-extraction chain shipped: Targets #18–#39 pushed. **#37 = first extractor fix: Primitive-A phantom-competitor gate → AP-164 PROMOTE_TRUSTED + AP-155 recovered; 9 confirmed endpoints, precision 1.00, recall 0.90.** **#38/#39 = bore_log57: terminus UNIQUELY AP-157 (alt resolver, no .FS), but placement HARD_BLOCKED on geometry (route_465 741ft vs bore 413ft) — frontier = 1 placeable bore (bore_log7).** #35 AP-160 KEEP_TRUSTED_REVIEW.
 - Tree: tracked clean; untracked diagnostics live in `scripts/` (offline probes, *_replay.py, bore_log7_*).
 
 ## Mission (non-negotiable)
