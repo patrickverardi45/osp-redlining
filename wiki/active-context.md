@@ -5,7 +5,7 @@
 
 ## Repo state
 - Branch: `pdf-ap-route-shadow`
-- `origin/main` = `1795298` (local HEAD tracks it). PDF-extraction chain shipped: Targets #18–#36 pushed (latest #36 AP-164 adjacent-pair gate → HARD_MISS/B-recovered-only; #35 AP-160 → KEEP_TRUSTED_REVIEW; #34 bore_log57 ABSTAIN).
+- `origin/main` = `3822aa5` (local HEAD tracks it). PDF-extraction chain shipped: Targets #18–#37 pushed. **#37 = first extractor fix: Primitive-A phantom-competitor gate → AP-164 PROMOTE_TRUSTED + AP-155 recovered; 9 confirmed endpoints, precision 1.00, recall 0.90.** #35 AP-160 KEEP_TRUSTED_REVIEW; #34 bore_log57 ABSTAIN (bore→drive).
 - Tree: tracked clean; untracked diagnostics live in `scripts/` (offline probes, *_replay.py, bore_log7_*).
 
 ## Mission (non-negotiable)
