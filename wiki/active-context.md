@@ -5,7 +5,7 @@
 
 ## Repo state
 - Branch: `pdf-ap-route-shadow`
-- `origin/main` = `8828164` (local HEAD tracks it). PDF-extraction chain shipped: Targets #18–#34 pushed (latest #34 bore_log57 placement candidate — structure-side READY, bore→drive binding ABSTAIN).
+- `origin/main` = `cadaad0` (local HEAD tracks it). PDF-extraction chain shipped: Targets #18–#35 pushed (latest #35 AP-160 trusted-review adjudication → KEEP_TRUSTED_REVIEW; #34 bore_log57 placement candidate ABSTAIN).
 - Tree: tracked clean; untracked diagnostics live in `scripts/` (offline probes, *_replay.py, bore_log7_*).
 
 ## Mission (non-negotiable)
