@@ -1,0 +1,75 @@
+{
+  "schema_version": "target35-ap160-adjudication-1",
+  "target": {
+    "sheet": 13,
+    "sta": 359.0,
+    "ap": 160
+  },
+  "classification": "KEEP_TRUSTED_REVIEW",
+  "machine_reason": "geometry_promote_grade_but_uncorroborated_by_hand_reference_on_boundary_sheet_and_no_independent_station_tail_binding; promotion blocked until ONE of: (a) literal-quote verification that a 'STA 3+59 ... DIR. BORE ... TERMINAL n PORT HH AP-160' run-END block exists on sheet 13 (the Agent-A method that built the hand table), OR (b) a station/sheet/tail binding for AP-160 in a verified source",
+  "signals": [
+    "kmz_terminal_port_hh_node_exists",
+    "run_role=run_end",
+    "leader_confirmed",
+    "reconstructed",
+    "no_geometry_matchline_within_40ft",
+    "absent_from_literal_quote_verified_hand_run_endpoint_reference",
+    "hand_reference_lists_zero_sheet13_ap_run_endpoints",
+    "no_independent_station_sheet_tail_binding_in_index"
+  ],
+  "evidence": {
+    "E1_kmz_node": true,
+    "E1_latlon": [
+      30.158369203616,
+      -96.38432759934322
+    ],
+    "E1_tail_route": null,
+    "E1_station_ft": null,
+    "E1_print_sheet": null,
+    "E2_run_role": "run_end",
+    "E3_B_verdict": "confirmed",
+    "E4_matchlines_near_sta359": [],
+    "E4_sheet13_matchlines": [],
+    "E5_in_hand_table": false,
+    "E5_sheet13_hand_ap_rows": []
+  },
+  "control_ok": true,
+  "confirmed_revalidated": [
+    [
+      8,
+      366.0,
+      154
+    ],
+    [
+      8,
+      387.0,
+      156
+    ],
+    [
+      8,
+      413.0,
+      157
+    ],
+    [
+      10,
+      140.0,
+      165
+    ],
+    [
+      10,
+      451.0,
+      163
+    ],
+    [
+      11,
+      189.0,
+      168
+    ],
+    [
+      12,
+      350.0,
+      167
+    ]
+  ],
+  "headline": "AP-160 -> KEEP_TRUSTED_REVIEW: real KMZ Terminal Port HH node but no proven DIR.BORE run terminus on boundary sheet 13; not promotable, not a phantom."
+}

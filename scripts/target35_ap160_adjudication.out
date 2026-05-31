@@ -1,0 +1,39 @@
+========================================================================================
+Target #35 — adjudicate TRUSTED-REVIEW endpoint (sheet 13, STA 359, AP-160) — READ-ONLY
+========================================================================================
+
+[E1 KMZ IDENTITY — Target #25 index]
+   AP-160 node present=True  folder='Nodes / Terminal Port Handhole'
+   latlon=[30.158369203616, -96.38432759934322]  tail_route=None  station_ft=None  print_sheet=None
+   (the 7 confirmed APs all carry station+sheet+tail; AP-160 binding shown above)
+
+[E2/E3 RUN-ROLE + LEADER VERDICT — sheet 13 geometry]
+   sheet-13 geometry-derived matchline stations = []
+   AP-160 @ STA 359: role=run_end  B_verdict=confirmed  B_comp_ap=160  reconstructed=True
+
+[E4 BOUNDARY CONTEXT]
+   matchline stations within 40 ft of STA 359 = NONE
+
+[E5 HAND RUN-ENDPOINT TABLE]
+   (13,359,160) in hand table = False
+   sheet-13 AP rows in hand table = NONE (sheet 13 carries 0 AP run-endpoints)
+
+[DECISION]
+   role=run_end  B_confirmed=True  reconstructed=True  kmz_node=True
+   geometry_promote_grade=True  in_hand_ref=False  sheet13_has_hand_ap=False  independent_binding=False
+   => KEEP_TRUSTED_REVIEW
+      reason: geometry_promote_grade_but_uncorroborated_by_hand_reference_on_boundary_sheet_and_no_independent_station_tail_binding; promotion blocked until ONE of: (a) literal-quote verification that a 'STA 3+59 ... DIR. BORE ... TERMINAL n PORT HH AP-160' run-END block exists on sheet 13 (the Agent-A method that built the hand table), OR (b) a station/sheet/tail binding for AP-160 in a verified source
+      signals: ['kmz_terminal_port_hh_node_exists', 'run_role=run_end', 'leader_confirmed', 'reconstructed', 'no_geometry_matchline_within_40ft', 'absent_from_literal_quote_verified_hand_run_endpoint_reference', 'hand_reference_lists_zero_sheet13_ap_run_endpoints', 'no_independent_station_sheet_tail_binding_in_index']
+
+[CONTROL — 7 confirmed endpoints non-regression]
+   confirmed re-validated this run: 7/7  control_ok=True
+
+[SUMMARY]
+   AP-160 (sheet 13, STA 359): KEEP_TRUSTED_REVIEW — geometry_promote_grade_but_uncorroborated_by_hand_reference_on_boundary_sheet_and_no_independent_station_tail_binding; promotion blocked until ONE of: (a) literal-quote verification that a 'STA 3+59 ... DIR. BORE ... TERMINAL n PORT HH AP-160' run-END block exists on sheet 13 (the Agent-A method that built the hand table), OR (b) a station/sheet/tail binding for AP-160 in a verified source
+   The structure (AP-160 KMZ Terminal Port HH node) is REAL and the AUTOMATED chain rates
+   it promote-grade (role=run_end, leader-confirmed, reconstructed, no nearby matchline).
+   What is unproven is CORROBORATION: it is absent from the literal-quote-verified hand
+   run-endpoint reference, which lists zero sheet-13 AP run-endpoints, and AP-160 has no
+   independent station/sheet/tail binding. Promoting on the automated signal alone — over
+   a reference that treats sheet 13 as boundary — would risk widening the placement-grade
+   table without ground confirmation (wrong-redline risk). 7 confirmed + bore_log7 untouched.

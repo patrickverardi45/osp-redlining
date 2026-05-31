@@ -198,6 +198,21 @@ route_469 (all 4 gates pass) — proven lane NOT degraded; gate calibration conf
 flag/STATE/geometry; read-only; self-test SELFTEST_OK. NEXT: adjudicate the TRUSTED-REVIEW (13,359,160) (pure
 structure-side, no bore dependency). Full: `gac/target34_bore_log57_pdf_derived_placement_candidate.md`. DO-NOT-WIDEN intact.
 
+**AP-160 TRUSTED-REVIEW ADJUDICATION (Target #35) — KEEP_TRUSTED_REVIEW; real node, promote-grade geometry, but
+uncorroborated → NOT promoted; 7 confirmed + bore_log7 untouched.** Adjudicated the lone Target #33 TRUSTED-REVIEW
+endpoint (sheet 13, STA 359, AP-160). `scripts/target35_ap160_adjudication.py` gathers 5 structure-side axes via
+Primitive A/B/C + #30 reconstruction + #25 index: **E1** AP-160 IS a real KMZ Terminal Port HH node (lat/lon
+30.158369,−96.384328) but tail/station/sheet = None; **E2** Primitive-C role=**run_end**; **E3** Primitive-B
+verdict=**confirmed** (comp_ap 160); **E4** zero geometry-derived matchlines, none within 40 ft of STA 359; **E5**
+absent from literal-quote-verified `BRENHAM_PH5_RUN_ENDPOINTS`, which lists **0 sheet-13 AP run-endpoints** (treats
+sheet 13 as boundary). So the AUTOMATED chain is promote-grade, but it's **uncorroborated by the hand reference on a
+boundary sheet AND has no independent station/tail binding** → **KEEP_TRUSTED_REVIEW** (not REJECT — structure is real;
+not PROMOTE — would widen placement-grade table on an automated-only signal = wrong-redline risk). Machine reason:
+`geometry_promote_grade_but_uncorroborated_by_hand_reference_on_boundary_sheet_and_no_independent_station_tail_binding`;
+promotion blocked until (a) literal-quote run-END verification on sheet 13 OR (b) a verified station/tail binding for
+AP-160. No promotion artifact updated (stays in `review`; `confirmed` 7 unchanged). CONTROL: 7/7 confirmed re-validated
+this run (control_ok). Self-test SELFTEST_OK. Full: `gac/target35_ap160_trusted_review_adjudication.md`. DO-NOT-WIDEN intact.
+
 ## Render disk caution
 `/data` can fill → upload/session/audit failures. If uploads fail, operator runs `df -h /data` BEFORE
 blaming code (B-WS-12 OOM fingerprint = bore-log upload 502 `<!DOCTYPE html>`). If tight: inspect/backup/
