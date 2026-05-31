@@ -273,6 +273,17 @@ untouched. Self-test SELFTEST_OK. **Advance over #38: terminus now UNIQUELY AP-1
 terminus" to "unknown which 413ft sub-path of the 741ft tail."** Full: `gac/target39_alternate_bore_drive_resolver.md`.
 NEXT (#40): apply resolver to the other 5 multi-drive route_480 logs (29/31/46/47/58). DO-NOT-WIDEN intact.
 
+**ALT-RESOLVER SWEEP over multi-drive bucket (Target #40) — 0 new placements; placeable set = exactly bore_log7,
+proven deterministically.** Applied the #39 resolver to all multi-drive route_480 logs. **29/31/46/47/58: NO real-structure
+terminus at END** (END coincides with matchline/footage, not a handhole; G1=False — can't even name a terminus).
+**bore_log57: unique terminus AP-157 but geometry-blocked** (#39). **bore_log7 CONTROL = PLACEABLE** (re-derives
+AP-163→route_469). NEW placeable = NONE; terminus uniquely resolved = bore_log57 only. The resolver places nothing past
+bore_log7 — every remaining bore needs a per-drive terminus/start-structure signal absent from all delivered files
+(#23/#24/#38), proven not assumed. Combined with DROP (#20) + main-chain (#22) blocks: **deterministically-placeable set
+from delivered files = exactly 1 bore (bore_log7, shipped default-OFF #14).** Self-test SELFTEST_OK; no placement/flag/
+STATE/geometry. Full: `gac/target40_multidrive_resolver_sweep.md`. **HARD BLOCKER (proven, alternate path exhausted):
+acquire a per-bore terminus/start-structure field (or .FS) to unblock the bucket.** DO-NOT-WIDEN intact.
+
 ## Render disk caution
 `/data` can fill → upload/session/audit failures. If uploads fail, operator runs `df -h /data` BEFORE
 blaming code (B-WS-12 OOM fingerprint = bore-log upload 502 `<!DOCTYPE html>`). If tight: inspect/backup/

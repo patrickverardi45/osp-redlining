@@ -1,0 +1,51 @@
+============================================================================================
+Target #40 — alternate resolver sweep over multi-drive route_480 logs (no .FS)
+============================================================================================
+
+[bore_log29] end=415 sheets=[10, 12] print_uncertain=False
+    cand: (none — no real-structure run-terminus within tol of END)
+    GATES G1=False G2=False G3=True G4=True
+    => HARD_BLOCKED_NO_DISCRIMINATOR
+
+[bore_log31] end=260 sheets=[10, 12] print_uncertain=False
+    cand: (none — no real-structure run-terminus within tol of END)
+    GATES G1=False G2=False G3=True G4=True
+    => HARD_BLOCKED_NO_DISCRIMINATOR
+
+[bore_log46] end=534 sheets=[10, 13, 14] print_uncertain=True
+    cand: (none — no real-structure run-terminus within tol of END)
+    GATES G1=False G2=False G3=True G4=False
+    => HARD_BLOCKED_NO_DISCRIMINATOR
+
+[bore_log47] end=494 sheets=[10, 13, 14] print_uncertain=True
+    cand: (none — no real-structure run-terminus within tol of END)
+    GATES G1=False G2=False G3=True G4=False
+    => HARD_BLOCKED_NO_DISCRIMINATOR
+
+[bore_log58] end=256 sheets=[8, 10, 13] print_uncertain=True
+    cand: (none — no real-structure run-terminus within tol of END)
+    GATES G1=False G2=False G3=False G4=False
+    => HARD_BLOCKED_NO_DISCRIMINATOR
+
+[bore_log57] end=413 sheets=[8, 10, 13] print_uncertain=True
+    cand AP-157 sheet8 STA413 score=4.0 sta_exact=1.0 tail=route_465 tail_len=741.7ft
+    GATES G1=True G2=False G3=False G4=False
+    => HARD_BLOCKED_NO_DISCRIMINATOR
+
+[bore_log7] (CONTROL) end=451 sheets=[10] print_uncertain=False
+    cand AP-163 sheet10 STA451 score=4.0 sta_exact=1.0 tail=route_469 tail_len=459.2ft
+    GATES G1=True G2=True G3=True G4=True
+    => PLACEABLE_BY_ALTERNATE_RESOLVER
+
+--------------------------------------------------------------------------------------------
+SUMMARY
+   HARD_BLOCKED_NO_DISCRIMINATOR: ['bore_log29', 'bore_log31', 'bore_log46', 'bore_log47', 'bore_log58', 'bore_log57']
+
+   NEW placeable by alternate resolver: NONE
+   terminus uniquely resolved (advance, even if placement blocked): ['bore_log57']
+   CONTROL bore_log7: PLACEABLE_BY_ALTERNATE_RESOLVER
+
+   The resolver places NOTHING beyond the proven bore_log7 (no log passes all 4 geometry gates).
+   For each multi-drive log it reports the exact evidence: either no real-structure terminus
+   near the END (the END coincides with a matchline/footage, not a handhole), or a terminus is
+   uniquely resolved but the tail-length/corridor geometry is unproven (same class as #39).

@@ -1,0 +1,111 @@
+{
+  "schema_version": "target40-multidrive-sweep-1",
+  "results": {
+    "bore_log29": {
+      "verdict": "HARD_BLOCKED_NO_DISCRIMINATOR",
+      "terminus": null,
+      "gates": {
+        "G1_terminus_unique": false,
+        "G2_length_match": false,
+        "G3_single_corridor": true,
+        "G4_print_certain": true
+      },
+      "candidates": []
+    },
+    "bore_log31": {
+      "verdict": "HARD_BLOCKED_NO_DISCRIMINATOR",
+      "terminus": null,
+      "gates": {
+        "G1_terminus_unique": false,
+        "G2_length_match": false,
+        "G3_single_corridor": true,
+        "G4_print_certain": true
+      },
+      "candidates": []
+    },
+    "bore_log46": {
+      "verdict": "HARD_BLOCKED_NO_DISCRIMINATOR",
+      "terminus": null,
+      "gates": {
+        "G1_terminus_unique": false,
+        "G2_length_match": false,
+        "G3_single_corridor": true,
+        "G4_print_certain": false
+      },
+      "candidates": []
+    },
+    "bore_log47": {
+      "verdict": "HARD_BLOCKED_NO_DISCRIMINATOR",
+      "terminus": null,
+      "gates": {
+        "G1_terminus_unique": false,
+        "G2_length_match": false,
+        "G3_single_corridor": true,
+        "G4_print_certain": false
+      },
+      "candidates": []
+    },
+    "bore_log58": {
+      "verdict": "HARD_BLOCKED_NO_DISCRIMINATOR",
+      "terminus": null,
+      "gates": {
+        "G1_terminus_unique": false,
+        "G2_length_match": false,
+        "G3_single_corridor": false,
+        "G4_print_certain": false
+      },
+      "candidates": []
+    },
+    "bore_log57": {
+      "verdict": "HARD_BLOCKED_NO_DISCRIMINATOR",
+      "terminus": 157,
+      "gates": {
+        "G1_terminus_unique": true,
+        "G2_length_match": false,
+        "G3_single_corridor": false,
+        "G4_print_certain": false
+      },
+      "candidates": [
+        {
+          "sheet": 8,
+          "sta": 413.0,
+          "kind": "ap",
+          "ap": 157,
+          "sta_exact": 1.0,
+          "has_tail_route": true,
+          "tail_route": "route_465",
+          "tail_len_ft": 741.7,
+          "score": 4.0
+        }
+      ]
+    },
+    "bore_log7": {
+      "verdict": "PLACEABLE_BY_ALTERNATE_RESOLVER",
+      "terminus": 163,
+      "gates": {
+        "G1_terminus_unique": true,
+        "G2_length_match": true,
+        "G3_single_corridor": true,
+        "G4_print_certain": true
+      },
+      "candidates": [
+        {
+          "sheet": 10,
+          "sta": 451.0,
+          "kind": "ap",
+          "ap": 163,
+          "sta_exact": 1.0,
+          "has_tail_route": true,
+          "tail_route": "route_469",
+          "tail_len_ft": 459.2,
+          "score": 4.0
+        }
+      ]
+    }
+  },
+  "new_placeable": [],
+  "terminus_uniquely_resolved": [
+    "bore_log57"
+  ],
+  "control_bore_log7": "PLACEABLE_BY_ALTERNATE_RESOLVER"
+}
