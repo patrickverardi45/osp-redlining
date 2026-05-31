@@ -5,7 +5,7 @@
 
 ## Repo state
 - Branch: `pdf-ap-route-shadow`
-- `origin/main` = `6e11eb5` (local HEAD tracks it). PDF-extraction chain shipped: Targets #18–#42 pushed. **#37 = first extractor fix: Primitive-A phantom-competitor gate → AP-164 PROMOTE_TRUSTED + AP-155 recovered; 9 confirmed endpoints, precision 1.00, recall 0.90.** **#39–#42 = bore→drive + segmentation + corpus resolvers (no .FS): deterministically-placeable set from delivered files = exactly {bore_log7}, proven across 58 bores by 5 independent methods; bore_log57 NOT_UNIQUE_COMPETING_SEGMENTS. Single unblock = a per-bore start-structure/terminus field.** #35 AP-160 KEEP_TRUSTED_REVIEW.
+- `origin/main` = `ba6c155` (local HEAD tracks it). PDF-extraction chain shipped: Targets #18–#43 pushed. **#37 = first extractor fix: Primitive-A phantom-competitor gate → AP-164 PROMOTE_TRUSTED + AP-155 recovered; 9 confirmed endpoints, precision 1.00, recall 0.90.** **#39–#42 = bore→drive + segmentation + corpus resolvers (no .FS): placeable set from delivered files = exactly {bore_log7}, proven across 58 bores; bore_log57 blocked on one field.** **#43 = default-OFF ambiguity-resolution input seam (schema + pure resolver + template + #14-style integration seam) — give it bore_log57's start structure and it deterministically places; no ground truth invented.** #35 AP-160 KEEP_TRUSTED_REVIEW.
 - Tree: tracked clean; untracked diagnostics live in `scripts/` (offline probes, *_replay.py, bore_log7_*).
 
 ## Mission (non-negotiable)
