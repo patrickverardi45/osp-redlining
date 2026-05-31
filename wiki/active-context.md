@@ -307,6 +307,19 @@ field (one field, not whole .FS; absent #23/#24). CONTROL bore_log7 PLACEABLE. S
 STATE/geometry. Full: `gac/target42_next_placeable_bore_sweep.md`. **HARD BLOCKER (exhaustively proven): no repo-local move
 yields a new deterministic placement; acquire a per-bore start-structure/terminus field to unblock.** DO-NOT-WIDEN intact.
 
+**AMBIGUITY-RESOLUTION INPUT SEAM (Target #43) — default-OFF path to place blocked bores from one office-provided field;
+no ground truth invented.** Built the seam #41/#42 named: `scripts/target43_ambiguity_resolution.py` pure resolver
+`resolve_placement_with_start(bore_id, route_id, end_structure, start_structure)` → validates start on-route → computes
+sub-route segment → length-tolerance check → default-OFF PLACEMENT_CANDIDATE or machine blocker. Schema accepts
+start_structure ∈ {kmz_node | route_offset | coordinate}; template `scripts/bore_ambiguity_overrides.sample.json`
+(bore_log57, start = PLACEHOLDER, NOT invented). **bore_log57 decision surface**: 4 mapped structures on route_465, NONE
+413ft from AP-157 → start is an UNMAPPED pit; office supplies coord/offset. **Resolver proven**: route_offset 413 →
+PLACEMENT_CANDIDATE (start 30.159037,-96.385587 → AP-157, seg 414ft); wrong-length starts (SPLICE LOC 45=742ft, Flower
+Pot=289ft) correctly BLOCK. **CONTROL bore_log7** (start SPLICE LOC 46 → AP-163) places seg 459ft, end=proven AP-163 node.
+SELFTEST_OK; ground_truth_invented=false; no flag wired/STATE/geometry/production. SEAM to wire later (separately
+authorized): default-OFF `TRUELINE_AMBIGUITY_START_OVERRIDE` mirroring the #14 isolated post-rebuild pass. Full:
+`gac/target43_ambiguity_resolution_input.md`. NEXT: office fills the start field for bore_log57; then wire the flag. DO-NOT-WIDEN intact.
+
 ## Render disk caution
 `/data` can fill → upload/session/audit failures. If uploads fail, operator runs `df -h /data` BEFORE
 blaming code (B-WS-12 OOM fingerprint = bore-log upload 502 `<!DOCTYPE html>`). If tight: inspect/backup/

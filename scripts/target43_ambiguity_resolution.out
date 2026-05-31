@@ -1,0 +1,26 @@
+============================================================================================
+Target #43 — ambiguity-resolution input seam (default-OFF) — bore_log57 + bore_log7 control
+============================================================================================
+
+[bore_log57] bore_len=413ft end=AP-157 route=route_465 (742ft total)
+   START-structure candidates on route_465 (segment = structure -> AP-157):
+     '157' [Terminal Port Handhole] off=0.0ft  seg_to_AP157=0.0ft  matches_413=False
+     'Unnamed Feature' [Flower Pot] off=288.7ft  seg_to_AP157=288.7ft  matches_413=False
+     'Unnamed Feature' [Installer HH] off=690.0ft  seg_to_AP157=690.0ft  matches_413=False
+     'SPLICE LOC 45' [Splice HH] off=741.7ft  seg_to_AP157=741.7ft  matches_413=False
+   => mapped structures whose segment to AP-157 == 413ft (+/-10%): NONE
+      (If NONE: the start is an UNMAPPED pit; office must supply its coordinate or a route_offset.)
+
+   RESOLVER DEMONSTRATION (mechanism only — values are office inputs, not invented ground truth):
+     [kmz_node 'SPLICE LOC 45'] -> BLOCKED (segment_len_741.7ft_vs_bore_413ft_outside_10pct)
+     [kmz_node Flower Pot @289 (by offset proxy)] -> BLOCKED (segment_len_288.7ft_vs_bore_413ft_outside_10pct)
+     [route_offset 413 (the open-space point #41 computed)] -> PLACEMENT_CANDIDATE start=[30.159037, -96.3855865] end=[30.1581953, -96.3859852] seg=414.3ft
+
+[bore_log7 CONTROL] bore_len=451ft start='SPLICE LOC 46' end=AP-163 route=route_469
+   => PLACEMENT_CANDIDATE start=[30.1594917, -96.3843263] end=[30.1591628, -96.3857298] seg=459.2ft
+
+[SEAM] integration (default-OFF, NOT wired this session):
+   mirror the shipped Target #14 pattern (_apply_terminal_tail_placement_override + flag
+   TRUELINE_TERMINAL_TAIL_PLACEMENT). A new default-OFF flag TRUELINE_AMBIGUITY_START_OVERRIDE
+   would, for bores present in an office-provided overrides JSON, call resolve_placement_with_start
+   in an isolated post-rebuild pass and re-render ONLY those bores. Flag-OFF => byte-identical.

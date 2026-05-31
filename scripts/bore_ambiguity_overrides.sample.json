@@ -1,0 +1,23 @@
+{
+  "_README": "TEMPLATE ONLY — office/field-crew fills `start_structure` per blocked bore. The engine draws geometry; this file only NAMES the start. Default-OFF: consumed only when TRUELINE_AMBIGUITY_START_OVERRIDE=1 (not wired this session). Values below for bore_log57 are NOT confirmed ground truth — `start_structure` is a PLACEHOLDER showing the accepted shape; the real start pit must be supplied before activation.",
+  "_schema": {
+    "bore_log_id": "string (e.g. 'bore_log57')",
+    "route_id": "string — the terminal-tail route the bore lies on (from the #39 resolver)",
+    "end_structure": {"type": "ap", "id": "string AP number — the proven terminus (#37/#39)"},
+    "start_structure": "EXACTLY ONE of: {type:'kmz_node', name:'<node>'} | {type:'route_offset', offset_ft:<number from END>} | {type:'coordinate', lat:<f>, lon:<f>}",
+    "notes": "string — office provenance"
+  },
+  "overrides": [
+    {
+      "bore_log_id": "bore_log57",
+      "route_id": "route_465",
+      "end_structure": {"type": "ap", "id": "157"},
+      "start_structure": {
+        "type": "PLACEHOLDER_OFFICE_MUST_PROVIDE",
+        "_hint": "No mapped KMZ structure on route_465 is ~413ft from AP-157 (candidates: AP-157@0, Flower Pot@289, Installer HH@690, SPLICE LOC 45@742). So the start is most likely an UNMAPPED pit at ~413ft from AP-157 along route_465. Office should supply either {type:'coordinate', lat, lon} for that pit, or confirm a {type:'kmz_node', name} if one exists in their records, or {type:'route_offset', offset_ft:<measured>}.",
+        "_engine_computed_open_space_point_at_offset_413_NOT_CONFIRMED": {"lat": 30.159037, "lon": -96.3855865}
+      },
+      "notes": "BLOCKED bore (#41/#42). Terminus AP-157 proven; start pit unknown. Fill start_structure to place."
+    }
+  ]
+}

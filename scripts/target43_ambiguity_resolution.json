@@ -1,0 +1,144 @@
+{
+  "schema_version": "target43-ambiguity-input-1",
+  "input_schema_example": {
+    "bore_log_id": "bore_log57",
+    "route_id": "route_465",
+    "end_structure": {
+      "type": "ap",
+      "id": "157"
+    },
+    "start_structure": {
+      "type": "route_offset",
+      "offset_ft": 413.0,
+      "_alt": [
+        "{type:kmz_node,name:...}",
+        "{type:coordinate,lat:..,lon:..}"
+      ]
+    },
+    "notes": "OFFICE MUST PROVIDE the real start; offset_ft here is the #41-computed open-space point, NOT confirmed ground truth"
+  },
+  "bore_log57": {
+    "bore_len_ft": 413.0,
+    "route_total_ft": 741.7,
+    "start_candidates": [
+      {
+        "node": "157",
+        "folder": "Terminal Port Handhole",
+        "offset_ft": 0.0,
+        "segment_to_end_ft": 0.0,
+        "matches_bore_len": false
+      },
+      {
+        "node": "Unnamed Feature",
+        "folder": "Flower Pot",
+        "offset_ft": 288.7,
+        "segment_to_end_ft": 288.7,
+        "matches_bore_len": false
+      },
+      {
+        "node": "Unnamed Feature",
+        "folder": "Installer HH",
+        "offset_ft": 690.0,
+        "segment_to_end_ft": 690.0,
+        "matches_bore_len": false
+      },
+      {
+        "node": "SPLICE LOC 45",
+        "folder": "Splice HH",
+        "offset_ft": 741.7,
+        "segment_to_end_ft": 741.7,
+        "matches_bore_len": false
+      }
+    ],
+    "mapped_match_to_bore_len": [],
+    "resolver_demos": [
+      {
+        "input": "kmz_node 'SPLICE LOC 45'",
+        "spec": {
+          "type": "kmz_node",
+          "name": "SPLICE LOC 45"
+        },
+        "result": {
+          "bore": "bore_log57",
+          "verdict": "BLOCKED",
+          "reason": "segment_len_741.7ft_vs_bore_413ft_outside_10pct"
+        }
+      },
+      {
+        "input": "kmz_node Flower Pot @289 (by offset proxy)",
+        "spec": {
+          "type": "route_offset",
+          "offset_ft": 288.7
+        },
+        "result": {
+          "bore": "bore_log57",
+          "verdict": "BLOCKED",
+          "reason": "segment_len_288.7ft_vs_bore_413ft_outside_10pct"
+        }
+      },
+      {
+        "input": "route_offset 413 (the open-space point #41 computed)",
+        "spec": {
+          "type": "route_offset",
+          "offset_ft": 413.0
+        },
+        "result": {
+          "bore": "bore_log57",
+          "verdict": "PLACEMENT_CANDIDATE",
+          "start_latlon": [
+            30.159037,
+            -96.3855865
+          ],
+          "end_latlon": [
+            30.1581953,
+            -96.3859852
+          ],
+          "segment_len_ft": 414.3,
+          "bore_len_ft": 413.0,
+          "route_total_ft": 741.7,
+          "segment_coords": [
+            [
+              30.15818990638903,
+              -96.38598771365729
+            ],
+            [
+              30.15824128341186,
+              -96.3858070175024
+            ],
+            [
+              30.15829266043469,
+              -96.3856263213475
+            ],
+            [
+              30.158419223637857,
+              -96.38557911334317
+            ],
+            [
+              30.1585828967304,
+              -96.38559779152267
+            ],
+            [
+              30.1587435787238,
+              -96.38563568283983
+            ],
+            [
+              30.15890260585021,
+              -96.38568420409123
+            ],
+            [
+              30.159021182611646,
+              -96.38565052000465
+            ],
+            [
+              30.15903698444399,
+              -96.38558650162669
+            ]
+          ],
+          "note": "DEFAULT-OFF candidate; geometry computed by engine from the office-provided start structure"
+        }
+      }
+    ]
+  },
+  "control_bore_log7": "PLACEMENT_CANDIDATE",
+  "ground_truth_invented": false
+}
