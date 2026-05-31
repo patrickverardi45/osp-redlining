@@ -1,0 +1,51 @@
+{
+  "schema_version": "target37-validation-1",
+  "added": [
+    [
+      9,
+      3810.0,
+      155
+    ],
+    [
+      12,
+      355.0,
+      164
+    ],
+    [
+      13,
+      245.0,
+      158
+    ]
+  ],
+  "removed": [],
+  "changed_id": [],
+  "wrong_id_raw_A": [
+    [
+      11,
+      189.0,
+      139
+    ]
+  ],
+  "baseline_7_retained": true,
+  "missing_baseline": [],
+  "promoted_in_hand": [
+    [
+      9,
+      3810.0,
+      155
+    ],
+    [
+      12,
+      355.0,
+      164
+    ]
+  ],
+  "promoted_not_in_hand": [
+    [
+      13,
+      245.0,
+      158
+    ]
+  ],
+  "safe": true
+}

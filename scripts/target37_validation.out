@@ -1,0 +1,20 @@
+========================================================================================
+Target #37 validation — legacy vs patched Primitive A (sheets 8-14)
+========================================================================================
+
+[DIFF legacy -> patched (real extractor; only _terminal_port_anchored toggled)]
+   ADDED   (None->ap) = [(9, 3810.0, 155), (12, 355.0, 164), (13, 245.0, 158)]
+   REMOVED (ap->None) = []   OK (empty)
+   CHANGED-ID (ap->different) = []   OK (none)
+      + sheet 9 STA 3810 -> AP-155   in_hand_table=True
+      + sheet 12 STA 355 -> AP-164   in_hand_table=True
+      + sheet 13 STA 245 -> AP-158   in_hand_table=False
+
+[ASSERTIONS]
+   resolutions lost (ap->None) = []   -> OK
+   changed-id (ap->different)  = []   -> OK
+   wrong-id vs hand table (raw patched-A records) = [(11, 189.0, 139)]   -> FAIL
+   baseline 7 endpoints retained = True   missing=[]
+
+   PROMOTED in hand table (true positives) = [(9, 3810.0, 155), (12, 355.0, 164)]
+   PROMOTED not in hand table (-> review tier, NOT auto-confirmed) = [(13, 245.0, 158)]

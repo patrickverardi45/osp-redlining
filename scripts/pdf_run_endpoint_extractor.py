@@ -52,6 +52,14 @@ STRUCT_KW = {"TERMINAL": "ap", "PORT": "ap", "FLOWER": "flower_pot", "SPLICE": "
 STA_TO_STRUCT_TOL = 28.0
 AP_NEAR_STRUCT_TOL = 45.0
 AP_UNIQUE_MARGIN = 1.4    # nearest AP cluster must be < this * 2nd-nearest, else ambiguous
+# Target #37: a real AP-terminal number sits ~6 px from its own TERMINAL/PORT label (measured:
+# AP-164=6.4px, AP-167=6.1px). Phantom numbers that merely COINCIDE with a valid AP id (pipe
+# dimensions / footages clustered near a FLOWER POT, e.g. a stray "110" 42px from any terminal-
+# port label, while real AP-110 is ~900 ft away) sit 40+ px from any TERMINAL/PORT. A within-
+# margin SECOND candidate only counts as a true ambiguity if it is ITSELF terminal-port-anchored;
+# a non-anchored phantom must not trigger a false abstention. 18px separates 6px reals from 42px
+# phantoms with wide margin on both sides. Only applied when terminal_port_words is provided.
+AP_TERMINAL_ANCHOR_TOL = 18.0
 
 
 def _sta_ft(txt: str) -> Optional[float]:
@@ -91,26 +99,48 @@ def _cluster_digit_numbers(chars: Sequence[Dict[str, Any]]) -> List[Tuple[str, f
     return out
 
 
+def _terminal_port_anchored(cx: float, cy: float, terminal_port_words,
+                            tol: float = AP_TERMINAL_ANCHOR_TOL) -> bool:
+    """True if a digit cluster sits within ``tol`` of any TERMINAL/PORT label — i.e. it is a
+    real AP-terminal number, not a phantom that merely coincides with a valid AP id. Pure."""
+    return any(_dist(cx, cy, w["cx"], w["cy"]) <= tol for w in (terminal_port_words or []))
+
+
 def _recover_ap(struct_x: float, struct_y: float, num_clusters, valid_ap_ids,
-                station_val: Optional[int] = None) -> Dict[str, Any]:
-    """Nearest UNIQUE valid-AP digit cluster to the structure label. Abstains on tie.
+                station_val: Optional[int] = None, terminal_port_words=None) -> Dict[str, Any]:
+    """Nearest UNIQUE valid-AP digit cluster to the structure label. Abstains on a TRUE tie.
     Excludes the station's own value (station-digits are not an AP — a collision when the
-    station number happens to lie in the AP id range, e.g. STA 1+60 vs AP-160)."""
+    station number happens to lie in the AP id range, e.g. STA 1+60 vs AP-160).
+
+    Target #37: when ``terminal_port_words`` is provided, a within-margin SECOND candidate only
+    counts as a real ambiguity if it is itself terminal-port-anchored. A non-anchored phantom
+    (a stray number near a flower pot that coincides with a valid AP id) no longer triggers a
+    false abstention. This never changes which AP is selected as ``near`` and never promotes a
+    new AP past a genuine competing terminal — it only removes phantom-induced abstentions."""
     cand = []
     for (txt, cx, cy) in num_clusters:
         if txt.isdigit() and int(txt) in valid_ap_ids and int(txt) != station_val:
-            cand.append((int(txt), _dist(struct_x, struct_y, cx, cy)))
+            cand.append((int(txt), _dist(struct_x, struct_y, cx, cy), cx, cy))
     cand.sort(key=lambda t: t[1])
     if not cand:
         return {"ap_id": None, "reason": "no_valid_ap_cluster_near_structure", "candidates": []}
     near = cand[0]
+    cand3 = [(a, round(d, 1)) for (a, d, _x, _y) in cand[:3]]
     if near[1] > AP_NEAR_STRUCT_TOL:
         return {"ap_id": None, "reason": f"nearest_ap_{near[0]}_beyond_tol_{near[1]:.0f}px",
-                "candidates": cand[:3]}
-    if len(cand) >= 2 and cand[1][1] < AP_UNIQUE_MARGIN * near[1]:
-        return {"ap_id": None, "reason": f"ambiguous_ap_{near[0]}_vs_{cand[1][0]}",
-                "candidates": cand[:3]}
-    return {"ap_id": near[0], "reason": "unique", "candidates": cand[:3], "dist_px": round(near[1], 1)}
+                "candidates": cand3}
+    # within-margin second candidate of a DIFFERENT id -> potential ambiguity
+    if len(cand) >= 2 and cand[1][0] != near[0] and cand[1][1] < AP_UNIQUE_MARGIN * near[1]:
+        comp = cand[1]
+        comp_is_real = (terminal_port_words is None
+                        or _terminal_port_anchored(comp[2], comp[3], terminal_port_words))
+        if comp_is_real:
+            return {"ap_id": None, "reason": f"ambiguous_ap_{near[0]}_vs_{comp[0]}",
+                    "candidates": cand3}
+        # phantom competitor (not terminal-port-anchored) -> ignore; near stands
+        return {"ap_id": near[0], "reason": f"unique_phantom_competitor_{comp[0]}_rejected",
+                "candidates": cand3, "dist_px": round(near[1], 1)}
+    return {"ap_id": near[0], "reason": "unique", "candidates": cand3, "dist_px": round(near[1], 1)}
 
 
 def extract_run_endpoints_from_layout(
@@ -126,6 +156,8 @@ def extract_run_endpoints_from_layout(
     C = [_c(dict(c)) for c in chars]
     sta_words = [w for w in W if STA_RE.match(str(w.get("text", "")))]
     struct_words = [w for w in W if str(w.get("text", "")).upper() in STRUCT_KW]
+    # TERMINAL/PORT labels anchor real AP-terminal numbers (Target #37 phantom-competitor reject)
+    terminal_port_words = [w for w in struct_words if STRUCT_KW[str(w["text"]).upper()] == "ap"]
     num_clusters = _cluster_digit_numbers(C)
 
     seen: Dict[Tuple[float, str, Optional[int]], Dict[str, Any]] = {}
@@ -150,7 +182,7 @@ def extract_run_endpoints_from_layout(
         conf = "medium"
         if stype == "ap":
             ap_ev = _recover_ap(st_word["cx"], st_word["cy"], num_clusters, valid,
-                                station_val=int(station))
+                                station_val=int(station), terminal_port_words=terminal_port_words)
             ap_id = ap_ev.get("ap_id")
             conf = "high" if (ap_id is not None and st_d <= 20 and ap_ev.get("reason") == "unique") else \
                    ("low" if ap_id is None else "medium")
@@ -273,13 +305,32 @@ def _selftest() -> None:
     # determinism
     recs2 = extract_run_endpoints_from_layout(sheet=10, words=words, chars=chars, valid_ap_ids=[163, 157])
     assert recs == recs2
-    # abstain when two valid APs equidistant from the PORT label (cx~115, cy~117):
-    # 163 to the left and 157 to the right, both ~26px away -> ambiguous.
-    chars_amb = ([{"text": d, "x0": 78 + i * 6, "x1": 84 + i * 6, "top": 121, "bottom": 131} for i, d in enumerate("163")]
-                 + [{"text": d, "x0": 134 + i * 6, "x1": 140 + i * 6, "top": 121, "bottom": 131} for i, d in enumerate("157")])
+    # TRUE TIE: two valid APs symmetric about the PORT label (cx~115,cy~117), BOTH terminal-port-
+    # anchored (~15px, well within AP_TERMINAL_ANCHOR_TOL) and equidistant -> must still abstain.
+    chars_amb = ([{"text": d, "x0": 93 + i * 5, "x1": 98 + i * 5, "top": 113, "bottom": 123} for i, d in enumerate("163")]
+                 + [{"text": d, "x0": 123 + i * 5, "x1": 128 + i * 5, "top": 113, "bottom": 123} for i, d in enumerate("157")])
     amb = extract_run_endpoints_from_layout(sheet=10, words=words, chars=chars_amb, valid_ap_ids=[163, 157])
     assert amb and amb[0]["ap_id"] is None and "ambiguous" in amb[0]["evidence"]["ap_recovery"]["reason"], amb
-    print("SELFTEST_OK: deterministic, validates AP, rejects noise, abstains on tie.")
+
+    # Target #37 PHANTOM-COMPETITOR REJECTION (the real AP-164 case): the matched PORT sits ~30px
+    # from the AP-164 cluster (which is itself anchored to a TERMINAL label 12px away); a phantom
+    # '110' sits ~38px from the PORT near NO terminal-port label -> within the 1.4x distance margin
+    # but not anchored -> must NOT block; AP-164 recovered.
+    words_ph = [
+        {"text": "3+55", "x0": 105, "x1": 125, "top": 95, "bottom": 105},
+        {"text": "PORT", "x0": 100, "x1": 130, "top": 117, "bottom": 127},      # matched (22px from STA)
+        {"text": "TERMINAL", "x0": 140, "x1": 175, "top": 117, "bottom": 127},  # anchors AP-164
+    ]
+    chars_ph = ([{"text": d, "x0": 138 + i * 5, "x1": 143 + i * 5, "top": 117, "bottom": 127} for i, d in enumerate("164")]
+                + [{"text": d, "x0": 108 + i * 5, "x1": 113 + i * 5, "top": 155, "bottom": 165} for i, d in enumerate("110")])
+    ph = extract_run_endpoints_from_layout(sheet=12, words=words_ph, chars=chars_ph, valid_ap_ids=[164, 110, 167])
+    assert ph and ph[0]["ap_id"] == 164, ph
+    assert "phantom_competitor" in ph[0]["evidence"]["ap_recovery"]["reason"], ph
+    # ...but if the SAME '110' were terminal-port-anchored (a real adjacent terminal), still abstain.
+    words_ph2 = words_ph + [{"text": "TERMINAL", "x0": 100, "x1": 131, "top": 155, "bottom": 165}]
+    ph2 = extract_run_endpoints_from_layout(sheet=12, words=words_ph2, chars=chars_ph, valid_ap_ids=[164, 110, 167])
+    assert ph2 and ph2[0]["ap_id"] is None and "ambiguous" in ph2[0]["evidence"]["ap_recovery"]["reason"], ph2
+    print("SELFTEST_OK: deterministic, validates AP, rejects noise, abstains on true tie, rejects phantom competitor.")
 
 
 if __name__ == "__main__":

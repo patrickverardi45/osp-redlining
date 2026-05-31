@@ -3,26 +3,28 @@ Target #33 — cleaned trusted endpoint table + placement readiness (read-only)
 ========================================================================================
 
 [CLEANED GRADE vs BRENHAM_PH5_RUN_ENDPOINTS]
-   TRUSTED-CONFIRMED (7) = [(8, 366.0, 154), (8, 387.0, 156), (8, 413.0, 157), (10, 140.0, 165), (10, 451.0, 163), (11, 189.0, 168), (12, 350.0, 167)]
+   TRUSTED-CONFIRMED (9) = [(8, 366.0, 154), (8, 387.0, 156), (8, 413.0, 157), (9, 3810.0, 155), (10, 140.0, 165), (10, 451.0, 163), (11, 189.0, 168), (12, 350.0, 167), (12, 355.0, 164)]
    WRONG IDs (0) = []
-   MISSES (3) = [(9, 3810.0, 155), (10, 136.0, 166), (12, 355.0, 164)]
-   TRUSTED-REVIEW (geom-valid, not in ref) = [(13, 359.0, 160)]
+   MISSES (1) = [(10, 136.0, 166)]
+   TRUSTED-REVIEW (geom-valid, not in ref) = [(13, 245.0, 158), (13, 359.0, 160)]
    EXCLUDED (4):
       (s13,160,AP151) -> no_terminal_port_splice_phrase
       (s13,389,AP166) -> not_corroborated_by_structure_anchored_reconstruction
       (s13,390,AP167) -> not_corroborated_by_structure_anchored_reconstruction
       (s13,398,AP162) -> not_corroborated_by_structure_anchored_reconstruction
-   PRECISION(confirmed)=1.00  RECALL=0.70  wrong-id=OK(0)
+   PRECISION(confirmed)=1.00  RECALL=0.90  wrong-id=OK(0)
    sheet-13/14 false APs removed = 4 (was 5 in Target #32)
 
 [TARGET #25 INDEX — lat/lon/route readiness for the 7 confirmed APs]
    sheet8 STA 366 -> AP-154: latlon=[30.15778810928553, -96.38710064239635] tail_route=route_461 geometry_ready=True
    sheet8 STA 387 -> AP-156: latlon=[30.15826948031435, -96.38622123890774] tail_route=route_467 geometry_ready=True
    sheet8 STA 413 -> AP-157: latlon=[30.15819526755925, -96.38598520451443] tail_route=route_465 geometry_ready=True
+   sheet9 STA 3810 -> AP-155: latlon=[30.158841148571, -96.38640497022526] tail_route=None geometry_ready=True
    sheet10 STA 140 -> AP-165: latlon=[30.15967902440125, -96.38513198137325] tail_route=route_470 geometry_ready=True
    sheet10 STA 451 -> AP-163: latlon=[30.15916282765615, -96.38572984005854] tail_route=route_469 geometry_ready=True
    sheet11 STA 189 -> AP-168: latlon=[30.15963424722056, -96.38376092016645] tail_route=route_472 geometry_ready=True
    sheet12 STA 350 -> AP-167: latlon=[30.16040142594407, -96.3846357727055] tail_route=route_473 geometry_ready=True
+   sheet12 STA 355 -> AP-164: latlon=[30.16021357886112, -96.38546055197757] tail_route=route_468 geometry_ready=True
 
 [PLACEMENT READINESS — bore logs whose (print, end-station) match a confirmed PDF endpoint]
    bore_log57 (end 413, prints [8, 10, 13]): PLACEMENT_READY_CANDIDATE -> [(8, 413.0, 157)]  AP-157 latlon=[30.15819526755925, -96.38598520451443]

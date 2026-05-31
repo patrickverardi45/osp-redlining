@@ -17,6 +17,11 @@
       157
     ],
     [
+      9,
+      3810.0,
+      155
+    ],
+    [
       10,
       140.0,
       165
@@ -35,9 +40,20 @@
       12,
       350.0,
       167
+    ],
+    [
+      12,
+      355.0,
+      164
     ]
   ],
   "review": [
+    {
+      "sheet": 13,
+      "sta": 245.0,
+      "ap": 158,
+      "reason": "geom_valid_but_absent_from_reference_pending_adjudication"
+    },
     {
       "sheet": 13,
       "sta": 359.0,
@@ -106,6 +122,17 @@
       "geometry_ready": true
     },
     {
+      "sheet": 9,
+      "sta": 3810.0,
+      "ap": 155,
+      "latlon": [
+        30.158841148571,
+        -96.38640497022526
+      ],
+      "tail_route": null,
+      "geometry_ready": true
+    },
+    {
       "sheet": 10,
       "sta": 140.0,
       "ap": 165,
@@ -147,6 +174,17 @@
         -96.3846357727055
       ],
       "tail_route": "route_473",
+      "geometry_ready": true
+    },
+    {
+      "sheet": 12,
+      "sta": 355.0,
+      "ap": 164,
+      "latlon": [
+        30.16021357886112,
+        -96.38546055197757
+      ],
+      "tail_route": "route_468",
       "geometry_ready": true
     }
   ],

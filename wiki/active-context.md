@@ -227,6 +227,22 @@ recall honestly 0.70. CONTROL: AP-167@350 re-validated confirmed (control_ok). S
 `gac/target36_next_pdf_endpoint_quality_gate.md`. NEXT (when re-authorized): focused Primitive-A abstention diagnosis at
 STA 355 → would lift AP-164 to confirmed + recall 0.80, validated vs the 7. DO-NOT-WIDEN intact.
 
+**PRIMITIVE-A STA355 FIX → AP-164 PROMOTED, RECALL 0.70→0.90 (Target #37) — first extractor code fix; precision 1.00,
+0 wrong-id, baseline 7 + bore_log7 intact.** Root-caused #36's AP-164 miss: Primitive A abstained on a PHANTOM competitor
+— a stray "110" digit cluster (coincides with a valid AP id, sits 42px from any TERMINAL/PORT label near a FLOWER POT;
+real AP-110 node is ~900ft south) fell inside A's 1.4× distance margin → false `ambiguous_164_vs_110`. FIX in
+[scripts/pdf_run_endpoint_extractor.py](scripts/pdf_run_endpoint_extractor.py) `_recover_ap`: a within-margin competitor
+only blocks if itself terminal-port-anchored (≤18px of a TERMINAL/PORT word; real APs sit ~6px). New helper
+`_terminal_port_anchored`; call-site passes TERMINAL/PORT words; legacy-exact when None. **Precision-safe (proven by
+`scripts/target37_validation.py` legacy-vs-patched diff over sheets 8-14): ADDED None→ap only = {(9,3810,155)✓hand,
+(12,355,164)✓hand, (13,245,158)→review}; REMOVED=[]; CHANGED-ID=[]; baseline 7 retained.** #33 grade now: **9
+TRUSTED-CONFIRMED** (7 + AP-155 + AP-164), WRONG-ID 0, **precision 1.00, recall 0.90** (was 0.70); review = AP-158@245 +
+AP-160@359. **AP-164 = PROMOTE_TRUSTED**; AP-155 bonus TP; AP-158 new review. Placement block UNCHANGED (bore_log7→AP-163
+ready, bore_log57→AP-157 candidate); the 2 new endpoints add NO new bore match → recall up, zero wrong-redline exposure.
+Extractor is scripts/-only (backend imports none — verified); no flag/STATE/geometry/placement/test touched. Selftest
+extended (phantom-reject + true-tie) SELFTEST_OK. Full: `gac/target37_primitive_a_sta355_recovery.md`. NEXT: bore→drive
+binding for bore_log57 (the #34 placement blocker). DO-NOT-WIDEN intact; (10,136,166) AP-166 glyph floor still out of scope.
+
 ## Render disk caution
 `/data` can fill → upload/session/audit failures. If uploads fail, operator runs `df -h /data` BEFORE
 blaming code (B-WS-12 OOM fingerprint = bore-log upload 502 `<!DOCTYPE html>`). If tight: inspect/backup/
