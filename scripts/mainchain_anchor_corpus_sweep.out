@@ -1,0 +1,16 @@
+==============================================================================
+Target #22 continuation — high-station anchor corpus sweep (4000-5950 ft)
+==============================================================================
+
+[BRENHAM PH5 - 18-02-2026.pdf]  exists=True  size=1486463
+   pages=4  pages_with_high_STA(4000-5950)=0  high_STA_pages_also_naming_AP/SPLICE=0
+
+[BRENHAM_PHASE_5_New_report_2026-03-23_1774300147.pdf]  exists=True  size=9159894
+   pages=80  pages_with_high_STA(4000-5950)=0  high_STA_pages_also_naming_AP/SPLICE=0
+
+[RESULT]
+   ZERO pages carry a high-range STA (4000-5950) co-located with a named AP/SPLICE.
+   => NO main-chain high-station anchor in either unchecked PDF.
+   Target #22 verdict CONFIRMED + HARDENED: the station<->geometry anchor is
+   ABSENT across ALL provided Brenham sources (3 PDFs + KMZ); no .FS sheet exists.
+   bore_log16/43 stay BLOCKED (data-absence, not extraction). DO-NOT-WIDEN intact.

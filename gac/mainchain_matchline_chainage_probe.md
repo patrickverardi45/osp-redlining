@@ -109,6 +109,23 @@ backbone without an anchor + direction.
 - No code helper falls out cleanly: a shadow would abstain on 100% of inputs (no anchor to
   resolve), so none is shipped this target — consistent with the Target #20 outcome.
 
+## 8b. Corpus-sweep hardening (continuation, `mainchain_anchor_corpus_sweep.py`)
+
+To upgrade "anchor absent" from a *local* claim to a *corpus-wide* one, the two Brenham
+PDFs NOT used by the matchline graph were swept for the exact missing edge — a `NN+NN`
+station in **4000–5950 ft** co-located on a page with a named `AP-NNN` / `SPLICE`:
+
+| PDF | pages | pages w/ high STA (4000–5950) | high-STA pages also naming AP/SPLICE |
+|---|---|---|---|
+| `BRENHAM PH5 - 18-02-2026.pdf` (3 extra plan sheets) | 4 | 0 | 0 |
+| `BRENHAM_PHASE_5_New_report_…03-23.pdf` (Fieldwire punch-list) | 80 | 0 | 0 |
+
+**ZERO co-location candidates.** No `.FS`/fiber-schematic/drive-decomposition file exists
+anywhere in the raw intake (`find` over the whole `TrueLine-Wiki` tree). So the
+station↔geometry anchor is **absent across ALL provided Brenham sources** (3 PDFs + KMZ),
+confirming this is a **data-absence** block, not an extraction gap. Verdict unchanged
+(PARTIAL graph / BLOCKED logs), now corpus-hardened.
+
 ## 8. Files read
 - [backend/app/core/brenham_plan_sheet_graph.py](backend/app/core/brenham_plan_sheet_graph.py)
   (matchline network — read, not changed).
