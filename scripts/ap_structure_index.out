@@ -1,0 +1,25 @@
+==============================================================================
+Target #25 — AP / structure-index shadow (read-only; nothing placed)
+==============================================================================
+schema=ap-structure-index-1  AP universe=64
+
+[SOURCE COVERAGE]
+  AP -> .FS page (Fieldwire)      : 63/64
+  AP -> station (plan run-end)    : 10/64
+  AP -> lat/lon (KMZ node)        : 64/64
+  AP -> terminal-tail route       : 48/64
+  geometry-anchor-ready (latlon)  : 64/64
+  ALL FOUR fields present         : 8/64 -> [154, 156, 157, 164, 165, 166, 167, 168]
+
+[GAP PROFILE] APs by which fields they have:
+  39 : ('fieldwire_fs', 'kmz_node', 'kmz_tail') APs
+  15 : ('fieldwire_fs', 'kmz_node') APs
+  8 : ('fieldwire_fs', 'kmz_node', 'kmz_tail', 'plan_run_endpoint') APs
+  1 : ('fieldwire_fs', 'kmz_node', 'plan_run_endpoint') APs
+  1 : ('kmz_node', 'kmz_tail', 'plan_run_endpoint') APs
+
+[SAMPLE RECORDS]
+  AP-154: {"ap": 154, "fs_page": 8, "wp_page": null, "station_ft": 366.0, "print_sheet": 8, "latlon": [30.15778810928553, -96.38710064239635], "kmz_feature_id": "point_564", "kmz_folder": "Nodes / Terminal Port Handhole", "tail_route": "route_461", "coverage": {"fs": true, "station": true, "latlon": true, "tail": true}, "sources": ["fieldwire_fs", "plan_run_endpoint", "kmz_node", "kmz_tail"], "geometry_anchor_ready": true, "complete_all_fields": true}
+  AP-157: {"ap": 157, "fs_page": 8, "wp_page": null, "station_ft": 413.0, "print_sheet": 8, "latlon": [30.15819526755925, -96.38598520451443], "kmz_feature_id": "point_567", "kmz_folder": "Nodes / Terminal Port Handhole", "tail_route": "route_465", "coverage": {"fs": true, "station": true, "latlon": true, "tail": true}, "sources": ["fieldwire_fs", "plan_run_endpoint", "kmz_node", "kmz_tail"], "geometry_anchor_ready": true, "complete_all_fields": true}
+  AP-168: {"ap": 168, "fs_page": 11, "wp_page": null, "station_ft": 189.0, "print_sheet": 11, "latlon": [30.15963424722056, -96.38376092016645], "kmz_feature_id": "point_576", "kmz_folder": "Nodes / Terminal Port Handhole", "tail_route": "route_472", "coverage": {"fs": true, "station": true, "latlon": true, "tail": true}, "sources": ["fieldwire_fs", "plan_run_endpoint", "kmz_node", "kmz_tail"], "geometry_anchor_ready": true, "complete_all_fields": true}
+  AP-155: {"ap": 155, "fs_page": 9, "wp_page": null, "station_ft": 3810.0, "print_sheet": 9, "latlon": [30.158841148571, -96.38640497022526], "kmz_feature_id": "point_568", "kmz_folder": "Nodes / Terminal Port Handhole", "tail_route": null, "coverage": {"fs": true, "station": true, "latlon": true, "tail": false}, "sources": ["fieldwire_fs", "plan_run_endpoint", "kmz_node"], "geometry_anchor_ready": true, "complete_all_fields": false}

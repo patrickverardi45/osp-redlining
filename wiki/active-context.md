@@ -80,6 +80,15 @@ structure lineage (AP/.FS/.WP/SCID) share NO join key in ANY file** — the sing
 0/13 blocked logs gain an extractable relationship. No code target extracts these from current files. Full:
 `gac/target24_existing_corpus_artifact_hunt.md`. DO-NOT-WIDEN intact.
 
+**AP/STRUCTURE-INDEX SHADOW (Target #25) — BUILT, read-only, placement-free.** Pre-joined the structure-SIDE facts
+we DO have into a deterministic reusable per-AP index (`scripts/ap_structure_index.py` pure helper +
+`scripts/ap_structure_index.json` artifact; isolated in scripts/, no engine import, no flag). Coverage over **64 APs**:
+lat/lon **64/64** (every AP geometry-anchor-ready), `.FS` page 63/64, terminal-tail route 48/64, station 10/64, all-four
+**8/64** (154/156/157/164/165/166/167/168). Places NOTHING and makes no bore↔structure claim (Target #24 invariant
+respected) — it's the catcher so the instant ONE bore→AP/structure clue arrives, that bore resolves to lat/lon (+tail
++station+.FS) with zero re-mining. Self-test `python scripts/ap_structure_index.py selftest` → SELFTEST_OK. Full:
+`gac/target25_structure_index_shadow.md`. Next unlock still gated on the single bore→AP edge. DO-NOT-WIDEN intact.
+
 ## Render disk caution
 `/data` can fill → upload/session/audit failures. If uploads fail, operator runs `df -h /data` BEFORE
 blaming code (B-WS-12 OOM fingerprint = bore-log upload 502 `<!DOCTYPE html>`). If tight: inspect/backup/

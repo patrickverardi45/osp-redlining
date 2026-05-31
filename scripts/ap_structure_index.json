@@ -1,0 +1,1727 @@
+{
+  "schema_version": "ap-structure-index-1",
+  "ap_count": 64,
+  "aps": {
+    "105": {
+      "ap": 105,
+      "fs_page": 1,
+      "wp_page": null,
+      "station_ft": null,
+      "print_sheet": null,
+      "latlon": [
+        30.1539053447231,
+        -96.38227981031856
+      ],
+      "kmz_feature_id": "point_557",
+      "kmz_folder": "Nodes / Terminal Port Handhole",
+      "tail_route": "route_452",
+      "coverage": {
+        "fs": true,
+        "station": false,
+        "latlon": true,
+        "tail": true
+      },
+      "sources": [
+        "fieldwire_fs",
+        "kmz_node",
+        "kmz_tail"
+      ],
+      "geometry_anchor_ready": true,
+      "complete_all_fields": false
+    },
+    "106": {
+      "ap": 106,
+      "fs_page": 2,
+      "wp_page": null,
+      "station_ft": null,
+      "print_sheet": null,
+      "latlon": [
+        30.15370341560109,
+        -96.38377029598809
+      ],
+      "kmz_feature_id": "point_533",
+      "kmz_folder": "Nodes / Terminal Port Handhole",
+      "tail_route": "route_451",
+      "coverage": {
+        "fs": true,
+        "station": false,
+        "latlon": true,
+        "tail": true
+      },
+      "sources": [
+        "fieldwire_fs",
+        "kmz_node",
+        "kmz_tail"
+      ],
+      "geometry_anchor_ready": true,
+      "complete_all_fields": false
+    },
+    "107": {
+      "ap": 107,
+      "fs_page": 2,
+      "wp_page": null,
+      "station_ft": null,
+      "print_sheet": null,
+      "latlon": [
+        30.1535445464986,
+        -96.38377431930161
+      ],
+      "kmz_feature_id": "point_532",
+      "kmz_folder": "Nodes / Terminal Port Handhole",
+      "tail_route": null,
+      "coverage": {
+        "fs": true,
+        "station": false,
+        "latlon": true,
+        "tail": false
+      },
+      "sources": [
+        "fieldwire_fs",
+        "kmz_node"
+      ],
+      "geometry_anchor_ready": true,
+      "complete_all_fields": false
+    },
+    "108": {
+      "ap": 108,
+      "fs_page": 3,
+      "wp_page": null,
+      "station_ft": null,
+      "print_sheet": null,
+      "latlon": [
+        30.15329662678539,
+        -96.38485245898207
+      ],
+      "kmz_feature_id": "point_527",
+      "kmz_folder": "Nodes / Terminal Port Handhole",
+      "tail_route": "route_450",
+      "coverage": {
+        "fs": true,
+        "station": false,
+        "latlon": true,
+        "tail": true
+      },
+      "sources": [
+        "fieldwire_fs",
+        "kmz_node",
+        "kmz_tail"
+      ],
+      "geometry_anchor_ready": true,
+      "complete_all_fields": false
+    },
+    "109": {
+      "ap": 109,
+      "fs_page": 23,
+      "wp_page": null,
+      "station_ft": null,
+      "print_sheet": null,
+      "latlon": [
+        30.15249062926458,
+        -96.38463384201987
+      ],
+      "kmz_feature_id": "point_526",
+      "kmz_folder": "Nodes / Terminal Port Handhole",
+      "tail_route": null,
+      "coverage": {
+        "fs": true,
+        "station": false,
+        "latlon": true,
+        "tail": false
+      },
+      "sources": [
+        "fieldwire_fs",
+        "kmz_node"
+      ],
+      "geometry_anchor_ready": true,
+      "complete_all_fields": false
+    },
+    "110": {
+      "ap": 110,
+      "fs_page": 29,
+      "wp_page": null,
+      "station_ft": null,
+      "print_sheet": null,
+      "latlon": [
+        30.15266805430207,
+        -96.38387880018217
+      ],
+      "kmz_feature_id": "point_529",
+      "kmz_folder": "Nodes / Terminal Port Handhole",
+      "tail_route": "route_430",
+      "coverage": {
+        "fs": true,
+        "station": false,
+        "latlon": true,
+        "tail": true
+      },
+      "sources": [
+        "fieldwire_fs",
+        "kmz_node",
+        "kmz_tail"
+      ],
+      "geometry_anchor_ready": true,
+      "complete_all_fields": false
+    },
+    "111": {
+      "ap": 111,
+      "fs_page": 23,
+      "wp_page": null,
+      "station_ft": null,
+      "print_sheet": null,
+      "latlon": [
+        30.15229812853612,
+        -96.38487979085315
+      ],
+      "kmz_feature_id": "point_525",
+      "kmz_folder": "Nodes / Terminal Port Handhole",
+      "tail_route": null,
+      "coverage": {
+        "fs": true,
+        "station": false,
+        "latlon": true,
+        "tail": false
+      },
+      "sources": [
+        "fieldwire_fs",
+        "kmz_node"
+      ],
+      "geometry_anchor_ready": true,
+      "complete_all_fields": false
+    },
+    "112": {
+      "ap": 112,
+      "fs_page": 29,
+      "wp_page": null,
+      "station_ft": null,
+      "print_sheet": null,
+      "latlon": [
+        30.15253585528485,
+        -96.38385734251005
+      ],
+      "kmz_feature_id": "point_528",
+      "kmz_folder": "Nodes / Terminal Port Handhole",
+      "tail_route": "route_429",
+      "coverage": {
+        "fs": true,
+        "station": false,
+        "latlon": true,
+        "tail": true
+      },
+      "sources": [
+        "fieldwire_fs",
+        "kmz_node",
+        "kmz_tail"
+      ],
+      "geometry_anchor_ready": true,
+      "complete_all_fields": false
+    },
+    "113": {
+      "ap": 113,
+      "fs_page": 23,
+      "wp_page": null,
+      "station_ft": null,
+      "print_sheet": null,
+      "latlon": [
+        30.15217271256103,
+        -96.38596440690615
+      ],
+      "kmz_feature_id": "point_522",
+      "kmz_folder": "Nodes / Terminal Port Handhole",
+      "tail_route": "route_426",
+      "coverage": {
+        "fs": true,
+        "station": false,
+        "latlon": true,
+        "tail": true
+      },
+      "sources": [
+        "fieldwire_fs",
+        "kmz_node",
+        "kmz_tail"
+      ],
+      "geometry_anchor_ready": true,
+      "complete_all_fields": false
+    },
+    "114": {
+      "ap": 114,
+      "fs_page": 3,
+      "wp_page": null,
+      "station_ft": null,
+      "print_sheet": null,
+      "latlon": [
+        30.15295356181743,
+        -96.38621921676257
+      ],
+      "kmz_feature_id": "point_524",
+      "kmz_folder": "Nodes / Terminal Port Handhole",
+      "tail_route": "route_428",
+      "coverage": {
+        "fs": true,
+        "station": false,
+        "latlon": true,
+        "tail": true
+      },
+      "sources": [
+        "fieldwire_fs",
+        "kmz_node",
+        "kmz_tail"
+      ],
+      "geometry_anchor_ready": true,
+      "complete_all_fields": false
+    },
+    "115": {
+      "ap": 115,
+      "fs_page": 24,
+      "wp_page": null,
+      "station_ft": null,
+      "print_sheet": null,
+      "latlon": [
+        30.15149668680101,
+        -96.38460654887419
+      ],
+      "kmz_feature_id": "point_516",
+      "kmz_folder": "Nodes / Terminal Port Handhole",
+      "tail_route": null,
+      "coverage": {
+        "fs": true,
+        "station": false,
+        "latlon": true,
+        "tail": false
+      },
+      "sources": [
+        "fieldwire_fs",
+        "kmz_node"
+      ],
+      "geometry_anchor_ready": true,
+      "complete_all_fields": false
+    },
+    "116": {
+      "ap": 116,
+      "fs_page": 25,
+      "wp_page": null,
+      "station_ft": null,
+      "print_sheet": null,
+      "latlon": [
+        30.15179386506001,
+        -96.38341602453359
+      ],
+      "kmz_feature_id": "point_518",
+      "kmz_folder": "Nodes / Terminal Port Handhole",
+      "tail_route": "route_424",
+      "coverage": {
+        "fs": true,
+        "station": false,
+        "latlon": true,
+        "tail": true
+      },
+      "sources": [
+        "fieldwire_fs",
+        "kmz_node",
+        "kmz_tail"
+      ],
+      "geometry_anchor_ready": true,
+      "complete_all_fields": false
+    },
+    "117": {
+      "ap": 117,
+      "fs_page": 24,
+      "wp_page": null,
+      "station_ft": null,
+      "print_sheet": null,
+      "latlon": [
+        30.15148650494222,
+        -96.38403677607634
+      ],
+      "kmz_feature_id": "point_517",
+      "kmz_folder": "Nodes / Terminal Port Handhole",
+      "tail_route": null,
+      "coverage": {
+        "fs": true,
+        "station": false,
+        "latlon": true,
+        "tail": false
+      },
+      "sources": [
+        "fieldwire_fs",
+        "kmz_node"
+      ],
+      "geometry_anchor_ready": true,
+      "complete_all_fields": false
+    },
+    "118": {
+      "ap": 118,
+      "fs_page": 25,
+      "wp_page": null,
+      "station_ft": null,
+      "print_sheet": null,
+      "latlon": [
+        30.15171622023263,
+        -96.38309038885234
+      ],
+      "kmz_feature_id": "point_519",
+      "kmz_folder": "Nodes / Terminal Port Handhole",
+      "tail_route": "route_425",
+      "coverage": {
+        "fs": true,
+        "station": false,
+        "latlon": true,
+        "tail": true
+      },
+      "sources": [
+        "fieldwire_fs",
+        "kmz_node",
+        "kmz_tail"
+      ],
+      "geometry_anchor_ready": true,
+      "complete_all_fields": false
+    },
+    "119": {
+      "ap": 119,
+      "fs_page": 24,
+      "wp_page": null,
+      "station_ft": null,
+      "print_sheet": null,
+      "latlon": [
+        30.15134343227809,
+        -96.38521725249042
+      ],
+      "kmz_feature_id": "point_515",
+      "kmz_folder": "Nodes / Terminal Port Handhole",
+      "tail_route": "route_423",
+      "coverage": {
+        "fs": true,
+        "station": false,
+        "latlon": true,
+        "tail": true
+      },
+      "sources": [
+        "fieldwire_fs",
+        "kmz_node",
+        "kmz_tail"
+      ],
+      "geometry_anchor_ready": true,
+      "complete_all_fields": false
+    },
+    "120": {
+      "ap": 120,
+      "fs_page": 23,
+      "wp_page": null,
+      "station_ft": null,
+      "print_sheet": null,
+      "latlon": [
+        30.15142462322611,
+        -96.38614289680136
+      ],
+      "kmz_feature_id": "point_514",
+      "kmz_folder": "Nodes / Terminal Port Handhole",
+      "tail_route": null,
+      "coverage": {
+        "fs": true,
+        "station": false,
+        "latlon": true,
+        "tail": false
+      },
+      "sources": [
+        "fieldwire_fs",
+        "kmz_node"
+      ],
+      "geometry_anchor_ready": true,
+      "complete_all_fields": false
+    },
+    "121": {
+      "ap": 121,
+      "fs_page": 3,
+      "wp_page": null,
+      "station_ft": null,
+      "print_sheet": null,
+      "latlon": [
+        30.15286542941408,
+        -96.38660947817424
+      ],
+      "kmz_feature_id": "point_523",
+      "kmz_folder": "Nodes / Terminal Port Handhole",
+      "tail_route": "route_427",
+      "coverage": {
+        "fs": true,
+        "station": false,
+        "latlon": true,
+        "tail": true
+      },
+      "sources": [
+        "fieldwire_fs",
+        "kmz_node",
+        "kmz_tail"
+      ],
+      "geometry_anchor_ready": true,
+      "complete_all_fields": false
+    },
+    "122": {
+      "ap": 122,
+      "fs_page": 25,
+      "wp_page": null,
+      "station_ft": null,
+      "print_sheet": null,
+      "latlon": [
+        30.15218985257622,
+        -96.38231986975089
+      ],
+      "kmz_feature_id": "point_550",
+      "kmz_folder": "Nodes / Terminal Port Handhole",
+      "tail_route": null,
+      "coverage": {
+        "fs": true,
+        "station": false,
+        "latlon": true,
+        "tail": false
+      },
+      "sources": [
+        "fieldwire_fs",
+        "kmz_node"
+      ],
+      "geometry_anchor_ready": true,
+      "complete_all_fields": false
+    },
+    "123": {
+      "ap": 123,
+      "fs_page": 29,
+      "wp_page": null,
+      "station_ft": null,
+      "print_sheet": null,
+      "latlon": [
+        30.15263009775938,
+        -96.38234106911841
+      ],
+      "kmz_feature_id": "point_551",
+      "kmz_folder": "Nodes / Terminal Port Handhole",
+      "tail_route": "route_442",
+      "coverage": {
+        "fs": true,
+        "station": false,
+        "latlon": true,
+        "tail": true
+      },
+      "sources": [
+        "fieldwire_fs",
+        "kmz_node",
+        "kmz_tail"
+      ],
+      "geometry_anchor_ready": true,
+      "complete_all_fields": false
+    },
+    "124": {
+      "ap": 124,
+      "fs_page": 29,
+      "wp_page": null,
+      "station_ft": null,
+      "print_sheet": null,
+      "latlon": [
+        30.15272054965127,
+        -96.38251004828635
+      ],
+      "kmz_feature_id": "point_552",
+      "kmz_folder": "Nodes / Terminal Port Handhole",
+      "tail_route": "route_443",
+      "coverage": {
+        "fs": true,
+        "station": false,
+        "latlon": true,
+        "tail": true
+      },
+      "sources": [
+        "fieldwire_fs",
+        "kmz_node",
+        "kmz_tail"
+      ],
+      "geometry_anchor_ready": true,
+      "complete_all_fields": false
+    },
+    "125": {
+      "ap": 125,
+      "fs_page": 25,
+      "wp_page": null,
+      "station_ft": null,
+      "print_sheet": null,
+      "latlon": [
+        30.15163245214285,
+        -96.38191453250217
+      ],
+      "kmz_feature_id": "point_545",
+      "kmz_folder": "Nodes / Terminal Port Handhole",
+      "tail_route": "route_444",
+      "coverage": {
+        "fs": true,
+        "station": false,
+        "latlon": true,
+        "tail": true
+      },
+      "sources": [
+        "fieldwire_fs",
+        "kmz_node",
+        "kmz_tail"
+      ],
+      "geometry_anchor_ready": true,
+      "complete_all_fields": false
+    },
+    "126": {
+      "ap": 126,
+      "fs_page": 25,
+      "wp_page": null,
+      "station_ft": null,
+      "print_sheet": null,
+      "latlon": [
+        30.15155970420665,
+        -96.38159549028991
+      ],
+      "kmz_feature_id": "point_546",
+      "kmz_folder": "Nodes / Terminal Port Handhole",
+      "tail_route": "route_446",
+      "coverage": {
+        "fs": true,
+        "station": false,
+        "latlon": true,
+        "tail": true
+      },
+      "sources": [
+        "fieldwire_fs",
+        "kmz_node",
+        "kmz_tail"
+      ],
+      "geometry_anchor_ready": true,
+      "complete_all_fields": false
+    },
+    "127": {
+      "ap": 127,
+      "fs_page": 27,
+      "wp_page": null,
+      "station_ft": null,
+      "print_sheet": null,
+      "latlon": [
+        30.15209798899857,
+        -96.38124811209545
+      ],
+      "kmz_feature_id": "point_553",
+      "kmz_folder": "Nodes / Terminal Port Handhole",
+      "tail_route": null,
+      "coverage": {
+        "fs": true,
+        "station": false,
+        "latlon": true,
+        "tail": false
+      },
+      "sources": [
+        "fieldwire_fs",
+        "kmz_node"
+      ],
+      "geometry_anchor_ready": true,
+      "complete_all_fields": false
+    },
+    "128": {
+      "ap": 128,
+      "fs_page": 27,
+      "wp_page": null,
+      "station_ft": null,
+      "print_sheet": null,
+      "latlon": [
+        30.15235242286392,
+        -96.3808578044963
+      ],
+      "kmz_feature_id": "point_554",
+      "kmz_folder": "Nodes / Terminal Port Handhole",
+      "tail_route": "route_447",
+      "coverage": {
+        "fs": true,
+        "station": false,
+        "latlon": true,
+        "tail": true
+      },
+      "sources": [
+        "fieldwire_fs",
+        "kmz_node",
+        "kmz_tail"
+      ],
+      "geometry_anchor_ready": true,
+      "complete_all_fields": false
+    },
+    "129": {
+      "ap": 129,
+      "fs_page": 28,
+      "wp_page": null,
+      "station_ft": null,
+      "print_sheet": null,
+      "latlon": [
+        30.1530689673025,
+        -96.38108713336707
+      ],
+      "kmz_feature_id": "point_555",
+      "kmz_folder": "Nodes / Terminal Port Handhole",
+      "tail_route": "route_448",
+      "coverage": {
+        "fs": true,
+        "station": false,
+        "latlon": true,
+        "tail": true
+      },
+      "sources": [
+        "fieldwire_fs",
+        "kmz_node",
+        "kmz_tail"
+      ],
+      "geometry_anchor_ready": true,
+      "complete_all_fields": false
+    },
+    "130": {
+      "ap": 130,
+      "fs_page": 28,
+      "wp_page": null,
+      "station_ft": null,
+      "print_sheet": null,
+      "latlon": [
+        30.15322783717109,
+        -96.38106165238143
+      ],
+      "kmz_feature_id": "point_556",
+      "kmz_folder": "Nodes / Terminal Port Handhole",
+      "tail_route": "route_449",
+      "coverage": {
+        "fs": true,
+        "station": false,
+        "latlon": true,
+        "tail": true
+      },
+      "sources": [
+        "fieldwire_fs",
+        "kmz_node",
+        "kmz_tail"
+      ],
+      "geometry_anchor_ready": true,
+      "complete_all_fields": false
+    },
+    "131": {
+      "ap": 131,
+      "fs_page": 28,
+      "wp_page": null,
+      "station_ft": null,
+      "print_sheet": null,
+      "latlon": [
+        30.15294370598448,
+        -96.37994300321574
+      ],
+      "kmz_feature_id": "point_559",
+      "kmz_folder": "Nodes / Terminal Port Handhole",
+      "tail_route": "route_456",
+      "coverage": {
+        "fs": true,
+        "station": false,
+        "latlon": true,
+        "tail": true
+      },
+      "sources": [
+        "fieldwire_fs",
+        "kmz_node",
+        "kmz_tail"
+      ],
+      "geometry_anchor_ready": true,
+      "complete_all_fields": false
+    },
+    "132": {
+      "ap": 132,
+      "fs_page": 27,
+      "wp_page": null,
+      "station_ft": null,
+      "print_sheet": null,
+      "latlon": [
+        30.15241973605567,
+        -96.3799394106534
+      ],
+      "kmz_feature_id": "point_558",
+      "kmz_folder": "Nodes / Terminal Port Handhole",
+      "tail_route": "route_454",
+      "coverage": {
+        "fs": true,
+        "station": false,
+        "latlon": true,
+        "tail": true
+      },
+      "sources": [
+        "fieldwire_fs",
+        "kmz_node",
+        "kmz_tail"
+      ],
+      "geometry_anchor_ready": true,
+      "complete_all_fields": false
+    },
+    "133": {
+      "ap": 133,
+      "fs_page": 26,
+      "wp_page": null,
+      "station_ft": null,
+      "print_sheet": null,
+      "latlon": [
+        30.15174245806407,
+        -96.37971855441144
+      ],
+      "kmz_feature_id": "point_548",
+      "kmz_folder": "Nodes / Terminal Port Handhole",
+      "tail_route": "route_455",
+      "coverage": {
+        "fs": true,
+        "station": false,
+        "latlon": true,
+        "tail": true
+      },
+      "sources": [
+        "fieldwire_fs",
+        "kmz_node",
+        "kmz_tail"
+      ],
+      "geometry_anchor_ready": true,
+      "complete_all_fields": false
+    },
+    "134": {
+      "ap": 134,
+      "fs_page": 26,
+      "wp_page": null,
+      "station_ft": null,
+      "print_sheet": null,
+      "latlon": [
+        30.15170824836526,
+        -96.37955225745252
+      ],
+      "kmz_feature_id": "point_549",
+      "kmz_folder": "Nodes / Terminal Port Handhole",
+      "tail_route": null,
+      "coverage": {
+        "fs": true,
+        "station": false,
+        "latlon": true,
+        "tail": false
+      },
+      "sources": [
+        "fieldwire_fs",
+        "kmz_node"
+      ],
+      "geometry_anchor_ready": true,
+      "complete_all_fields": false
+    },
+    "135": {
+      "ap": 135,
+      "fs_page": 26,
+      "wp_page": null,
+      "station_ft": null,
+      "print_sheet": null,
+      "latlon": [
+        30.15129251260224,
+        -96.38016380110791
+      ],
+      "kmz_feature_id": "point_547",
+      "kmz_folder": "Nodes / Terminal Port Handhole",
+      "tail_route": "route_453",
+      "coverage": {
+        "fs": true,
+        "station": false,
+        "latlon": true,
+        "tail": true
+      },
+      "sources": [
+        "fieldwire_fs",
+        "kmz_node",
+        "kmz_tail"
+      ],
+      "geometry_anchor_ready": true,
+      "complete_all_fields": false
+    },
+    "136": {
+      "ap": 136,
+      "fs_page": 4,
+      "wp_page": null,
+      "station_ft": null,
+      "print_sheet": null,
+      "latlon": [
+        30.15404253318179,
+        -96.38565796187955
+      ],
+      "kmz_feature_id": "point_530",
+      "kmz_folder": "Nodes / Terminal Port Handhole",
+      "tail_route": "route_431",
+      "coverage": {
+        "fs": true,
+        "station": false,
+        "latlon": true,
+        "tail": true
+      },
+      "sources": [
+        "fieldwire_fs",
+        "kmz_node",
+        "kmz_tail"
+      ],
+      "geometry_anchor_ready": true,
+      "complete_all_fields": false
+    },
+    "137": {
+      "ap": 137,
+      "fs_page": 5,
+      "wp_page": null,
+      "station_ft": null,
+      "print_sheet": null,
+      "latlon": [
+        30.15550414943054,
+        -96.3856648555275
+      ],
+      "kmz_feature_id": "point_540",
+      "kmz_folder": "Nodes / Terminal Port Handhole",
+      "tail_route": "route_438",
+      "coverage": {
+        "fs": true,
+        "station": false,
+        "latlon": true,
+        "tail": true
+      },
+      "sources": [
+        "fieldwire_fs",
+        "kmz_node",
+        "kmz_tail"
+      ],
+      "geometry_anchor_ready": true,
+      "complete_all_fields": false
+    },
+    "138": {
+      "ap": 138,
+      "fs_page": 5,
+      "wp_page": null,
+      "station_ft": null,
+      "print_sheet": null,
+      "latlon": [
+        30.15552154352469,
+        -96.38549855856857
+      ],
+      "kmz_feature_id": "point_541",
+      "kmz_folder": "Nodes / Terminal Port Handhole",
+      "tail_route": "route_439",
+      "coverage": {
+        "fs": true,
+        "station": false,
+        "latlon": true,
+        "tail": true
+      },
+      "sources": [
+        "fieldwire_fs",
+        "kmz_node",
+        "kmz_tail"
+      ],
+      "geometry_anchor_ready": true,
+      "complete_all_fields": false
+    },
+    "139": {
+      "ap": 139,
+      "fs_page": 21,
+      "wp_page": null,
+      "station_ft": null,
+      "print_sheet": null,
+      "latlon": [
+        30.15451322351288,
+        -96.38451883240873
+      ],
+      "kmz_feature_id": "point_531",
+      "kmz_folder": "Nodes / Terminal Port Handhole",
+      "tail_route": null,
+      "coverage": {
+        "fs": true,
+        "station": false,
+        "latlon": true,
+        "tail": false
+      },
+      "sources": [
+        "fieldwire_fs",
+        "kmz_node"
+      ],
+      "geometry_anchor_ready": true,
+      "complete_all_fields": false
+    },
+    "140": {
+      "ap": 140,
+      "fs_page": 21,
+      "wp_page": null,
+      "station_ft": null,
+      "print_sheet": null,
+      "latlon": [
+        30.15460992688985,
+        -96.38399510836582
+      ],
+      "kmz_feature_id": "point_534",
+      "kmz_folder": "Nodes / Terminal Port Handhole",
+      "tail_route": "route_436",
+      "coverage": {
+        "fs": true,
+        "station": false,
+        "latlon": true,
+        "tail": true
+      },
+      "sources": [
+        "fieldwire_fs",
+        "kmz_node",
+        "kmz_tail"
+      ],
+      "geometry_anchor_ready": true,
+      "complete_all_fields": false
+    },
+    "141": {
+      "ap": 141,
+      "fs_page": 17,
+      "wp_page": null,
+      "station_ft": null,
+      "print_sheet": null,
+      "latlon": [
+        30.1549929141346,
+        -96.38450936088205
+      ],
+      "kmz_feature_id": "point_539",
+      "kmz_folder": "Nodes / Terminal Port Handhole",
+      "tail_route": "route_437",
+      "coverage": {
+        "fs": true,
+        "station": false,
+        "latlon": true,
+        "tail": true
+      },
+      "sources": [
+        "fieldwire_fs",
+        "kmz_node",
+        "kmz_tail"
+      ],
+      "geometry_anchor_ready": true,
+      "complete_all_fields": false
+    },
+    "142": {
+      "ap": 142,
+      "fs_page": 17,
+      "wp_page": null,
+      "station_ft": null,
+      "print_sheet": null,
+      "latlon": [
+        30.15583001622246,
+        -96.38467073591256
+      ],
+      "kmz_feature_id": "point_543",
+      "kmz_folder": "Nodes / Terminal Port Handhole",
+      "tail_route": "route_440",
+      "coverage": {
+        "fs": true,
+        "station": false,
+        "latlon": true,
+        "tail": true
+      },
+      "sources": [
+        "fieldwire_fs",
+        "kmz_node",
+        "kmz_tail"
+      ],
+      "geometry_anchor_ready": true,
+      "complete_all_fields": false
+    },
+    "143": {
+      "ap": 143,
+      "fs_page": 17,
+      "wp_page": null,
+      "station_ft": null,
+      "print_sheet": null,
+      "latlon": [
+        30.15559004768168,
+        -96.3844354794238
+      ],
+      "kmz_feature_id": "point_542",
+      "kmz_folder": "Nodes / Terminal Port Handhole",
+      "tail_route": null,
+      "coverage": {
+        "fs": true,
+        "station": false,
+        "latlon": true,
+        "tail": false
+      },
+      "sources": [
+        "fieldwire_fs",
+        "kmz_node"
+      ],
+      "geometry_anchor_ready": true,
+      "complete_all_fields": false
+    },
+    "144": {
+      "ap": 144,
+      "fs_page": 17,
+      "wp_page": null,
+      "station_ft": null,
+      "print_sheet": null,
+      "latlon": [
+        30.15583093851824,
+        -96.38351154300474
+      ],
+      "kmz_feature_id": "point_544",
+      "kmz_folder": "Nodes / Terminal Port Handhole",
+      "tail_route": "route_441",
+      "coverage": {
+        "fs": true,
+        "station": false,
+        "latlon": true,
+        "tail": true
+      },
+      "sources": [
+        "fieldwire_fs",
+        "kmz_node",
+        "kmz_tail"
+      ],
+      "geometry_anchor_ready": true,
+      "complete_all_fields": false
+    },
+    "145": {
+      "ap": 145,
+      "fs_page": 18,
+      "wp_page": null,
+      "station_ft": null,
+      "print_sheet": null,
+      "latlon": [
+        30.15601317958405,
+        -96.38268149362965
+      ],
+      "kmz_feature_id": "point_560",
+      "kmz_folder": "Nodes / Terminal Port Handhole",
+      "tail_route": "route_459",
+      "coverage": {
+        "fs": true,
+        "station": false,
+        "latlon": true,
+        "tail": true
+      },
+      "sources": [
+        "fieldwire_fs",
+        "kmz_node",
+        "kmz_tail"
+      ],
+      "geometry_anchor_ready": true,
+      "complete_all_fields": false
+    },
+    "146": {
+      "ap": 146,
+      "fs_page": 18,
+      "wp_page": null,
+      "station_ft": null,
+      "print_sheet": null,
+      "latlon": [
+        30.15564012210233,
+        -96.38218254800444
+      ],
+      "kmz_feature_id": "point_561",
+      "kmz_folder": "Nodes / Terminal Port Handhole",
+      "tail_route": "route_457",
+      "coverage": {
+        "fs": true,
+        "station": false,
+        "latlon": true,
+        "tail": true
+      },
+      "sources": [
+        "fieldwire_fs",
+        "kmz_node",
+        "kmz_tail"
+      ],
+      "geometry_anchor_ready": true,
+      "complete_all_fields": false
+    },
+    "147": {
+      "ap": 147,
+      "fs_page": 18,
+      "wp_page": null,
+      "station_ft": null,
+      "print_sheet": null,
+      "latlon": [
+        30.15570284491642,
+        -96.38205534282336
+      ],
+      "kmz_feature_id": "point_562",
+      "kmz_folder": "Nodes / Terminal Port Handhole",
+      "tail_route": "route_458",
+      "coverage": {
+        "fs": true,
+        "station": false,
+        "latlon": true,
+        "tail": true
+      },
+      "sources": [
+        "fieldwire_fs",
+        "kmz_node",
+        "kmz_tail"
+      ],
+      "geometry_anchor_ready": true,
+      "complete_all_fields": false
+    },
+    "148": {
+      "ap": 148,
+      "fs_page": 19,
+      "wp_page": null,
+      "station_ft": null,
+      "print_sheet": null,
+      "latlon": [
+        30.15692381753637,
+        -96.37988215104744
+      ],
+      "kmz_feature_id": "point_563",
+      "kmz_folder": "Nodes / Terminal Port Handhole",
+      "tail_route": "route_460",
+      "coverage": {
+        "fs": true,
+        "station": false,
+        "latlon": true,
+        "tail": true
+      },
+      "sources": [
+        "fieldwire_fs",
+        "kmz_node",
+        "kmz_tail"
+      ],
+      "geometry_anchor_ready": true,
+      "complete_all_fields": false
+    },
+    "149": {
+      "ap": 149,
+      "fs_page": 7,
+      "wp_page": null,
+      "station_ft": null,
+      "print_sheet": null,
+      "latlon": [
+        30.1565895160489,
+        -96.38652115409909
+      ],
+      "kmz_feature_id": "point_537",
+      "kmz_folder": "Nodes / Terminal Port Handhole",
+      "tail_route": "route_435",
+      "coverage": {
+        "fs": true,
+        "station": false,
+        "latlon": true,
+        "tail": true
+      },
+      "sources": [
+        "fieldwire_fs",
+        "kmz_node",
+        "kmz_tail"
+      ],
+      "geometry_anchor_ready": true,
+      "complete_all_fields": false
+    },
+    "150": {
+      "ap": 150,
+      "fs_page": 7,
+      "wp_page": null,
+      "station_ft": null,
+      "print_sheet": null,
+      "latlon": [
+        30.15664865530559,
+        -96.38704016154347
+      ],
+      "kmz_feature_id": "point_536",
+      "kmz_folder": "Nodes / Terminal Port Handhole",
+      "tail_route": "route_434",
+      "coverage": {
+        "fs": true,
+        "station": false,
+        "latlon": true,
+        "tail": true
+      },
+      "sources": [
+        "fieldwire_fs",
+        "kmz_node",
+        "kmz_tail"
+      ],
+      "geometry_anchor_ready": true,
+      "complete_all_fields": false
+    },
+    "151": {
+      "ap": 151,
+      "fs_page": 7,
+      "wp_page": null,
+      "station_ft": null,
+      "print_sheet": null,
+      "latlon": [
+        30.15669353629989,
+        -96.38754681689005
+      ],
+      "kmz_feature_id": "point_535",
+      "kmz_folder": "Nodes / Terminal Port Handhole",
+      "tail_route": "route_432",
+      "coverage": {
+        "fs": true,
+        "station": false,
+        "latlon": true,
+        "tail": true
+      },
+      "sources": [
+        "fieldwire_fs",
+        "kmz_node",
+        "kmz_tail"
+      ],
+      "geometry_anchor_ready": true,
+      "complete_all_fields": false
+    },
+    "152": {
+      "ap": 152,
+      "fs_page": 15,
+      "wp_page": null,
+      "station_ft": null,
+      "print_sheet": null,
+      "latlon": [
+        30.15641755292415,
+        -96.38887138718808
+      ],
+      "kmz_feature_id": "point_521",
+      "kmz_folder": "Nodes / Terminal Port Handhole",
+      "tail_route": null,
+      "coverage": {
+        "fs": true,
+        "station": false,
+        "latlon": true,
+        "tail": false
+      },
+      "sources": [
+        "fieldwire_fs",
+        "kmz_node"
+      ],
+      "geometry_anchor_ready": true,
+      "complete_all_fields": false
+    },
+    "153": {
+      "ap": 153,
+      "fs_page": 15,
+      "wp_page": null,
+      "station_ft": null,
+      "print_sheet": null,
+      "latlon": [
+        30.15616429520479,
+        -96.39000116736686
+      ],
+      "kmz_feature_id": "point_520",
+      "kmz_folder": "Nodes / Terminal Port Handhole",
+      "tail_route": "route_433",
+      "coverage": {
+        "fs": true,
+        "station": false,
+        "latlon": true,
+        "tail": true
+      },
+      "sources": [
+        "fieldwire_fs",
+        "kmz_node",
+        "kmz_tail"
+      ],
+      "geometry_anchor_ready": true,
+      "complete_all_fields": false
+    },
+    "154": {
+      "ap": 154,
+      "fs_page": 8,
+      "wp_page": null,
+      "station_ft": 366.0,
+      "print_sheet": 8,
+      "latlon": [
+        30.15778810928553,
+        -96.38710064239635
+      ],
+      "kmz_feature_id": "point_564",
+      "kmz_folder": "Nodes / Terminal Port Handhole",
+      "tail_route": "route_461",
+      "coverage": {
+        "fs": true,
+        "station": true,
+        "latlon": true,
+        "tail": true
+      },
+      "sources": [
+        "fieldwire_fs",
+        "plan_run_endpoint",
+        "kmz_node",
+        "kmz_tail"
+      ],
+      "geometry_anchor_ready": true,
+      "complete_all_fields": true
+    },
+    "155": {
+      "ap": 155,
+      "fs_page": 9,
+      "wp_page": null,
+      "station_ft": 3810.0,
+      "print_sheet": 9,
+      "latlon": [
+        30.158841148571,
+        -96.38640497022526
+      ],
+      "kmz_feature_id": "point_568",
+      "kmz_folder": "Nodes / Terminal Port Handhole",
+      "tail_route": null,
+      "coverage": {
+        "fs": true,
+        "station": true,
+        "latlon": true,
+        "tail": false
+      },
+      "sources": [
+        "fieldwire_fs",
+        "plan_run_endpoint",
+        "kmz_node"
+      ],
+      "geometry_anchor_ready": true,
+      "complete_all_fields": false
+    },
+    "156": {
+      "ap": 156,
+      "fs_page": 8,
+      "wp_page": null,
+      "station_ft": 387.0,
+      "print_sheet": 8,
+      "latlon": [
+        30.15826948031435,
+        -96.38622123890774
+      ],
+      "kmz_feature_id": "point_566",
+      "kmz_folder": "Nodes / Terminal Port Handhole",
+      "tail_route": "route_467",
+      "coverage": {
+        "fs": true,
+        "station": true,
+        "latlon": true,
+        "tail": true
+      },
+      "sources": [
+        "fieldwire_fs",
+        "plan_run_endpoint",
+        "kmz_node",
+        "kmz_tail"
+      ],
+      "geometry_anchor_ready": true,
+      "complete_all_fields": true
+    },
+    "157": {
+      "ap": 157,
+      "fs_page": 8,
+      "wp_page": null,
+      "station_ft": 413.0,
+      "print_sheet": 8,
+      "latlon": [
+        30.15819526755925,
+        -96.38598520451443
+      ],
+      "kmz_feature_id": "point_567",
+      "kmz_folder": "Nodes / Terminal Port Handhole",
+      "tail_route": "route_465",
+      "coverage": {
+        "fs": true,
+        "station": true,
+        "latlon": true,
+        "tail": true
+      },
+      "sources": [
+        "fieldwire_fs",
+        "plan_run_endpoint",
+        "kmz_node",
+        "kmz_tail"
+      ],
+      "geometry_anchor_ready": true,
+      "complete_all_fields": true
+    },
+    "158": {
+      "ap": 158,
+      "fs_page": 13,
+      "wp_page": null,
+      "station_ft": null,
+      "print_sheet": null,
+      "latlon": [
+        30.15862430927755,
+        -96.38456363373653
+      ],
+      "kmz_feature_id": "point_569",
+      "kmz_folder": "Nodes / Terminal Port Handhole",
+      "tail_route": null,
+      "coverage": {
+        "fs": true,
+        "station": false,
+        "latlon": true,
+        "tail": false
+      },
+      "sources": [
+        "fieldwire_fs",
+        "kmz_node"
+      ],
+      "geometry_anchor_ready": true,
+      "complete_all_fields": false
+    },
+    "159": {
+      "ap": 159,
+      "fs_page": 7,
+      "wp_page": null,
+      "station_ft": null,
+      "print_sheet": null,
+      "latlon": [
+        30.15751575442378,
+        -96.38581086092846
+      ],
+      "kmz_feature_id": "point_565",
+      "kmz_folder": "Nodes / Terminal Port Handhole",
+      "tail_route": "route_464",
+      "coverage": {
+        "fs": true,
+        "station": false,
+        "latlon": true,
+        "tail": true
+      },
+      "sources": [
+        "fieldwire_fs",
+        "kmz_node",
+        "kmz_tail"
+      ],
+      "geometry_anchor_ready": true,
+      "complete_all_fields": false
+    },
+    "160": {
+      "ap": 160,
+      "fs_page": 13,
+      "wp_page": null,
+      "station_ft": null,
+      "print_sheet": null,
+      "latlon": [
+        30.158369203616,
+        -96.38432759934322
+      ],
+      "kmz_feature_id": "point_571",
+      "kmz_folder": "Nodes / Terminal Port Handhole",
+      "tail_route": null,
+      "coverage": {
+        "fs": true,
+        "station": false,
+        "latlon": true,
+        "tail": false
+      },
+      "sources": [
+        "fieldwire_fs",
+        "kmz_node"
+      ],
+      "geometry_anchor_ready": true,
+      "complete_all_fields": false
+    },
+    "161": {
+      "ap": 161,
+      "fs_page": 14,
+      "wp_page": null,
+      "station_ft": null,
+      "print_sheet": null,
+      "latlon": [
+        30.1579042630711,
+        -96.38419413777535
+      ],
+      "kmz_feature_id": "point_570",
+      "kmz_folder": "Nodes / Terminal Port Handhole",
+      "tail_route": null,
+      "coverage": {
+        "fs": true,
+        "station": false,
+        "latlon": true,
+        "tail": false
+      },
+      "sources": [
+        "fieldwire_fs",
+        "kmz_node"
+      ],
+      "geometry_anchor_ready": true,
+      "complete_all_fields": false
+    },
+    "162": {
+      "ap": 162,
+      "fs_page": 7,
+      "wp_page": null,
+      "station_ft": null,
+      "print_sheet": null,
+      "latlon": [
+        30.15736732772329,
+        -96.3858537762727
+      ],
+      "kmz_feature_id": "point_538",
+      "kmz_folder": "Nodes / Terminal Port Handhole",
+      "tail_route": "route_463",
+      "coverage": {
+        "fs": true,
+        "station": false,
+        "latlon": true,
+        "tail": true
+      },
+      "sources": [
+        "fieldwire_fs",
+        "kmz_node",
+        "kmz_tail"
+      ],
+      "geometry_anchor_ready": true,
+      "complete_all_fields": false
+    },
+    "163": {
+      "ap": 163,
+      "fs_page": null,
+      "wp_page": null,
+      "station_ft": 451.0,
+      "print_sheet": 10,
+      "latlon": [
+        30.15916282765615,
+        -96.38572984005854
+      ],
+      "kmz_feature_id": "point_572",
+      "kmz_folder": "Nodes / Terminal Port Handhole",
+      "tail_route": "route_469",
+      "coverage": {
+        "fs": false,
+        "station": true,
+        "latlon": true,
+        "tail": true
+      },
+      "sources": [
+        "plan_run_endpoint",
+        "kmz_node",
+        "kmz_tail"
+      ],
+      "geometry_anchor_ready": true,
+      "complete_all_fields": false
+    },
+    "164": {
+      "ap": 164,
+      "fs_page": 12,
+      "wp_page": null,
+      "station_ft": 355.0,
+      "print_sheet": 12,
+      "latlon": [
+        30.16021357886112,
+        -96.38546055197757
+      ],
+      "kmz_feature_id": "point_574",
+      "kmz_folder": "Nodes / Terminal Port Handhole",
+      "tail_route": "route_468",
+      "coverage": {
+        "fs": true,
+        "station": true,
+        "latlon": true,
+        "tail": true
+      },
+      "sources": [
+        "fieldwire_fs",
+        "plan_run_endpoint",
+        "kmz_node",
+        "kmz_tail"
+      ],
+      "geometry_anchor_ready": true,
+      "complete_all_fields": true
+    },
+    "165": {
+      "ap": 165,
+      "fs_page": 10,
+      "wp_page": null,
+      "station_ft": 140.0,
+      "print_sheet": 10,
+      "latlon": [
+        30.15967902440125,
+        -96.38513198137325
+      ],
+      "kmz_feature_id": "point_573",
+      "kmz_folder": "Nodes / Terminal Port Handhole",
+      "tail_route": "route_470",
+      "coverage": {
+        "fs": true,
+        "station": true,
+        "latlon": true,
+        "tail": true
+      },
+      "sources": [
+        "fieldwire_fs",
+        "plan_run_endpoint",
+        "kmz_node",
+        "kmz_tail"
+      ],
+      "geometry_anchor_ready": true,
+      "complete_all_fields": true
+    },
+    "166": {
+      "ap": 166,
+      "fs_page": 10,
+      "wp_page": null,
+      "station_ft": 136.0,
+      "print_sheet": 10,
+      "latlon": [
+        30.1598042565086,
+        -96.38460895061534
+      ],
+      "kmz_feature_id": "point_575",
+      "kmz_folder": "Nodes / Terminal Port Handhole",
+      "tail_route": "route_471",
+      "coverage": {
+        "fs": true,
+        "station": true,
+        "latlon": true,
+        "tail": true
+      },
+      "sources": [
+        "fieldwire_fs",
+        "plan_run_endpoint",
+        "kmz_node",
+        "kmz_tail"
+      ],
+      "geometry_anchor_ready": true,
+      "complete_all_fields": true
+    },
+    "167": {
+      "ap": 167,
+      "fs_page": 12,
+      "wp_page": null,
+      "station_ft": 350.0,
+      "print_sheet": 12,
+      "latlon": [
+        30.16040142594407,
+        -96.3846357727055
+      ],
+      "kmz_feature_id": "point_577",
+      "kmz_folder": "Nodes / Terminal Port Handhole",
+      "tail_route": "route_473",
+      "coverage": {
+        "fs": true,
+        "station": true,
+        "latlon": true,
+        "tail": true
+      },
+      "sources": [
+        "fieldwire_fs",
+        "plan_run_endpoint",
+        "kmz_node",
+        "kmz_tail"
+      ],
+      "geometry_anchor_ready": true,
+      "complete_all_fields": true
+    },
+    "168": {
+      "ap": 168,
+      "fs_page": 11,
+      "wp_page": null,
+      "station_ft": 189.0,
+      "print_sheet": 11,
+      "latlon": [
+        30.15963424722056,
+        -96.38376092016645
+      ],
+      "kmz_feature_id": "point_576",
+      "kmz_folder": "Nodes / Terminal Port Handhole",
+      "tail_route": "route_472",
+      "coverage": {
+        "fs": true,
+        "station": true,
+        "latlon": true,
+        "tail": true
+      },
+      "sources": [
+        "fieldwire_fs",
+        "plan_run_endpoint",
+        "kmz_node",
+        "kmz_tail"
+      ],
+      "geometry_anchor_ready": true,
+      "complete_all_fields": true
+    }
+  }
+}
