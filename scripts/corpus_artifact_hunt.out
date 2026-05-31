@@ -1,0 +1,53 @@
+================================================================================
+Target #24 — existing-corpus source-artifact hunt (bore -> drive -> structure)
+================================================================================
+
+[CLASS 1] BORE LOGS (xlsx) — incl. pre-split originals
+   files inventoried = 71 (checked 71)
+   NON-STANDARD columns across ALL of them = NONE
+   => bore lineage carries ONLY station/depth/boc/date/crew/print/notes. No AP /
+      structure / drive / terminus column at source. (No join key on the bore side.)
+
+[CLASS 2] FIELDWIRE PUNCH-LIST PDF (the 9MB report) — the .FS reference home
+   present=True pages=80
+   AP->.FS register entries = 63 (a POINTER: which fiber-schematic PAGE each AP is on)
+      sample = [(105, 1), (106, 2), (107, 2), (108, 3), (109, 23), (110, 29), (111, 23), (112, 29)]
+   bore_log mentions anywhere in this PDF = 0
+   lines where an AP is co-located with a STA = 0
+   => carries AP->.FS-PAGE + AP->.WP + item/date, but NO bore_log id and (per Target #8)
+      station is never co-located with an AP in a bore-bindable way. The .FS PAGES
+      THEMSELVES (drive decomposition) are NOT in the corpus — only references to them.
+
+[CLASS 3] ROUTE-CONTEXT JSON (backend/uploads/.../brenham-phase-5.json)
+   routes = 539; per-route keys = ['coords', 'length_ft', 'name', 'point_count', 'route_id', 'route_name', 'route_role', 'source_folder']
+   structure tokens in entire JSON = {'station': 0, '\\bscid\\b': 0, '\\bflower\\b': 0, '\\bsplice\\b': 0, '\\bdrive\\b': 0, '\\.fs\\b': 0}
+   => pure geometry (route_id/name/source_folder/coords/length/role). ZERO station,
+      scid, splice, drive, or .FS fields. No bore<->structure key.
+
+[CLASS 4] DESIGN KMZ (fixture, md5-identical to design)
+   present=True. Per Target #20: House nodes carry Address+AP; Terminal Port
+   HH carry AP+Scid; FLOWER POTS carry NO id (Unnamed x158, Scid empty 157/158); drop
+   routes carry only 'Connection Type'. No station metadata anywhere (R2a: KMZ has zero
+   station anchors). => structure lineage has APs+houses, but the DROP layer is id-less
+   and nothing ties a KMZ structure to a bore-log id or a bore station.
+
+[CLASS 5] EXTRACTED GOLDEN/SIGNAL JSON FIXTURES (backend/tests/fixtures/.../brenham)
+   plan_inputs / extracted_signals / normalized_groups / rankings_input / ambiguity_*
+   => these are TrueLine's OWN derived signal outputs (revision/sheet/ambiguity lockdown
+      fixtures), not new source. They inherit the same fields; they add no external join.
+
+--------------------------------------------------------------------------------
+VERDICT — JOIN-KEY MATRIX (does this source link a BORE to its END STRUCTURE?)
+--------------------------------------------------------------------------------
+  source class            bore_id? structure_id? station<->structure? bore<->structure?
+  bore xlsx (71)            YES      NO            local only           NO
+  plan PDFs (3 sheets)      NO       YES (AP/FP)   per-drive 0+00       NO (no bore id)
+  Fieldwire punch-list      NO       YES (AP/.FS)  NO                   NO (no bore id)
+  route_catalog JSON        NO       NO            NO                   NO
+  design KMZ               NO       partial(AP)   NO                   NO
+  golden JSON fixtures      NO       NO            NO                   NO
+
+  The bore lineage (station/crew/date/print) and the structure lineage (AP/.FS/.WP/SCID)
+  share NO common key in ANY provided file. The .FS REFERENCES exist (AP->.FS page), but
+  the .FS PAGES (the drive decomposition) are absent, AND no file links a bore to an AP.
+  => RELATIONSHIP NOT FOUND in the complete existing corpus (not merely 'not in 3 PDFs').

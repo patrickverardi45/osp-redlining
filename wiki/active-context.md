@@ -70,6 +70,16 @@ excluded). Missing artifact (all 6) = the **`.FS` Fiber-Schematic / drive-decomp
 (flower-pot identity key / high-station anchor+direction / `.FS` drive-decomposition). No bucket log is provable
 from current files.** DO-NOT-WIDEN intact.
 
+**EXISTING-CORPUS HUNT (Target #24) — relationship NOT FOUND, full-inventory proof.** Reopened the "ask for files"
+conclusion and searched the COMPLETE corpus (not just 3 PDFs): 6 source classes — **71 bore xlsx** (incl. 13
+pre-split originals, all 0 non-standard columns), the **80-pg Fieldwire punch-list** (holds a **63-entry `AP→.FS`
+page register** + `AP→.WP` + item/date, but **0 bore_log mentions, 0 AP↔STA lines**; the `.FS` PAGES themselves are
+absent — only references), the **539-route context JSON** (pure geometry, 0 structure tokens), the design KMZ
+(flower pots id-less, Target #20), and TrueLine's own golden fixtures. **Bore lineage (station/crew/date/print) and
+structure lineage (AP/.FS/.WP/SCID) share NO join key in ANY file** — the single missing edge is `bore↔AP/structure`.
+0/13 blocked logs gain an extractable relationship. No code target extracts these from current files. Full:
+`gac/target24_existing_corpus_artifact_hunt.md`. DO-NOT-WIDEN intact.
+
 ## Render disk caution
 `/data` can fill → upload/session/audit failures. If uploads fail, operator runs `df -h /data` BEFORE
 blaming code (B-WS-12 OOM fingerprint = bore-log upload 502 `<!DOCTYPE html>`). If tight: inspect/backup/
