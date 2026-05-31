@@ -258,6 +258,21 @@ bore matches → recall up, 0 wrong-redline exposure. Self-test SELFTEST_OK. Ful
 **This is the FINISH-MODE hard blocker: the single unblocking artifact (.FS Fiber-Schematic) must be ACQUIRED — it exists
 (Fieldwire register references it) but was not delivered.** DO-NOT-WIDEN intact.
 
+**ALTERNATE bore→drive RESOLVER, no .FS (Target #39) — bore_log57 TERMINUS uniquely resolved to AP-157; placement still
+HARD_BLOCKED on geometry (length gap), not terminus.** Built a deterministic constraint scorer
+(`scripts/target39_alternate_bore_drive_resolver.py`) from delivered signals only (station/direction, prints→corridors,
+AP endpoint table, matchline typing, KMZ terminal-tail geometry+LENGTH, sibling segments). Terminus score = station_exact
++ is_real_structure + corridor_in_prints + has_tail_route; matchlines excluded (a bore can't end at a sheet boundary).
+**bore_log57: UNIQUE dominant terminus = AP-157** (score 4.0, exact STA 413, no competitor within margin; route_465 is the
+sole tail ending 2.1ft from AP-157). Placement gates G1 unique ✓ but **G2 length_match ✗ (route_465=741.7ft vs bore
+413ft, ratio 1.80 → bore is a SUB-SEGMENT of the tail, unknown start offset), G3 single_corridor ✗ (spans [3-9,23,24] +
+[10,12,13,14]), G4 print_certain ✗** → **HARD_BLOCKED_NO_DISCRIMINATOR**. Missing discriminator = per-drive segmentation
+OR a start-structure field OR a certain corridor-A-only print (NOT .FS-only). **CONTROL bore_log7 = PLACEABLE_BY_ALTERNATE_RESOLVER**
+(re-derives AP-163→route_469 via the independent scorer, ratio 1.02 — proven lane not degraded). No placement; 9 endpoints
+untouched. Self-test SELFTEST_OK. **Advance over #38: terminus now UNIQUELY AP-157; blocker narrowed from "unknown
+terminus" to "unknown which 413ft sub-path of the 741ft tail."** Full: `gac/target39_alternate_bore_drive_resolver.md`.
+NEXT (#40): apply resolver to the other 5 multi-drive route_480 logs (29/31/46/47/58). DO-NOT-WIDEN intact.
+
 ## Render disk caution
 `/data` can fill → upload/session/audit failures. If uploads fail, operator runs `df -h /data` BEFORE
 blaming code (B-WS-12 OOM fingerprint = bore-log upload 502 `<!DOCTYPE html>`). If tight: inspect/backup/

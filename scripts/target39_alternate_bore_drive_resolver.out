@@ -1,0 +1,37 @@
+==========================================================================================
+Target #39 — alternate bore->drive resolver (no .FS); deterministic constraint scorer
+==========================================================================================
+STA_TOL=20.0 LEN_TOL=0.15 DOMINANCE_MARGIN=0.5 EP_FT=12.0
+
+------------------------------------------------------------------------------------------
+[bore_log57]  (TARGET)  end=413  sheets=[8, 10, 13]  print_uncertain=True
+   candidate termini (scored):
+     AP-157 sheet8 STA413 score=4.0 sta_exact=1.0 tail=route_465 tail_len=741.7ft
+   dominant terminus: AP-157 (tail route_465, len 741.7ft)
+   length_ratio tail/bore = 1.8  corridors=[[3, 4, 5, 6, 7, 8, 9, 23, 24], [10, 12, 13, 14]]
+   GATES: G1_unique=True G2_len_match=False G3_single_corridor=False G4_print_certain=False
+   => HARD_BLOCKED_NO_DISCRIMINATOR
+      terminus_uniquely_resolved_but_placement_geometry_unproven: tail_len_741.7ft_vs_bore_413ft_ratio_1.80_no_length_match; multi_corridor_span_[[3, 4, 5, 6, 7, 8, 9, 23, 24], [10, 12, 13, 14]]; print_mapping_flagged_uncertain -> missing discriminator = per-drive segmentation / start-structure that fixes which sub-segment of the tail (length gap) and which corridor path the bore occupies
+
+------------------------------------------------------------------------------------------
+[bore_log7]  (CONTROL)  end=451  sheets=[10]  print_uncertain=False
+   candidate termini (scored):
+     AP-163 sheet10 STA451 score=4.0 sta_exact=1.0 tail=route_469 tail_len=459.2ft
+   dominant terminus: AP-163 (tail route_469, len 459.2ft)
+   length_ratio tail/bore = 1.02  corridors=[[10, 12, 13, 14]]
+   GATES: G1_unique=True G2_len_match=True G3_single_corridor=True G4_print_certain=True
+   => PLACEABLE_BY_ALTERNATE_RESOLVER
+      terminus_unique_and_geometry_proof_grade
+
+------------------------------------------------------------------------------------------
+SUMMARY
+   bore_log57: HARD_BLOCKED_NO_DISCRIMINATOR
+   bore_log7 (control): PLACEABLE_BY_ALTERNATE_RESOLVER  (must be PLACEABLE_BY_ALTERNATE_RESOLVER)
+
+   KEY ADVANCE over #38: the alternate resolver UNIQUELY resolves bore_log57's TERMINUS to
+   AP-157 (exact END station 413, sole real structure; matchlines excluded; route_465 is the
+   unique tail ending 2.1ft from AP-157). The remaining blocker is PLACEMENT GEOMETRY, not the
+   terminus: route_465 is 741.7ft but the bore is 413ft (ratio 1.80) -> the bore is a SUB-SEGMENT
+   of the tail with unknown start offset, and its prints span a 2nd corridor route_465 cannot
+   represent. Placing it would require assuming (a) the AP-157-end 413ft sub-segment and (b) the
+   corridor-B prints are mis-mapped -> two unprovable assumptions = wrong-redline risk. ABSTAIN.

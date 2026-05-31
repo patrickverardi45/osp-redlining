@@ -1,0 +1,120 @@
+{
+  "schema_version": "target39-alt-resolver-1",
+  "results": {
+    "bore_log57": {
+      "bore": "bore_log57",
+      "end": 413.0,
+      "sheets": [
+        8,
+        10,
+        13
+      ],
+      "print_uncertain": true,
+      "candidates": [
+        {
+          "sheet": 8,
+          "sta": 413.0,
+          "kind": "ap",
+          "ap": 157,
+          "sta_exact": 1.0,
+          "has_tail_route": true,
+          "tail_route": "route_465",
+          "tail_len_ft": 741.7,
+          "score": 4.0
+        }
+      ],
+      "dominant_terminus": {
+        "sheet": 8,
+        "sta": 413.0,
+        "kind": "ap",
+        "ap": 157,
+        "sta_exact": 1.0,
+        "has_tail_route": true,
+        "tail_route": "route_465",
+        "tail_len_ft": 741.7,
+        "score": 4.0
+      },
+      "gates": {
+        "G1_terminus_unique": true,
+        "G2_length_match": false,
+        "G3_single_corridor": false,
+        "G4_print_certain": false
+      },
+      "length_ratio_tail_over_bore": 1.8,
+      "corridors": [
+        [
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          23,
+          24
+        ],
+        [
+          10,
+          12,
+          13,
+          14
+        ]
+      ],
+      "verdict": "HARD_BLOCKED_NO_DISCRIMINATOR",
+      "reason": "terminus_uniquely_resolved_but_placement_geometry_unproven: tail_len_741.7ft_vs_bore_413ft_ratio_1.80_no_length_match; multi_corridor_span_[[3, 4, 5, 6, 7, 8, 9, 23, 24], [10, 12, 13, 14]]; print_mapping_flagged_uncertain -> missing discriminator = per-drive segmentation / start-structure that fixes which sub-segment of the tail (length gap) and which corridor path the bore occupies"
+    },
+    "bore_log7": {
+      "bore": "bore_log7",
+      "end": 451.0,
+      "sheets": [
+        10
+      ],
+      "print_uncertain": false,
+      "candidates": [
+        {
+          "sheet": 10,
+          "sta": 451.0,
+          "kind": "ap",
+          "ap": 163,
+          "sta_exact": 1.0,
+          "has_tail_route": true,
+          "tail_route": "route_469",
+          "tail_len_ft": 459.2,
+          "score": 4.0
+        }
+      ],
+      "dominant_terminus": {
+        "sheet": 10,
+        "sta": 451.0,
+        "kind": "ap",
+        "ap": 163,
+        "sta_exact": 1.0,
+        "has_tail_route": true,
+        "tail_route": "route_469",
+        "tail_len_ft": 459.2,
+        "score": 4.0
+      },
+      "gates": {
+        "G1_terminus_unique": true,
+        "G2_length_match": true,
+        "G3_single_corridor": true,
+        "G4_print_certain": true
+      },
+      "length_ratio_tail_over_bore": 1.02,
+      "corridors": [
+        [
+          10,
+          12,
+          13,
+          14
+        ]
+      ],
+      "verdict": "PLACEABLE_BY_ALTERNATE_RESOLVER",
+      "reason": "terminus_unique_and_geometry_proof_grade"
+    }
+  },
+  "bore_log57_verdict": "HARD_BLOCKED_NO_DISCRIMINATOR",
+  "bore_log57_terminus": 157,
+  "missing_discriminator": "per_drive_segmentation_or_start_structure (resolves 741-vs-413 tail length gap + corridor-B prints)",
+  "control_bore_log7": "PLACEABLE_BY_ALTERNATE_RESOLVER"
+}
