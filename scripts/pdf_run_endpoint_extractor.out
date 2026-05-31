@@ -1,0 +1,57 @@
+================================================================================
+Target #27 — PDF spatial run-endpoint extractor (read-only; nothing placed)
+================================================================================
+schema=pdf-run-endpoint-shadow-1  valid AP universe=64 (from Target #25 index)
+
+[SHEET 8] 14 run-endpoint records:
+   STA 193 -> ap         ap=None  conf=low  (struct 'PORT' @12.2px)
+   STA 234 -> flower_pot ap=None  conf=medium  (struct 'FLOWER' @22.9px)
+   STA 299 -> flower_pot ap=None  conf=medium  (struct 'FLOWER' @23.0px)
+   STA 308 -> ap         ap=110  conf=high  (struct 'PORT' @12.3px)
+   STA 366 -> ap         ap=None  conf=low  (struct 'TERMINAL' @16.3px)
+   STA 366 -> ap         ap=154  conf=high  (struct 'PORT' @14.5px)
+   STA 387 -> ap         ap=None  conf=low  (struct 'TERMINAL' @16.1px)
+   STA 387 -> ap         ap=156  conf=high  (struct 'PORT' @14.4px)
+   STA 398 -> ap         ap=None  conf=low  (struct 'PORT' @12.3px)
+   STA 413 -> ap         ap=None  conf=low  (struct 'TERMINAL' @16.1px)
+   STA 413 -> ap         ap=157  conf=high  (struct 'PORT' @14.4px)
+   STA 457 -> flower_pot ap=None  conf=medium  (struct 'FLOWER' @23.0px)
+   STA 557 -> flower_pot ap=None  conf=medium  (struct 'FLOWER' @23.0px)
+   STA 614 -> flower_pot ap=None  conf=medium  (struct 'FLOWER' @23.0px)
+
+[SHEET 10] 23 run-endpoint records:
+   STA 47 -> flower_pot ap=None  conf=high  (struct 'FLOWER' @14.6px)
+   STA 84 -> flower_pot ap=None  conf=medium  (struct 'FLOWER' @23.0px)
+   STA 92 -> flower_pot ap=None  conf=high  (struct 'FLOWER' @14.1px)
+   STA 100 -> flower_pot ap=None  conf=high  (struct 'FLOWER' @14.4px)
+   STA 135 -> flower_pot ap=None  conf=medium  (struct 'FLOWER' @22.9px)
+   STA 136 -> ap         ap=None  conf=low  (struct 'PORT' @14.5px)
+   STA 139 -> ap         ap=None  conf=low  (struct 'TERMINAL' @16.3px)
+   STA 140 -> ap         ap=None  conf=low  (struct 'TERMINAL' @16.3px)
+   STA 140 -> ap         ap=165  conf=high  (struct 'TERMINAL' @13.3px)
+   STA 160 -> ap         ap=None  conf=low  (struct 'TERMINAL' @16.0px)
+   STA 162 -> ap         ap=None  conf=low  (struct 'TERMINAL' @16.3px)
+   STA 166 -> ap         ap=None  conf=low  (struct 'TERMINAL' @16.1px)
+   STA 167 -> ap         ap=None  conf=low  (struct 'TERMINAL' @16.0px)
+   STA 184 -> flower_pot ap=None  conf=high  (struct 'FLOWER' @14.1px)
+   STA 186 -> flower_pot ap=None  conf=medium  (struct 'FLOWER' @22.9px)
+   STA 190 -> ap         ap=None  conf=low  (struct 'TERMINAL' @16.1px)
+   STA 191 -> ap         ap=None  conf=low  (struct 'TERMINAL' @16.1px)
+   STA 376 -> flower_pot ap=None  conf=high  (struct 'FLOWER' @14.6px)
+   STA 451 -> ap         ap=None  conf=low  (struct 'TERMINAL' @16.0px)
+   STA 451 -> ap         ap=163  conf=high  (struct 'TERMINAL' @13.1px)
+   STA 508 -> flower_pot ap=None  conf=medium  (struct 'FLOWER' @23.0px)
+   STA 3890 -> ap         ap=None  conf=low  (struct 'PORT' @19.5px)
+   STA 4408 -> ap         ap=None  conf=low  (struct 'TERMINAL' @27.5px)
+
+--------------------------------------------------------------------------------
+VALIDATION GATE vs BRENHAM_PH5_RUN_ENDPOINTS (sheets 8 & 10, AP rows)
+--------------------------------------------------------------------------------
+   [PASS] sheet 10 STA 451 -> AP-163
+   [PASS] sheet 8 STA 413 -> AP-157
+
+   hand AP rows (sh 8/10) = 6; auto AP rows = 6
+   REPRODUCED = [(8, 366.0, 154), (8, 387.0, 156), (8, 413.0, 157), (10, 140.0, 165), (10, 451.0, 163)]
+   MISSED     = [(10, 136.0, 166)]
+   EXTRA      = [(8, 308.0, 110)]
+   ABSTAINED (ap structure, no unique AP) = [(8, 193.0, 'nearest_ap_110_beyond_tol_184px'), (8, 366.0, 'nearest_ap_110_beyond_tol_174px'), (8, 387.0, 'nearest_ap_110_beyond_tol_49px'), (8, 398.0, 'nearest_ap_157_beyond_tol_52px'), (8, 413.0, 'nearest_ap_157_beyond_tol_52px'), (10, 136.0, 'nearest_ap_125_beyond_tol_59px'), (10, 139.0, 'nearest_ap_136_beyond_tol_235px'), (10, 140.0, 'nearest_ap_165_beyond_tol_57px'), (10, 160.0, 'nearest_ap_120_beyond_tol_78px'), (10, 162.0, 'nearest_ap_121_beyond_tol_50px'), (10, 166.0, 'nearest_ap_125_beyond_tol_135px'), (10, 167.0, 'nearest_ap_125_beyond_tol_87px'), (10, 190.0, 'nearest_ap_125_beyond_tol_154px'), (10, 191.0, 'nearest_ap_110_beyond_tol_161px'), (10, 451.0, 'nearest_ap_163_beyond_tol_109px'), (10, 3890.0, 'nearest_ap_162_beyond_tol_49px'), (10, 4408.0, 'nearest_ap_162_beyond_tol_70px')]

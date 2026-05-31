@@ -1,0 +1,994 @@
+{
+  "schema_version": "pdf-run-endpoint-shadow-1",
+  "records": [
+    {
+      "sheet": 8,
+      "station_ft": 193.0,
+      "structure_type": "ap",
+      "ap_id": null,
+      "confidence": "low",
+      "evidence": {
+        "sta_xy": [
+          494.1,
+          486.0
+        ],
+        "struct_label": "PORT",
+        "struct_dist_px": 12.2,
+        "ap_recovery": {
+          "ap_id": null,
+          "reason": "nearest_ap_110_beyond_tol_184px",
+          "candidates": [
+            [
+              110,
+              184.07941760571316
+            ],
+            [
+              154,
+              195.65924550027844
+            ],
+            [
+              152,
+              461.0298443141975
+            ]
+          ]
+        }
+      }
+    },
+    {
+      "sheet": 8,
+      "station_ft": 234.0,
+      "structure_type": "flower_pot",
+      "ap_id": null,
+      "confidence": "medium",
+      "evidence": {
+        "sta_xy": [
+          228.4,
+          308.0
+        ],
+        "struct_label": "FLOWER",
+        "struct_dist_px": 22.9,
+        "ap_recovery": null
+      }
+    },
+    {
+      "sheet": 8,
+      "station_ft": 299.0,
+      "structure_type": "flower_pot",
+      "ap_id": null,
+      "confidence": "medium",
+      "evidence": {
+        "sta_xy": [
+          122.9,
+          307.6
+        ],
+        "struct_label": "FLOWER",
+        "struct_dist_px": 23.0,
+        "ap_recovery": null
+      }
+    },
+    {
+      "sheet": 8,
+      "station_ft": 308.0,
+      "structure_type": "ap",
+      "ap_id": 110,
+      "confidence": "high",
+      "evidence": {
+        "sta_xy": [
+          1045.3,
+          172.1
+        ],
+        "struct_label": "PORT",
+        "struct_dist_px": 12.3,
+        "ap_recovery": {
+          "ap_id": 110,
+          "reason": "unique",
+          "candidates": [
+            [
+              110,
+              39.32402610538399
+            ],
+            [
+              156,
+              78.14606370773637
+            ],
+            [
+              157,
+              166.0565725451501
+            ]
+          ],
+          "dist_px": 39.3
+        }
+      }
+    },
+    {
+      "sheet": 8,
+      "station_ft": 366.0,
+      "structure_type": "ap",
+      "ap_id": null,
+      "confidence": "low",
+      "evidence": {
+        "sta_xy": [
+          526.7,
+          486.0
+        ],
+        "struct_label": "TERMINAL",
+        "struct_dist_px": 16.3,
+        "ap_recovery": {
+          "ap_id": null,
+          "reason": "nearest_ap_110_beyond_tol_174px",
+          "candidates": [
+            [
+              110,
+              173.97855043642983
+            ],
+            [
+              154,
+              197.0109428945897
+            ],
+            [
+              152,
+              446.3996870577931
+            ]
+          ]
+        }
+      }
+    },
+    {
+      "sheet": 8,
+      "station_ft": 366.0,
+      "structure_type": "ap",
+      "ap_id": 154,
+      "confidence": "high",
+      "evidence": {
+        "sta_xy": [
+          534.0,
+          284.2
+        ],
+        "struct_label": "PORT",
+        "struct_dist_px": 14.5,
+        "ap_recovery": {
+          "ap_id": 154,
+          "reason": "unique",
+          "candidates": [
+            [
+              154,
+              33.95102354882897
+            ],
+            [
+              110,
+              77.50057075890837
+            ],
+            [
+              152,
+              316.95142017447654
+            ]
+          ],
+          "dist_px": 34.0
+        }
+      }
+    },
+    {
+      "sheet": 8,
+      "station_ft": 387.0,
+      "structure_type": "ap",
+      "ap_id": null,
+      "confidence": "low",
+      "evidence": {
+        "sta_xy": [
+          1077.9,
+          172.1
+        ],
+        "struct_label": "TERMINAL",
+        "struct_dist_px": 16.1,
+        "ap_recovery": {
+          "ap_id": null,
+          "reason": "nearest_ap_110_beyond_tol_49px",
+          "candidates": [
+            [
+              110,
+              49.39037080889127
+            ],
+            [
+              156,
+              99.42432645329139
+            ],
+            [
+              157,
+              166.21798442021773
+            ]
+          ]
+        }
+      }
+    },
+    {
+      "sheet": 8,
+      "station_ft": 387.0,
+      "structure_type": "ap",
+      "ap_id": 156,
+      "confidence": "high",
+      "evidence": {
+        "sta_xy": [
+          1010.0,
+          174.8
+        ],
+        "struct_label": "PORT",
+        "struct_dist_px": 14.4,
+        "ap_recovery": {
+          "ap_id": 156,
+          "reason": "unique",
+          "candidates": [
+            [
+              156,
+              33.951023548828914
+            ],
+            [
+              110,
+              49.31301268934977
+            ],
+            [
+              157,
+              172.0436653263916
+            ]
+          ],
+          "dist_px": 34.0
+        }
+      }
+    },
+    {
+      "sheet": 8,
+      "station_ft": 398.0,
+      "structure_type": "ap",
+      "ap_id": null,
+      "confidence": "low",
+      "evidence": {
+        "sta_xy": [
+          1043.8,
+          388.4
+        ],
+        "struct_label": "PORT",
+        "struct_dist_px": 12.3,
+        "ap_recovery": {
+          "ap_id": null,
+          "reason": "nearest_ap_157_beyond_tol_52px",
+          "candidates": [
+            [
+              157,
+              51.72752533998546
+            ],
+            [
+              110,
+              178.59647399231397
+            ],
+            [
+              156,
+              221.43252621367475
+            ]
+          ]
+        }
+      }
+    },
+    {
+      "sheet": 8,
+      "station_ft": 413.0,
+      "structure_type": "ap",
+      "ap_id": null,
+      "confidence": "low",
+      "evidence": {
+        "sta_xy": [
+          1076.4,
+          388.4
+        ],
+        "struct_label": "TERMINAL",
+        "struct_dist_px": 16.1,
+        "ap_recovery": {
+          "ap_id": null,
+          "reason": "nearest_ap_157_beyond_tol_52px",
+          "candidates": [
+            [
+              157,
+              51.65078621159497
+            ],
+            [
+              110,
+              180.90927008086163
+            ],
+            [
+              156,
+              229.6719113480071
+            ]
+          ]
+        }
+      }
+    },
+    {
+      "sheet": 8,
+      "station_ft": 413.0,
+      "structure_type": "ap",
+      "ap_id": 157,
+      "confidence": "high",
+      "evidence": {
+        "sta_xy": [
+          1096.7,
+          331.7
+        ],
+        "struct_label": "PORT",
+        "struct_dist_px": 14.4,
+        "ap_recovery": {
+          "ap_id": 157,
+          "reason": "unique",
+          "candidates": [
+            [
+              157,
+              34.14486171830899
+            ],
+            [
+              110,
+              132.82068383931576
+            ],
+            [
+              156,
+              193.47560043167547
+            ]
+          ],
+          "dist_px": 34.1
+        }
+      }
+    },
+    {
+      "sheet": 8,
+      "station_ft": 457.0,
+      "structure_type": "flower_pot",
+      "ap_id": null,
+      "confidence": "medium",
+      "evidence": {
+        "sta_xy": [
+          547.0,
+          199.6
+        ],
+        "struct_label": "FLOWER",
+        "struct_dist_px": 23.0,
+        "ap_recovery": null
+      }
+    },
+    {
+      "sheet": 8,
+      "station_ft": 557.0,
+      "structure_type": "flower_pot",
+      "ap_id": null,
+      "confidence": "medium",
+      "evidence": {
+        "sta_xy": [
+          763.0,
+          189.9
+        ],
+        "struct_label": "FLOWER",
+        "struct_dist_px": 23.0,
+        "ap_recovery": null
+      }
+    },
+    {
+      "sheet": 8,
+      "station_ft": 614.0,
+      "structure_type": "flower_pot",
+      "ap_id": null,
+      "confidence": "medium",
+      "evidence": {
+        "sta_xy": [
+          811.6,
+          329.9
+        ],
+        "struct_label": "FLOWER",
+        "struct_dist_px": 23.0,
+        "ap_recovery": null
+      }
+    },
+    {
+      "sheet": 10,
+      "station_ft": 47.0,
+      "structure_type": "flower_pot",
+      "ap_id": null,
+      "confidence": "high",
+      "evidence": {
+        "sta_xy": [
+          830.3,
+          499.1
+        ],
+        "struct_label": "FLOWER",
+        "struct_dist_px": 14.6,
+        "ap_recovery": null
+      }
+    },
+    {
+      "sheet": 10,
+      "station_ft": 84.0,
+      "structure_type": "flower_pot",
+      "ap_id": null,
+      "confidence": "medium",
+      "evidence": {
+        "sta_xy": [
+          702.2,
+          508.1
+        ],
+        "struct_label": "FLOWER",
+        "struct_dist_px": 23.0,
+        "ap_recovery": null
+      }
+    },
+    {
+      "sheet": 10,
+      "station_ft": 92.0,
+      "structure_type": "flower_pot",
+      "ap_id": null,
+      "confidence": "high",
+      "evidence": {
+        "sta_xy": [
+          306.5,
+          522.9
+        ],
+        "struct_label": "FLOWER",
+        "struct_dist_px": 14.1,
+        "ap_recovery": null
+      }
+    },
+    {
+      "sheet": 10,
+      "station_ft": 100.0,
+      "structure_type": "flower_pot",
+      "ap_id": null,
+      "confidence": "high",
+      "evidence": {
+        "sta_xy": [
+          980.8,
+          221.2
+        ],
+        "struct_label": "FLOWER",
+        "struct_dist_px": 14.4,
+        "ap_recovery": null
+      }
+    },
+    {
+      "sheet": 10,
+      "station_ft": 135.0,
+      "structure_type": "flower_pot",
+      "ap_id": null,
+      "confidence": "medium",
+      "evidence": {
+        "sta_xy": [
+          732.0,
+          311.9
+        ],
+        "struct_label": "FLOWER",
+        "struct_dist_px": 22.9,
+        "ap_recovery": null
+      }
+    },
+    {
+      "sheet": 10,
+      "station_ft": 136.0,
+      "structure_type": "ap",
+      "ap_id": null,
+      "confidence": "low",
+      "evidence": {
+        "sta_xy": [
+          835.0,
+          143.1
+        ],
+        "struct_label": "PORT",
+        "struct_dist_px": 14.5,
+        "ap_recovery": {
+          "ap_id": null,
+          "reason": "nearest_ap_125_beyond_tol_59px",
+          "candidates": [
+            [
+              125,
+              58.96112804580746
+            ],
+            [
+              140,
+              148.29725505748436
+            ],
+            [
+              140,
+              153.58899626468298
+            ]
+          ]
+        }
+      }
+    },
+    {
+      "sheet": 10,
+      "station_ft": 139.0,
+      "structure_type": "ap",
+      "ap_id": null,
+      "confidence": "low",
+      "evidence": {
+        "sta_xy": [
+          1052.3,
+          271.8
+        ],
+        "struct_label": "TERMINAL",
+        "struct_dist_px": 16.3,
+        "ap_recovery": {
+          "ap_id": null,
+          "reason": "nearest_ap_136_beyond_tol_235px",
+          "candidates": [
+            [
+              136,
+              235.37398908216107
+            ],
+            [
+              125,
+              242.3203484452112
+            ],
+            [
+              136,
+              249.50408942066971
+            ]
+          ]
+        }
+      }
+    },
+    {
+      "sheet": 10,
+      "station_ft": 140.0,
+      "structure_type": "ap",
+      "ap_id": null,
+      "confidence": "low",
+      "evidence": {
+        "sta_xy": [
+          697.3,
+          227.9
+        ],
+        "struct_label": "TERMINAL",
+        "struct_dist_px": 16.3,
+        "ap_recovery": {
+          "ap_id": null,
+          "reason": "nearest_ap_165_beyond_tol_57px",
+          "candidates": [
+            [
+              165,
+              57.23793526443276
+            ],
+            [
+              135,
+              85.3547953551442
+            ],
+            [
+              110,
+              100.18894640106703
+            ]
+          ]
+        }
+      }
+    },
+    {
+      "sheet": 10,
+      "station_ft": 140.0,
+      "structure_type": "ap",
+      "ap_id": 165,
+      "confidence": "high",
+      "evidence": {
+        "sta_xy": [
+          668.7,
+          169.4
+        ],
+        "struct_label": "TERMINAL",
+        "struct_dist_px": 13.3,
+        "ap_recovery": {
+          "ap_id": 165,
+          "reason": "unique",
+          "candidates": [
+            [
+              165,
+              6.122407874360873
+            ],
+            [
+              110,
+              40.038939376589035
+            ],
+            [
+              136,
+              124.19430629121284
+            ]
+          ],
+          "dist_px": 6.1
+        }
+      }
+    },
+    {
+      "sheet": 10,
+      "station_ft": 160.0,
+      "structure_type": "ap",
+      "ap_id": null,
+      "confidence": "low",
+      "evidence": {
+        "sta_xy": [
+          133.9,
+          538.2
+        ],
+        "struct_label": "TERMINAL",
+        "struct_dist_px": 16.0,
+        "ap_recovery": {
+          "ap_id": null,
+          "reason": "nearest_ap_120_beyond_tol_78px",
+          "candidates": [
+            [
+              120,
+              78.19001349822211
+            ],
+            [
+              121,
+              177.0152408796535
+            ],
+            [
+              142,
+              202.13426258815656
+            ]
+          ]
+        }
+      }
+    },
+    {
+      "sheet": 10,
+      "station_ft": 162.0,
+      "structure_type": "ap",
+      "ap_id": null,
+      "confidence": "low",
+      "evidence": {
+        "sta_xy": [
+          349.6,
+          487.8
+        ],
+        "struct_label": "TERMINAL",
+        "struct_dist_px": 16.3,
+        "ap_recovery": {
+          "ap_id": null,
+          "reason": "nearest_ap_121_beyond_tol_50px",
+          "candidates": [
+            [
+              121,
+              49.808038557696186
+            ],
+            [
+              120,
+              155.69113008229144
+            ],
+            [
+              110,
+              173.17961632477386
+            ]
+          ]
+        }
+      }
+    },
+    {
+      "sheet": 10,
+      "station_ft": 166.0,
+      "structure_type": "ap",
+      "ap_id": null,
+      "confidence": "low",
+      "evidence": {
+        "sta_xy": [
+          865.8,
+          554.0
+        ],
+        "struct_label": "TERMINAL",
+        "struct_dist_px": 16.1,
+        "ap_recovery": {
+          "ap_id": null,
+          "reason": "nearest_ap_125_beyond_tol_135px",
+          "candidates": [
+            [
+              125,
+              134.7983811987334
+            ],
+            [
+              167,
+              205.36569576061862
+            ],
+            [
+              135,
+              282.39564340106637
+            ]
+          ]
+        }
+      }
+    },
+    {
+      "sheet": 10,
+      "station_ft": 167.0,
+      "structure_type": "ap",
+      "ap_id": null,
+      "confidence": "low",
+      "evidence": {
+        "sta_xy": [
+          650.2,
+          550.1
+        ],
+        "struct_label": "TERMINAL",
+        "struct_dist_px": 16.0,
+        "ap_recovery": {
+          "ap_id": null,
+          "reason": "nearest_ap_125_beyond_tol_87px",
+          "candidates": [
+            [
+              125,
+              86.74894108794096
+            ],
+            [
+              135,
+              266.84345488409735
+            ],
+            [
+              162,
+              298.6789077904682
+            ]
+          ]
+        }
+      }
+    },
+    {
+      "sheet": 10,
+      "station_ft": 184.0,
+      "structure_type": "flower_pot",
+      "ap_id": null,
+      "confidence": "high",
+      "evidence": {
+        "sta_xy": [
+          981.2,
+          100.6
+        ],
+        "struct_label": "FLOWER",
+        "struct_dist_px": 14.1,
+        "ap_recovery": null
+      }
+    },
+    {
+      "sheet": 10,
+      "station_ft": 186.0,
+      "structure_type": "flower_pot",
+      "ap_id": null,
+      "confidence": "medium",
+      "evidence": {
+        "sta_xy": [
+          534.0,
+          104.2
+        ],
+        "struct_label": "FLOWER",
+        "struct_dist_px": 22.9,
+        "ap_recovery": null
+      }
+    },
+    {
+      "sheet": 10,
+      "station_ft": 190.0,
+      "structure_type": "ap",
+      "ap_id": null,
+      "confidence": "low",
+      "evidence": {
+        "sta_xy": [
+          1021.7,
+          160.5
+        ],
+        "struct_label": "TERMINAL",
+        "struct_dist_px": 16.1,
+        "ap_recovery": {
+          "ap_id": null,
+          "reason": "nearest_ap_125_beyond_tol_154px",
+          "candidates": [
+            [
+              125,
+              153.9741376516895
+            ],
+            [
+              136,
+              178.14132535757722
+            ],
+            [
+              136,
+              202.19649731290534
+            ]
+          ]
+        }
+      }
+    },
+    {
+      "sheet": 10,
+      "station_ft": 191.0,
+      "structure_type": "ap",
+      "ap_id": null,
+      "confidence": "low",
+      "evidence": {
+        "sta_xy": [
+          491.8,
+          194.0
+        ],
+        "struct_label": "TERMINAL",
+        "struct_dist_px": 16.1,
+        "ap_recovery": {
+          "ap_id": null,
+          "reason": "nearest_ap_110_beyond_tol_161px",
+          "candidates": [
+            [
+              110,
+              160.79514454208328
+            ],
+            [
+              163,
+              182.79299504692258
+            ],
+            [
+              165,
+              183.04592529280603
+            ]
+          ]
+        }
+      }
+    },
+    {
+      "sheet": 10,
+      "station_ft": 376.0,
+      "structure_type": "flower_pot",
+      "ap_id": null,
+      "confidence": "high",
+      "evidence": {
+        "sta_xy": [
+          428.6,
+          312.3
+        ],
+        "struct_label": "FLOWER",
+        "struct_dist_px": 14.6,
+        "ap_recovery": null
+      }
+    },
+    {
+      "sheet": 10,
+      "station_ft": 451.0,
+      "structure_type": "ap",
+      "ap_id": null,
+      "confidence": "low",
+      "evidence": {
+        "sta_xy": [
+          447.1,
+          281.9
+        ],
+        "struct_label": "TERMINAL",
+        "struct_dist_px": 16.0,
+        "ap_recovery": {
+          "ap_id": null,
+          "reason": "nearest_ap_163_beyond_tol_109px",
+          "candidates": [
+            [
+              163,
+              109.36392836762812
+            ],
+            [
+              110,
+              158.9786253134247
+            ],
+            [
+              162,
+              212.35995546739352
+            ]
+          ]
+        }
+      }
+    },
+    {
+      "sheet": 10,
+      "station_ft": 451.0,
+      "structure_type": "ap",
+      "ap_id": 163,
+      "confidence": "high",
+      "evidence": {
+        "sta_xy": [
+          332.4,
+          286.7
+        ],
+        "struct_label": "TERMINAL",
+        "struct_dist_px": 13.1,
+        "ap_recovery": {
+          "ap_id": 163,
+          "reason": "unique",
+          "candidates": [
+            [
+              163,
+              6.122275843934616
+            ],
+            [
+              110,
+              58.02665192428079
+            ],
+            [
+              162,
+              190.12683780308137
+            ]
+          ],
+          "dist_px": 6.1
+        }
+      }
+    },
+    {
+      "sheet": 10,
+      "station_ft": 508.0,
+      "structure_type": "flower_pot",
+      "ap_id": null,
+      "confidence": "medium",
+      "evidence": {
+        "sta_xy": [
+          197.8,
+          316.6
+        ],
+        "struct_label": "FLOWER",
+        "struct_dist_px": 23.0,
+        "ap_recovery": null
+      }
+    },
+    {
+      "sheet": 10,
+      "station_ft": 3890.0,
+      "structure_type": "ap",
+      "ap_id": null,
+      "confidence": "low",
+      "evidence": {
+        "sta_xy": [
+          405.5,
+          468.0
+        ],
+        "struct_label": "PORT",
+        "struct_dist_px": 19.5,
+        "ap_recovery": {
+          "ap_id": null,
+          "reason": "nearest_ap_162_beyond_tol_49px",
+          "candidates": [
+            [
+              162,
+              48.985684581628284
+            ],
+            [
+              121,
+              109.12356403918253
+            ],
+            [
+              110,
+              189.81487887929993
+            ]
+          ]
+        }
+      }
+    },
+    {
+      "sheet": 10,
+      "station_ft": 4408.0,
+      "structure_type": "ap",
+      "ap_id": null,
+      "confidence": "low",
+      "evidence": {
+        "sta_xy": [
+          440.9,
+          468.0
+        ],
+        "struct_label": "TERMINAL",
+        "struct_dist_px": 27.5,
+        "ap_recovery": {
+          "ap_id": null,
+          "reason": "nearest_ap_162_beyond_tol_70px",
+          "candidates": [
+            [
+              162,
+              70.35182354178549
+            ],
+            [
+              121,
+              128.99357551253325
+            ],
+            [
+              110,
+              203.57258119919317
+            ]
+          ]
+        }
+      }
+    }
+  ]
+}

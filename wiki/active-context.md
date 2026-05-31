@@ -101,6 +101,17 @@ index → lat/lon + tail route_465. Multi-drive logs (29 end 415 has 0 '4+15' ca
 + char-stream AP recovery, gated by equality vs the hand table). Still placement-free. Full:
 `gac/target26_pdf_visual_relationship_extraction.md`. DO-NOT-WIDEN intact.
 
+**PDF RUN-ENDPOINT EXTRACTOR (Target #27) — Primitive A BUILT + validated.** Pure default-OFF/read-only
+`scripts/pdf_run_endpoint_extractor.py::extract_run_endpoints_from_layout` derives structure-side run endpoints from
+plan-sheet layout (positioned STA callouts → nearest structure label → unique valid-AP digit-cluster, excluding the
+station's own value, abstain on tie/beyond-tol; skip 0+00 run-starts). **Validation gate PASSES both: sheet 10 STA 451→AP-163,
+sheet 8 STA 413→AP-157.** vs hand `BRENHAM_PH5_RUN_ENDPOINTS` (sheets 8/10 AP rows): **5/6 REPRODUCED** (154/156/157/165/163),
+1 MISS (10,136,166 — abstained, needs Primitive B leader-following), 1 EXTRA (8,308,110 — candidate hand-table omission,
+flagged not asserted); 0 wrong AP ids (all uncertain cases abstain); flower-pot/splice rows typed id-less (correct).
+Self-test `… selftest` → SELFTEST_OK. Isolated in scripts/, no engine import/flag/STATE; placement-free. Output
+`scripts/pdf_run_endpoint_extractor.{json,out}`. NEXT: Primitive B (leader-line following) + MATCHLINE exclusion + extend to
+sheets 8–14, then feed the Target #25 index. Full: `gac/target27_pdf_spatial_run_endpoint_shadow.md`. DO-NOT-WIDEN intact.
+
 ## Render disk caution
 `/data` can fill → upload/session/audit failures. If uploads fail, operator runs `df -h /data` BEFORE
 blaming code (B-WS-12 OOM fingerprint = bore-log upload 502 `<!DOCTYPE html>`). If tight: inspect/backup/
