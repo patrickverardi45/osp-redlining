@@ -1,0 +1,78 @@
+================================================================================
+Target #23 — remaining route_480-bucket proof sweep (57, 29, 31, 46, 47, 58)
+================================================================================
+TOL=15.0 ft. PROVABLE gate = EXACTLY ONE named-AP run terminus within TOL on a
+print sheet (the bore_log7 mechanism). 0 -> no_run_terminus_match; >=2 -> ambiguous.
+
+[bore_log57]  prints=[8, 10, 13]  sta=0-413 (span 413, 10 rows)
+   L1 notes: ["Segment A (col1) split from bore_log24.xlsx. Source: 2026-01-13_213036 - Jimenez. NEEDS REVIEW: form DATE field reads '1/13/25' — interpreted as 2026-01-13 based on project context (Brenham PH5 active Dec 2025-Jan 2026); confirm intended year. NEEDS REVIEW: print mapping uncertain — preserved full source print '8,10,13'.", 'nan', 'nan']
+   L2 run termini within 15 ft of END 413 on sheets [8, 10, 13]:
+        all hits   = [(8, 413.0, 'ap', 157), (13, 398.0, 'matchline', None)]
+        named-AP   = [(8, 413.0, 'ap', 157)]
+   L2 matchline-graph: status=multi_corridor_span corridors=[[3, 4, 5, 6, 7, 8, 9, 23, 24], [10, 12, 13, 14]] extents={'3,4,5,6,7,8,9,23,24': (0.0, 4401.0), '10,12,13,14': (0.0, 4533.0)}
+   => BLOCKED:multi_drive_terminus_ambiguous
+      missing artifact: .FS drive-decomposition sheet (which drive/terminus this bore ends at; competing unnamed termini [(13, 398.0, 'matchline')]; END spans 2 corridors; print mapping flagged uncertain)
+
+[bore_log29]  prints=[10, 12]  sta=0-415 (span 415, 10 rows)
+   L1 notes: ['nan', 'nan', 'nan']
+   L2 run termini within 15 ft of END 415 on sheets [10, 12]:
+        all hits   = NONE
+        named-AP   = NONE
+   L2 matchline-graph: status=within_corridor corridors=[[10, 12, 13, 14]] extents={'10,12,13,14': (0.0, 4533.0)}
+   => BLOCKED:no_run_terminus_match
+      missing artifact: .FS drive-decomposition sheet (continuous multi-drive bore; END station hits no single run terminus) OR a bore-log terminus field
+
+[bore_log31]  prints=[10, 12]  sta=0-260 (span 260, 7 rows)
+   L1 notes: ['nan', 'nan', 'nan']
+   L2 run termini within 15 ft of END 260 on sheets [10, 12]:
+        all hits   = NONE
+        named-AP   = NONE
+   L2 matchline-graph: status=within_corridor corridors=[[10, 12, 13, 14]] extents={'10,12,13,14': (0.0, 4533.0)}
+   => BLOCKED:no_run_terminus_match
+      missing artifact: .FS drive-decomposition sheet (continuous multi-drive bore; END station hits no single run terminus) OR a bore-log terminus field
+
+[bore_log46]  prints=[10, 13, 14]  sta=0-534 (span 534, 12 rows)
+   L1 notes: ["Segment B (col2) split from bore_log18.xlsx. Source: 2025-12-15_214828 - Jimenez. NEEDS REVIEW: print mapping uncertain — preserved full source print '10,13,14'.", 'nan', 'nan']
+   L2 run termini within 15 ft of END 534 on sheets [10, 13, 14]:
+        all hits   = NONE
+        named-AP   = NONE
+   L2 matchline-graph: status=within_corridor corridors=[[10, 12, 13, 14]] extents={'10,12,13,14': (0.0, 4533.0)}
+   => BLOCKED:no_run_terminus_match
+      missing artifact: .FS drive-decomposition sheet (continuous multi-drive bore; END station hits no single run terminus) OR a bore-log terminus field
+
+[bore_log47]  prints=[10, 13, 14]  sta=325-494 (span 169, 5 rows)
+   L1 notes: ["Segment C (col3) split from bore_log18.xlsx. Source: 2025-12-15_214828 - Jimenez. NEEDS REVIEW: print mapping uncertain — preserved full source print '10,13,14'.", 'nan', 'nan']
+   L2 run termini within 15 ft of END 494 on sheets [10, 13, 14]:
+        all hits   = NONE
+        named-AP   = NONE
+   L2 matchline-graph: status=within_corridor corridors=[[10, 12, 13, 14]] extents={'10,12,13,14': (0.0, 4533.0)}
+   => BLOCKED:no_run_terminus_match
+      missing artifact: .FS drive-decomposition sheet (continuous multi-drive bore; END station hits no single run terminus) OR a bore-log terminus field
+
+[bore_log58]  prints=[8, 10, 13]  sta=0-256 (span 256, 6 rows)
+   L1 notes: ["Segment B (col2) split from bore_log24.xlsx. Source: 2026-01-13_213036 - Jimenez. NEEDS REVIEW: form DATE field reads '1/13/25' — interpreted as 2026-01-13; confirm year (see bore_log57). NEEDS REVIEW: print mapping uncertain — preserved full source print '8,10,13'.", 'nan', 'nan']
+   L2 run termini within 15 ft of END 256 on sheets [8, 10, 13]:
+        all hits   = NONE
+        named-AP   = NONE
+   L2 matchline-graph: status=multi_corridor_span corridors=[[3, 4, 5, 6, 7, 8, 9, 23, 24], [10, 12, 13, 14]] extents={'3,4,5,6,7,8,9,23,24': (0.0, 4401.0), '10,12,13,14': (0.0, 4533.0)}
+   => BLOCKED:no_run_terminus_match
+      missing artifact: .FS drive-decomposition sheet (continuous multi-drive bore; END station hits no single run terminus) OR a bore-log terminus field
+
+--------------------------------------------------------------------------------
+SUMMARY (deterministic verdict table)
+--------------------------------------------------------------------------------
+  log          verdict                                    graph_status
+  bore_log57   BLOCKED:multi_drive_terminus_ambiguous     multi_corridor_span
+  bore_log29   BLOCKED:no_run_terminus_match              within_corridor
+  bore_log31   BLOCKED:no_run_terminus_match              within_corridor
+  bore_log46   BLOCKED:no_run_terminus_match              within_corridor
+  bore_log47   BLOCKED:no_run_terminus_match              within_corridor
+  bore_log58   BLOCKED:no_run_terminus_match              multi_corridor_span
+
+  PROVABLE candidates: 0 -> NONE
+  BLOCKED            : 6 / 6
+
+  Cross-check: Targets #8/#9/#10 already proved no bore↔drive/AP binding key exists
+  in any provided file (xlsx has no AP/terminus column; the .FS Fiber-Schematic /
+  drive-decomposition sheet referenced by the Fieldwire register is ABSENT from the
+  3 PDFs). This sweep re-confirms that at the per-log terminus level.

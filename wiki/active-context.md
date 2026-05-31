@@ -60,6 +60,16 @@ mechanism reproduces bore_log7 (sta 451→AP-163→route_469) but finds NONE nea
 datum (or the `.FS` sheet, or a start-structure xlsx column). Full: `gac/mainchain_matchline_chainage_probe.md`.
 DO-NOT-WIDEN: bore_log16/43 abstain until an anchor arrives.
 
+**REMAINING route_480 logs (57, 29/31/46/47/58) = BLOCKED, 0/6 provable (Target #23).** bore_log57 =
+multi_drive_terminus_ambiguous (END 413 hits AP-157 sheet-8 AND a sheet-13 matchline@398; spans 2 corridors;
+print mapping flagged uncertain). bore_log29/31/46/47/58 = no_run_terminus_match (continuous multi-drive bores;
+END station hits no DIR.BORE run terminus within 15 ft; bore_log46's 534=AP-161 LABEL not a run terminus →
+excluded). Missing artifact (all 6) = the **`.FS` Fiber-Schematic / drive-decomposition sheet** (absent from all
+3 PDFs; re-confirmed by #22 sweep) OR a per-bore terminus/direction field. Full: `gac/route480_remaining_proof_sweep.md`.
+**Bucket closeout: all 14 route_480 logs classified — 1 PROVEN (bore_log7), 13 BLOCKED on 3 acquisition artifacts
+(flower-pot identity key / high-station anchor+direction / `.FS` drive-decomposition). No bucket log is provable
+from current files.** DO-NOT-WIDEN intact.
+
 ## Render disk caution
 `/data` can fill → upload/session/audit failures. If uploads fail, operator runs `df -h /data` BEFORE
 blaming code (B-WS-12 OOM fingerprint = bore-log upload 502 `<!DOCTYPE html>`). If tight: inspect/backup/
