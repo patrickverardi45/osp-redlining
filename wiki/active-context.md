@@ -32,14 +32,22 @@ uploads are actively blocked); drift into auth, UI, broad PDF interpreter, KMZ S
 near-ties, or screenshot-tooling plumbing.
 
 ## Exact next redline action
-**bore_log7 = ADJUDICATED: route_469 PROVEN from source** (PDF sheet 10 + KMZ + bore_log7.xlsx triangulate;
-route_477 is a hardcoded-print-index artifact, ≥363 ft from AP-163; no extraction gap). Full proof:
-`gac/bore_log7_route_adjudication.md`.
-- Next (operator-side, NOT this session): final-audit the proof, then flip `TRUELINE_TERMINAL_TAIL_PLACEMENT`
-  (+ `TRUELINE_TERMINUS_TYPE_SHADOW`) on Render — engine path already shipped (Target #14), no code change.
-- Next engineering lane (same deterministic method): the flower-pot DROP lane (bore_log5/30/48/50/65) —
-  prove each terminates at its flower-pot node (run→endpoint table already has the termini) and place on
-  its drop geometry, scoped + default-OFF, DO-NOT-WIDEN intact.
+**bore_log7 = ADJUDICATED + SHIPPED-as-shadow.** route_469 PROVEN from source (`gac/bore_log7_route_adjudication.md`);
+DrillPathFrame proof layer shipped default-OFF (Target #18 `93434cd`, `TRUELINE_DRILL_PATH_FRAME_SHADOW`).
+Operator-side next (NOT this session): final-audit, then flip `TRUELINE_TERMINAL_TAIL_PLACEMENT`
+(+`TRUELINE_TERMINUS_TYPE_SHADOW`) on Render — engine path already shipped, no code change.
+
+**DROP lane (bore_log5/30/48/50/65) = BLOCKED, fully diagnosed (Target #20).** No unique drop-identity
+key exists in the files: flower-pot KMZ nodes are vacant/identity-less (no name/SCID/address), drop routes
+carry only "Connection Type", each pot touches 2–6 drop routes, PDF flower-pot callouts carry no unit id.
+NEW finding: the KMZ `<description>` HTML (parser currently DROPS it) carries House Address + AP Number +
+Terminal-Port-HH AP Number — rich, but does NOT bind vacant flower pots. Missing artifact (any one closes it):
+flower-pot SCID/address in KMZ, OR the `.FS` drive-decomposition sheet, OR a served-address column in the
+bore xlsx. Helper `resolve_flowerpot_drop_identity(...)` is DESIGNED (abstain-until-key), not built. Full:
+`gac/drop_lane_flowerpot_identity.md`. DO-NOT-WIDEN: drops abstain until a key arrives.
+
+DrillPathFrame bucket review (Target #19, `gac/drill_frame_bucket_review.md`): 1 PROVEN (bore_log7), 13
+BLOCKED; overlap detector = 58 unproven_overlap pairs (print-index stacks 11 logs on route_477, 3 on route_478).
 
 ## Render disk caution
 `/data` can fill → upload/session/audit failures. If uploads fail, operator runs `df -h /data` BEFORE
