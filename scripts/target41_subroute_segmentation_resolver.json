@@ -1,0 +1,43 @@
+{
+  "schema_version": "target41-subroute-1",
+  "bore_log57": {
+    "verdict": "NOT_UNIQUE_COMPETING_SEGMENTS",
+    "bore_len": 413.0,
+    "route_total_ft": 741.7,
+    "candidates": [
+      {
+        "type": "structure_to_structure",
+        "start_off": 288.7,
+        "end_off": 690.0,
+        "len": 401.3,
+        "start_node": "Unnamed Feature",
+        "end_node": "Unnamed Feature",
+        "both_anchored": true,
+        "ends_at_terminus": false
+      },
+      {
+        "type": "structure_to_structure",
+        "start_off": 288.7,
+        "end_off": 741.7,
+        "len": 453.0,
+        "start_node": "Unnamed Feature",
+        "end_node": "SPLICE LOC 45",
+        "both_anchored": true,
+        "ends_at_terminus": false
+      },
+      {
+        "type": "terminus_anchored_open_start",
+        "start_off": 413.0,
+        "end_off": 0.0,
+        "len": 413.0,
+        "start_node": null,
+        "start_node_dist_ft": 35.3,
+        "both_anchored": false,
+        "ends_at_terminus": true
+      }
+    ],
+    "reason": "a structure-to-structure segment of the bore length exists but does NOT reach the AP terminus, while the terminus-anchored segment starts in OPEN SPACE (no pit) -> two competing readings, no discriminator"
+  },
+  "bore_log7_control": "PLACEABLE_SEGMENT_PROVEN",
+  "missing_discriminator": "per_bore_start_structure (which pit the bore drilled from); route geometry shows no structure-to-structure 413ft segment ends at AP-157"
+}

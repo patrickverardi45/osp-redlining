@@ -284,6 +284,19 @@ from delivered files = exactly 1 bore (bore_log7, shipped default-OFF #14).** Se
 STATE/geometry. Full: `gac/target40_multidrive_resolver_sweep.md`. **HARD BLOCKER (proven, alternate path exhausted):
 acquire a per-bore terminus/start-structure field (or .FS) to unblock the bucket.** DO-NOT-WIDEN intact.
 
+**SUB-ROUTE SEGMENTATION RESOLVER (Target #41) — bore_log57 NOT_UNIQUE_COMPETING_SEGMENTS; geometry shows 413ft has no
+placeable drive ending at AP-157.** `scripts/target41_subroute_segmentation_resolver.py` resolves which portion of a
+longer route a bore occupies via structure anchors. **route_465 = AP-157(off 0) ↔ SPLICE LOC 45(off 742)**, Flower
+Pot(~289) + Installer HH(~690) between. Proof-grade segment gates: G_len ∧ G_anchor (both ends real structures) ∧ G_term
+(one end = AP terminus). **bore_log57 (413ft): NO proof-grade segment** — terminus reading "last 413ft ending at AP-157"
+**starts in OPEN SPACE** (nearest node 35ft, no pit); the only ~413ft structure-to-structure segment (Flower Pot→Installer
+HH ~401ft) **does NOT reach AP-157**. Two competing readings, no discriminator → **NOT_UNIQUE_COMPETING_SEGMENTS**.
+**This corrects #39**: the 413↔AP-157 station-value match is NOT placement-grade geometry. Missing discriminator =
+per-bore START-structure (a single field, NOT the whole .FS). **CONTROL bore_log7 = PLACEABLE_SEGMENT_PROVEN** (route_469
+~459 ≈ bore ~451 = WHOLE route, both ends AP-163 + SPLICE LOC 46). Self-test SELFTEST_OK; no placement/flag/STATE/geometry.
+Full: `gac/target41_subroute_segmentation_resolver.md`. NEXT (#42): sweep all bores for route-len≈bore-len / uniquely-anchored
+proof-grade segments. DO-NOT-WIDEN intact.
+
 ## Render disk caution
 `/data` can fill → upload/session/audit failures. If uploads fail, operator runs `df -h /data` BEFORE
 blaming code (B-WS-12 OOM fingerprint = bore-log upload 502 `<!DOCTYPE html>`). If tight: inspect/backup/

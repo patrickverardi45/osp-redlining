@@ -1,0 +1,37 @@
+============================================================================================
+Target #41 — sub-route segmentation resolver (no .FS)
+============================================================================================
+LEN_TOL=0.1 ANCHOR_TOL=20.0ft TERM_TOL=12.0ft
+
+--------------------------------------------------------------------------------------------
+[bore_log57] bore_len=413ft route=route_465 total=741.7ft ap=AP-157
+   structural anchors along route: [(0.0, '157', 'Terminal Port Handhole'), (288.7, 'Unnamed Feature', 'Flower Pot'), (690.0, 'Unnamed Feature', 'Installer HH'), (741.7, 'SPLICE LOC 45', 'Splice HH')]
+   segment candidates (len ~ bore):
+     structure_to_structure: off 288.7->690.0 len=401.3ft start='Unnamed Feature'() both_anchored=True ends_at_terminus=False
+     structure_to_structure: off 288.7->741.7 len=453.0ft start='Unnamed Feature'() both_anchored=True ends_at_terminus=False
+     terminus_anchored_open_start: off 413.0->0.0 len=413.0ft start='None'(35.3) both_anchored=False ends_at_terminus=True
+   => NOT_UNIQUE_COMPETING_SEGMENTS
+      a structure-to-structure segment of the bore length exists but does NOT reach the AP terminus, while the terminus-anchored segment starts in OPEN SPACE (no pit) -> two competing readings, no discriminator
+
+--------------------------------------------------------------------------------------------
+[bore_log7] (CONTROL) bore_len=451ft route=route_469 total=459.2ft ap=AP-163
+   structural anchors along route: [(0.0, '163', 'Terminal Port Handhole'), (60.0, 'Unnamed Feature', 'Flower Pot'), (180.0, 'Unnamed Feature', 'Installer HH'), (450.0, 'SPLICE LOC 46', 'Splice HH')]
+   segment candidates (len ~ bore):
+     structure_to_structure: off 0.0->450.0 len=450.0ft start='163'() both_anchored=True ends_at_terminus=True
+     terminus_anchored_open_start: off 451.0->0.0 len=451.0ft start='SPLICE LOC 46'(8.2) both_anchored=True ends_at_terminus=True
+   => PLACEABLE_SEGMENT_PROVEN
+      unique structure-to-structure segment len~451 ending at the AP terminus (both ends real structures)
+
+--------------------------------------------------------------------------------------------
+SUMMARY
+   bore_log57: NOT_UNIQUE_COMPETING_SEGMENTS
+   bore_log7 (control): PLACEABLE_SEGMENT_PROVEN (must be PLACEABLE_SEGMENT_PROVEN)
+
+   KEY FINDING: route_465 runs AP-157 (off 0) <-> SPLICE LOC 45 (off 742), with a Flower Pot
+   (~288) and Installer HH (~693) between. The ONLY structure-to-structure segment ~413ft is
+   Flower Pot->Installer HH (~405ft) which does NOT reach AP-157; the terminus-anchored 'last
+   413ft ending at AP-157' starts in OPEN SPACE (nearest node ~35ft, no pit). So the 413ft
+   END<->AP-157 station match (#39) has NO placeable drive geometry: the segmentation is
+   genuinely ambiguous. Missing discriminator = a per-bore START-structure (which pit it drilled
+   from). bore_log7 differs: route_469 (~459) ~= bore (~451) is the WHOLE route, both ends real
+   structures (AP-163 + SPLICE LOC 46) -> proof-grade.
