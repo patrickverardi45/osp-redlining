@@ -1220,3 +1220,283 @@ def emit_shadow_for_group(
             result = dict(result)
             result["backbone_corridor_chain_error"] = type(_bcexc).__name__
     return result
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Target #18 — DrillPathFrame: pure, read-only PDF↔KMZ↔bore-log proof object.
+#
+# A DrillPathFrame turns "where does this bore's redline go?" into one testable
+# value object: PROVEN (a KMZ route + a uniquely-identified anchor) or BLOCKED
+# (an exact extraction-gap reason). It DECIDES NOTHING and PLACES NOTHING — it is
+# observation only, attached to `_diag["drill_path_frame"]` behind the default-OFF
+# flag TRUELINE_DRILL_PATH_FRAME_SHADOW. It REUSES the shipped helpers
+# (classify_terminus_type, resolve_terminal_tail_route_for_ap,
+# terminal_nodes_from_point_features, build_route_adjacency, BRENHAM_PH5_RUN_ENDPOINTS)
+# and invents no new matching math; the only new logic is dict assembly + the
+# frame-ownership overlap rule (a pure set comparison over build_route_adjacency).
+# Design: gac/pdf_drill_path_frame_strategy.md (Target #17).
+# ─────────────────────────────────────────────────────────────────────────────
+
+DRILL_FRAME_SCHEMA = "drill_path_frame_v1"
+DRILL_FRAME_SOURCE = "target18_drill_path_frame_v1"
+
+# bore terminus work-class -> drill-path structure class
+_STRUCTURE_BY_TERMINUS = {
+    "backbone_ap_bore": "terminal_tail",
+    "flower_pot_drop": "flower_pot",
+    "main_chain_high_station": "main_chain",
+    "multi_drive_unknown": "multi_drive",
+    "unknown_insufficient": "unknown",
+}
+# KMZ folder substrings that mark a DROP/LATERAL route (a flower-pot drop lands here)
+_DROP_FOLDER_SUBSTRINGS = ("vacant pipe", "house drop")
+
+
+def _station_label(ft: Any) -> Optional[str]:
+    """Render a feet value as a station label, e.g. 451 -> '4+51'. None on bad input."""
+    try:
+        n = int(round(float(ft)))
+    except (TypeError, ValueError):
+        return None
+    return "%d+%02d" % (n // 100, n % 100)
+
+
+def build_drill_path_frame(
+    *,
+    source_file: Optional[str],
+    print_tokens: Optional[Sequence[Any]] = None,
+    station_min_ft: Optional[float] = None,
+    station_max_ft: Optional[float] = None,
+    point_features: Optional[Sequence[Dict[str, Any]]] = None,
+    route_catalog: Optional[Sequence[Dict[str, Any]]] = None,
+    run_endpoints: Sequence = BRENHAM_PH5_RUN_ENDPOINTS,
+    endpoint_tol_ft: float = 10.0,
+    run_len_tol: float = 0.10,
+    hardcoded_route_ids: Optional[Sequence[str]] = None,
+) -> Dict[str, Any]:
+    """Pure. Assemble ONE DrillPathFrame for a bore log from PDF (run→endpoint table)
+    + KMZ (point_features, route_catalog) + bore-log facts (print/station). Never
+    raises. OBSERVATION ONLY — never feeds placement/selection/scoring/geometry/STATE.
+
+    proof == "PROVEN" only when the PDF gives a unique run terminus at the bore's end
+    station, that terminus has a UNIQUE KMZ node identity, and a UNIQUE length-matched
+    KMZ route attaches to it (today: backbone_ap_bore → the AP-anchored Terminal Tail,
+    e.g. bore_log7 → route_469 ending at AP-163). Otherwise proof == "BLOCKED" with an
+    exact ``abstain_reason`` (e.g. flower-pot drops → ``flowerpot_node_identity`` because
+    all KMZ flower-pot nodes are unnamed). Reuses classify_terminus_type +
+    resolve_terminal_tail_route_for_ap; adds no new matching math."""
+    point_features = list(point_features or [])
+    route_catalog = list(route_catalog or [])
+    cls = classify_terminus_type(
+        source_file=source_file,
+        print_tokens=print_tokens,
+        station_min_ft=station_min_ft,
+        station_max_ft=station_max_ft,
+        run_endpoints=run_endpoints,
+    )
+    ttype = cls.get("terminus_type")
+    cev = cls.get("evidence") or {}
+    matched = list(cev.get("matched_run_endpoints") or [])
+    legacy = [str(r) for r in (hardcoded_route_ids or [])]
+
+    frame: Dict[str, Any] = {
+        "schema": DRILL_FRAME_SCHEMA,
+        "source_file": _source_stem(source_file) or source_file,
+        "print_sheets": cev.get("print_sheets") or [],
+        "station_min_ft": cev.get("station_min_ft"),
+        "station_max_ft": cev.get("station_end_ft"),
+        "terminus_class": ttype,
+        "structure_type": _STRUCTURE_BY_TERMINUS.get(ttype, "unknown"),
+        "run_text": None,
+        "start_anchor": None,
+        "end_anchor": None,
+        "kmz_geometry": None,
+        "station_direction": None,
+        "proof": "BLOCKED",
+        "confidence": cls.get("confidence") or "low",
+        "abstain_reason": None,
+        "evidence": {"terminus": cev, "legacy_print_index_route_ids": legacy},
+        "source": DRILL_FRAME_SOURCE,
+    }
+
+    # human-readable run descriptor from the matched terminus nearest the bore end
+    if matched and station_max_ft is not None:
+        m = min(matched, key=lambda x: abs(float(x.get("run_end_ft") or 0) - float(station_max_ft)))
+        ap = m.get("ap")
+        frame["run_text"] = "sheet %s DIR.BORE run end STA %s -> %s%s" % (
+            m.get("sheet"), _station_label(m.get("run_end_ft")), m.get("endpoint_type"),
+            (" AP-%s" % ap) if ap is not None else "")
+
+    # ---- backbone_ap_bore: the bore ends at an AP terminal -> bind its Terminal Tail ----
+    if ttype == "backbone_ap_bore":
+        ap_hits = [m for m in matched if m.get("endpoint_type") == "ap" and m.get("ap") is not None]
+        if not ap_hits:
+            frame["abstain_reason"] = "ap_terminus_missing"
+            return frame
+        ap_id = min(ap_hits, key=lambda x: abs(float(x.get("run_end_ft") or 0) - float(station_max_ft or 0))).get("ap")
+        frame["evidence"]["ap_id"] = ap_id
+        ap_node = next((t for t in terminal_nodes_from_point_features(point_features)
+                        if str(t.get("name")) == str(ap_id)), None)
+        if ap_node is None:
+            frame["abstain_reason"] = "ap_node_not_in_kmz"
+            return frame
+        frame["end_anchor"] = {"kind": "ap", "id": str(ap_id),
+                               "lat": ap_node["lat"], "lon": ap_node["lon"]}
+        tail_route_id = resolve_terminal_tail_route_for_ap(
+            ap_id, point_features, route_catalog,
+            endpoint_tol_ft=endpoint_tol_ft, run_len_ft=station_max_ft, run_len_tol=run_len_tol,
+        )
+        if not tail_route_id:
+            # resolve returns None on 0 (no tail) or >=2 (ambiguous) length-matched tails
+            frame["abstain_reason"] = "terminal_tail_not_unique"
+            return frame
+        route = next((r for r in route_catalog if str(r.get("route_id")) == str(tail_route_id)), None)
+        coords = (route or {}).get("coords") or []
+        gap = None
+        if coords:
+            gap = round(min(
+                _haversine_ft(ap_node["lat"], ap_node["lon"], float(coords[0][0]), float(coords[0][1])),
+                _haversine_ft(ap_node["lat"], ap_node["lon"], float(coords[-1][0]), float(coords[-1][1])),
+            ), 2)
+        frame["structure_type"] = "terminal_tail"
+        frame["kmz_geometry"] = {
+            "route_id": str(tail_route_id),
+            "source_folder": (route or {}).get("source_folder"),
+            "length_ft": round(_route_length_ft(route), 1),
+            "endpoint_gap_ft": gap,
+        }
+        frame["station_direction"] = (
+            "station_max(%s)=end_anchor AP-%s; stations increase toward the AP"
+            % (frame["station_max_ft"], ap_id))
+        frame["proof"] = "PROVEN"
+        frame["confidence"] = "high" if (gap is not None and gap <= 2.0) else "med"
+        if legacy and str(tail_route_id) not in legacy:
+            frame["evidence"]["legacy_conflict"] = (
+                "print-index route(s) %s != proven %s (legacy was engine policy, not source evidence)"
+                % (legacy, tail_route_id))
+        return frame
+
+    # ---- flower_pot_drop: PDF proves a flower-pot terminus, but KMZ pots are unnamed ----
+    if ttype == "flower_pot_drop":
+        flower = [pf for pf in point_features if "flower" in str(pf.get("folder_path") or "").lower()]
+        named = [pf for pf in flower
+                 if str(pf.get("name") or "").strip() not in ("", "None", "Unnamed Feature")]
+        drops = [r for r in route_catalog
+                 if any(s in str(r.get("source_folder") or "").lower() for s in _DROP_FOLDER_SUBSTRINGS)]
+        frame["structure_type"] = "flower_pot"
+        frame["end_anchor"] = {"kind": "flower_pot", "id": None, "lat": None, "lon": None}
+        frame["confidence"] = "med"
+        # The blocking gap: no station→node bridge exists for flower pots (all unnamed),
+        # and the bore log carries no AP/structure key — so WHICH pot / WHICH drop route
+        # is not selectable. (PDF terminus may ALSO be non-unique; recorded in evidence.)
+        frame["abstain_reason"] = "flowerpot_node_identity"
+        frame["evidence"].update({
+            "flower_pot_node_count": len(flower),
+            "named_flower_pot_node_count": len(named),
+            "drop_route_count": len(drops),
+            "pdf_terminus_unique": (len(matched) == 1),
+        })
+        return frame
+
+    # ---- everything else: structurally not a single bindable terminus ----
+    if ttype == "main_chain_high_station":
+        frame["abstain_reason"] = "main_chain_absolute_stationing_no_anchor"
+        return frame
+    if ttype == "multi_drive_unknown":
+        frame["abstain_reason"] = "multi_drive_terminus_ambiguous"
+        return frame
+    frame["abstain_reason"] = "no_run_terminus_match"
+    return frame
+
+
+def extract_drill_path_frames(
+    bore_specs: Sequence[Dict[str, Any]],
+    point_features: Optional[Sequence[Dict[str, Any]]] = None,
+    route_catalog: Optional[Sequence[Dict[str, Any]]] = None,
+    *,
+    run_endpoints: Sequence = BRENHAM_PH5_RUN_ENDPOINTS,
+) -> List[Dict[str, Any]]:
+    """Pure batch wrapper over ``build_drill_path_frame``. ``bore_specs`` is an iterable
+    of dicts {source_file, print_tokens, station_min_ft, station_max_ft,
+    hardcoded_route_ids?}. Deterministic; never raises (per-frame failures surface as
+    BLOCKED frames). OBSERVATION ONLY."""
+    out: List[Dict[str, Any]] = []
+    for spec in (bore_specs or []):
+        out.append(build_drill_path_frame(
+            source_file=spec.get("source_file"),
+            print_tokens=spec.get("print_tokens"),
+            station_min_ft=spec.get("station_min_ft"),
+            station_max_ft=spec.get("station_max_ft"),
+            point_features=point_features,
+            route_catalog=route_catalog,
+            run_endpoints=run_endpoints,
+            hardcoded_route_ids=spec.get("hardcoded_route_ids"),
+        ))
+    return out
+
+
+def detect_frame_overlaps(
+    frames: Sequence[Dict[str, Any]],
+    route_catalog: Optional[Sequence[Dict[str, Any]]] = None,
+    *,
+    occupied_route_id_by_source: Optional[Dict[str, Any]] = None,
+    epsilon_ft: float = TOPOLOGY_EPSILON_FT,
+) -> List[Dict[str, Any]]:
+    """Pure frame-ownership overlap diagnostic. OBSERVATION ONLY — flags overlaps, never
+    acts on them.
+
+    Rule (Target #17 §4): a redline may occupy KMZ geometry only where its OWN frame
+    PROVES that geometry. For each pair of bores whose OCCUPIED routes overlap (same
+    route, or adjacent via an exact shared vertex — reusing ``build_route_adjacency``),
+    verdict is:
+      - ``unproven_overlap`` if either bore occupies a route its frame does not prove
+        (this is the bad-overlap case, e.g. bore_log7 forced onto route_477 while its
+        frame proves route_469);
+      - ``proven_shared`` if both prove the SAME occupied route;
+      - ``proven_adjacent`` if both prove their own (different, touching) routes.
+
+    ``occupied_route_id_by_source`` maps source_file → the route the engine currently
+    places it on; when absent for a source, falls back to the frame's PROVEN route.
+    Adds no new matching math beyond the shipped shared-vertex adjacency."""
+    frames = list(frames or [])
+    adj = build_route_adjacency(route_catalog or [], epsilon_ft)
+    proven: Dict[str, Optional[str]] = {}
+    occupied: Dict[str, str] = {}
+    for f in frames:
+        src = f.get("source_file")
+        if src is None:
+            continue
+        pr = (f.get("kmz_geometry") or {}).get("route_id") if f.get("proof") == "PROVEN" else None
+        proven[src] = (str(pr) if pr is not None else None)
+        occ = (occupied_route_id_by_source or {}).get(src)
+        if occ is None:
+            occ = pr
+        if occ is not None:
+            occupied[src] = str(occ)
+
+    out: List[Dict[str, Any]] = []
+    srcs = sorted(occupied)
+    for i in range(len(srcs)):
+        for j in range(i + 1, len(srcs)):
+            a, b = srcs[i], srcs[j]
+            ra, rb = occupied[a], occupied[b]
+            same = ra == rb
+            adjacent = (rb in adj.get(ra, set())) or (ra in adj.get(rb, set()))
+            if not (same or adjacent):
+                continue
+            not_owned = [s for s in (a, b) if proven.get(s) != occupied[s]]
+            if not_owned:
+                verdict = "unproven_overlap"
+            elif same:
+                verdict = "proven_shared"
+            else:
+                verdict = "proven_adjacent"
+            out.append({
+                "sources": [a, b],
+                "occupied_route_ids": {a: ra, b: rb},
+                "shares_via": "same_route" if same else "shared_vertex",
+                "owned_by_frame": {a: proven.get(a) == ra, b: proven.get(b) == rb},
+                "not_owned_by_frame": not_owned,
+                "verdict": verdict,
+            })
+    return out
