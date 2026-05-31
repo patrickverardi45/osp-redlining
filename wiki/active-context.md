@@ -243,6 +243,21 @@ Extractor is scripts/-only (backend imports none — verified); no flag/STATE/ge
 extended (phantom-reject + true-tie) SELFTEST_OK. Full: `gac/target37_primitive_a_sta355_recovery.md`. NEXT: bore→drive
 binding for bore_log57 (the #34 placement blocker). DO-NOT-WIDEN intact; (10,136,166) AP-166 glyph floor still out of scope.
 
+**bore_log57 BORE→DRIVE BINDING (Target #38) — HARD_BLOCKED; placement frontier characterized.** Auto-continued from
+#37 toward placement. `scripts/target38_bore_log57_drive_binding.py` exhausts every repo-local disambiguation signal:
+**S1** per-row print = uniform union `8,10,13` on ALL 10 rows (empirically dumped — NO per-row drive signal); **S2**
+multi_corridor_span [3-9,23,24] vs [10,12,13,14]; **S3** sole confirmed REAL-structure terminus near END = AP-157 (the
+`(13,398)` competitor is a MATCHLINE = sheet-continuation boundary, NOT a physical terminus — reclassified, removing
+#34's 3rd blocker); **S4** multi-drive (413 is a run-end value, not a single 0+00→4+13 drive). Passes S3 only →
+**HARD_BLOCKED**. Missing artifact = `.FS` drive-decomposition sheet, **proven absent (#23/#24 full-corpus sweep), no
+extraction path** (bore xlsx has no terminus field; PDFs carry no bore_log id #8/#24). bore_log7 CONTROL = PLACEABLE
+(single corridor/drive/terminus). **Placement frontier (honest, end-to-end): PDF-AP lane yields exactly 1
+deterministically placeable bore = bore_log7 (shipped default-OFF #14); bore_log57 + 12 other route_480 logs blocked on
+artifacts proven absent (#20 flower-pot identity / #22 high-station anchor / #23 .FS).** #37's 2 new endpoints added 0 new
+bore matches → recall up, 0 wrong-redline exposure. Self-test SELFTEST_OK. Full: `gac/target38_bore_log57_drive_binding.md`.
+**This is the FINISH-MODE hard blocker: the single unblocking artifact (.FS Fiber-Schematic) must be ACQUIRED — it exists
+(Fieldwire register references it) but was not delivered.** DO-NOT-WIDEN intact.
+
 ## Render disk caution
 `/data` can fill → upload/session/audit failures. If uploads fail, operator runs `df -h /data` BEFORE
 blaming code (B-WS-12 OOM fingerprint = bore-log upload 502 `<!DOCTYPE html>`). If tight: inspect/backup/

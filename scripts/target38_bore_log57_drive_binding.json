@@ -1,0 +1,96 @@
+{
+  "schema_version": "target38-bore-drive-binding-1",
+  "results": {
+    "bore_log57": {
+      "bore": "bore_log57",
+      "end": 413.0,
+      "sheets": [
+        8,
+        10,
+        13
+      ],
+      "n_rows": 10,
+      "S1_print_uniform_union": true,
+      "S1_end_row_single_sheet": false,
+      "S2_single_corridor": false,
+      "corridors": [
+        [
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          23,
+          24
+        ],
+        [
+          10,
+          12,
+          13,
+          14
+        ]
+      ],
+      "S3_confirmed_real_termini_near_end": [
+        [
+          8,
+          413.0,
+          157
+        ]
+      ],
+      "S3_matchlines_near_end": [
+        [
+          13,
+          398.0
+        ]
+      ],
+      "S4_single_drive_span": false,
+      "verdict": "HARD_BLOCKED",
+      "blockers": [
+        "multi_corridor_span[[3, 4, 5, 6, 7, 8, 9, 23, 24], [10, 12, 13, 14]]",
+        "per_row_print_is_uniform_union_no_drive_signal",
+        "print_mapping_flagged_uncertain",
+        "end_is_multi_drive_not_a_single_0+00_run_to_the_ap"
+      ]
+    },
+    "bore_log7": {
+      "bore": "bore_log7",
+      "end": 451.0,
+      "sheets": [
+        10
+      ],
+      "n_rows": 10,
+      "S1_print_uniform_union": true,
+      "S1_end_row_single_sheet": true,
+      "S2_single_corridor": true,
+      "corridors": [
+        [
+          10,
+          12,
+          13,
+          14
+        ]
+      ],
+      "S3_confirmed_real_termini_near_end": [
+        [
+          10,
+          451.0,
+          163
+        ]
+      ],
+      "S3_matchlines_near_end": [],
+      "S4_single_drive_span": false,
+      "verdict": "PLACEABLE",
+      "blockers": [
+        "end_is_multi_drive_not_a_single_0+00_run_to_the_ap"
+      ]
+    }
+  },
+  "bore_log57_classification": "HARD_BLOCKED",
+  "machine_reason": "bore_to_drive_binding_unresolved: per_row_print_uniform_union_no_signal + multi_corridor_span + print_mapping_uncertain + end_is_multi_drive; missing_artifact=.FS_drive_decomposition (proven absent #23/#24, no extraction path)",
+  "ap_side_ready": {
+    "bore_log57": "STA413->AP-157->route_465 geometry-ready"
+  },
+  "control_bore_log7": "PLACEABLE"
+}

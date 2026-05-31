@@ -1,0 +1,48 @@
+========================================================================================
+Target #38 — bore_log57 bore->drive binding final adjudication (post-#37 9-endpoint table)
+========================================================================================
+confirmed endpoints = [(8, 366.0, 154), (8, 387.0, 156), (8, 413.0, 157), (9, 3810.0, 155), (10, 140.0, 165), (10, 451.0, 163), (11, 189.0, 168), (12, 350.0, 167), (12, 355.0, 164)]
+
+----------------------------------------------------------------------------------------
+[bore_log57]  (TARGET)  end=413  sheets=[8, 10, 13]  rows=10
+   S1 per-row print: uniform_union=True  end_row_single_sheet=False
+   S2 single corridor=False  corridors=[[3, 4, 5, 6, 7, 8, 9, 23, 24], [10, 12, 13, 14]]
+   S3 confirmed REAL-structure termini near END = [(8, 413.0, 157)]
+      matchlines near END (NOT termini) = [(13, 398.0)]
+   S4 single 0+00->END drive = False
+   => HARD_BLOCKED
+      blockers: ['multi_corridor_span[[3, 4, 5, 6, 7, 8, 9, 23, 24], [10, 12, 13, 14]]', 'per_row_print_is_uniform_union_no_drive_signal', 'print_mapping_flagged_uncertain', 'end_is_multi_drive_not_a_single_0+00_run_to_the_ap']
+
+----------------------------------------------------------------------------------------
+[bore_log7]  (CONTROL (placement-ready))  end=451  sheets=[10]  rows=10
+   S1 per-row print: uniform_union=True  end_row_single_sheet=True
+   S2 single corridor=True  corridors=[[10, 12, 13, 14]]
+   S3 confirmed REAL-structure termini near END = [(10, 451.0, 163)]
+      matchlines near END (NOT termini) = []
+   S4 single 0+00->END drive = False
+   => PLACEABLE
+
+----------------------------------------------------------------------------------------
+VERDICT — bore_log57
+----------------------------------------------------------------------------------------
+   HARD_BLOCKED.  AP side is ready (STA 413 -> AP-157 -> route_465). Matchline reclassification:
+   the sheet-13 '@398' competitor is a MATCHLINE (sheet-continuation boundary), NOT a physical
+   terminus — so AP-157 is the SOLE confirmed real-structure terminus near the END. BUT the
+   bore->drive binding is still unresolved: the print mapping is a uniform union {8,10,13} with
+   NO per-row drive signal (every row lists the same union), the bore spans 2 corridors, the
+   print mapping is flagged uncertain, and the END is multi-drive (not a single 0+00->4+13 run).
+
+   MISSING ARTIFACT (proven absent, no extraction path):
+   - .FS Fiber-Schematic / drive-decomposition sheet: ABSENT from all 3 Brenham PDFs and the
+     full corpus (Targets #23/#24 full-inventory sweep). It is the only artifact that maps a
+     multi-drive bore's station sub-ranges -> drive -> terminating structure.
+   - per-bore terminus/direction field: the bore xlsx carries only station/depth/boc/date/crew/
+     print/notes (Target #23) — no terminus column. Verified again here: per-row print is the
+     uniform union, the only candidate field, and it does NOT bind a drive.
+   - PDF bore->run link: the PDFs contain NO bore_log id anywhere (Targets #8/#24), so the PDF
+     cannot say which physical bore drilled the AP-157 run.
+   => bore->drive binding for bore_log57 is HARD-BLOCKED by data absence; no repo-local analysis,
+      code, or test can resolve it without guessing (which would risk a wrong redline a whole
+      corridor away). DO-NOT-WIDEN: bore_log57 abstains.
+
+   CONTROL bore_log7: PLACEABLE (single corridor True, one real terminus [(10, 451.0, 163)]) — placement lane intact.
