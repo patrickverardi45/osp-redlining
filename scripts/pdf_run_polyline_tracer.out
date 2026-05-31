@@ -1,0 +1,44 @@
+====================================================================================
+Target #29 — Primitive C run-polyline tracer + matchline exclusion (read-only)
+====================================================================================
+schema=pdf-run-polyline-tracer-1  valid AP universe=64
+
+[SHEET 8] matchline stations (geometry-derived) = []
+   STA 193: role=run_end_unresolved_ap A=None B=abstain_geometry/None C_trace=no_vector_nodes_at_callout
+   STA 308: role=run_end_unresolved_ap A=110 B=unconfirmed_review/None C_trace=no_vector_nodes_at_callout
+   STA 366: role=run_end_unresolved_ap A=None B=abstain_geometry/None C_trace=no_vector_nodes_at_callout
+   STA 366: role=run_end              A=154 B=confirmed/154
+   STA 387: role=run_end_unresolved_ap A=None B=abstain_geometry/None C_trace=no_far_ap_in_run_component
+   STA 387: role=run_end              A=156 B=confirmed/156
+   STA 398: role=run_end_unresolved_ap A=None B=abstain_geometry/None C_trace=no_far_ap_in_run_component
+   STA 413: role=run_end              A=None B=recovered/157 C_trace=single_far_ap_in_component
+   STA 413: role=run_end              A=157 B=confirmed/157
+
+[SHEET 10] matchline stations (geometry-derived) = []
+   STA 136: role=run_end              A=None B=recovered/125 C_trace=target_ap_166_not_spatially_localizable_glyph_scramble
+   STA 139: role=run_end_unresolved_ap A=None B=abstain_geometry/None C_trace=no_vector_nodes_at_callout
+   STA 140: role=run_end_unresolved_ap A=None B=abstain_geometry/None C_trace=no_vector_nodes_at_callout
+   STA 140: role=run_end              A=165 B=confirmed/165
+   STA 160: role=run_end_unresolved_ap A=None B=abstain_geometry/None C_trace=no_far_ap_in_run_component
+   STA 162: role=run_end              A=None B=recovered/121 C_trace=single_far_ap_in_component
+   STA 166: role=run_end_unresolved_ap A=None B=abstain_geometry/None C_trace=no_far_ap_in_run_component
+   STA 167: role=run_end_unresolved_ap A=None B=abstain_geometry/None C_trace=no_vector_nodes_at_callout
+   STA 190: role=run_end_unresolved_ap A=None B=abstain_geometry/None C_trace=no_far_ap_in_run_component
+   STA 191: role=run_end_unresolved_ap A=None B=abstain_geometry/None C_trace=no_vector_nodes_at_callout
+   STA 451: role=run_end_unresolved_ap A=None B=abstain_geometry/None C_trace=no_far_ap_in_run_component
+   STA 451: role=run_end              A=163 B=confirmed/163
+   STA 3890: role=run_end              A=None B=recovered/162 C_trace=no_vector_nodes_at_callout
+   STA 4408: role=run_end_unresolved_ap A=None B=abstain_geometry/None C_trace=no_vector_nodes_at_callout
+
+------------------------------------------------------------------------------------
+VALIDATION vs BRENHAM_PH5_RUN_ENDPOINTS (sheets 8 & 10, AP rows)
+------------------------------------------------------------------------------------
+   [PASS] keep (10,451,163)
+   [PASS] keep (8,413,157)
+   [(10,136,166)] -> NOT RECOVERED (abstain)
+       C tracer reason: target_ap_166_not_spatially_localizable_glyph_scramble
+   [(8,308,110)] -> REVIEW/REJECTED (B=unconfirmed_review)
+
+   TRUSTED (B-confirmed, matchline-excluded) = [(8, 366.0, 154), (8, 387.0, 156), (8, 413.0, 157), (10, 140.0, 165), (10, 451.0, 163)]
+   REPRODUCED vs hand = [(8, 366.0, 154), (8, 387.0, 156), (8, 413.0, 157), (10, 140.0, 165), (10, 451.0, 163)]
+   MATCHLINE-EXCLUDED stations = []

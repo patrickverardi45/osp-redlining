@@ -1,0 +1,294 @@
+{
+  "schema_version": "pdf-run-polyline-tracer-1",
+  "rows": [
+    {
+      "sheet": 8,
+      "station_ft": 193.0,
+      "role": "run_end_unresolved_ap",
+      "A_ap": null,
+      "B_verdict": "abstain_geometry",
+      "B_ap": null,
+      "C_trace": {
+        "ap_id": null,
+        "reason": "no_vector_nodes_at_callout"
+      }
+    },
+    {
+      "sheet": 8,
+      "station_ft": 308.0,
+      "role": "run_end_unresolved_ap",
+      "A_ap": 110,
+      "B_verdict": "unconfirmed_review",
+      "B_ap": null,
+      "C_trace": {
+        "ap_id": null,
+        "reason": "no_vector_nodes_at_callout"
+      }
+    },
+    {
+      "sheet": 8,
+      "station_ft": 366.0,
+      "role": "run_end_unresolved_ap",
+      "A_ap": null,
+      "B_verdict": "abstain_geometry",
+      "B_ap": null,
+      "C_trace": {
+        "ap_id": null,
+        "reason": "no_vector_nodes_at_callout"
+      }
+    },
+    {
+      "sheet": 8,
+      "station_ft": 366.0,
+      "role": "run_end",
+      "A_ap": 154,
+      "B_verdict": "confirmed",
+      "B_ap": 154,
+      "C_trace": null
+    },
+    {
+      "sheet": 8,
+      "station_ft": 387.0,
+      "role": "run_end_unresolved_ap",
+      "A_ap": null,
+      "B_verdict": "abstain_geometry",
+      "B_ap": null,
+      "C_trace": {
+        "ap_id": null,
+        "reason": "no_far_ap_in_run_component",
+        "far_in_component": []
+      }
+    },
+    {
+      "sheet": 8,
+      "station_ft": 387.0,
+      "role": "run_end",
+      "A_ap": 156,
+      "B_verdict": "confirmed",
+      "B_ap": 156,
+      "C_trace": null
+    },
+    {
+      "sheet": 8,
+      "station_ft": 398.0,
+      "role": "run_end_unresolved_ap",
+      "A_ap": null,
+      "B_verdict": "abstain_geometry",
+      "B_ap": null,
+      "C_trace": {
+        "ap_id": null,
+        "reason": "no_far_ap_in_run_component",
+        "far_in_component": []
+      }
+    },
+    {
+      "sheet": 8,
+      "station_ft": 413.0,
+      "role": "run_end",
+      "A_ap": null,
+      "B_verdict": "recovered",
+      "B_ap": 157,
+      "C_trace": {
+        "ap_id": 157,
+        "reason": "single_far_ap_in_component",
+        "far_in_component": [
+          [
+            157,
+            43.6
+          ]
+        ]
+      }
+    },
+    {
+      "sheet": 8,
+      "station_ft": 413.0,
+      "role": "run_end",
+      "A_ap": 157,
+      "B_verdict": "confirmed",
+      "B_ap": 157,
+      "C_trace": null
+    },
+    {
+      "sheet": 10,
+      "station_ft": 136.0,
+      "role": "run_end",
+      "A_ap": null,
+      "B_verdict": "recovered",
+      "B_ap": 125,
+      "C_trace": {
+        "ap_id": null,
+        "reason": "target_ap_166_not_spatially_localizable_glyph_scramble",
+        "far_in_component": [
+          [
+            125,
+            44.9
+          ]
+        ]
+      }
+    },
+    {
+      "sheet": 10,
+      "station_ft": 139.0,
+      "role": "run_end_unresolved_ap",
+      "A_ap": null,
+      "B_verdict": "abstain_geometry",
+      "B_ap": null,
+      "C_trace": {
+        "ap_id": null,
+        "reason": "no_vector_nodes_at_callout"
+      }
+    },
+    {
+      "sheet": 10,
+      "station_ft": 140.0,
+      "role": "run_end_unresolved_ap",
+      "A_ap": null,
+      "B_verdict": "abstain_geometry",
+      "B_ap": null,
+      "C_trace": {
+        "ap_id": null,
+        "reason": "no_vector_nodes_at_callout"
+      }
+    },
+    {
+      "sheet": 10,
+      "station_ft": 140.0,
+      "role": "run_end",
+      "A_ap": 165,
+      "B_verdict": "confirmed",
+      "B_ap": 165,
+      "C_trace": null
+    },
+    {
+      "sheet": 10,
+      "station_ft": 160.0,
+      "role": "run_end_unresolved_ap",
+      "A_ap": null,
+      "B_verdict": "abstain_geometry",
+      "B_ap": null,
+      "C_trace": {
+        "ap_id": null,
+        "reason": "no_far_ap_in_run_component",
+        "far_in_component": []
+      }
+    },
+    {
+      "sheet": 10,
+      "station_ft": 162.0,
+      "role": "run_end",
+      "A_ap": null,
+      "B_verdict": "recovered",
+      "B_ap": 121,
+      "C_trace": {
+        "ap_id": 121,
+        "reason": "single_far_ap_in_component",
+        "far_in_component": [
+          [
+            121,
+            65.9
+          ]
+        ]
+      }
+    },
+    {
+      "sheet": 10,
+      "station_ft": 166.0,
+      "role": "run_end_unresolved_ap",
+      "A_ap": null,
+      "B_verdict": "abstain_geometry",
+      "B_ap": null,
+      "C_trace": {
+        "ap_id": null,
+        "reason": "no_far_ap_in_run_component",
+        "far_in_component": []
+      }
+    },
+    {
+      "sheet": 10,
+      "station_ft": 167.0,
+      "role": "run_end_unresolved_ap",
+      "A_ap": null,
+      "B_verdict": "abstain_geometry",
+      "B_ap": null,
+      "C_trace": {
+        "ap_id": null,
+        "reason": "no_vector_nodes_at_callout"
+      }
+    },
+    {
+      "sheet": 10,
+      "station_ft": 190.0,
+      "role": "run_end_unresolved_ap",
+      "A_ap": null,
+      "B_verdict": "abstain_geometry",
+      "B_ap": null,
+      "C_trace": {
+        "ap_id": null,
+        "reason": "no_far_ap_in_run_component",
+        "far_in_component": []
+      }
+    },
+    {
+      "sheet": 10,
+      "station_ft": 191.0,
+      "role": "run_end_unresolved_ap",
+      "A_ap": null,
+      "B_verdict": "abstain_geometry",
+      "B_ap": null,
+      "C_trace": {
+        "ap_id": null,
+        "reason": "no_vector_nodes_at_callout"
+      }
+    },
+    {
+      "sheet": 10,
+      "station_ft": 451.0,
+      "role": "run_end_unresolved_ap",
+      "A_ap": null,
+      "B_verdict": "abstain_geometry",
+      "B_ap": null,
+      "C_trace": {
+        "ap_id": null,
+        "reason": "no_far_ap_in_run_component",
+        "far_in_component": []
+      }
+    },
+    {
+      "sheet": 10,
+      "station_ft": 451.0,
+      "role": "run_end",
+      "A_ap": 163,
+      "B_verdict": "confirmed",
+      "B_ap": 163,
+      "C_trace": null
+    },
+    {
+      "sheet": 10,
+      "station_ft": 3890.0,
+      "role": "run_end",
+      "A_ap": null,
+      "B_verdict": "recovered",
+      "B_ap": 162,
+      "C_trace": {
+        "ap_id": null,
+        "reason": "no_vector_nodes_at_callout"
+      }
+    },
+    {
+      "sheet": 10,
+      "station_ft": 4408.0,
+      "role": "run_end_unresolved_ap",
+      "A_ap": null,
+      "B_verdict": "abstain_geometry",
+      "B_ap": null,
+      "C_trace": {
+        "ap_id": null,
+        "reason": "no_vector_nodes_at_callout"
+      }
+    }
+  ],
+  "matchline_stations": {
+    "8": [],
+    "10": []
+  }
+}

@@ -123,6 +123,17 @@ single isolable polyline); EXTRA (8,308,110) REJECTED as false positive (no vali
 NEXT: MATCHLINE exclusion + a gated run-polyline tracer (Primitive C) for multi-drive far-end APs, then extend 8–14 + feed Target
 #25 index. Full: `gac/target28_pdf_leader_line_run_following.md`. DO-NOT-WIDEN intact.
 
+**PDF RUN-POLYLINE TRACER (Target #29) — Primitive C: AP-166 NOT recoverable (glyph floor), honest abstain.** Pure
+`scripts/pdf_run_polyline_tracer.py` traces a callout's vector component to a far-end AP + adds matchline-label exclusion +
+run-role classification (run_start/matchline/run_end/run_end_unresolved_ap/unrelated). **Headline: (10,136,166) NOT RECOVERED** —
+AP-166 IS on the page (page-concat V2 reads 163/165/166) but forms NO positioned digit cluster (glyphs scramble), so there is no
+geometry target to trace to → abstain reason `target_ap_166_not_spatially_localizable_glyph_scramble` (NOT guessing). Gate kept:
+(10,451,163)+(8,413,157) PASS; (8,308,110) REVIEW/REJECTED; TRUSTED=5/6 hand rows 100% precision (Target #27/#28 NOT degraded).
+Matchline label-proximity exclusion is conservative (caught 0 at safe 36px — MATCHLINE words are sheet-edge; 162/3890 candidates
+already out of trust via confirmed-only gate); robust matchline detection should use SEE-SHEET/boundary-STA (brenham_plan_sheet_graph).
+Self-test → SELFTEST_OK. Isolated/placement-free. NEXT: positioned AP-glyph reconstruction (recover scrambled AP numbers WITH
+positions to give the tracer a target — the 136→166 unlock). Full: `gac/target29_pdf_run_polyline_tracer.md`. DO-NOT-WIDEN intact.
+
 ## Render disk caution
 `/data` can fill → upload/session/audit failures. If uploads fail, operator runs `df -h /data` BEFORE
 blaming code (B-WS-12 OOM fingerprint = bore-log upload 502 `<!DOCTYPE html>`). If tight: inspect/backup/
