@@ -5,7 +5,7 @@
 
 ## Repo state
 - Branch: `pdf-ap-route-shadow`
-- `origin/main` = `42f58f6` (local HEAD tracks it)
+- `origin/main` = `f0fbcc8` (local HEAD tracks it; Targets #18/#19/#20/#21 pushed). Target #22 probe/docs pushed on top.
 - Tree: tracked clean; untracked diagnostics live in `scripts/` (offline probes, *_replay.py, bore_log7_*).
 
 ## Mission (non-negotiable)
@@ -48,6 +48,17 @@ bore xlsx. Helper `resolve_flowerpot_drop_identity(...)` is DESIGNED (abstain-un
 
 DrillPathFrame bucket review (Target #19, `gac/drill_frame_bucket_review.md`): 1 PROVEN (bore_log7), 13
 BLOCKED; overlap detector = 58 unproven_overlap pairs (print-index stacks 11 logs on route_477, 3 on route_478).
+
+**MAIN-CHAIN lane (bore_log16/43) = BLOCKED, PARTIAL probe (Target #22).** Corrects Target #21 §5.1: the
+matchline-equation network is ALREADY EXTRACTED (`brenham_plan_sheet_graph.py` — boundary STA equations
+1625→3393, SEE-SHEET corridor graph), so it is NOT the missing piece. Real blocker = a **station↔geometry
+anchor** at the bores' high stations (4000–5950): the graph is station-space only (zero lat/lon); the only
+station→KMZ bridge is a named AP in `BRENHAM_PH5_RUN_ENDPOINTS`, whose max named-AP station is 3810 (max of
+ALL table stations 4533) — far below the bore ends 5919/5950, so NO anchor exists. Self-validation: the
+mechanism reproduces bore_log7 (sta 451→AP-163→route_469) but finds NONE near 5919/5950. Missing artifact
+(absent, not un-extracted): one high-station named/identified structure that is also a KMZ node + a direction
+datum (or the `.FS` sheet, or a start-structure xlsx column). Full: `gac/mainchain_matchline_chainage_probe.md`.
+DO-NOT-WIDEN: bore_log16/43 abstain until an anchor arrives.
 
 ## Render disk caution
 `/data` can fill → upload/session/audit failures. If uploads fail, operator runs `df -h /data` BEFORE

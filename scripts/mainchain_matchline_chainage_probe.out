@@ -1,0 +1,79 @@
+==============================================================================
+Target #22 — Matchline-Equation Chainage Extraction Probe
+==============================================================================
+
+[A] EXTRACTED matchline-equation network (brenham_plan_sheet_graph.py)
+    schema = brenham-plan-sheet-graph-1; PAGE_OFFSET = 13 (sheet N = page N+13)
+    corridors (connected components over SEE-SHEET matchline edges):
+      [2, 17, 20, 21]  extent_ft=(0.0, 3701.0)
+      [3, 4, 5, 6, 7, 8, 9, 23, 24]  extent_ft=(0.0, 4401.0)
+      [10, 12, 13, 14]  extent_ft=(0.0, 4533.0)
+      [18, 22]  extent_ft=(0.0, 1222.0)
+      [25, 29]  extent_ft=(0.0, 1930.0)
+      [26, 27, 28]  extent_ft=(0.0, 2795.0)
+    boundary STA equations (MATCHLINE STA = SEE SHEET, proven shared value):
+      [25, 29] -> 36.0 ft
+      [17, 21] -> 161.0 ft
+      [2, 21] -> 163.0 ft
+      [17, 20] -> 182.0 ft
+      [27, 28] -> 218.0 ft
+      [3, 4] -> 1625.0 ft
+      [4, 5] -> 2018.0 ft
+      [26, 27] -> 2105.0 ft
+      [5, 6] -> 2411.0 ft
+      [6, 7] -> 2671.0 ft
+      [7, 8] -> 3064.0 ft
+      [8, 9] -> 3393.0 ft
+    MAX extracted boundary STA = 3393.0 ft
+
+    corridor membership of the bore sheets:
+      sheet  7 -> corridor [3, 4, 5, 6, 7, 8, 9, 23, 24]
+      sheet  8 -> corridor [3, 4, 5, 6, 7, 8, 9, 23, 24]
+      sheet  9 -> corridor [3, 4, 5, 6, 7, 8, 9, 23, 24]
+      sheet 10 -> corridor [10, 12, 13, 14]
+      sheet 11 -> corridor [11]
+      sheet 12 -> corridor [10, 12, 13, 14]
+
+[B] GRAPH VERDICT on the two main-chain logs (evaluate_bore_log)
+    bore_log16: prints=[8, 9, 10] sta=5100-5950
+      status            = station_print_disjoint
+      corridors spanned = [[3, 4, 5, 6, 7, 8, 9, 23, 24], [10, 12, 13, 14]] (count=2)
+      corridor_extents  = {'3,4,5,6,7,8,9,23,24': (0.0, 4401.0), '10,12,13,14': (0.0, 4533.0)}
+      sheet_windows     = {'8': (0.0, 3393.0), '9': (611.0, 3890.0), '10': (0.0, 4533.0)}
+      reasons           = ['station 5100.0-5950.0 outside all sheet windows [(0.0, 3393.0), (611.0, 3890.0), (0.0, 4533.0)]', 'station 5100.0-5950.0 outside all corridor extents [(0.0, 4401.0), (0.0, 4533.0)]', 'prints span 2 corridors: [[3, 4, 5, 6, 7, 8, 9, 23, 24], [10, 12, 13, 14]]']
+      sta_max 5950 > max_boundary 3393? True
+    bore_log43: prints=[10] sta=4000-5919
+      status            = within_corridor
+      corridors spanned = [[10, 12, 13, 14]] (count=1)
+      corridor_extents  = {'10,12,13,14': (0.0, 4533.0)}
+      sheet_windows     = {'10': (0.0, 4533.0)}
+      reasons           = []
+      sta_max 5919 > max_boundary 3393? True
+
+[C] STATION<->GEOMETRY ANCHOR TEST (run-endpoint table = only station->KMZ bridge)
+    named-AP rows in table: 10; station range = 136..3810 ft
+    ALL table stations span = 136..4533 ft
+
+    [C1] self-validation of the station->named-structure->KMZ mechanism on the PROVEN anchor bore_log7 (sta 451, sheet 10):
+        named anchors within 25 ft of sta 451: [(10, 451.0, 'ap', 163)]
+        -> reproduces sheet 10 / AP-163 (route_469)? True  (this is the mechanism that proved bore_log7)
+
+    [C2] same mechanism on the main-chain bore END stations:
+        bore_log16 end sta 5950: named anchors within 25 ft = NONE
+        bore_log43 end sta 5919: named anchors within 25 ft = NONE
+
+[D] VERDICT
+    PRESENT  : matchline-equation network IS extracted (boundary STA equations +
+               SEE-SHEET corridor graph) for the main chain (sheets 3-9) and the
+               Niebuhr / Glenda clusters. So matchline equations are NOT missing.
+    MISSING-1: the graph is STATION-SPACE ONLY (zero lat/lon). There is NO
+               station<->geometry anchor in it; the ONLY station->KMZ bridge is a
+               NAMED AP in the run-endpoint table.
+    MISSING-2: the bores' absolute stations (4000-5950) EXCEED the max extracted
+               boundary STA (3393) AND the max named-AP station
+               (3810); NO named anchor exists at their
+               end stations -> the chainage cannot be tied to a KMZ position/direction.
+    => PARTIAL chainage graph with a NAMED missing edge: a station<->geometry anchor
+       (a KMZ-locatable named structure at an absolute station in the 4000-5950 range)
+       plus a direction datum. Self-validation CONFIRMS the mechanism works where an
+       anchor exists (bore_log7/451/AP-163) and is ABSENT for bore_log16/43.
