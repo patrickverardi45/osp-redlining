@@ -1,0 +1,21 @@
+================================================================================
+Target #28 — vector-connectivity feasibility probe
+================================================================================
+
+[sheet 10] '4+51'->AP-163; vector nodes=15108 components_top5_sizes=[244, 144, 130, 128, 101]
+   callout@(332,287)  struct 'TERMINAL'@(328,299)  straight=13px
+   -> {'connected': True, 'reason': 'shared vector component', 'shared_comp_sizes': [80, 74, 40], 'safe_specific_leader': True}
+
+[sheet 10] '1+36'->AP-166; vector nodes=15108 components_top5_sizes=[244, 144, 130, 128, 101]
+   callout@(835,143)  struct 'PORT'@(827,155)  straight=15px
+   -> {'connected': True, 'reason': 'shared vector component', 'shared_comp_sizes': [38, 17, 14], 'safe_specific_leader': True}
+
+[sheet 8] '3+08'->AP-110; vector nodes=11142 components_top5_sizes=[235, 150, 102, 98, 70]
+   callout@(1045,172)  struct 'PORT'@(1046,184)  straight=12px
+   -> {'connected': True, 'reason': 'shared vector component', 'shared_comp_sizes': [27, 2], 'safe_specific_leader': True}
+
+[FEASIBILITY VERDICT]
+  If the KNOWN-GOOD pair (451->163) does NOT yield a small isolable shared component, the
+  vector layer is hatch/glyph soup and CANNOT be followed safely -> Primitive B must abstain
+  and Primitive A (nearest-label, validated) remains the method. If it DOES, connectivity is
+  usable and Primitive B can disambiguate by connection.

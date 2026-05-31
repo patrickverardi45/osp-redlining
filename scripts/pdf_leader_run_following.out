@@ -1,0 +1,43 @@
+==================================================================================
+Target #28 — Primitive B leader/run connectivity (read-only; nothing placed)
+==================================================================================
+schema=pdf-leader-run-following-1  valid AP universe=64
+
+[SHEET 8] 9 AP-class records:
+   STA 193: A.ap=None conf=low | B.verdict=abstain_geometry comp_ap=None (no_vector_nodes_near_structure)
+   STA 308: A.ap=110 conf=high | B.verdict=unconfirmed_review comp_ap=None (no_valid_ap_in_structure_component)
+   STA 366: A.ap=None conf=low | B.verdict=abstain_geometry comp_ap=None (no_vector_nodes_near_structure)
+   STA 366: A.ap=154 conf=high | B.verdict=confirmed comp_ap=154 (unique_in_component)
+   STA 387: A.ap=None conf=low | B.verdict=abstain_geometry comp_ap=None (no_valid_ap_in_structure_component)
+   STA 387: A.ap=156 conf=high | B.verdict=confirmed comp_ap=156 (unique_in_component)
+   STA 398: A.ap=None conf=low | B.verdict=abstain_geometry comp_ap=None (no_vector_nodes_near_structure)
+   STA 413: A.ap=None conf=low | B.verdict=recovered comp_ap=157 (unique_in_component)
+   STA 413: A.ap=157 conf=high | B.verdict=confirmed comp_ap=157 (unique_in_component)
+
+[SHEET 10] 14 AP-class records:
+   STA 136: A.ap=None conf=low | B.verdict=recovered comp_ap=125 (unique_in_component)
+   STA 139: A.ap=None conf=low | B.verdict=abstain_geometry comp_ap=None (no_valid_ap_in_structure_component)
+   STA 140: A.ap=None conf=low | B.verdict=abstain_geometry comp_ap=None (no_vector_nodes_near_structure)
+   STA 140: A.ap=165 conf=high | B.verdict=confirmed comp_ap=165 (unique_in_component)
+   STA 160: A.ap=None conf=low | B.verdict=abstain_geometry comp_ap=None (no_valid_ap_in_structure_component)
+   STA 162: A.ap=None conf=low | B.verdict=recovered comp_ap=121 (unique_in_component)
+   STA 166: A.ap=None conf=low | B.verdict=abstain_geometry comp_ap=None (no_valid_ap_in_structure_component)
+   STA 167: A.ap=None conf=low | B.verdict=abstain_geometry comp_ap=None (no_valid_ap_in_structure_component)
+   STA 190: A.ap=None conf=low | B.verdict=abstain_geometry comp_ap=None (no_valid_ap_in_structure_component)
+   STA 191: A.ap=None conf=low | B.verdict=abstain_geometry comp_ap=None (no_valid_ap_in_structure_component)
+   STA 451: A.ap=None conf=low | B.verdict=abstain_geometry comp_ap=None (no_valid_ap_in_structure_component)
+   STA 451: A.ap=163 conf=high | B.verdict=confirmed comp_ap=163 (unique_in_component)
+   STA 3890: A.ap=None conf=low | B.verdict=recovered comp_ap=162 (unique_in_component)
+   STA 4408: A.ap=None conf=low | B.verdict=abstain_geometry comp_ap=None (no_vector_nodes_near_structure)
+
+----------------------------------------------------------------------------------
+VALIDATION (Primitive B connectivity-trusted vs hand table, sheets 8&10 AP rows)
+----------------------------------------------------------------------------------
+   [PASS] sheet 10 STA 451 -> AP-163
+   [PASS] sheet 8 STA 413 -> AP-157
+
+   TRUSTED (A+B agree) = [(8, 366.0, 154), (8, 387.0, 156), (8, 413.0, 157), (10, 140.0, 165), (10, 451.0, 163)]
+   REPRODUCED vs hand  = [(8, 366.0, 154), (8, 387.0, 156), (8, 413.0, 157), (10, 140.0, 165), (10, 451.0, 163)]
+   hand rows NOT trusted (abstained) = [(10, 136.0, 166)]
+   FALSE-POSITIVE/REVIEW (A said AP, geometry did NOT confirm) = [(8, 308.0, 110)]
+   GEOMETRY CANDIDATES (B found AP where A abstained/disagreed — REVIEW, not asserted) = [(8, 413.0, 157, 'recovered'), (10, 136.0, 125, 'recovered'), (10, 162.0, 121, 'recovered'), (10, 3890.0, 162, 'recovered')]

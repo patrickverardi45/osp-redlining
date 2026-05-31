@@ -112,6 +112,17 @@ Self-test `… selftest` → SELFTEST_OK. Isolated in scripts/, no engine import
 `scripts/pdf_run_endpoint_extractor.{json,out}`. NEXT: Primitive B (leader-line following) + MATCHLINE exclusion + extend to
 sheets 8–14, then feed the Target #25 index. Full: `gac/target27_pdf_spatial_run_endpoint_shadow.md`. DO-NOT-WIDEN intact.
 
+**PDF LEADER/RUN CONNECTIVITY (Target #28) — Primitive B BUILT: validation + false-positive rejection.** Feasibility probe
+proved the vector layer is followable (NOT hatch soup: largest page component ~244 nodes; callouts reach structure labels via
+small isolable components). Pure `scripts/pdf_leader_run_following.py` builds a union-find component graph over page.lines+curves
+endpoints, then binds the AP number that lies in the STRUCTURE LABEL'S OWN connected component (not nearest text). vs hand table
+(sheets 8/10): **both gate cases PASS (451→163, 413→157 confirmed); TRUSTED (A+B agree) = 5/6 hand rows, 100% precision (0 wrong)**;
+MISS (10,136,166) ABSTAINS with geometry reason (STA 1+36's local structure is AP-125, not 166 — 166 is the run's far end, not a
+single isolable polyline); EXTRA (8,308,110) REJECTED as false positive (no valid AP in its component). Geometry candidates
+(10,136,125 conflict / 162 / 3890 matchline) surfaced for REVIEW, not asserted. Self-test → SELFTEST_OK. Isolated/placement-free.
+NEXT: MATCHLINE exclusion + a gated run-polyline tracer (Primitive C) for multi-drive far-end APs, then extend 8–14 + feed Target
+#25 index. Full: `gac/target28_pdf_leader_line_run_following.md`. DO-NOT-WIDEN intact.
+
 ## Render disk caution
 `/data` can fill → upload/session/audit failures. If uploads fail, operator runs `df -h /data` BEFORE
 blaming code (B-WS-12 OOM fingerprint = bore-log upload 502 `<!DOCTYPE html>`). If tight: inspect/backup/
