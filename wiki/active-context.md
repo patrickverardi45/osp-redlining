@@ -5,7 +5,7 @@
 
 ## Repo state
 - Branch: `pdf-ap-route-shadow`
-- `origin/main` = `061cbe3` (local HEAD tracks it). PDF-extraction chain shipped: Targets #18–#31 pushed (latest #31 component-bridge run-span tracer).
+- `origin/main` = `<pending>` (local HEAD tracks it). PDF-extraction chain shipped: Targets #18–#32 pushed (latest #32 sheets-8–14 endpoint table).
 - Tree: tracked clean; untracked diagnostics live in `scripts/` (offline probes, *_replay.py, bore_log7_*).
 
 ## Mission (non-negotiable)
@@ -156,6 +156,17 @@ hand rows, 100% precision, Target #27/#28/#30 NOT degraded; 0 unsafe bridges. Se
 RENDERED as a followable polyline on sheet 10 (hand-table value stands as reference, not re-derivable without guessing). NEXT:
 cross-sheet/matchline run reconstruction + apply A→B→C→reconstruct→bridge chain to sheets 8–14 (capture geometry-provable endpoints).
 Full: `gac/target31_pdf_component_bridge_run_span.md`. DO-NOT-WIDEN intact.
+
+**SHEETS 8–14 ENDPOINT TABLE (Target #32) — chain scales: 7/10 endpoints, 100% precision on AP-terminal sheets, 0 wrong IDs.**
+Driver `scripts/pdf_endpoint_table_8_14.py` runs A→B across sheets 8–14, trust=B-confirmed & not-matchline. **AP-terminal sheets
+8–12: TP=7 (154/156/157/165/163/168/167), extra=0, PRECISION=1.00, RECALL=0.70, WRONG-ID=0.** 3 misses (9:3810→155 high-station;
+10:136→166 unbridgeable; 12:355→164 adjacent-pair contamination — abstain, no mis-bind). Boundary sheets 13/14 (0 hand AP rows)
+OVER-GENERATE 5 false APs (matchline/cross-ref numbers; label-proximity filter insufficient) → quarantined, NOT trusted-clean.
+**7/7 trusted APs geometry-anchor-ready in Target #25 index.** AP-166 cross-sheet: only `…→166` is (13,389,166) at a sheet-13
+MATCHLINE station → rejected; no boundary equation → **(10,136,166) NOT RECOVERED, abstained + STOPPED** (no loop). Self-test
+SELFTEST_OK. Zero degradation of #27–#31 trusted cases. NEXT: stronger matchline/boundary exclusion (boundary-STA eqns + SEE-SHEET)
+to lift overall precision 0.58→1.00; adjacent-AP disambiguation; feed the 7-endpoint table into the #25 index as auto-derived truth.
+Full: `gac/target32_pdf_endpoint_table_sheets_8_14.md`. DO-NOT-WIDEN intact.
 
 ## Render disk caution
 `/data` can fill → upload/session/audit failures. If uploads fail, operator runs `df -h /data` BEFORE

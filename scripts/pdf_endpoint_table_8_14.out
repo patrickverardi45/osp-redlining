@@ -1,0 +1,35 @@
+========================================================================================
+Target #32 — PDF run-endpoint table, sheets 8-14 (read-only; nothing placed)
+========================================================================================
+ sheet  8: confirmed-trusted AP rows=3  matchline/see-sheet stations excluded=[3393.0]
+ sheet  9: confirmed-trusted AP rows=0  matchline/see-sheet stations excluded=[3393.0]
+ sheet 10: confirmed-trusted AP rows=2  matchline/see-sheet stations excluded=[184.0]
+ sheet 11: confirmed-trusted AP rows=1  matchline/see-sheet stations excluded=[]
+ sheet 12: confirmed-trusted AP rows=1  matchline/see-sheet stations excluded=[]
+ sheet 13: confirmed-trusted AP rows=5  matchline/see-sheet stations excluded=[]
+ sheet 14: confirmed-trusted AP rows=0  matchline/see-sheet stations excluded=[]
+
+----------------------------------------------------------------------------------------
+GRADE vs BRENHAM_PH5_RUN_ENDPOINTS (sheets 8-14 AP rows)
+----------------------------------------------------------------------------------------
+   hand AP rows = 10; trusted = 12
+   TRUE POSITIVES (7) = [(8, 366.0, 154), (8, 387.0, 156), (8, 413.0, 157), (10, 140.0, 165), (10, 451.0, 163), (11, 189.0, 168), (12, 350.0, 167)]
+   WRONG IDs      (0) = []
+   EXTRA/REVIEW   (5) = [(13, 160.0, 151), (13, 359.0, 160), (13, 389.0, 166), (13, 390.0, 167), (13, 398.0, 162)]
+   MISSES         (3) = [(9, 3810.0, 155), (10, 136.0, 166), (12, 355.0, 164)]
+   PRECISION = 0.58   RECALL = 0.70   (wrong-id policy: OK (0))
+   -- AP-terminal sheets 8-12: TP=7 extra=0 miss=3 PRECISION=1.00 RECALL=0.70
+   -- boundary sheets 13-14 (hand has 0 AP rows): 5 EXTRA = boundary-sheet
+      over-generation (matchline/cross-ref numbers read as APs) = [(13, 160.0, 151), (13, 359.0, 160), (13, 389.0, 166), (13, 390.0, 167), (13, 398.0, 162)]
+      => matchline label-proximity filter is insufficient on 13/14; these are NOT trusted-clean.
+
+   Target #25 index: 7/7 trusted APs are geometry-anchor-ready (latlon present) -> [154, 156, 157, 165, 163, 168, 167]
+
+[BOUNDED AP-166 CROSS-SHEET ATTEMPT (one shot, then stop)]
+   sheet 10 corridor (matchline-connected) = [10, 12, 13, 14]; adjacent in-band sheets = [12, 13, 14]
+   sheet-10<->adjacent matchline boundary equation: None
+   => ABSTAIN: no same-component AP-166 on sheet 10; cross-sheet candidates are matchline
+      false-positives or lack a deterministic STA-136->AP-166 matchline equation.
+   STOP chasing AP-166 (per Target #32 rule: one bounded attempt, then move on).
+
+   (10,136,166) FINAL: NOT RECOVERED (abstained, stopped)
