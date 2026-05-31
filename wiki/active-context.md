@@ -89,6 +89,18 @@ respected) — it's the catcher so the instant ONE bore→AP/structure clue arri
 +station+.FS) with zero re-mining. Self-test `python scripts/ap_structure_index.py selftest` → SELFTEST_OK. Full:
 `gac/target25_structure_index_shadow.md`. Next unlock still gated on the single bore→AP edge. DO-NOT-WIDEN intact.
 
+**PDF VISUAL EXTRACTION PATH (Target #26) — POSITIVE: relationship IS in the PDF, was an extraction failure.** The
+plan sheets (8–14, pdf pp.21–27) visually encode each DIR.BORE run→structure via positioned text + a dense VECTOR layer
+(sheet 10: 3233 lines + 7874 curves = leader lines + bored-run polylines). A **position-aware spatial nearest-label join
+auto-reproduces known run-endpoints**: `STA 4+51→TERMINAL PORT HH` (AP-163) @13px, `STA 4+13→PORT` (AP-157) @14px — i.e.
+the hand `BRENHAM_PH5_RUN_ENDPOINTS` table is derivable, not missing. Current extractor misses it because linear
+text-order flattens (x,y) adjacency, the leader/polyline VECTOR layer is never read, and AP-number glyphs scramble (need
+Target #1 char-stream V2). Concrete validated path: bore_log57 end 413 → sheet-8 join '4+13'→'PORT'=AP-157 → Target #25
+index → lat/lon + tail route_465. Multi-drive logs (29 end 415 has 0 '4+15' callouts) need per-DRIVE run grouping
+(Primitive B). NEXT IMPL TARGET: default-OFF read-only `extract_run_endpoints_from_sheet(page)` (Primitive A: spatial join
++ char-stream AP recovery, gated by equality vs the hand table). Still placement-free. Full:
+`gac/target26_pdf_visual_relationship_extraction.md`. DO-NOT-WIDEN intact.
+
 ## Render disk caution
 `/data` can fill → upload/session/audit failures. If uploads fail, operator runs `df -h /data` BEFORE
 blaming code (B-WS-12 OOM fingerprint = bore-log upload 502 `<!DOCTYPE html>`). If tight: inspect/backup/

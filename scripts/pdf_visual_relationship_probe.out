@@ -1,0 +1,31 @@
+================================================================================
+Target #26 — PDF visual bore->structure extraction probe
+================================================================================
+plan PDF: Brenham - Phase 5_07-15-25.pdf (43 pages)
+
+[SHEET 10 / pdf page 23]  page 1224x792
+   words=1588  vector: lines=3233 curves=7874 rects=34
+   STA callouts=55  AP-num labels(100-200)=2  FLOWER=13 SPLICE=5 PORT/TERMINAL=34 BORE=20
+   sample STA tokens: ['39+00', '40+00', '41+00', '42+00', '43+00', '44+00', '1+00', '1+40', '4+51', '0+47', '43+36', '44+83']
+   sample AP-num labels: ['100']
+
+[VALIDATION] auto-derive the structure nearest the '4+51' callout on sheet 10
+             (hand-table says STA 451 -> AP-163 Terminal Port HH):
+   '4+51' at (x=332,y=287) -> nearest structure label 'TERMINAL' at (x=328,y=299), dist=13px
+      AP-num labels within 220px of '4+51': []  (expect 163 present)
+   '4+51' at (x=447,y=282) -> nearest structure label 'TERMINAL' at (x=436,y=294), dist=16px
+      AP-num labels within 220px of '4+51': []  (expect 163 present)
+
+[APPLY] blocked bore_log29 end station 415 -> is there a '4+15' callout + structure on sheet 10/12?
+   sheet 10: '4+15' callouts = 0; all STA on sheet = ['0+00', '0+47', '0+84', '0+92', '1+00', '1+35', '1+36', '1+39', '1+40', '1+60', '1+62', '1+66', '1+67', '1+84', '1+86', '1+90']
+   sheet 12: '4+15' callouts = 0; all STA on sheet = ['1+90', '1+91', '1+92', '3+50', '3+55', '4+42', '4+45', '5+07', '5+10']
+
+[FINDING]
+  The plan sheet carries, AS POSITIONED OBJECTS: STA callouts (x,y), numeric AP labels
+  (x,y), FLOWER POT / SPLICE / TERMINAL PORT text, AND a dense vector layer (lines+curves
+  = leader lines + bored-run polylines; rects = structure symbols). The station<->structure
+  association is a SPATIAL nearest-label / leader-line join — which linear text-order
+  extraction discards. The hand-built BRENHAM_PH5_RUN_ENDPOINTS table is exactly this join
+  done by eye. Extraction primitive = position-aware 'STA-callout -> nearest structure
+  label (or leader-line-connected label)' on each sheet, validated against the known AP
+  run-ends, then joined to the Target #25 AP/structure index for geometry.
