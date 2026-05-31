@@ -5,7 +5,7 @@
 
 ## Repo state
 - Branch: `pdf-ap-route-shadow`
-- `origin/main` = `<pending>` (local HEAD tracks it). PDF-extraction chain shipped: Targets #18–#33 pushed (latest #33 cleaned endpoint table + placement readiness).
+- `origin/main` = `c1e1639` (local HEAD tracks it). PDF-extraction chain shipped: Targets #18–#33 pushed (latest #33 cleaned endpoint table + placement readiness).
 - Tree: tracked clean; untracked diagnostics live in `scripts/` (offline probes, *_replay.py, bore_log7_*).
 
 ## Mission (non-negotiable)
