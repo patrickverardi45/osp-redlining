@@ -1,0 +1,38 @@
+{
+  "schema_version": "target36-ap164-adjacent-pair-1",
+  "pair": {
+    "confirmed": {
+      "sta": 350.0,
+      "ap": 167
+    },
+    "miss": {
+      "sta": 355.0,
+      "ap": 164
+    }
+  },
+  "sheet": 12,
+  "classification": "HARD_MISS_NEEDS_GUESS",
+  "machine_reason": "ap164_is_a_PrimitiveB_recovered_only_candidate (A_side_abstained_no_A_B_agreement(A_ap=None,B_verdict=recovered)). NOT a label-adjacency collision: AP-164 / AP-167 centroids are 489px apart. The miss is a Primitive-A abstention at STA 355, so the A^B agreement that DEFINES the confirmed tier is absent BY DESIGN. AP-164 is a real hand-table run-endpoint (geometry-ready) recovered by B (full phrase, run_end, reconstructed). Promotion would require EITHER a validated Primitive-A fix at STA 355 OR an authorized decision to admit B-recovered endpoints into the placement-grade set (a trust-tier change) \u2014 neither is a guess, but both are out of scope for a no-widen structure-side gate. Stays a documented miss / B-recovered review.",
+  "evidence": {
+    "ap164_in_hand_table": true,
+    "ap164_geometry_ready": true,
+    "ap164_A_ap_at_355": null,
+    "ap164_B_verdict_at_355": "recovered",
+    "ap164_reconstructed": true,
+    "ap164_full_phrase": true,
+    "ap164_not_matchline": true,
+    "centroid_167": [
+      980.6,
+      361.3
+    ],
+    "centroid_164": [
+      491.4,
+      368.5
+    ],
+    "centroid_separation_px": 489.2529815954115,
+    "b_recovered_only": true,
+    "labels_far_apart": true
+  },
+  "control_ok": true,
+  "headline": "AP-164 @ (12,355) -> HARD_MISS_NEEDS_GUESS: not separable from AP-167@350 without guessing; documented miss"
+}

@@ -1,0 +1,36 @@
+========================================================================================
+Target #36 — endpoint-quality gate: AP-164 adjacent-pair MISS (sheet 12, STA 350/355) — READ-ONLY
+========================================================================================
+
+[A/B EXTRACTION ON SHEET 12 — the STA 350/355 pair]
+   STA 350 (hand AP-167, confirmed): A_ap=167  B_verdict=confirmed  B_comp_ap=167  role=run_end  reconstructed_in_gidx=True
+   STA 355 (hand AP-164, miss): A_ap=None  B_verdict=recovered  B_comp_ap=164  role=run_end  reconstructed_in_gidx=True
+
+[RECONSTRUCTED CENTROIDS]
+   AP-167 centroid=[980.6, 361.3]   AP-164 centroid=[491.4, 368.5]
+   centroid separation = 489.3 px
+   geometry-derived matchlines near pair = []
+
+[CANONICAL RUN-ENDPOINT GATE applied to AP-164 @ 355 INDEPENDENTLY]
+   g1 B-confirmed as AP-164 = False  (A_ap=None, B_verdict=recovered)
+   g2 reconstructed         = True
+   g3 full TERMINAL+PORT+SPLICE phrase = True
+   g4 not matchline         = True
+
+[DECISION]
+   AP-164 hand run-endpoint=True  geometry_ready=True  centroid_sep=489.3px
+   => HARD_MISS_NEEDS_GUESS
+      reason: ap164_is_a_PrimitiveB_recovered_only_candidate (A_side_abstained_no_A_B_agreement(A_ap=None,B_verdict=recovered)). NOT a label-adjacency collision: AP-164 / AP-167 centroids are 489px apart. The miss is a Primitive-A abstention at STA 355, so the A^B agreement that DEFINES the confirmed tier is absent BY DESIGN. AP-164 is a real hand-table run-endpoint (geometry-ready) recovered by B (full phrase, run_end, reconstructed). Promotion would require EITHER a validated Primitive-A fix at STA 355 OR an authorized decision to admit B-recovered endpoints into the placement-grade set (a trust-tier change) — neither is a guess, but both are out of scope for a no-widen structure-side gate. Stays a documented miss / B-recovered review.
+
+[CONTROL — AP-167 @ 350 confirmed endpoint must NOT degrade]
+   AP-167 @ 350: A_ap=167  B_verdict=confirmed  control_ok=True
+
+[SUMMARY]
+   CORRECTS the '#32 adjacent-pair contamination' label: AP-164 and AP-167 labels are NOT
+   adjacent (centroids 489px apart). AP-164 is a Primitive-B 'recovered'-only
+   candidate — a real hand-table run-endpoint that B found (full phrase, run_end,
+   reconstructed, real KMZ node) but Primitive A ABSTAINED on (A_ap=None), so the A^B
+   agreement defining the confirmed tier is absent by design. It cannot enter the
+   placement-grade set without either a validated A-side fix at STA 355 or an authorized
+   B-recovered trust-tier change — out of scope for a no-widen gate. Documented miss.
+   Precision stays 1.00 either way; the 7 confirmed + bore_log7 lane are untouched.

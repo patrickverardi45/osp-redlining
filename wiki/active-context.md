@@ -213,6 +213,20 @@ promotion blocked until (a) literal-quote run-END verification on sheet 13 OR (b
 AP-160. No promotion artifact updated (stays in `review`; `confirmed` 7 unchanged). CONTROL: 7/7 confirmed re-validated
 this run (control_ok). Self-test SELFTEST_OK. Full: `gac/target35_ap160_trusted_review_adjudication.md`. DO-NOT-WIDEN intact.
 
+**AP-164 ADJACENT-PAIR "MISS" GATE (Target #36) — HARD_MISS (B-recovered-only); #32 "adjacent-pair contamination"
+label CORRECTED; 7 confirmed + bore_log7 untouched.** Auto-continued from #35: adjudicated the only non-AP-166
+extraction-quality recall gap that is a real hand-table run-endpoint — (sheet 12, STA 355, AP-164), recall 0.70 miss.
+`scripts/target36_ap164_adjacent_pair_gate.py`: AP-164/AP-167 reconstructed centroids are **489 px apart** (NOT a
+label-adjacency collision — the "5 ft" was station values 350 vs 355). Real mechanism: **Primitive A ABSTAINED at STA
+355 (A_ap=None)** while Primitive B **recovered** AP-164 (comp_ap 164, full TERMINAL+PORT+SPLICE phrase, role run_end,
+reconstructed, real KMZ node route_468). A∧B disagree → verdict=`recovered` not `confirmed` → the #33 gate excludes it
+**by design** (confirmed-only). So AP-164 = a Primitive-B-recovered-only review candidate (analogous to AP-160/#35).
+Two named recovery paths, both out of scope for a no-widen gate: (a) a VALIDATED Primitive-A fix at STA 355, OR (b) an
+AUTHORIZED B-recovered trust-tier change. Classification `HARD_MISS_NEEDS_GUESS`; no promotion; precision stays 1.00;
+recall honestly 0.70. CONTROL: AP-167@350 re-validated confirmed (control_ok). Self-test SELFTEST_OK. Full:
+`gac/target36_next_pdf_endpoint_quality_gate.md`. NEXT (when re-authorized): focused Primitive-A abstention diagnosis at
+STA 355 → would lift AP-164 to confirmed + recall 0.80, validated vs the 7. DO-NOT-WIDEN intact.
+
 ## Render disk caution
 `/data` can fill → upload/session/audit failures. If uploads fail, operator runs `df -h /data` BEFORE
 blaming code (B-WS-12 OOM fingerprint = bore-log upload 502 `<!DOCTYPE html>`). If tight: inspect/backup/
