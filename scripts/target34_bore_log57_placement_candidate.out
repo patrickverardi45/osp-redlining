@@ -1,0 +1,40 @@
+====================================================================================
+Target #34 — bore_log57 PDF-derived placement-readiness adjudication (READ-ONLY)
+====================================================================================
+TOL=15.0 ft. Gate = G1 structure-side-trusted AND G2 single-corridor AND
+G3 no-competing-terminus AND G4 print-mapping-certain  (the bore_log7 proof shape).
+Trusted endpoints: pdf_clean_endpoint_table.json   AP index: ap_structure_index.json
+
+Confirmed PDF-derived endpoints (Target #33): 7 -> [(8, 366, 154), (8, 387, 156), (8, 413, 157), (10, 140, 165), (10, 451, 163), (11, 189, 168), (12, 350, 167)]
+
+------------------------------------------------------------------------------------
+[bore_log57]  (TARGET)
+   prints=[8, 10, 13]  station=0-413  rows=10
+   STRUCTURE SIDE: confirmed_hits=[(8, 413.0, 157)]  -> AP-157  tail=route_465  latlon=[30.15819526755925, -96.38598520451443]  ready=True
+   BORE SIDE: corridor_status=multi_corridor_span  corridors=[[3, 4, 5, 6, 7, 8, 9, 23, 24], [10, 12, 13, 14]]
+              named_AP_termini_near_END=[(8, 413.0, 'ap', 157)]
+              competing_unnamed_termini=[(13, 398.0, 'matchline')]
+              notes=Segment A (col1) split from bore_log24.xlsx. Source: 2026-01-13_213036 - Jimenez. NEEDS REVIEW: form DATE field reads '1/13/25' — interprete
+   GATES: G1=True  G2=False  G3=False  G4=False
+   => ABSTAIN
+      blockers: ['multi_corridor_span', 'competing_unnamed_terminus_within_tol', 'print_mapping_flagged_uncertain']
+      missing artifact: .FS Fiber-Schematic / drive-decomposition sheet (which drive/terminus this bore's END belongs to) OR a per-bore terminus-structure/direction field — absent from all provided Brenham sources (Target #23/#24). Structure side (AP + tail route + lat/lon) IS ready; the BORE->drive binding is not.
+
+------------------------------------------------------------------------------------
+[bore_log7]  (CONTROL (proven bore_log7->route_469))
+   prints=[10]  station=55-451  rows=10
+   STRUCTURE SIDE: confirmed_hits=[(10, 451.0, 163)]  -> AP-163  tail=route_469  latlon=[30.15916282765615, -96.38572984005854]  ready=True
+   BORE SIDE: corridor_status=within_corridor  corridors=[[10, 12, 13, 14]]
+              named_AP_termini_near_END=[(10, 451.0, 'ap', 163)]
+              competing_unnamed_termini=[]
+   GATES: G1=True  G2=True  G3=True  G4=True
+   => PLACEMENT_READY
+
+------------------------------------------------------------------------------------
+SUMMARY
+------------------------------------------------------------------------------------
+  CONTROL bore_log7 : PLACEMENT_READY (re-derives route_469: route_469) -> control_ok=True
+  TARGET  bore_log57: ABSTAIN  structure_side_ready=True  blockers=['multi_corridor_span', 'competing_unnamed_terminus_within_tol', 'print_mapping_flagged_uncertain']
+
+  VERDICT: bore_log57 is NOT safely placeable. Structure side (AP-157 -> route_465, lat/lon) is clean & geometry-ready (Target #33 resolved the endpoint-side ambiguity), but the BORE-side drive-disambiguation is unresolved: its END (sta 413) sits within tol of BOTH AP-157 (sheet 8) and a sheet-13 matchline (sta 398), the bore spans two corridors, and its print mapping is flagged uncertain. Binding it to AP-157 over the sheet-13 corridor = guessing -> wrong-redline risk. ABSTAIN per DO-NOT-WIDEN.
+  bore_log7 control unchanged (PLACEMENT_READY -> route_469); gate calibration confirmed.

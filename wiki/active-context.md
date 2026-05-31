@@ -5,7 +5,7 @@
 
 ## Repo state
 - Branch: `pdf-ap-route-shadow`
-- `origin/main` = `c1e1639` (local HEAD tracks it). PDF-extraction chain shipped: Targets #18–#33 pushed (latest #33 cleaned endpoint table + placement readiness).
+- `origin/main` = `c1e1639` (local HEAD tracks it). PDF-extraction chain shipped: Targets #18–#34 pushed (latest #34 bore_log57 placement candidate — structure-side READY, bore→drive binding ABSTAIN).
 - Tree: tracked clean; untracked diagnostics live in `scripts/` (offline probes, *_replay.py, bore_log7_*).
 
 ## Mission (non-negotiable)
@@ -179,6 +179,24 @@ bore_log57 (end 413,prints 8/10/13)→(8,413,157) = CANDIDATE (endpoint clean no
 drive disambiguation).** No placement performed (DO-NOT-WIDEN). Self-test SELFTEST_OK. NEXT: adjudicate (13,359,160); bore_log57
 drive-disambiguation; future default-OFF placement shadow for PLACEMENT_READY bores. Full: `gac/target33_clean_endpoint_table_placement_readiness.md`.
 DO-NOT-WIDEN intact.
+
+**bore_log57 PLACEMENT CANDIDATE (Target #34) — structure side READY, bore→drive binding UNRESOLVED → ABSTAIN; no
+override (would guess); bore_log7 control unchanged.** First trusted PDF-derived placement attempt beyond bore_log7.
+`scripts/target34_bore_log57_placement_candidate.py` adjudicates the Target #33 PLACEMENT_READY_CANDIDATEs against the
+bore_log7 proof shape — 4 gates: **G1** structure-side-trusted (unique confirmed endpoint + #25 geometry-ready) **∧
+G2** single-corridor **∧ G3** no-competing-terminus **∧ G4** print-mapping-certain. **bore_log57: G1=T, G2=F, G3=F,
+G4=F → ABSTAIN.** Structure side IS clean & geometry-ready: end 413 → unique (8,413,**AP-157**) → **route_465** @
+(30.15819527,−96.38598520), coverage fs/station/latlon/tail all ✓ (more complete than proven AP-163). Bore side
+unresolved on 3 independent machine-readable counts: `multi_corridor_span` (corridors [3-9,23,24] via print 8 vs
+[10,12,13,14] via 10/13), `competing_unnamed_terminus_within_tol` (sheet-13 matchline@398, |413−398|=15 — #33 removed
+it from the TRUSTED AP table but it still physically sits by the END), `print_mapping_flagged_uncertain` (notes: split
+from bore_log24, "print mapping uncertain — preserved full source print '8,10,13'"). Binding AP-157 over the sheet-13
+corridor = guessing → wrong-redline risk. Missing artifact = `.FS` drive-decomposition sheet OR a per-bore
+terminus/direction field (Target #23/#24; absent) — once acquired this adjudicator resolves bore_log57→AP-157→route_465
+with zero re-mining (G1 already green; the artifact flips G2-G4). **CONTROL bore_log7 re-verified PLACEMENT_READY →
+route_469 (all 4 gates pass) — proven lane NOT degraded; gate calibration confirmed.** No placement, no override, no
+flag/STATE/geometry; read-only; self-test SELFTEST_OK. NEXT: adjudicate the TRUSTED-REVIEW (13,359,160) (pure
+structure-side, no bore dependency). Full: `gac/target34_bore_log57_pdf_derived_placement_candidate.md`. DO-NOT-WIDEN intact.
 
 ## Render disk caution
 `/data` can fill → upload/session/audit failures. If uploads fail, operator runs `df -h /data` BEFORE
