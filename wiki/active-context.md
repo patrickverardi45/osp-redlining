@@ -5,7 +5,7 @@
 
 ## Repo state
 - Branch: `pdf-ap-route-shadow`
-- `origin/main` = `e6c9fee` (local HEAD tracks it). PDF-extraction chain shipped: Targets #18–#30 pushed (latest #30 positioned AP-glyph reconstruction — AP-166 localized).
+- `origin/main` = `<pending>` (local HEAD tracks it). PDF-extraction chain shipped: Targets #18–#31 pushed (latest #31 component-bridge run-span tracer).
 - Tree: tracked clean; untracked diagnostics live in `scripts/` (offline probes, *_replay.py, bore_log7_*).
 
 ## Mission (non-negotiable)
@@ -144,6 +144,18 @@ vector component (local structure is AP-125) → binding 166 over 125 = guessing
 endpoint TRUST untouched. NEXT: component-bridge/run-polyline span (connect STA callout to a close-but-separate-component AP only
 when ONE bored-run polyline spans the gap) — the final 136→166 unlock. Full: `gac/target30_positioned_ap_glyph_reconstruction.md`.
 DO-NOT-WIDEN intact.
+
+**COMPONENT-BRIDGE RUN-SPAN TRACER (Target #31) — 136→166 geometry-unprovable on sheet 10; honest floor.** Pure
+`scripts/pdf_component_bridge.py::attempt_bridge` connects a STA callout to a localized AP target (Target #30 universe) via two
+paths: `same_component_direct` (trusted Prim-B cases) or `bridge_single_run` (cross-component, ONLY if a single bored-run polyline
+spans the gap: spanning component + not-hatch-soup + long run segment + DIR.BORE label in gap). **(10,136,166) ABSTAIN** — gap is
+hatch soup (104 curves/7 lines/86% short), 0 DIR.BORE labels, no spanning component → 3 machine-readable reasons; bridging = guessing.
+Gate kept: (10,451,163)+(8,413,157) ACCEPT via same_component_direct; AP-125 does NOT steal 136 (canonical AP-125 is 206px away — the
+Target #28 "125-in-136-component" was a loose-cluster artifact, now removed); (8,308,110) stays review/rejected. FINAL trusted=5/6
+hand rows, 100% precision, Target #27/#28/#30 NOT degraded; 0 unsafe bridges. Self-test SELFTEST_OK. The 136→166 run is simply not
+RENDERED as a followable polyline on sheet 10 (hand-table value stands as reference, not re-derivable without guessing). NEXT:
+cross-sheet/matchline run reconstruction + apply A→B→C→reconstruct→bridge chain to sheets 8–14 (capture geometry-provable endpoints).
+Full: `gac/target31_pdf_component_bridge_run_span.md`. DO-NOT-WIDEN intact.
 
 ## Render disk caution
 `/data` can fill → upload/session/audit failures. If uploads fail, operator runs `df -h /data` BEFORE

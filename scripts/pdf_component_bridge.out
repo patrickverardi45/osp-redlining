@@ -1,0 +1,25 @@
+======================================================================================
+Target #31 — component-bridge / bored-run span tracer (read-only; nothing placed)
+======================================================================================
+schema=pdf-component-bridge-1
+
+[BRIDGE ATTEMPTS]
+   sheet10 1+36->AP-166 (PRIMARY cross-component): ABSTAIN [no_spanning_component; gap_is_hatch_soup(curves=104,lines=7,short_ratio=0.86); no_dir_bore_label_in_gap] straight=45.1px
+       reason: no_spanning_component; gap_is_hatch_soup(curves=104,lines=7,short_ratio=0.86); no_dir_bore_label_in_gap
+   sheet10 4+51->AP-163 (demo same-component (trusted)): ACCEPT [same_component_direct] straight=19.0px
+   sheet8 4+13->AP-157 (demo same-component (trusted)): ACCEPT [same_component_direct] straight=43.7px
+   sheet10 1+36->AP-125 (ALT local AP-125 (must not steal 136)): ABSTAIN [no_vector_nodes_at_endpoint] straight=206.1px
+       reason: no_vector_nodes_at_endpoint
+
+--------------------------------------------------------------------------------------
+VALIDATION vs BRENHAM_PH5_RUN_ENDPOINTS (sheets 8 & 10, AP rows)
+--------------------------------------------------------------------------------------
+   (10,136,166) -> NOT RECOVERED (abstain)
+   [PASS] keep (10,451,163) trusted
+   [PASS] keep (8,413,157) trusted
+   AP-125 stealing STA 136? NO (125 not trusted)
+   (8,308,110) in trusted? NO (rejected/review)
+
+   FINAL trusted endpoints = [(8, 366.0, 154), (8, 387.0, 156), (8, 413.0, 157), (10, 140.0, 165), (10, 451.0, 163)]
+   REPRODUCED vs hand     = [(8, 366.0, 154), (8, 387.0, 156), (8, 413.0, 157), (10, 140.0, 165), (10, 451.0, 163)]
+   bridged (cross-comp)   = NONE

@@ -1,0 +1,81 @@
+{
+  "schema_version": "pdf-component-bridge-1",
+  "bridge_attempts": [
+    {
+      "sheet": 10,
+      "sta": "1+36",
+      "ap": 166,
+      "note": "PRIMARY cross-component",
+      "ap_id": 166,
+      "verdict": "abstain",
+      "reason": "no_spanning_component; gap_is_hatch_soup(curves=104,lines=7,short_ratio=0.86); no_dir_bore_label_in_gap",
+      "straight_px": 45.1,
+      "evidence": {
+        "corr_lines": 7,
+        "corr_curves": 104,
+        "hatch_ratio": 0.86,
+        "longest_seg_px": 21.6,
+        "bore_labels_in_gap": 0
+      }
+    },
+    {
+      "sheet": 10,
+      "sta": "4+51",
+      "ap": 163,
+      "note": "demo same-component (trusted)",
+      "ap_id": 163,
+      "verdict": "accept",
+      "path": "same_component_direct",
+      "reason": "sta_and_ap_share_one_vector_component",
+      "straight_px": 19.0
+    },
+    {
+      "sheet": 8,
+      "sta": "4+13",
+      "ap": 157,
+      "note": "demo same-component (trusted)",
+      "ap_id": 157,
+      "verdict": "accept",
+      "path": "same_component_direct",
+      "reason": "sta_and_ap_share_one_vector_component",
+      "straight_px": 43.7
+    },
+    {
+      "sheet": 10,
+      "sta": "1+36",
+      "ap": 125,
+      "note": "ALT local AP-125 (must not steal 136)",
+      "ap_id": 125,
+      "verdict": "abstain",
+      "reason": "no_vector_nodes_at_endpoint",
+      "straight_px": 206.1
+    }
+  ],
+  "final_trusted": [
+    [
+      8,
+      366.0,
+      154
+    ],
+    [
+      8,
+      387.0,
+      156
+    ],
+    [
+      8,
+      413.0,
+      157
+    ],
+    [
+      10,
+      140.0,
+      165
+    ],
+    [
+      10,
+      451.0,
+      163
+    ]
+  ]
+}
