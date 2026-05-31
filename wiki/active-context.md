@@ -297,6 +297,16 @@ per-bore START-structure (a single field, NOT the whole .FS). **CONTROL bore_log
 Full: `gac/target41_subroute_segmentation_resolver.md`. NEXT (#42): sweep all bores for route-len≈bore-len / uniquely-anchored
 proof-grade segments. DO-NOT-WIDEN intact.
 
+**CORPUS-WIDE PLACEABLE SWEEP (Target #42) — placeable set = exactly {bore_log7}, proven across 58 bores.**
+`scripts/target42_next_placeable_bore_sweep.py` runs the #41 proof-grade segment test on every bore that matches a
+confirmed endpoint. **58 scanned; only 2 bind to a confirmed endpoint** (bore_log7→PLACEABLE, bore_log57→NOT_UNIQUE);
+**56 have no confirmed-endpoint match. NEW placeable beyond bore_log7 = NONE.** Five independent methods (#38 binding /
+#39 alt-resolver / #40 multi-drive sweep / #41 segmentation / #42 corpus sweep) now converge on the same answer:
+deterministically-placeable set from delivered files = {bore_log7}. Single unblock = a per-bore terminus/start-structure
+field (one field, not whole .FS; absent #23/#24). CONTROL bore_log7 PLACEABLE. Self-test SELFTEST_OK; no placement/flag/
+STATE/geometry. Full: `gac/target42_next_placeable_bore_sweep.md`. **HARD BLOCKER (exhaustively proven): no repo-local move
+yields a new deterministic placement; acquire a per-bore start-structure/terminus field to unblock.** DO-NOT-WIDEN intact.
+
 ## Render disk caution
 `/data` can fill → upload/session/audit failures. If uploads fail, operator runs `df -h /data` BEFORE
 blaming code (B-WS-12 OOM fingerprint = bore-log upload 502 `<!DOCTYPE html>`). If tight: inspect/backup/

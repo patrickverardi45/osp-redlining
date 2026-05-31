@@ -1,0 +1,27 @@
+============================================================================================
+Target #42 — corpus-wide sweep for the next placeable bore (bore_log7 shape)
+============================================================================================
+confirmed endpoints = [(8, 366, 154), (8, 387, 156), (8, 413, 157), (9, 3810, 155), (10, 140, 165), (10, 451, 163), (11, 189, 168), (12, 350, 167), (12, 355, 164)]  STA_TOL=15.0
+
+scanning 58 bore logs...
+
+[bore_log57] end=413 sheets=[8, 10, 13] -> matches=[(8, 413.0, 157)] verdicts=[(157, 'NOT_UNIQUE_COMPETING_SEGMENTS')]
+[bore_log7] end=451 sheets=[10] -> matches=[(10, 451.0, 163)] verdicts=[(163, 'PLACEABLE_SEGMENT_PROVEN')]
+
+--------------------------------------------------------------------------------------------
+SUMMARY
+   bores scanned: 58
+   endpoint-matched bores: ['bore_log57', 'bore_log7']
+   PLACEABLE_SEGMENT_PROVEN: ['bore_log7']
+   NOT_UNIQUE_COMPETING_SEGMENTS: ['bore_log57']
+   endpoint match but no unique tail / other: []
+   no confirmed-endpoint match: 56 bores
+
+   NEW placeable bores (beyond bore_log7): NONE
+   CONTROL bore_log7 in PLACEABLE: True
+
+   The corpus-wide sweep confirms the deterministically-placeable set from the delivered files
+   is exactly {bore_log7}. Only bore_log7 and bore_log57 bind to a confirmed PDF endpoint at all;
+   bore_log7 yields a unique whole-route proof-grade segment, bore_log57 does not (#41). No other
+   bore's END lands on a confirmed endpoint, so none can be placed via the PDF-AP lane without the
+   missing per-bore start-structure / terminus signal.

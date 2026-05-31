@@ -1,0 +1,59 @@
+{
+  "schema_version": "target42-placeable-sweep-1",
+  "bores_scanned": 58,
+  "endpoint_matched": [
+    "bore_log57",
+    "bore_log7"
+  ],
+  "placeable": [
+    "bore_log7"
+  ],
+  "new_placeable_beyond_bore_log7": [],
+  "not_unique": [
+    "bore_log57"
+  ],
+  "no_endpoint_match_count": 56,
+  "detail": {
+    "bore_log57": {
+      "end": 413.0,
+      "sheets": [
+        8,
+        10,
+        13
+      ],
+      "matches": [
+        [
+          8,
+          413.0,
+          157
+        ]
+      ],
+      "verdicts": [
+        [
+          157,
+          "NOT_UNIQUE_COMPETING_SEGMENTS"
+        ]
+      ]
+    },
+    "bore_log7": {
+      "end": 451.0,
+      "sheets": [
+        10
+      ],
+      "matches": [
+        [
+          10,
+          451.0,
+          163
+        ]
+      ],
+      "verdicts": [
+        [
+          163,
+          "PLACEABLE_SEGMENT_PROVEN"
+        ]
+      ]
+    }
+  },
+  "control_bore_log7_placeable": true
+}
