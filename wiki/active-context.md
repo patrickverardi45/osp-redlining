@@ -134,6 +134,17 @@ already out of trust via confirmed-only gate); robust matchline detection should
 Self-test → SELFTEST_OK. Isolated/placement-free. NEXT: positioned AP-glyph reconstruction (recover scrambled AP numbers WITH
 positions to give the tracer a target — the 136→166 unlock). Full: `gac/target29_pdf_run_polyline_tracer.md`. DO-NOT-WIDEN intact.
 
+**POSITIONED AP-GLYPH RECONSTRUCTION (Target #30) — AP-166 LOCALIZED; glyph floor cleared.** Forensic: AP-166's chars ARE
+present + ordered (clean '166' triples); Target #29's "scramble" was Primitive A's greedy clusterer OVER-MERGING dense AutoCAD
+digits. Pure `scripts/pdf_ap_glyph_reconstruct.py::reconstruct_positioned_aps` recovers positioned AP targets via valid-AP-3-digit-
+subsequence + STRUCTURE ANCHORING (TERMINAL/PORT/HH/AP within 34px) + station/dimension exclusion + ambiguous-run abstain.
+**AP-166 LOCALIZED centroid [793.8,161.4]**; regressions AP-163/157/165 still localized; 0 false clusters; self-test SELFTEST_OK.
+Endpoint 136→166 STILL not auto-recovered but blocker ADVANCED: AP-166 now a valid target but 45px from STA 1+36 in a SEPARATE
+vector component (local structure is AP-125) → binding 166 over 125 = guessing → abstain (trusts NEITHER). Target #27/#28/#29
+endpoint TRUST untouched. NEXT: component-bridge/run-polyline span (connect STA callout to a close-but-separate-component AP only
+when ONE bored-run polyline spans the gap) — the final 136→166 unlock. Full: `gac/target30_positioned_ap_glyph_reconstruction.md`.
+DO-NOT-WIDEN intact.
+
 ## Render disk caution
 `/data` can fill → upload/session/audit failures. If uploads fail, operator runs `df -h /data` BEFORE
 blaming code (B-WS-12 OOM fingerprint = bore-log upload 502 `<!DOCTYPE html>`). If tight: inspect/backup/

@@ -1,0 +1,27 @@
+====================================================================================
+Target #30 — positioned AP-glyph reconstruction (read-only; nothing placed)
+====================================================================================
+schema=pdf-ap-glyph-reconstruct-1  valid AP universe=64
+
+[SHEET 8] localized AP ids = [110, 111, 125, 132, 151, 154, 156, 157]
+   ambiguous runs (abstained) = 9
+   AP-157: LOCALIZED centroid=[1055.5, 350.1] conf=high
+
+[SHEET 10] localized AP ids = [110, 111, 112, 122, 125, 132, 136, 139, 140, 142, 160, 162, 163, 165, 166, 167]
+   ambiguous runs (abstained) = 13
+   AP-163: LOCALIZED 1x centroid=[327.6, 305.1] anchor={'label': 'TERMINAL', 'dist_px': 5.8} conf=high
+   AP-166: LOCALIZED 2x centroid=[793.8, 161.4] anchor={'label': 'TERMINAL', 'dist_px': 6.4} conf=high
+   AP-165: LOCALIZED 1x centroid=[663.4, 187.7] anchor={'label': 'TERMINAL', 'dist_px': 5.8} conf=high
+
+------------------------------------------------------------------------------------
+REGRESSION + PRIMARY GRADE
+------------------------------------------------------------------------------------
+   [PASS] AP-163 (regression) -> centroid [327.6, 305.1]
+   [PASS] AP-157 (regression) -> centroid [1055.5, 350.1]
+   [PASS] AP-165 (regression) -> centroid [663.4, 187.7]
+   [PASS] AP-166 (PRIMARY) -> centroid [793.8, 161.4]
+
+[PRIMITIVE C RE-GRADE] sheet 10 STA 136 -> AP-166 with reconstructed target:
+   STA 1+36 <-> AP-166 centroid [793.8, 161.4]: straight=45px shared_vector_component=False
+   => STILL ABSTAIN: AP-166 now localized, but NOT in STA 1+36's run component
+      (reason: far-end label not reachable as one safe component — Primitive C floor).
