@@ -68,10 +68,12 @@ _SURFACE_BY_TIER: Dict[str, str] = {
 # Map-geometry keys the Friday evidence surface must NEVER carry (Phase-2 only).
 _GEOMETRY_KEYS = ("coords", "route_polyline", "lat", "lon", "latlon", "map_points")
 
-# Dev fallback. Production should set TRUELINE_PDF_FIRST_ENGINE_PATH (or vendor
-# the engine under backend/). Day-4 runs against the demonstrated Brenham logs
-# from the clean-room scratch project.
-_DEFAULT_ENGINE_ROOT = r"C:\Nova\scratch\clean-redline-test\engine"
+# Vendored engine location. The clean-room ``redline_pdf_first`` package is vendored INTO this
+# package's directory (``backend/app/core/redline_pdf_first``), so the engine root is simply this
+# file's directory — ``import redline_pdf_first`` resolves once that dir is on sys.path (see
+# ``_load_engine``). An env override (``TRUELINE_PDF_FIRST_ENGINE_PATH``) still wins, for an
+# out-of-tree engine. (Was the clean-room scratch path; vendored for live-app portability.)
+_DEFAULT_ENGINE_ROOT = os.path.dirname(os.path.abspath(__file__))
 
 _engine_mod: Any = None
 _engine_err: Optional[str] = None
@@ -124,7 +126,10 @@ def engine_available() -> bool:
 # metadata ONLY: render_target stays ``evidence_card`` and NO coords/
 # route_polyline/map_points top-level (map-draw) keys are ever emitted.
 # ─────────────────────────────────────────────────────────────────────────────
-_DEFAULT_ANALYSIS_DIR = r"C:\Nova\scratch\clean-redline-test\_analysis"
+# Vendored owner-reviewed data ledgers (anchors.json / sheet_station_model.json at the root for
+# Slice-B; ``_matchline`` / ``_boc`` / ``_corrections`` subdirs for the resolver consult). An env
+# override (``TRUELINE_AP_ANCHORED_ANALYSIS_DIR``) still wins. (Was the scratch _analysis path.)
+_DEFAULT_ANALYSIS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "_redline_data")
 _anchor_tables_by_dir: Dict[str, Any] = {}
 
 
@@ -162,6 +167,17 @@ def _pdf_path_trace_dash_chain_enabled() -> bool:
     if not _pdf_path_trace_enabled():
         return False
     return str(os.environ.get("TRUELINE_PDF_PATH_TRACE_DASH_CHAIN", "")).strip().lower() in {
+        "1", "true", "yes", "on"}
+
+
+def _matchline_frame_resolver_enabled() -> bool:
+    """Default-OFF resolver/correction/false-A-override consult flag (the proven scratch lane,
+    ported to the live row-fed path). When unset the row-fed path applies NO source corrections
+    and runs NO resolver consult, so the evidence envelope is byte-identical to pre-wiring. This
+    is an INDEPENDENT switch (does NOT stack on the geometry flags), but the false-A OVERRIDE
+    sub-case only engages when the geometry/path-trace flags are also on (an A trace exists to
+    supersede); LIFTS of blocked/fail-safe FRAME_ONLY bores engage regardless."""
+    return str(os.environ.get("TRUELINE_MATCHLINE_FRAME_RESOLVER", "")).strip().lower() in {
         "1", "true", "yes", "on"}
 
 
@@ -618,8 +634,39 @@ def build_session_evidence_from_rows(plan_pdf_path: str,
     counts_by_tier: Dict[str, int] = {}
     results_by_log: Dict[str, Any] = {}
 
+    # Default-OFF consult (TRUELINE_MATCHLINE_FRAME_RESOLVER): owner-reviewed source-station
+    # corrections applied to a COPY of each log's rows BEFORE the engine, plus a post-engine
+    # matchline/station-frame resolver + narrow false-A override. Flag OFF -> _consult stays None,
+    # nothing is imported, no rows are corrected -> the evidence envelope is byte-identical.
+    _consult = None
+    _consult_doc = None
+    _consult_data_dir: Optional[str] = None
+    _corrections_applied: List[Dict[str, Any]] = []
+    if _matchline_frame_resolver_enabled():
+        try:
+            from app.core import redline_consult as _rc  # lazy: engine root already on sys.path
+            _consult = _rc
+            _consult_data_dir = _resolve_analysis_dir()
+            _consult_doc = _rc.open_document(plan_pdf_path)  # one PDF handle for the session run
+        except Exception as exc:
+            warnings.append(f"[resolver-consult] disabled: {type(exc).__name__}: {exc}")
+            _consult = None
+
     try:
         for log_id, rows, source_file in logs:
+            # Owner-reviewed source-station OCR corrections -> corrected COPY fed to the engine
+            # (STATE rows untouched). A stale/typo'd correction records an error + falls back to RAW.
+            if _consult is not None:
+                try:
+                    rows, _chg, _corr_rec = _consult.apply_corrections(log_id, rows, _consult_data_dir)
+                    if _corr_rec is not None:
+                        _ca = {"log_id": log_id, "category": _corr_rec.get("category"),
+                               "cells_changed": _corr_rec.get("cells_changed", 0)}
+                        if _corr_rec.get("correction_error"):
+                            _ca["correction_error"] = _corr_rec["correction_error"]
+                        _corrections_applied.append(_ca)
+                except Exception:
+                    pass  # a correction failure must never block the engine run
             try:
                 result = eng.select_redline_from_rows(
                     plan_pdf_path, rows, source_file=source_file, sheet_offset=sheet_offset,
@@ -630,6 +677,12 @@ def build_session_evidence_from_rows(plan_pdf_path: str,
                 continue
             results_by_log[log_id] = result
             env = _envelope_from_result(result)
+            # Post-engine resolver consult: LIFT a blocked/fail-safe FRAME_ONLY bore into matchline
+            # (C) / station-frame (B) review evidence, or OVERRIDE a geometry-only false-A placement.
+            if _consult is not None and _consult_doc is not None:
+                env = _consult.apply_resolver(
+                    log_id, env, _consult_doc, sheet_offset,
+                    card_out_dir or _cards_root(), _consult_data_dir)
             placements.extend(env["placements"])
             review_items.extend(env["review_items"])
             fail_safe.extend(env["fail_safe"])
@@ -644,7 +697,7 @@ def build_session_evidence_from_rows(plan_pdf_path: str,
                 if res:
                     group_blocks.append(build_group_review(res, group_id=gid))
 
-        return {
+        out = {
             "schema_version": SCHEMA_VERSION,
             "engine_version": getattr(eng, "ENGINE_VERSION", None) or getattr(eng, "__version__", None),
             "contract_version": getattr(eng, "CONTRACT_VERSION", None),
@@ -664,9 +717,25 @@ def build_session_evidence_from_rows(plan_pdf_path: str,
             "groups": group_blocks,
             "warnings": warnings,
         }
+        # Resolver consult summary — present ONLY when the flag is on (off => key absent =>
+        # envelope byte-identical). Customer-safe: counts + owner-reviewed correction provenance.
+        if _matchline_frame_resolver_enabled():
+            out["resolver"] = {
+                "flag": "TRUELINE_MATCHLINE_FRAME_RESOLVER",
+                "consult_active": bool(_consult is not None and _consult_doc is not None),
+                "resolved_count": counts_by_tier.get("MATCHLINE_FRAME_RESOLVER", 0),
+                "corrections_applied": _corrections_applied,
+            }
+        return out
     except Exception as exc:
         detail = "".join(traceback.format_exception_only(type(exc), exc)).strip()
         return _error_envelope(detail, source)
+    finally:
+        if _consult_doc is not None:
+            try:
+                _consult_doc.close()
+            except Exception:
+                pass
 
 
 def build_session_evidence_from_committed_rows(plan_pdf_path: str,

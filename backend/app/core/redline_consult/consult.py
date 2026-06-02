@@ -1,0 +1,364 @@
+"""Default-OFF matchline / station-frame / correction / BOC consult — ENVELOPE-space port.
+
+This is the LIVE row-fed sibling of the proven offline coverage consult (scratch
+``_analysis/full_pdf_borelog_coverage/build_coverage.py``). It is consulted by the
+TrueLine PDF-first adapter ONLY behind ``TRUELINE_MATCHLINE_FRAME_RESOLVER``; with the
+flag unset nothing here is imported or called and the adapter envelope is byte-identical.
+
+It carries NO new selection / scoring intelligence. It only:
+  * applies OWNER-REVIEWED source-station OCR corrections to a COPY of ``committed_rows``
+    BEFORE the engine runs (``apply_corrections``; the live STATE rows are never mutated,
+    exactly as the file-fed lane never alters the original .xlsx);
+  * after the engine runs, LIFTS a bore the engine left FRAME_ONLY / blocked / fail-safe —
+    when it is in truth ONE owner-reviewed authored cross-sheet (or single-sheet host-
+    anchored) run — into a matchline (group C) / station-frame (group B) REVIEW card, every
+    authored fact VERIFIED against the live PDF before any overlay is emitted; OR
+  * lets an owner-reviewed + BOC-corroborated resolver entry OVERRIDE a geometry-only A
+    ``path_trace`` placement that fails the authored-endpoint/BOC proof on its own sheet
+    (the NARROW false-A precedence rule — never a rerank).
+
+Doctrine (unchanged from the scratch lane): per-bore resolutions / corrections / BOC are
+OWNER-REVIEWED data (the vendored ``_redline_data`` ledgers), never guessed; EXACT authored-
+text + exact-station matching only — no nearest snapping, no scoring, no span. Never raises
+into the adapter (any failure leaves the envelope untouched).
+"""
+from __future__ import annotations
+
+import json
+import os
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
+
+# ── owner-reviewed ledger caches (keyed by data_dir; the ledgers are immutable) ─────────────
+_RES_CACHE: Dict[str, Dict[str, Any]] = {}
+_BOC_CACHE: Dict[str, Dict[str, Any]] = {}
+_CORR_CACHE: Dict[str, Dict[str, Any]] = {}
+
+
+def _resolutions(data_dir: str) -> Dict[str, Any]:
+    # Pure JSON read (NOT via frame_resolver) so checking "is there a resolution for this log"
+    # never imports fitz — only the actual PDF verification (_matchline_resolve) does.
+    if data_dir not in _RES_CACHE:
+        path = os.path.join(data_dir, "_matchline", "frame_resolutions.json")
+        res: Dict[str, Any] = {}
+        if os.path.isfile(path):
+            try:
+                res = {r["bore_id"]: r
+                       for r in json.load(open(path, encoding="utf-8")).get("resolutions", [])}
+            except Exception:
+                res = {}
+        _RES_CACHE[data_dir] = res
+    return _RES_CACHE[data_dir]
+
+
+def _corrections(data_dir: str) -> Dict[str, Any]:
+    if data_dir not in _CORR_CACHE:
+        from . import correction_lib
+        _CORR_CACHE[data_dir] = correction_lib.load_corrections(
+            os.path.join(data_dir, "_corrections", "corrections.json"))
+    return _CORR_CACHE[data_dir]
+
+
+def _boc_evidence(data_dir: str) -> Dict[str, Any]:
+    if data_dir not in _BOC_CACHE:
+        ev: Dict[str, Any] = {}
+        p = os.path.join(data_dir, "_boc", "boc_evidence.json")
+        if os.path.isfile(p):
+            try:
+                ev = {e["bore_id"]: e
+                      for e in json.load(open(p, encoding="utf-8")).get("logs", [])}
+            except Exception:
+                ev = {}
+        _BOC_CACHE[data_dir] = ev
+    return _BOC_CACHE[data_dir]
+
+
+def open_document(pdf_path: str) -> Any:
+    """Open the plan PDF once for a session run (lazy fitz import via the engine's text
+    primitive). The caller owns the handle and should close it after the per-log loop."""
+    from redline_pdf_first.pdf import text_extract
+    return text_extract.open_document(pdf_path)
+
+
+# ── corrections (applied BEFORE the engine, row-fed) ────────────────────────────────────────
+def apply_corrections(log_id: str, rows: Sequence[Mapping[str, Any]], data_dir: str
+                      ) -> Tuple[Sequence[Mapping[str, Any]], List[Dict[str, Any]], Optional[Dict[str, Any]]]:
+    """If an owner-reviewed correction exists for ``log_id``, return a CORRECTED COPY of
+    ``rows`` + the change audit + a provenance record; else ``(rows, [], None)``. Never mutates
+    the input. A stale correction (a station_map key / drop_station that no row matches) raises
+    inside ``correction_lib`` (strict) — caught here and recorded as ``correction_error`` with a
+    fall-back to the RAW rows, so a half-fix is never applied silently."""
+    corr = _corrections(data_dir).get(log_id)
+    if not corr:
+        return rows, [], None
+    from . import correction_lib
+    try:
+        new_rows, changes = correction_lib.corrected_rows(
+            rows, corr.get("station_map", {}),
+            drop_stations=[e["station"] for e in corr.get("row_exclusions", [])])
+        return new_rows, changes, {
+            "category": corr.get("reason"), "approved_by": corr.get("approved_by"),
+            "reviewed_at": corr.get("reviewed_at"), "source_date": corr.get("source_date"),
+            "cells_changed": len(changes), "changes": changes,
+            "rows_excluded": corr.get("row_exclusions", []),
+        }
+    except Exception as exc:
+        return rows, [], {"category": corr.get("reason"),
+                          "correction_error": f"{type(exc).__name__}: {exc}"}
+
+
+# ── classify (verbatim port of the proven coverage status detection) ─────────────────────────
+def _first(seq):
+    return seq[0] if seq else None
+
+
+def classify(env: Mapping[str, Any]) -> Dict[str, Any]:
+    """Per-log record from ONE adapter envelope. Status is derived ONLY from the engine's own
+    result fields (never invented). Verbatim port of build_coverage.classify — the consult keys
+    on the SAME fields the proven offline harness used, so detection cannot drift."""
+    status = env.get("status")
+    placements = env.get("placements") or []
+    reviews = env.get("review_items") or []
+    fail_safe = env.get("fail_safe") or []
+    warnings = env.get("warnings") or []
+    cards = placements + reviews
+
+    rec: Dict[str, Any] = {
+        "station_range": None, "footage": None, "print": None, "sheets": None,
+        "page": None, "geometry_status": None, "trace_status": None,
+        "artifact_name": None, "has_overlay_image": False,
+        "caveats": [], "block_reason": None, "surface": None,
+    }
+
+    if status == "ERROR":
+        rec["block_reason"] = "; ".join(warnings) or "engine returned ERROR"
+        rec["status"] = "blocked"
+        return rec
+
+    if not cards and fail_safe:
+        fs = fail_safe[0]
+        rec["surface"] = "fail_safe"
+        rec["block_reason"] = (fs.get("reason")
+                               or (fs.get("caveat") or {}).get("text")
+                               or "two or more equally-supported candidates; nothing placed")
+        rec["status"] = "fail_safe"
+        return rec
+
+    if not cards:
+        rec["block_reason"] = ("; ".join(warnings)
+                               or "engine produced no placement, review item, or fail-safe candidate")
+        rec["status"] = "blocked"
+        return rec
+
+    card = _first(cards)
+    geo = card.get("geo") or {}
+    frame = geo.get("frame") or {}
+    pt = geo.get("pdf_path_trace") or {}
+    rec["surface"] = card.get("surface")
+    rec["station_range"] = card.get("station_range")
+    rec["footage"] = card.get("footage")
+    rec["print"] = card.get("print")
+    rec["sheets"] = card.get("sheets")
+    rec["page"] = frame.get("page") or pt.get("page")
+    rec["geometry_status"] = geo.get("geometry_status")
+    rec["trace_status"] = pt.get("trace_status")
+    multi_sheet = bool(frame.get("multi_sheet"))
+
+    gs = rec["geometry_status"]
+    if gs == "FRAME_WITH_DROP_TERMINAL_CANDIDATE":
+        rec["status"] = "fiber_drop"
+    elif pt.get("artifact_name"):
+        rec["status"] = "matchline" if multi_sheet else "path_trace_drawn"
+    elif (geo.get("pdf_redline") or {}).get("artifact_name"):
+        rec["status"] = "evidence_overlay"
+    else:
+        rec["block_reason"] = ("placement frame anchored; PDF path-trace not attempted for this "
+                               "geometry class (FRAME_ONLY is excluded from the trace gate)")
+        rec["status"] = "blocked"
+    return rec
+
+
+# ── resolver consult (run AFTER the engine, verified against the live PDF) ───────────────────
+def _matchline_resolve(log_id: str, doc: Any, sheet_offset: int, out_dir: str, data_dir: str
+                       ) -> Optional[Dict[str, Any]]:
+    try:
+        res = _resolutions(data_dir).get(log_id)
+        if not res:
+            return None
+        from . import frame_resolver as fr
+        return fr.verify_and_resolve(doc, res, sheet_offset, out_dir)
+    except Exception as exc:
+        return {"resolved": False, "reason": f"{type(exc).__name__}: {exc}"}
+
+
+def _resolver_overrides_false_A(log_id: str, rec: Mapping[str, Any], doc: Any,
+                                sheet_offset: int, out_dir: str, data_dir: str
+                                ) -> Optional[Dict[str, Any]]:
+    """Return the verified resolver result to APPLY iff it should override a geometry-only A
+    path_trace, else None. NARROW safety override (NOT a rerank): fires ONLY when an owner-
+    reviewed frame resolution fully resolves AND carries equation(start) + matchline + endpoint
+    anchors AND an owner-reviewed BOC entry exists AND the resolver endpoint sheet PASSES the
+    authored-endpoint + BOC proof while EVERY sheet of the A trace FAILS it. Any A trace that
+    itself passes the authored-endpoint proof is left exactly as the engine drew it."""
+    try:
+        mr = _matchline_resolve(log_id, doc, sheet_offset, out_dir, data_dir)
+        if not (mr and mr.get("resolved")):
+            return None
+        res = _resolutions(data_dir).get(log_id) or {}
+        anchors = res.get("anchors", [])
+        end = next((a for a in anchors if a.get("kind") == "station"), None)
+        if not (end and res.get("matchline_seam")
+                and any(a.get("kind") == "equation" for a in anchors)):
+            return None
+        from . import boc_offset as boc_mod
+        ev = _boc_evidence(data_dir).get(log_id)
+        if not ev:
+            return None
+        end_sta = end["station"]
+        struct = ev.get("endpoint_structure", "INSTALLER HH")
+        boc_ft = ev.get("boc_ft")
+        res_ok = boc_mod.prove_candidate(
+            boc_mod.tx.get_page(doc, end["sheet"], sheet_offset), end_sta, boc_ft, struct
+        )["corroborated"]
+        a_sheets = rec.get("sheets") or []
+        a_fail = bool(a_sheets) and all(
+            not boc_mod.prove_candidate(
+                boc_mod.tx.get_page(doc, s, sheet_offset), end_sta, boc_ft, struct)["corroborated"]
+            for s in a_sheets)
+        if res_ok and a_fail:
+            mr = dict(mr)
+            mr["override"] = {
+                "superseded_status": rec.get("status"), "a_trace_sheets": a_sheets,
+                "resolver_endpoint_sheet": end["sheet"],
+                "reason": (f"geometry-only A path_trace on sheet(s) {a_sheets} lacks authored STA "
+                           f"{end_sta} {struct} + {boc_ft}' BOC; owner-reviewed resolver "
+                           f"(equation+matchline+endpoint, BOC-corroborated on sheet {end['sheet']}) "
+                           f"supersedes")}
+            return mr
+        return None
+    except Exception:
+        return None  # any failure -> do NOT override; leave the engine's A trace untouched
+
+
+def _resolver_card(log_id: str, mr: Mapping[str, Any], rec: Mapping[str, Any],
+                   res: Mapping[str, Any]) -> Dict[str, Any]:
+    """Translate a verified resolver result into a review-grade evidence card. The ``geo`` block
+    mirrors the primary overlay into the slot the existing PdfFirstEvidencePanel already renders
+    (``pdf_path_trace`` for a cross-sheet C win / ``pdf_redline`` for a single-sheet B win) with
+    ``frame.multi_sheet`` set, so the win lands in the correct coverage group WITH its image and
+    needs NO frontend change; the full authored trail lives under ``geo.matchline_resolution``."""
+    cross_sheet = bool(mr.get("seam"))
+    overlays = mr.get("overlays") or []
+    prim = next((o for o in overlays if o.get("role") == "end"), overlays[0] if overlays else None)
+    prim_name = os.path.basename(prim["image"]) if (prim and prim.get("image")) else None
+    ov_refs = [{"sheet": o.get("sheet"), "role": o.get("role"), "id": o.get("id"),
+                "label": o.get("label"), "station": o.get("station"), "kind": o.get("kind"),
+                "artifact_name": (os.path.basename(o["image"]) if o.get("image") else None)}
+               for o in overlays]
+    anchors = res.get("anchors") or []
+    start_a = next((a for a in anchors if a.get("role") in ("start", "reset_origin")), None)
+    end_a = next((a for a in anchors if a.get("role") == "end"), None)
+    end_structs = sorted({a.get("label") for a in anchors if a.get("label")})
+
+    geo: Dict[str, Any] = {
+        "geometry_status": mr.get("geometry_status"),
+        "frame": {"multi_sheet": cross_sheet},
+        "matchline_resolution": {
+            "group": mr.get("group"), "status": mr.get("status"),
+            "class": res.get("class"), "sheets": mr.get("sheets"), "seam": mr.get("seam"),
+            "canonical_span": mr.get("canonical_span"), "hh_hh_ft": res.get("hh_hh_ft"),
+            "boc_ft": res.get("boc_ft"), "overlays": ov_refs, "override": mr.get("override"),
+            "verification_trail": mr.get("verification_trail"),
+        },
+    }
+    # Mirror the primary overlay into the existing-frontend slot (no FE change needed).
+    if cross_sheet:
+        geo["pdf_path_trace"] = {"artifact_name": prim_name,
+                                 "trace_status": mr.get("geometry_status"),
+                                 "path_basis": "authored matchline frame"}
+    else:
+        geo["pdf_redline"] = {"artifact_name": prim_name}
+
+    if mr.get("override"):
+        cav_text = "RESOLVER OVERRIDE: " + mr["override"]["reason"]
+    elif cross_sheet:
+        seam = mr.get("seam") or {}
+        cav_text = (f"authored matchline frame resolved across sheets {mr.get('sheets')} "
+                    f"(seam {seam.get('home_sta')}/{seam.get('neighbor_sta')}); "
+                    f"{len(overlays)} evidence overlays")
+    else:
+        cav_text = (f"authored station-frame resolved on sheet {mr.get('sheets')} via reset + "
+                    f"host anchors; {len(overlays)} evidence overlays")
+
+    return {
+        "log_ids": [log_id],
+        "segment_id": f"{log_id}-resolver",
+        "tier": "SHARED_SEGMENT_REVIEW",  # review surface; never an AUTO_SELECT placement
+        "surface": "review",
+        "group_id": None,
+        "requires_approval": True,
+        "print": rec.get("print"),
+        "sheets": mr.get("sheets"),
+        "page": (prim.get("sheet") if prim else None),
+        "station_range": {
+            "start": (start_a or {}).get("station") or (start_a or {}).get("phys_sta"),
+            "end": (end_a or {}).get("station"),
+        },
+        "footage": res.get("hh_hh_ft"),
+        "conduit": None,
+        "end_structures": end_structs,
+        "evidence": [o.get("label") or o.get("id") for o in overlays],
+        "caveat": {"code": mr.get("geometry_status"), "text": cav_text},
+        "render_target": "evidence_card",
+        "render_artifact_ref": prim_name,
+        "geo": geo,
+    }
+
+
+def _recount(env: Dict[str, Any]) -> None:
+    env["counts_by_surface"] = {
+        "placements": len(env.get("placements") or []),
+        "review_items": len(env.get("review_items") or []),
+        "fail_safe": len(env.get("fail_safe") or []),
+    }
+
+
+def apply_resolver(log_id: str, env: Dict[str, Any], doc: Any, sheet_offset: int,
+                   out_dir: str, data_dir: str) -> Dict[str, Any]:
+    """Envelope-space resolver consult for ONE log (mirrors the proven offline coverage consult).
+    LIFT a blocked / fail-safe FRAME_ONLY bore into a matchline (C) / station-frame (B) review
+    card, OR let an owner-reviewed + BOC-corroborated resolver entry OVERRIDE a geometry-only A
+    path_trace placement (dropping the superseded placement). Returns the (possibly) modified
+    env. Never raises (any failure -> env unchanged)."""
+    try:
+        res = _resolutions(data_dir).get(log_id)
+        if not res:
+            return env  # no owner-reviewed resolution for this log -> untouched
+        rec = classify(env)
+        status = rec.get("status")
+        mr: Optional[Dict[str, Any]] = None
+        if status in ("blocked", "fail_safe"):
+            mr = _matchline_resolve(log_id, doc, sheet_offset, out_dir, data_dir)
+            mr = mr if (mr and mr.get("resolved")) else None
+        elif status == "path_trace_drawn":
+            mr = _resolver_overrides_false_A(log_id, rec, doc, sheet_offset, out_dir, data_dir)
+        if not (mr and mr.get("resolved")):
+            return env
+
+        card = _resolver_card(log_id, mr, rec, res)
+        if mr.get("override"):
+            # clear the superseded geometry-only A placement(s) for this log
+            env["placements"] = [c for c in (env.get("placements") or [])
+                                 if log_id not in (c.get("log_ids") or [])]
+        if status == "fail_safe":
+            env["fail_safe"] = [c for c in (env.get("fail_safe") or [])
+                                if log_id not in (c.get("log_ids") or [])]
+        env.setdefault("review_items", []).append(card)
+        _recount(env)
+        cbt = env.setdefault("counts_by_tier", {})
+        cbt["MATCHLINE_FRAME_RESOLVER"] = cbt.get("MATCHLINE_FRAME_RESOLVER", 0) + 1
+        return env
+    except Exception:
+        return env
+
+
+__all__ = ["apply_corrections", "apply_resolver", "classify", "open_document"]

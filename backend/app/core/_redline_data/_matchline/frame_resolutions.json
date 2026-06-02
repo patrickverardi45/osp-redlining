@@ -1,0 +1,129 @@
+{
+  "schema": "matchline-frame-resolution-1",
+  "note": "OWNER-REVIEWED authored-matchline / station-frame resolutions. The resolver VERIFIES every claim against the live PDF (matchline seam text + both anchors) before emitting overlays; reciprocal far-side matchline is corroborating only (PDF text extraction can drop a digit). EXACT authored-text + exact-station matching — NEVER nearest snapping, NEVER scoring, NEVER a guessed value. Adding a bore here + enabling TRUELINE_MATCHLINE_FRAME_RESOLVER is the only way a resolution takes effect; the engine truth path is untouched and the default (flag unset) is unchanged.",
+  "resolutions": [
+    {
+      "bore_id": "bore_log12",
+      "canonical_span": "5+50->10+92",
+      "print": 3,
+      "home_sheet": 3,
+      "anchors": [
+        {"label": "AP-121", "sheet": 3, "station": "10+92", "role": "end", "terminal_tail": 1250},
+        {"label": "AP-120", "sheet": 23, "station": "5+50", "role": "start", "terminal_tail": 750}
+      ],
+      "matchline_seam": {
+        "home_sheet": 3, "home_sta": "9+38",
+        "neighbor_sheet": 23, "neighbor_sta": "5+43",
+        "raw": "MATCHLINE STA 9+38/5+43 - SEE SHEET 23"
+      },
+      "approved_by": "owner-directed (matchline-resolver)",
+      "reviewed_at": "2026-06-02",
+      "evidence": "Owner PDF evidence: ONE logical bore. Start AP-120 @ STA 5+50 (terminal tail 750', sheet 23); authored matchline STA 9+38/5+43 - SEE SHEET 23 joins sheet 3 (9+38 side) to sheet 23 (5+43 side); end AP-121 @ STA 10+92 (terminal tail 1250', sheet 3). Field span 5+50->10+92 spans the seam. Not missing data — a cross-sheet authored run the engine flattened to FRAME_ONLY."
+    },
+    {
+      "bore_id": "bore_log38",
+      "canonical_span": "0+62->16+21",
+      "class": "STATION_EQUATION_RESET",
+      "home_sheet": 27,
+      "anchors": [
+        {"kind": "equation", "sheet": 27, "phys_sta": "0+62", "local_origin": "0+00", "role": "start"},
+        {"kind": "station", "sheet": 25, "station": "16+21", "role": "end"}
+      ],
+      "matchline_seam": {
+        "home_sheet": 27, "home_sta": "19+30",
+        "neighbor_sheet": 25, "neighbor_sta": "3+18",
+        "raw": "MATCHLINE STA 19+30/3+18 - SEE SHEET 25"
+      },
+      "approved_by": "owner-directed (matchline-resolver)",
+      "reviewed_at": "2026-06-02",
+      "evidence": "Owner: log38 is ONE authored run (bore-log stations 0+62, 1+00, 2+86, 16+21). Sheet 27 authors station-equation STA 0+62=0+00 -> physical 0+62 becomes local 0+00 (run start); authored matchline STA 19+30/3+18 - SEE SHEET 25 continues to sheet 25; endpoint STA 16+21 authored on sheet 25. Local-vs-physical frame mismatch caused NO_AUTHORED_BOX_MATCH; resolved by authored equation + matchline + endpoint, never by span/footage."
+    },
+    {
+      "bore_id": "bore_log54",
+      "canonical_span": "0+00->3+14 (local; physical reset STA 3+14=0+00)",
+      "class": "STATION_EQUATION_RESET",
+      "home_sheet": 21,
+      "anchors": [
+        {"kind": "equation", "sheet": 21, "phys_sta": "3+14", "local_origin": "0+00", "role": "reset_origin"},
+        {"kind": "label", "sheet": 21, "label": "AP-139", "role": "host_ap"},
+        {"kind": "label", "sheet": 21, "label": "SPLICE LOC 33", "role": "host_splice"}
+      ],
+      "matchline_seam": null,
+      "approved_by": "owner-directed (matchline-resolver)",
+      "reviewed_at": "2026-06-02",
+      "evidence": "Owner: log54 (print 5,6,17,21,2; bore-log local span 0+00->3+14) is hosted on sheet 21. Sheet 21 authors STA 3+14=0+00 (physical 3+14 = local 0+00 run origin) co-located with AP-139, SPLICE LOC 33, TERMINAL TAIL=500', and an 8-Port Terminal HH / flower-pot. These EXACT authored anchors uniquely identify the host and break the GE_2_COEQUAL_OVERLAP (a bare 0+00 lateral otherwise matches many sheets). Single-sheet host placement; no cross-sheet matchline. Disambiguation by authored identity only — never nearest/span."
+    },
+    {
+      "bore_id": "bore_log6",
+      "canonical_span": "0+00->2+43 (local; physical reset STA 0+56=0+00 on sheet 17 -> matchline -> sheet 5 endpoint STA 2+43)",
+      "class": "STATION_EQUATION_RESET",
+      "home_sheet": 17,
+      "anchors": [
+        {"kind": "equation", "sheet": 17, "phys_sta": "0+56", "local_origin": "0+00", "role": "start"},
+        {"kind": "station", "sheet": 5, "station": "2+43", "role": "end"}
+      ],
+      "matchline_seam": {
+        "home_sheet": 17, "home_sta": "3+23",
+        "neighbor_sheet": 5, "neighbor_sta": "0+69",
+        "raw": "MATCHLINE STA 3+23/0+69 - SEE SHEET 5"
+      },
+      "approved_by": "owner-directed (matchline-resolver, log6 clarification)",
+      "reviewed_at": "2026-06-02",
+      "evidence": "Owner clarification (log6 visually clear): ONE authored cross-sheet run, bore-log local span 0+00->2+43 (243'). Start authored on sheet 17 as station-equation STA 0+56=0+00 (physical 0+56 -> local 0+00 run origin). The run follows the authored bore line LEFT to the authored matchline STA 3+23/0+69 - SEE SHEET 5 (reciprocal on sheet 5: MATCHLINE STA 3+23/0+69 - SEE SHEET 17), continuing onto sheet 5 with authored station ticks 1+00 -> 2+00 -> endpoint STA 2+43, the red INSTALLER HH (verified PDF block: 'STA 2+43 13\"X24\"X24\" INSTALLER HH'). Reverse check holds: from STA 2+43 on sheet 5 the stations count down 2+43 -> 2+00 -> 1+00 -> matchline -> sheet 17 STA 0+56=0+00. Resolved by authored equation + matchline continuity + authored endpoint structure + station-tick order; never nearest/snapping/scoring, never span-only. Engine left it GE_2_COEQUAL_OVERLAP fail-safe (bare-0+00 single-box s5 vs s5+s17 stitch); the authored sheet-17 equation origin plus the sheet-17<->sheet-5 matchline disambiguate the true run. Corrects the stale coverage_manifest diagnosis that claimed s5/s17 'share no authored SEE-SHEET ref'."
+    },
+    {
+      "bore_id": "bore_log56",
+      "canonical_span": "0+00->2+76 (local; physical reset STA 4+57=0+00 on sheet 17 -> matchline -> sheet 21 endpoint STA 2+76)",
+      "class": "STATION_EQUATION_RESET",
+      "home_sheet": 17,
+      "anchors": [
+        {"kind": "equation", "sheet": 17, "phys_sta": "4+57", "local_origin": "0+00", "role": "start"},
+        {"kind": "station", "sheet": 21, "station": "2+76", "role": "end"}
+      ],
+      "matchline_seam": {
+        "home_sheet": 17, "home_sta": "1+61",
+        "neighbor_sheet": 21, "neighbor_sta": "1+59",
+        "raw": "MATCHLINE STA 1+61/1+59 - SEE SHEET 21"
+      },
+      "approved_by": "owner-directed (matchline-resolver, log56 screenshots + walkthrough)",
+      "reviewed_at": "2026-06-02",
+      "boc_ft": 11,
+      "evidence": "Owner screenshots + walkthrough (log56): ONE authored cross-sheet run, local span 0+00->2+76 (boc=11; endpoint OCR-corrected 2+96->2+76 in ../_corrections/corrections.json). Start authored on sheet 17 as station-equation STA 4+57=0+00 co-located with a 13\"X24\"X24\" INSTALLER HH (red/white box on the magenta run). Authored matchline STA 1+61/1+59 - SEE SHEET 21 carries the run to sheet 21 (reciprocal on sheet 21: MATCHLINE STA 1+61/1+59 - SEE SHEET 17); endpoint authored on sheet 21 as STA 2+76 13\"X24\"X24\" INSTALLER HH. The black BOC offset stack incl. 11' is co-located with the run on BOTH sheets (s17 11' ~142px from the reset; s21 11' ~91px from STA 2+76), matching the bore-log boc=11. Resolved by authored equation + matchline continuity + authored endpoint structure + BOC offset; never nearest/snapping/scoring, never span-only. Blocks the prior sheet-2 station/footage-only A trace (sheet 2 has no authored STA 2+76 endpoint and no matching BOC/run context)."
+    },
+    {
+      "bore_id": "bore_log66",
+      "canonical_span": "0+00->0+55 (local; 55' handhole-to-handhole street crossing on sheet 10; reset STA 45+33=0+00 NEXTLINK HH -> endpoint STA 0+55=0+00 INSTALLER HH)",
+      "class": "STATION_EQUATION_RESET",
+      "home_sheet": 10,
+      "anchors": [
+        {"kind": "equation", "sheet": 10, "phys_sta": "45+33", "local_origin": "0+00", "role": "start"},
+        {"kind": "station", "sheet": 10, "station": "0+55=0+00", "role": "end"}
+      ],
+      "matchline_seam": null,
+      "boc_ft": 10,
+      "approved_by": "owner-directed (matchline-resolver, log66 HH-HH crossing correction)",
+      "reviewed_at": "2026-06-02",
+      "evidence": "Owner correction (log66, sheet 10): a 55' handhole-to-handhole street crossing. Production log CONFIRMED = bore_log66 (Segment B, split from combined bore_log33.xlsx), source span 0+00->0+55 = 55', boc=10, print 9,10 (prior residual 'footage 55' matches nothing ~137'' was wrong). LOCAL-FRAME MODEL (per-segment binding, NOT 'every =0+00 is a start'): log66's start/reset is the authored equation 'STA 45+33=0+00 PLACE 24\"X34\"X24\" NEXTLINK HH' (plan station 45+33 -> log66 local 0+00); the bore crosses right-to-left ~55' to its ENDPOINT, the authored 'STA 0+55=0+00 13\"X24\"X24\" INSTALLER HH'. The 0+55=0+00 node is bound here ONLY as log66's endpoint structure (located by its exact authored label, role=end) -- it is NOT log66's reset. That same physical handhole SEPARATELY authors the start/reset for the next segment (a distinct bore toward STA 1+35/1+36 on sheet 10) -- candidate only, NOT merged. Binding evidence: span 55' == authored '55'' HH-HH distance between the two handholes; structures NEXTLINK HH (start) / INSTALLER HH (end); authored 10' BOC offsets co-located near both HHs (matches source boc=10). Single-sheet (no matchline -> group B). Never nearest/snapping/scoring, never span-only."
+    },
+    {
+      "bore_id": "bore_log58",
+      "canonical_span": "0+00->2+36 (236' HH-HH crossing; STA 39+79 INSTALLER HH sheet 10 -> STA 2+36 INSTALLER HH sheet 13)",
+      "class": "HH_HH_DISTANCE",
+      "home_sheet": 10,
+      "anchors": [
+        {"kind": "station", "sheet": 10, "station": "39+79", "role": "start"},
+        {"kind": "station", "sheet": 13, "station": "2+36", "role": "end"}
+      ],
+      "matchline_seam": {
+        "home_sheet": 10, "home_sta": "1+60",
+        "neighbor_sheet": 13, "neighbor_sta": "1+62",
+        "raw": "MATCHLINE STA 1+60/1+62 - SEE SHEET 13"
+      },
+      "boc_ft": 8,
+      "hh_hh_ft": 236,
+      "approved_by": "owner-directed (matchline-resolver, log58 HH-HH 236' evidence)",
+      "reviewed_at": "2026-06-02",
+      "evidence": "Owner visual evidence (log58, HH-HH DISTANCE case -- NOT a STA X=0+00 reset case): the bore is the 236' handhole-to-handhole crossing between authored 'STA 39+79 13\"X24\"X24\" INSTALLER HH' (sheet 10) and 'STA 2+36 13\"X24\"X24\" INSTALLER HH' (sheet 13). Authored 'HH - HH = 236'' is labeled on BOTH sheets, matching log58's corrected source footage 236' (endpoint OCR-corrected 2+56->2+36 in ../_corrections/corrections.json; source span 0+00->2+36, boc 7/8). Authored 7' BOC offset is co-located with the run near both HHs (s10 7' ~142px from STA 39+79; s13 7' ~28px from STA 2+36), matching source boc=7. log58 is a segment of combined original bore_log24 (sibling log57, placed C). Sheet transition is authored: reciprocal s10<->s13 matchlines STA 1+60/1+62 AND STA 1+67/1+66 (both verified); the run crosses the authored s10/s13 boundary. Bound by two authored INSTALLER HH endpoints + authored HH-HH=236' distance + 7' BOC continuity -- no STA X=0+00 reset node on this corridor carries boc 7/8; never span-only, never nearest/snapping/scoring."
+    }
+  ]
+}

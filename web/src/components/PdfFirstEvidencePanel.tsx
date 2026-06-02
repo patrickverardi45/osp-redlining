@@ -53,6 +53,12 @@ function neutralBadge(card: PdfFirstCard): string | null {
   if (!geo) return null;
   if (geo.geometry_status === "FRAME_WITH_DROP_TERMINAL_CANDIDATE")
     return "Fiber-drop evidence — review only";
+  // Authored matchline / station-frame resolver wins (TRUELINE_MATCHLINE_FRAME_RESOLVER): a bore
+  // the engine left FRAME_ONLY, lifted into one verified authored cross-sheet / single-sheet run.
+  if (geo.geometry_status === "MATCHLINE_FRAME_RESOLVED")
+    return "Review — authored matchline frame resolved";
+  if (geo.geometry_status === "STATION_FRAME_RESOLVED")
+    return "Review — authored station frame resolved";
   const ts = geo.pdf_path_trace?.trace_status ?? "";
   if (ts.includes("DASH_CHAINED") || ts === "PDF_PATH_TRACE_REVIEW")
     return "Review — parallel authored bore layers present";
