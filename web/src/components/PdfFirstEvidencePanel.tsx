@@ -163,7 +163,6 @@ function SegmentCard({ card, sessionId }: { card: PdfFirstCard; sessionId: strin
       <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
         <span style={{ fontFamily: "monospace", fontSize: 13, fontWeight: 600 }}>{logLabel(card)}</span>
         <span style={chip}>{badge ?? card.tier ?? "—"}</span>
-        {card.surface && <span style={{ fontSize: 11, color: "var(--tl-text-muted)" }}>{card.surface}</span>}
       </div>
       <div style={{ display: "flex", gap: 14, flexWrap: "wrap", marginTop: 6 }}>
         <Meta label="Station" value={station} />
@@ -189,11 +188,8 @@ function SegmentCard({ card, sessionId }: { card: PdfFirstCard; sessionId: strin
         </div>
       )}
 
-      {card.caveat?.code && (
-        <div style={{ marginTop: 6, fontSize: 12, color: "#d4a72c" }}>
-          {card.caveat.code}
-          {card.caveat.text ? ` — ${card.caveat.text}` : ""}
-        </div>
+      {card.caveat?.text && (
+        <div style={{ marginTop: 6, fontSize: 12, color: "#d4a72c" }}>{card.caveat.text}</div>
       )}
 
       {geo && (
@@ -214,12 +210,25 @@ function SegmentCard({ card, sessionId }: { card: PdfFirstCard; sessionId: strin
             <Meta label="Engine status" value={geo.pdf_path_trace?.trace_status ?? null} />
             <Meta label="Geometry" value={geo.geometry_status ?? null} />
             <Meta label="Path basis" value={geo.pdf_path_trace?.path_basis ?? null} />
+            {card.caveat?.code && <Meta label="Caveat code" value={card.caveat.code} />}
             <span>Review-grade — not promoted to final/READY.</span>
           </div>
         </details>
       )}
     </li>
   );
+}
+
+// Plain-English translation of an internal fail-safe reason code for the customer view.
+function friendlyReason(raw?: string | null): string | null {
+  if (!raw) return null;
+  if (raw.includes("GE_2_COEQUAL_OVERLAP")) return "Two or more overlapping candidates with equal evidence — engine placed nothing.";
+  if (raw.includes("NO_TIEBREAKER") || raw.includes("GE_2_COEQUAL_CANDIDATES"))
+    return "Several equally-supported candidates, no tiebreaker — engine placed nothing.";
+  if (raw.includes("NO_AUTHORED_BOX_MATCH")) return "No authored bore-path callout matched this bore's station span.";
+  if (raw.includes("no parseable stations") || raw.includes("ValueError"))
+    return "Station data could not be read from the source spreadsheet.";
+  return raw;
 }
 
 function FailSafeCard({ card }: { card: PdfFirstFailSafeCard }) {
@@ -243,13 +252,35 @@ function FailSafeCard({ card }: { card: PdfFirstFailSafeCard }) {
         </span>
       </div>
       <div style={{ marginTop: 6 }}>
-        <Meta label="Reason" value={card.reason} />
+        <Meta label="Reason" value={friendlyReason(card.reason)} />
       </div>
       <div style={{ marginTop: 4, fontSize: 11, color: "var(--tl-text-muted)" }}>
         {n} candidate{n === 1 ? "" : "s"} shown for review only
       </div>
     </li>
   );
+}
+
+type CovGroup = "A" | "B" | "C" | "D" | "E";
+
+const GROUP_META: { key: CovGroup; title: string }[] = [
+  { key: "A", title: "Drawn PDF traces" },
+  { key: "B", title: "Review / evidence overlays" },
+  { key: "C", title: "Matchline / partial" },
+  { key: "D", title: "Fail-safe / no draw" },
+  { key: "E", title: "Needs review / more source data" },
+];
+
+// Classify a segment card into one honest coverage group from the engine's OWN fields
+// (mirrors the offline coverage harness). Fail-safe cards are group D by construction.
+// "Drawn" stays review-grade evidence — never a final/READY claim.
+function segmentGroup(card: PdfFirstCard): CovGroup {
+  const geo = card.geo;
+  if (!geo) return "E";
+  if (geo.geometry_status === "FRAME_WITH_DROP_TERMINAL_CANDIDATE") return "B"; // fiber-drop evidence
+  if (geo.pdf_path_trace?.artifact_name) return geo.frame?.multi_sheet ? "C" : "A";
+  if (geo.pdf_redline?.artifact_name) return "B";
+  return "E"; // placement metadata but nothing drawable
 }
 
 export default function PdfFirstEvidencePanel({
@@ -262,9 +293,19 @@ export default function PdfFirstEvidencePanel({
   const placements = evidence.placements ?? [];
   const reviews = evidence.review_items ?? [];
   const failSafe = evidence.fail_safe ?? [];
-  const c = evidence.counts_by_surface ?? {};
   const total = placements.length + reviews.length + failSafe.length;
   const sid = sessionId ?? null;
+
+  // Group every card A-E. Nothing hidden — empty groups are omitted, counts are shown.
+  const grouped: Record<CovGroup, React.ReactNode[]> = { A: [], B: [], C: [], D: [], E: [] };
+  [...placements, ...reviews].forEach((card, i) => {
+    grouped[segmentGroup(card)].push(
+      <SegmentCard key={`s-${i}-${card.segment_id ?? card.log_ids?.join(",") ?? i}`} card={card} sessionId={sid} />,
+    );
+  });
+  failSafe.forEach((card, i) => {
+    grouped.D.push(<FailSafeCard key={`f-${i}`} card={card} />);
+  });
 
   return (
     <div
@@ -291,14 +332,13 @@ export default function PdfFirstEvidencePanel({
           PDF-first evidence
         </h2>
         <span style={{ fontSize: 12, color: "var(--tl-text-muted)" }}>
-          {c.placements ?? placements.length} placed · {c.review_items ?? reviews.length} review ·{" "}
-          {c.fail_safe ?? failSafe.length} fail-safe
+          {total} bore log{total === 1 ? "" : "s"} accounted for
         </span>
       </div>
       <p className="tl-subtle" style={{ margin: "0 0 12px", fontSize: 12 }}>
-        Authored bore-path redline traced from the PDF&apos;s CAD bore layers, drawn in the plan&apos;s own
-        (page-space) coordinates
-        {evidence.source?.input ? ` · source: ${evidence.source.input}` : ""}. Read-only · review-grade.
+        Authored bore-path evidence traced from the PDF&apos;s CAD bore layers, in the plan&apos;s own
+        (page-space) coordinates{evidence.source?.input ? ` · source: ${evidence.source.input}` : ""}. Read-only ·
+        review-grade · grouped by outcome — none hidden.
         {evidence.status && evidence.status !== "OK" ? ` · status: ${evidence.status}` : ""}
       </p>
 
@@ -307,26 +347,40 @@ export default function PdfFirstEvidencePanel({
           No PDF-first evidence for this session.
         </p>
       ) : (
-        <ul
-          style={{
-            listStyle: "none",
-            margin: 0,
-            padding: 0,
-            display: "flex",
-            flexDirection: "column",
-            gap: 8,
-          }}
-        >
-          {placements.map((card, i) => (
-            <SegmentCard key={`p-${i}`} card={card} sessionId={sid} />
-          ))}
-          {reviews.map((card, i) => (
-            <SegmentCard key={`r-${i}`} card={card} sessionId={sid} />
-          ))}
-          {failSafe.map((card, i) => (
-            <FailSafeCard key={`f-${i}`} card={card} />
-          ))}
-        </ul>
+        GROUP_META.map(({ key, title }) => {
+          const items = grouped[key];
+          if (!items.length) return null;
+          return (
+            <details key={key} open={key === "A" || key === "B" || key === "C"} style={{ marginTop: 10 }}>
+              <summary style={{ cursor: "pointer", fontSize: 13, fontWeight: 600, color: "var(--tl-text)" }}>
+                Group {key} — {title}
+                <span
+                  style={{
+                    fontSize: 11,
+                    background: "var(--tl-bg-raised, rgba(255,255,255,0.10))",
+                    borderRadius: 10,
+                    padding: "0 8px",
+                    marginLeft: 6,
+                  }}
+                >
+                  {items.length}
+                </span>
+              </summary>
+              <ul
+                style={{
+                  listStyle: "none",
+                  margin: "8px 0 0",
+                  padding: 0,
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: 8,
+                }}
+              >
+                {items}
+              </ul>
+            </details>
+          );
+        })
       )}
 
       {(evidence.warnings?.length ?? 0) > 0 && (

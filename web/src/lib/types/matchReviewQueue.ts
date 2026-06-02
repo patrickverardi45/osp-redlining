@@ -98,6 +98,9 @@ export interface PdfFirstGeo {
   geometry_status?: string | null;
   pdf_path_trace?: PdfFirstOverlay | null;
   pdf_redline?: PdfFirstOverlay | null;
+  // Coord-free chainage frame metadata. `multi_sheet` flags a bore that crosses a
+  // matchline (the trace is the sheet-local portion only). NO world coords.
+  frame?: { multi_sheet?: boolean; page?: number | null } | null;
 }
 
 export interface PdfFirstCard {
