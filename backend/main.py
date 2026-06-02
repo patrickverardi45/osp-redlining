@@ -14979,6 +14979,10 @@ def match_review_queue_endpoint(session_id: Optional[str] = None) -> JSONRespons
         )
     _psg_inputs: Optional[Dict[str, Dict[str, Any]]] = None
     _placement_proof: Optional[Dict[str, Any]] = None
+    # PDF-first evidence (Day-4f, default-OFF). Flag read once; REAL committed_rows
+    # snapshotted INSIDE the scope below; the heavy engine run is deferred to AFTER it.
+    _pf_on = os.getenv("TRUELINE_PDF_FIRST_ENGINE", "0").strip() == "1"
+    _pdf_first_rows: Optional[List[Dict[str, Any]]] = None
     with _session_scope(sid):
         diag: List[Dict[str, Any]] = list(STATE.get("pipeline_diag") or [])
         # Brenham PSG precision evidence (default-OFF via
@@ -15022,6 +15026,10 @@ def match_review_queue_endpoint(session_id: Optional[str] = None) -> JSONRespons
                 ),
                 terminus_lane_by_source=_terminus_lane_by_source,
             )
+        # PDF-first inputs (Day-4f): snapshot REAL committed_rows INSIDE the session
+        # scope when the flag is ON (read-only). The engine run happens AFTER the scope.
+        if _pf_on:
+            _pdf_first_rows = list(STATE.get("committed_rows") or [])
     if _psg_inputs:
         queue = _assemble_match_review_queue(diag, plan_sheet_graph_inputs=_psg_inputs)
     else:
@@ -15033,7 +15041,61 @@ def match_review_queue_endpoint(session_id: Optional[str] = None) -> JSONRespons
     }
     if _placement_proof is not None:
         _body["placement_proof"] = _placement_proof
+    # PDF-first evidence panel (Day-4f). Additive + default-OFF: attached ONLY when the
+    # flag is ON AND real inputs resolve (committed_rows + a persisted plan PDF). The
+    # heavy engine run is OUTSIDE _session_scope. Null-safe: any failure omits the key
+    # (never 500). The adapter owns all engine/translation logic — no selection here.
+    if _pf_on and _pdf_first_rows:
+        try:
+            _pf_plans = _resolve_engineering_plan_pdf_paths(sid)
+            _pf_plan_pdf = str(_pf_plans[0]) if _pf_plans else None
+            if _pf_plan_pdf:
+                from app.core import pdf_first_adapter
+                _pf_card_dir = str(UPLOADS_DIR / "pdf_first_cards" / _safe_filename(sid))
+                _pf_ev = pdf_first_adapter.build_session_evidence_from_committed_rows(
+                    _pf_plan_pdf, _pdf_first_rows, card_out_dir=_pf_card_dir,
+                )
+                if _pf_ev:
+                    _body["pdf_first_evidence"] = _pf_ev
+        except Exception:
+            pass  # null-safe: omit the key, never break the queue response
     return JSONResponse(content=_body)
+
+
+# ── PDF-first evidence: artifact (overlay PNG) serving ──────────────────────
+#
+# Read-only, gated companion to the Day-4f `pdf_first_evidence` block. Serves the
+# engine's already-rendered page-space overlay PNGs (pdf_path_trace / pdf_redline)
+# and evidence-card crops from the per-session cards dir, BY BASENAME ONLY. No
+# absolute path is ever accepted or trusted: the traversal-safe re-rooting +
+# realpath/commonpath containment lives in the pure, unit-tested helper
+# `app.core.pdf_first_artifacts.resolve_artifact_path` (kept out of main.py so the
+# security logic is testable without importing the monolith — note `_safe_filename`
+# only .strip()s and is NOT traversal-safe on its own). Mirrors the VO.2a gated-PNG/
+# FileResponse pattern (`get_engineering_plan_page_image`). Same router as
+# `/api/match-review-queue` (the panel that references these images). Gate OFF
+# (TRUELINE_PDF_FIRST_ENGINE unset/'0') => 404 before any filesystem access; no
+# existing response changes.
+@localhost_router.get("/api/pdf-first-evidence/{session_id}/artifact")
+def get_pdf_first_evidence_artifact(
+    session_id: str,
+    name: str,
+    request: Request = None,
+) -> Response:
+    # Gate first — flag-off is a 404 with zero filesystem cost (mirrors VO.2a).
+    if os.getenv("TRUELINE_PDF_FIRST_ENGINE", "0").strip() != "1":
+        return _err("PDF-first evidence artifact serving is disabled.", status_code=404)
+
+    sid = _resolve_session_id(session_id)
+    _require_tenant_owns_session(sid, request)  # reuse ownership check; 403 on non-owner
+
+    # Delegate basename sanitize + re-root + containment to the pure helper.
+    from app.core.pdf_first_artifacts import resolve_artifact_path
+    resolved = resolve_artifact_path(str(UPLOADS_DIR), sid, name)
+    if not resolved:
+        return _err("Artifact not found.", status_code=404, session_id=sid)
+
+    return FileResponse(resolved, media_type="image/png", filename=os.path.basename(resolved))
 
 
 @localhost_router.get("/api/trust-ledger")

@@ -70,6 +70,84 @@ export interface MatchReviewRow {
   plan_sheet_graph_evidence?: PlanSheetGraphEvidence;
 }
 
+// ── PDF-first engine evidence (Day-4f) ─────────────────────────────────────
+// Present ONLY when the backend runs the deterministic PDF-first engine
+// (TRUELINE_PDF_FIRST_ENGINE=1) and real inputs resolve. The adapter
+// `pdf_first_adapter.py` owns the canonical shape; the UI reads a subset.
+// Schema: pdf-first-evidence-1. Crop images are not served in-browser yet —
+// render_artifact_ref is a server-side path for now (next: artifact serving).
+export interface PdfFirstStationRange {
+  start?: string | null;
+  end?: string | null;
+}
+
+// A pdf_path_trace / pdf_redline overlay block — present per-card only when the
+// stacked render flags are ON. `artifact_name` is a BASENAME: fetch the page-space
+// overlay PNG via GET /api/pdf-first-evidence/{session_id}/artifact?name=<artifact_name>
+// (the backend re-roots it under the owned session dir; no absolute path is exposed).
+export interface PdfFirstOverlay {
+  trace_status?: string | null; // pdf_path_trace only: PDF_PATH_TRACE_*
+  artifact_name?: string | null; // basename of the rendered overlay PNG
+  artifact_refs?: string[];
+  path_basis?: string | null; // pdf_path_trace only
+}
+
+// Evidence-only geometry block (page-space; NO map/world coords). Present only when
+// TRUELINE_AP_ANCHORED_GEOMETRY (+ stacked flags) is ON.
+export interface PdfFirstGeo {
+  geometry_status?: string | null;
+  pdf_path_trace?: PdfFirstOverlay | null;
+  pdf_redline?: PdfFirstOverlay | null;
+}
+
+export interface PdfFirstCard {
+  log_ids?: string[];
+  segment_id?: string | null;
+  tier?: string;
+  surface?: string;
+  print?: string | null;
+  sheets?: number[];
+  station_range?: PdfFirstStationRange;
+  footage?: number | null;
+  conduit?: string | null;
+  end_structures?: string[];
+  evidence?: string[];
+  caveat?: { code?: string; text?: string } | null;
+  render_artifact_ref?: string[] | string | null;
+  geo?: PdfFirstGeo | null;
+}
+
+export interface PdfFirstFailSafeCard {
+  log_ids?: string[];
+  tier?: string;
+  reason?: string;
+  candidates?: unknown[];
+  render_artifact_ref?: string[] | string | null;
+}
+
+export interface PdfFirstGroup {
+  group_id?: string | null;
+  log_ids?: string[];
+  tier?: string | null;
+  kind?: string | null;
+  caveat?: { code?: string; text?: string } | null;
+  signals?: { false_overlaps?: number } & Record<string, unknown>;
+}
+
+export interface PdfFirstEvidence {
+  schema_version?: string;
+  status?: string;
+  render_target?: string;
+  source?: { input?: string; logs?: string[]; plan_pdf?: string } & Record<string, unknown>;
+  counts_by_tier?: Record<string, number>;
+  counts_by_surface?: { placements?: number; review_items?: number; fail_safe?: number };
+  placements?: PdfFirstCard[];
+  review_items?: PdfFirstCard[];
+  fail_safe?: PdfFirstFailSafeCard[];
+  groups?: PdfFirstGroup[];
+  warnings?: string[];
+}
+
 export interface MatchReviewQueueResponse {
   success?: boolean;
   session_id?: string;
@@ -78,4 +156,6 @@ export interface MatchReviewQueueResponse {
   counts_by_status?: Record<string, number>;
   counts_by_priority?: Record<string, number>;
   rows?: MatchReviewRow[];
+  // Additive, present only when the PDF-first engine ran (flag ON + real inputs).
+  pdf_first_evidence?: PdfFirstEvidence;
 }
