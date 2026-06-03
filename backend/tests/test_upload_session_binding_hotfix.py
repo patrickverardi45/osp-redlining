@@ -63,7 +63,9 @@ def test_upload_design_without_session_errors_not_mints():
 
 
 def test_upload_structured_bore_without_session_errors_not_mints():
-    resp = asyncio.run(M.upload_structured_bore_files(_FakeReq(), files=[], session_id=""))
+    # background_tasks param (added for the staged-rebuild flag) is unused on this
+    # early-return path; pass None.
+    resp = asyncio.run(M.upload_structured_bore_files(_FakeReq(), None, files=[], session_id=""))
     body = _decoded(resp)
     assert "active workspace session is required" in body
     assert "bore-log" in body  # bore-specific message

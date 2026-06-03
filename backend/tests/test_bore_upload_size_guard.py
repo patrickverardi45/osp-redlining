@@ -50,7 +50,7 @@ def test_oversize_bore_file_returns_413(monkeypatch):
     monkeypatch.setattr(M, "_MAX_BORE_UPLOAD_BYTES", 16)
     big = _FakeUpload(b"x" * 64, "huge.csv")
     resp = asyncio.run(
-        M.upload_structured_bore_files(_FakeReq(), files=[big], session_id="beta-test")
+        M.upload_structured_bore_files(_FakeReq(), None, files=[big], session_id="beta-test")
     )
     assert resp.status_code == 413
     body = _decoded(resp)
@@ -68,7 +68,20 @@ def test_missing_session_errors_before_size_guard():
     # session-required error BEFORE the file loop / size guard runs. Ordering
     # check: a missing session is a session error, never a spurious 413.
     resp = asyncio.run(
-        M.upload_structured_bore_files(_FakeReq(), files=[], session_id="")
+        M.upload_structured_bore_files(_FakeReq(), None, files=[], session_id="")
     )
     assert resp.status_code != 413
     assert "active workspace session is required" in _decoded(resp)
+
+
+def test_async_rebuild_flag_defaults_off(monkeypatch):
+    # The staged/deferred rebuild is opt-in: default OFF so the synchronous path
+    # (today's behavior) is unchanged unless the operator enables it.
+    monkeypatch.delenv("TRUELINE_BORE_ASYNC_REBUILD", raising=False)
+    assert M._trueline_bore_async_rebuild_enabled() is False
+    for truthy in ("1", "true", "YES", "on"):
+        monkeypatch.setenv("TRUELINE_BORE_ASYNC_REBUILD", truthy)
+        assert M._trueline_bore_async_rebuild_enabled() is True
+    for falsy in ("0", "false", "", "off"):
+        monkeypatch.setenv("TRUELINE_BORE_ASYNC_REBUILD", falsy)
+        assert M._trueline_bore_async_rebuild_enabled() is False

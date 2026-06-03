@@ -26,7 +26,7 @@ from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
 import boto3
 import pandas as pd
-from fastapi import APIRouter, Body, Depends, FastAPI, File, Form, HTTPException, Query, Request, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Body, Depends, FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
 from app.auth import current_tenant, get_current_tenant
@@ -14819,9 +14819,40 @@ async def select_active_route(
 _MAX_BORE_UPLOAD_BYTES = 50 * 1024 * 1024
 
 
+def _trueline_bore_async_rebuild_enabled() -> bool:
+    """Bore upload — defer the heavy ROWS_ONLY rebuild to a background task.
+    Default OFF. When ON, the upload persists parsed rows and returns JSON
+    immediately with rebuild_status="pending"; the rebuild runs AFTER the
+    response so an OOM/timeout SIGKILL during it cannot kill the upload. Read
+    per-request; never captured at import."""
+    return os.environ.get("TRUELINE_BORE_ASYNC_REBUILD", "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _run_bore_rebuild_background(session_id: str) -> None:
+    """Run the ROWS_ONLY field-data rebuild for an already-persisted bore upload.
+    Used as a FastAPI BackgroundTask when TRUELINE_BORE_ASYNC_REBUILD=1. The rows
+    are persisted by the upload handler BEFORE this runs, so a failure (or even an
+    OOM that kills the worker) here never loses field data — it only leaves
+    rebuild_status != "ready". Never raises out of the task."""
+    try:
+        with _session_scope(session_id):
+            _rebuild_field_data_outputs(scope=RebuildScope.ROWS_ONLY)
+            STATE["rebuild_status"] = "ready"
+        logging.info("[bore_upload] async rebuild complete sid=%s", session_id)
+    except Exception as exc:
+        logging.error("[bore_upload] async rebuild FAILED sid=%s: %s", session_id, exc)
+        try:
+            with _session_scope(session_id):
+                STATE["rebuild_status"] = "failed"
+                STATE["rebuild_error"] = str(exc)
+        except Exception:
+            pass
+
+
 @protected_router.post("/api/upload-structured-bore-files")
 async def upload_structured_bore_files(
     request: Request,
+    background_tasks: BackgroundTasks,
     files: List[UploadFile] = File(...),
     session_id: Optional[str] = Form(None),
 ) -> JSONResponse:
@@ -14899,16 +14930,48 @@ async def upload_structured_bore_files(
             STATE["committed_rows"] = merged_rows
             STATE["loaded_field_data_files"] = len(existing_by_file)
             STATE["latest_structured_file"] = latest_name
+            STATE["rebuild_status"] = "pending"
 
-            # RI.4: ROWS_ONLY scope structurally prevents bore-log uploads from
-            # invoking the PDF parser. See wiki/sprints/rebuild-isolation/
-            # RI-4-bore-log-rows-only.md and bugs/current-bugs#B-WS-12.
-            # _rebuild_field_data_outputs is the heaviest step (route matching +
-            # station mapping over every row) and the prime suspect for a slow or
-            # OOM bore upload on the full set — time it explicitly.
+            # SURVIVAL: persist the parsed/merged rows to disk BEFORE the heavy
+            # rebuild, so an OOM/timeout SIGKILL mid-rebuild cannot lose the field
+            # data. Bore rows are billable field truth and must survive even if
+            # auto-draw (the rebuild) dies. Cheap — rows-only blob, no redlines yet.
+            try:
+                _persist_session(resolved_session_id, dict(STATE))
+            except Exception as _persist_exc:
+                logging.warning("[bore_upload] pre-rebuild row persist failed sid=%s: %s", resolved_session_id, _persist_exc)
+
+            # STAGED REBUILD (default OFF — TRUELINE_BORE_ASYNC_REBUILD). When ON,
+            # defer the heavy rebuild to a background task that runs AFTER the
+            # response, so an OOM/timeout during it cannot kill the upload (rows are
+            # already persisted above). current-state stays JSON and shows the rows
+            # with no redlines until the deferred rebuild completes.
+            if _trueline_bore_async_rebuild_enabled() and background_tasks is not None:
+                _payload = _summary_payload()
+                try:
+                    background_tasks.add_task(_run_bore_rebuild_background, resolved_session_id)
+                except Exception as _sched_exc:
+                    logging.warning("[bore_upload] async rebuild schedule failed sid=%s: %s", resolved_session_id, _sched_exc)
+                logging.info(
+                    "[bore_upload] sid=%s files=%d rows=%d async=1 status=pending (rebuild deferred)",
+                    resolved_session_id, len(prepared_files), len(merged_rows),
+                )
+                return _ok(
+                    session_id=resolved_session_id,
+                    message="Bore logs uploaded. Redlines are processing — refresh in a moment.",
+                    rebuild_status="pending",
+                    **_payload,
+                )
+
+            # SYNCHRONOUS (default). A CATCHABLE rebuild error still bubbles to the
+            # handler's outer `except -> _err` (clean JSON; rows already persisted
+            # above). An UNCATCHABLE SIGKILL (OOM / Render worker --timeout) is
+            # addressed by infra (raise RAM + worker timeout) and the async flag.
+            # RI.4: ROWS_ONLY never invokes the PDF parser (rebuild-isolation).
             _rb_t0 = time.perf_counter()
             _rebuild_field_data_outputs(scope=RebuildScope.ROWS_ONLY)
             _rebuild_ms = (time.perf_counter() - _rb_t0) * 1000.0
+            STATE["rebuild_status"] = "ready"
             if _perf_audit_enabled():
                 _emit_perf_audit_row(
                     "bore_log.rebuild",
@@ -14931,7 +14994,7 @@ async def upload_structured_bore_files(
             try:
                 logging.info(
                     "[bore_upload] sid=%s files=%d rows=%d rebuild_ms=%.0f total_ms=%.0f "
-                    "redline_segments=%d station_points=%d",
+                    "status=ready redline_segments=%d station_points=%d",
                     resolved_session_id,
                     len(prepared_files),
                     len(merged_rows),
@@ -14942,7 +15005,7 @@ async def upload_structured_bore_files(
                 )
             except Exception:
                 pass
-            return _ok(session_id=resolved_session_id, message="Bore logs uploaded successfully", **_payload)
+            return _ok(session_id=resolved_session_id, message="Bore logs uploaded successfully", rebuild_status="ready", **_payload)
     except Exception as exc:
         return _err(str(exc), session_id=resolved_session_id)
 

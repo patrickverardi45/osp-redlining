@@ -4034,8 +4034,20 @@ ${redlinePlacemarks.length > 0 ? buildEngFolder("Redlines", redlinePlacemarks, 1
         clearTimeout(initialFitTimeoutRef.current);
         initialFitTimeoutRef.current = null;
       }
-      setStatusText(String(data.warning || data.message || "Field data uploaded successfully."));
-      setStatusTone(data.warning ? "warning" : "success");
+      // When the backend deferred the rebuild (TRUELINE_BORE_ASYNC_REBUILD on), the
+      // rows are saved but redlines are still processing. Surface that instead of a
+      // plain "success" so the user knows to refresh. Sync path returns
+      // rebuild_status "ready"/absent → unchanged behavior.
+      const _rebuildStatus = (data as { rebuild_status?: string }).rebuild_status;
+      if (_rebuildStatus === "pending") {
+        setStatusText(
+          String(data.message || "Field data uploaded. Redlines are processing — refresh in a moment to see them."),
+        );
+        setStatusTone("warning");
+      } else {
+        setStatusText(String(data.warning || data.message || "Field data uploaded successfully."));
+        setStatusTone(data.warning ? "warning" : "success");
+      }
     } catch (error) {
       setStatusText(error instanceof Error ? error.message : "Field data upload failed.");
       setStatusTone("error");
