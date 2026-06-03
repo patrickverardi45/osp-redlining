@@ -95,7 +95,8 @@ class TestEndpointByteIdenticalAndAdditive(unittest.TestCase):
         os.environ.pop(_PSG_FLAG, None)
         # Bypass tenant/session gating — the endpoint only needs STATE here.
         self._saved_scope = M._session_scope
-        M._session_scope = lambda sid: contextlib.nullcontext()
+        # Match the real _session_scope signature (now accepts readonly=).
+        M._session_scope = lambda sid, readonly=False: contextlib.nullcontext()
         # Snapshot + seed STATE.
         self._saved_state = dict(M.STATE)
         M.STATE.clear()

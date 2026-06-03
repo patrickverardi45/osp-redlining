@@ -15387,8 +15387,40 @@ def _placement_counts_by_source(
     return out
 
 
+# MRQ lean-response trim. The /match-review panel
+# (web/src/lib/types/matchReviewQueue.ts) reads only a small projection of each
+# row; these per-row fields are NOT read by the UI and can be MBs on a large
+# (515-row / 58-log) session — a major contributor to the MRQ 504. They are
+# stripped by default and returned only when ?include_internals=1.
+_MRQ_HEAVY_ROW_FIELDS = ("safety_net_log",)
+_MRQ_HEAVY_EVIDENCE_FIELDS = ("evidence_resolver_tag", "kmz_address_cluster_evidence")
+
+
+def _lean_match_review_rows(rows: List[Dict[str, Any]]) -> None:
+    """Strip heavy, UI-unused internals from MRQ rows IN PLACE (default response).
+
+    Removes ``safety_net_log`` and the verbose ``evidence_summary`` sub-dicts
+    ``evidence_resolver_tag`` / ``kmz_address_cluster_evidence`` — none of which
+    the /match-review panel reads. The lean row keeps every field the panel
+    actually renders (status, priority, selected route, abstain_reason,
+    top_3_alternates, evidence_summary print/street fields, ambiguity status,
+    plan_sheet_graph_evidence). Never raises."""
+    for _r in rows:
+        if not isinstance(_r, dict):
+            continue
+        for _f in _MRQ_HEAVY_ROW_FIELDS:
+            _r.pop(_f, None)
+        _es = _r.get("evidence_summary")
+        if isinstance(_es, dict):
+            for _f in _MRQ_HEAVY_EVIDENCE_FIELDS:
+                _es.pop(_f, None)
+
+
 @localhost_router.get("/api/match-review-queue")
-def match_review_queue_endpoint(session_id: Optional[str] = None) -> JSONResponse:
+def match_review_queue_endpoint(
+    session_id: Optional[str] = None,
+    include_internals: bool = False,
+) -> JSONResponse:
     """Read-only operator-review queue.
 
     KMZ Matching Trust Slice B — projects STATE["pipeline_diag"] into a
@@ -15404,13 +15436,18 @@ def match_review_queue_endpoint(session_id: Optional[str] = None) -> JSONRespons
         return JSONResponse(
             status_code=400, content={"error": "session_id is required"}
         )
+    _mrq_t0 = time.perf_counter()
     _psg_inputs: Optional[Dict[str, Dict[str, Any]]] = None
     _placement_proof: Optional[Dict[str, Any]] = None
     # PDF-first evidence (Day-4f, default-OFF). Flag read once; REAL committed_rows
     # snapshotted INSIDE the scope below; the heavy engine run is deferred to AFTER it.
     _pf_on = os.getenv("TRUELINE_PDF_FIRST_ENGINE", "0").strip() == "1"
     _pdf_first_rows: Optional[List[Dict[str, Any]]] = None
-    with _session_scope(sid):
+    # READ-ONLY scope: the queue is a pure projection of STATE and must not
+    # re-persist the (now ~18 MB) session JSON on every panel load — that write
+    # was part of the 504. readonly=True keeps tenant gating (in __enter__) and
+    # skips the on-exit save.
+    with _session_scope(sid, readonly=True):
         diag: List[Dict[str, Any]] = list(STATE.get("pipeline_diag") or [])
         # Brenham PSG precision evidence (default-OFF via
         # TRUELINE_MRQ_PLAN_SHEET_GRAPH_EVIDENCE). When OFF: no gather, no PSG
@@ -15457,10 +15494,12 @@ def match_review_queue_endpoint(session_id: Optional[str] = None) -> JSONRespons
         # scope when the flag is ON (read-only). The engine run happens AFTER the scope.
         if _pf_on:
             _pdf_first_rows = list(STATE.get("committed_rows") or [])
+    _assemble_t0 = time.perf_counter()
     if _psg_inputs:
         queue = _assemble_match_review_queue(diag, plan_sheet_graph_inputs=_psg_inputs)
     else:
         queue = _assemble_match_review_queue(diag)
+    _assemble_ms = (time.perf_counter() - _assemble_t0) * 1000.0
     _body: Dict[str, Any] = {
         "success": True,
         "session_id": sid,
@@ -15531,6 +15570,29 @@ def match_review_queue_endpoint(session_id: Optional[str] = None) -> JSONRespons
                     _body["pdf_first_evidence"] = _pf_ev
         except Exception:
             pass  # null-safe: omit the key, never break the queue response
+    # LEAN by default: strip heavy, UI-unused internals from rows unless the
+    # caller explicitly asks for them (?include_internals=1). These fields can be
+    # MBs on a large session and were a major contributor to the MRQ 504.
+    if not include_internals:
+        _lean_match_review_rows(_body.get("rows") or [])
+    # Timing + response-size log around assembly and serialization (diagnostic;
+    # never raises). The lean body is small, so this extra serialize is cheap.
+    try:
+        _mrq_payload = json.dumps(_body, default=str)
+        _mrq_bytes = len(_mrq_payload)
+        logging.info(
+            "[mrq] sid=%s rows=%d include_internals=%s assemble_ms=%.0f total_ms=%.0f "
+            "bytes=%d (%.2f MB)",
+            sid,
+            len(_body.get("rows") or []),
+            include_internals,
+            _assemble_ms,
+            (time.perf_counter() - _mrq_t0) * 1000.0,
+            _mrq_bytes,
+            _mrq_bytes / 1024.0 / 1024.0,
+        )
+    except Exception:
+        pass
     return JSONResponse(content=_body)
 
 
