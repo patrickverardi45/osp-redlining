@@ -7675,6 +7675,30 @@ def _trueline_mrq_plan_sheet_graph_evidence_enabled() -> bool:
     return raw in {"1", "true", "yes", "on"}
 
 
+def _trueline_mrq_evidence_cache_enabled() -> bool:
+    """Match Review Queue — runtime flag for the PDF-first evidence DISK CACHE.
+    Default OFF.
+
+    When OFF, the `/api/match-review-queue` endpoint never imports or touches the
+    evidence cache module; the PDF-first evidence block is regenerated exactly as
+    before (the adapter runs on every load) and the response is byte-identical to
+    pre-cache behavior. When ON, the endpoint computes a signature over the plan
+    set + evidence-affecting committed_rows + the PDF-first flag stack and, on a
+    cache hit, returns the previously generated evidence envelope WITHOUT re-running
+    `build_session_evidence_from_committed_rows` (skipping the full engine run +
+    crop/overlay rasterization); on a miss it runs the adapter as today and writes
+    the result back. This NEVER changes the envelope shape, resolver logic, rendered
+    visuals, engine internals, or any PNG rendering — it only skips regeneration.
+
+    A separate kill switch (`TRUELINE_MRQ_EVIDENCE_CACHE_DISABLE`, honored inside
+    the cache module) forces a miss/no-write even when this flag is ON.
+
+    Read every call; never captured at import-time.
+    """
+    raw = os.environ.get("TRUELINE_MRQ_EVIDENCE_CACHE", "").strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
 def _trueline_pdf_ap_route_shadow_enabled() -> bool:
     """PDF-AP Route Shadow Resolver — runtime flag for the Brenham PH5
     proof-slice diagnostic. Default OFF. Scoped to the four proof-slice
@@ -15068,6 +15092,22 @@ def match_review_queue_endpoint(session_id: Optional[str] = None) -> JSONRespons
     # flag is ON AND real inputs resolve (committed_rows + a persisted plan PDF). The
     # heavy engine run is OUTSIDE _session_scope. Null-safe: any failure omits the key
     # (never 500). The adapter owns all engine/translation logic — no selection here.
+    #
+    # Evidence-cache wrapper (TRUELINE_MRQ_EVIDENCE_CACHE, default OFF): a SAFE,
+    # skip-regeneration layer ONLY. When the cache flag is OFF the cache module is
+    # never imported or touched and this path is byte-identical to before — the
+    # adapter runs on every load. When ON, we compute a signature over the plan set
+    # + evidence-affecting committed_rows + the PDF-first flag stack; on a cache HIT
+    # we reuse the previously generated evidence envelope (skipping the full engine
+    # run + crop/overlay rasterization), and on a MISS we run the adapter exactly as
+    # today and write the result back. The envelope shape, resolver logic, rendered
+    # visuals, engine internals, and PNG rendering are all unchanged.
+    #
+    # CLEANUP POLICY: the cache file `_evidence_cache.json` is fully regenerable and
+    # safe to delete. It lives under pdf_first_cards/<sid>/ alongside the PNGs, so an
+    # existing `rm -rf pdf_first_cards/*` cleanup also clears it; a signature change
+    # (new upload or flag change) auto-invalidates it, so there is no stale evidence
+    # after new uploads.
     if _pf_on and _pdf_first_rows:
         try:
             _pf_plans = _resolve_engineering_plan_pdf_paths(sid)
@@ -15075,9 +15115,38 @@ def match_review_queue_endpoint(session_id: Optional[str] = None) -> JSONRespons
             if _pf_plan_pdf:
                 from app.core import pdf_first_adapter
                 _pf_card_dir = str(UPLOADS_DIR / "pdf_first_cards" / _safe_filename(sid))
-                _pf_ev = pdf_first_adapter.build_session_evidence_from_committed_rows(
-                    _pf_plan_pdf, _pdf_first_rows, card_out_dir=_pf_card_dir,
-                )
+                _pf_cache_on = _trueline_mrq_evidence_cache_enabled()
+                _pf_cache_file = None
+                _pf_sig = None
+                _pf_ev = None
+                if _pf_cache_on:
+                    # Cache-ON only: compute the signature and try a read before
+                    # touching the adapter. Any failure here degrades to a normal
+                    # (uncached) adapter run below — never breaks the response.
+                    try:
+                        from app.core import pdf_first_evidence_cache as _pf_cache
+                        from app.core.plan_topology_cache import derive_plan_set_signature as _derive_pss
+                        _pf_plan_records = _load_engineering_plan_index_for_session(sid)
+                        _pf_pss = _derive_pss(_pf_plan_records)
+                        _pf_sig = _pf_cache.compute_signature(
+                            sid, _pf_pss, _pdf_first_rows,
+                        )
+                        _pf_cache_file = _pf_cache.cache_path(UPLOADS_DIR, _safe_filename(sid))
+                        _pf_ev = _pf_cache.cache_read(_pf_cache_file, _pf_sig)
+                    except Exception:
+                        _pf_cache_file = None
+                        _pf_sig = None
+                        _pf_ev = None
+                if _pf_ev is None:
+                    # Cache miss (or cache OFF): regenerate exactly as before.
+                    _pf_ev = pdf_first_adapter.build_session_evidence_from_committed_rows(
+                        _pf_plan_pdf, _pdf_first_rows, card_out_dir=_pf_card_dir,
+                    )
+                    if _pf_cache_on and _pf_ev and _pf_cache_file is not None and _pf_sig is not None:
+                        try:
+                            _pf_cache.cache_write(_pf_cache_file, _pf_sig, _pf_ev)
+                        except Exception:
+                            pass  # best-effort: a write failure just re-generates next load
                 if _pf_ev:
                     _body["pdf_first_evidence"] = _pf_ev
         except Exception:
