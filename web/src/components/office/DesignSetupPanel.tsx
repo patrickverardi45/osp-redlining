@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { BackendState } from "@/lib/types/backend";
-import { acceptSessionFromMutation, appendSessionId, appendSessionIdReadOnly, appendSessionIdToForm } from "@/lib/session";
+import { acceptSessionFromMutation, appendSessionIdReadOnly, appendSessionIdToForm } from "@/lib/session";
 import { apiFetch } from "@/lib/apiFetch";
 
 const API_BASE = "";
@@ -22,6 +22,11 @@ export default function DesignSetupPanel({ onMutated }: DesignSetupPanelProps) {
   const [uploadingPdf, setUploadingPdf] = useState(false);
   const [pdfStatusMessage, setPdfStatusMessage] = useState<string>("");
   const [pdfStatusTone, setPdfStatusTone] = useState<"neutral" | "success" | "warning" | "error">("neutral");
+  // Bore-log (field data) lane — structured field/billable truth. Wired to the
+  // existing /api/upload-structured-bore-files route; frontend-only, no backend change.
+  const [uploadingBore, setUploadingBore] = useState(false);
+  const [boreStatusMessage, setBoreStatusMessage] = useState<string>("");
+  const [boreStatusTone, setBoreStatusTone] = useState<"neutral" | "success" | "warning" | "error">("neutral");
 
   const hasDesign = useMemo(() => {
     const lineCount = state?.kmz_reference?.line_features?.length || 0;
@@ -178,6 +183,53 @@ export default function DesignSetupPanel({ onMutated }: DesignSetupPanelProps) {
     [fetchCurrentState, onMutated]
   );
 
+  const handleBoreLogUpload = useCallback(
+    async (files: FileList) => {
+      if (!files || files.length === 0) return;
+      setUploadingBore(true);
+      setBoreStatusMessage(
+        `Uploading ${files.length} bore-log file${files.length === 1 ? "" : "s"}...`
+      );
+      setBoreStatusTone("neutral");
+      try {
+        const form = new FormData();
+        for (let i = 0; i < files.length; i += 1) {
+          const f = files.item(i);
+          if (f) form.append("files", f);
+        }
+        appendSessionIdToForm(form);
+
+        const response = await apiFetch(`${API_BASE}/api/upload-structured-bore-files`, {
+          method: "POST",
+          body: form,
+        });
+        const data: BackendState = await response.json();
+        acceptSessionFromMutation(data);
+        if (!response.ok || data.success === false) {
+          throw new Error(data.error || "Bore-log upload failed.");
+        }
+
+        setBoreStatusMessage(
+          String(
+            data.warning ||
+              data.message ||
+              `Uploaded ${files.length} bore-log file${files.length === 1 ? "" : "s"}.`
+          )
+        );
+        setBoreStatusTone(data.warning ? "warning" : "success");
+
+        await fetchCurrentState();
+        await onMutated?.();
+      } catch (error) {
+        setBoreStatusMessage(error instanceof Error ? error.message : "Bore-log upload failed.");
+        setBoreStatusTone("error");
+      } finally {
+        setUploadingBore(false);
+      }
+    },
+    [fetchCurrentState, onMutated]
+  );
+
   const handleConfirmActiveRoute = useCallback(async () => {
     if (!suggestedRouteId) return;
     setConfirmingRoute(true);
@@ -211,9 +263,9 @@ export default function DesignSetupPanel({ onMutated }: DesignSetupPanelProps) {
     <section>
       <div className="flex items-center justify-between mb-3 gap-3 flex-wrap">
         <div>
-          <h2 className="text-base font-semibold text-gray-800">Design / KMZ Setup</h2>
+          <h2 className="text-base font-semibold text-gray-800">Project Inputs</h2>
           <p className="text-sm text-gray-500 mt-1">
-            Upload design, refresh backend route context, and confirm active route.
+            Upload engineering plan PDFs, KMZ design, and bore-log field data for this job.
           </p>
         </div>
         <button
@@ -255,48 +307,17 @@ export default function DesignSetupPanel({ onMutated }: DesignSetupPanelProps) {
           </div>
         </div>
 
-        <div className="flex items-center gap-3 flex-wrap">
-          <label className="inline-flex items-center">
-            <input
-              type="file"
-              accept=".kmz,.kml"
-              className="hidden"
-              disabled={uploading || loadingState || confirmingRoute}
-              onChange={(e) => {
-                const file = e.target.files?.[0];
-                if (file) {
-                  handleDesignUpload(file);
-                }
-                e.currentTarget.value = "";
-              }}
-            />
-            <span className="px-3 py-1.5 rounded text-sm font-medium bg-gray-800 text-white hover:bg-gray-700 cursor-pointer">
-              {uploading ? "Uploading..." : "Upload KMZ Design"}
-            </span>
-          </label>
-
-          <button
-            onClick={handleConfirmActiveRoute}
-            disabled={!suggestedRouteId || confirmingRoute || loadingState || uploading}
-            className="px-3 py-1.5 rounded text-sm font-medium bg-white border border-gray-300 text-gray-700 hover:bg-gray-50 disabled:opacity-50"
-          >
-            {confirmingRoute ? "Confirming..." : "Confirm Active Route"}
-          </button>
-
-          {!hasRoute && (
-            <span className="text-xs text-gray-500">
-              No active route selected yet.
-            </span>
-          )}
-        </div>
-
         {/*
+          Lane order: engineering plan PDFs, then KMZ design, then bore-log
+          field data. Order is presentation only — the lanes are independent,
+          not a required sequence.
+
           Engineering Plan PDF lane — separate from KMZ design upload.
           Engineering PDFs are diagnostic/signal-only and never feed route
           matching or redline truth. Backend route /api/upload-engineering-plans
           enforces session ownership via the protected router.
         */}
-        <div className="border-t border-gray-100 pt-4">
+        <div>
           <div className="flex items-center justify-between gap-3 flex-wrap">
             <div>
               <h3 className="text-sm font-semibold text-gray-800">Engineering Plan PDFs</h3>
@@ -310,7 +331,7 @@ export default function DesignSetupPanel({ onMutated }: DesignSetupPanelProps) {
                 accept=".pdf,application/pdf"
                 multiple
                 className="hidden"
-                disabled={uploadingPdf || loadingState || uploading || confirmingRoute}
+                disabled={uploadingPdf || loadingState || uploading || confirmingRoute || uploadingBore}
                 onChange={(e) => {
                   const files = e.target.files;
                   if (files && files.length > 0) {
@@ -355,6 +376,102 @@ export default function DesignSetupPanel({ onMutated }: DesignSetupPanelProps) {
                 </li>
               ))}
             </ul>
+          )}
+        </div>
+
+        {/* KMZ design upload + active-route confirmation (second lane). */}
+        <div className="border-t border-gray-100 pt-4">
+          <h3 className="text-sm font-semibold text-gray-800 mb-3">KMZ Design</h3>
+          <div className="flex items-center gap-3 flex-wrap">
+            <label className="inline-flex items-center">
+              <input
+                type="file"
+                accept=".kmz,.kml"
+                className="hidden"
+                disabled={uploading || loadingState || confirmingRoute || uploadingBore}
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) {
+                    handleDesignUpload(file);
+                  }
+                  e.currentTarget.value = "";
+                }}
+              />
+              <span className="px-3 py-1.5 rounded text-sm font-medium bg-gray-800 text-white hover:bg-gray-700 cursor-pointer">
+                {uploading ? "Uploading..." : "Upload KMZ Design"}
+              </span>
+            </label>
+
+            <button
+              onClick={handleConfirmActiveRoute}
+              disabled={!suggestedRouteId || confirmingRoute || loadingState || uploading}
+              className="px-3 py-1.5 rounded text-sm font-medium bg-white border border-gray-300 text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+            >
+              {confirmingRoute ? "Confirming..." : "Confirm Active Route"}
+            </button>
+
+            {!hasRoute && (
+              <span className="text-xs text-gray-500">
+                No active route selected yet.
+              </span>
+            )}
+          </div>
+        </div>
+
+        {/*
+          Bore-log (field data) lane — third. Structured bore-log files are the
+          actual field/billable truth. Wired to the existing
+          /api/upload-structured-bore-files route; frontend-only, no backend change.
+        */}
+        <div className="border-t border-gray-100 pt-4">
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <div>
+              <h3 className="text-sm font-semibold text-gray-800">Bore Logs (Field Data)</h3>
+              <p className="text-xs text-gray-500 mt-1">
+                Structured bore-log files (.xlsx, .xls, .csv) — actual field/billable truth.
+              </p>
+            </div>
+            <label className="inline-flex items-center">
+              <input
+                type="file"
+                accept=".xlsx,.xls,.csv"
+                multiple
+                className="hidden"
+                disabled={uploadingBore || loadingState || uploading || confirmingRoute || uploadingPdf}
+                onChange={(e) => {
+                  const files = e.target.files;
+                  if (files && files.length > 0) {
+                    handleBoreLogUpload(files);
+                  }
+                  e.currentTarget.value = "";
+                }}
+              />
+              <span className="px-3 py-1.5 rounded text-sm font-medium bg-gray-800 text-white hover:bg-gray-700 cursor-pointer">
+                {uploadingBore ? "Uploading..." : "Upload Bore Logs"}
+              </span>
+            </label>
+          </div>
+
+          {boreStatusMessage && (
+            <div
+              className={`mt-3 rounded-md border px-3 py-2 text-xs ${
+                boreStatusTone === "success"
+                  ? "bg-green-50 border-green-200 text-green-700"
+                  : boreStatusTone === "warning"
+                  ? "bg-yellow-50 border-yellow-200 text-yellow-800"
+                  : boreStatusTone === "error"
+                  ? "bg-red-50 border-red-200 text-red-700"
+                  : "bg-gray-50 border-gray-200 text-gray-700"
+              }`}
+            >
+              {boreStatusMessage}
+            </div>
+          )}
+
+          {(state?.loaded_field_data_files ?? 0) > 0 && (
+            <p className="mt-3 text-xs font-medium text-green-700">
+              {state?.loaded_field_data_files} field data file(s) loaded.
+            </p>
           )}
         </div>
       </div>

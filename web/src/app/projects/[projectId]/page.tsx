@@ -147,6 +147,13 @@ export default function ProjectPage({ params, searchParams }: ProjectPageProps) 
 
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
             <Link
+              href={matchReviewHref}
+              className="tl-btn tl-btn-primary"
+              style={{ fontSize: 13, whiteSpace: "nowrap" }}
+            >
+              Match Review
+            </Link>
+            <Link
               href={`/trust-ledger?projectId=${encodeURIComponent(projectId)}`}
               className="tl-btn tl-btn-ghost"
               style={{ fontSize: 13, whiteSpace: "nowrap" }}
