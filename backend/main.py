@@ -14811,6 +14811,14 @@ async def select_active_route(
         return _err(str(exc), session_id=resolved_session_id)
 
 
+# Defensive cap against an accidental/abusive huge upload that could OOM the
+# worker (the handler reads each file fully into memory). The real Brenham
+# bore-log upload is a single ~1.1 MB CSV (~1,339 rows), so 50 MB never blocks a
+# legitimate file; it only rejects absurd inputs with a clean JSON 413 instead of
+# letting a memory blow-up surface to the client as an HTML 502.
+_MAX_BORE_UPLOAD_BYTES = 50 * 1024 * 1024
+
+
 @protected_router.post("/api/upload-structured-bore-files")
 async def upload_structured_bore_files(
     request: Request,
@@ -14829,6 +14837,7 @@ async def upload_structured_bore_files(
             session_id=None,
         )
     try:
+        _bore_t0 = time.perf_counter()
         prepared_files: List[Tuple[str, bytes]] = []
         latest_name: Optional[str] = None
         for file in files:
@@ -14839,6 +14848,17 @@ async def upload_structured_bore_files(
                 stage_detail=_bl_filename,
             ):
                 file_bytes = await file.read()
+            # Survival guard: reject an absurdly large file with a clean JSON 413
+            # rather than holding it in memory and risking an OOM worker death
+            # (which the client sees as an HTML 502). Generous cap — does not block
+            # the real ~1.1 MB Brenham bore CSV.
+            if len(file_bytes) > _MAX_BORE_UPLOAD_BYTES:
+                return _err(
+                    f"Bore-log file '{_bl_filename}' is {len(file_bytes)} bytes, over the "
+                    f"{_MAX_BORE_UPLOAD_BYTES}-byte per-file limit.",
+                    status_code=413,
+                    session_id=resolved_session_id,
+                )
             latest_name = _bl_filename
             prepared_files.append((latest_name, file_bytes))
 
@@ -14883,7 +14903,19 @@ async def upload_structured_bore_files(
             # RI.4: ROWS_ONLY scope structurally prevents bore-log uploads from
             # invoking the PDF parser. See wiki/sprints/rebuild-isolation/
             # RI-4-bore-log-rows-only.md and bugs/current-bugs#B-WS-12.
+            # _rebuild_field_data_outputs is the heaviest step (route matching +
+            # station mapping over every row) and the prime suspect for a slow or
+            # OOM bore upload on the full set — time it explicitly.
+            _rb_t0 = time.perf_counter()
             _rebuild_field_data_outputs(scope=RebuildScope.ROWS_ONLY)
+            _rebuild_ms = (time.perf_counter() - _rb_t0) * 1000.0
+            if _perf_audit_enabled():
+                _emit_perf_audit_row(
+                    "bore_log.rebuild",
+                    _rebuild_ms,
+                    phase="bore_log_upload",
+                    input_count=len(merged_rows),
+                )
             _pa_payload_t0 = time.perf_counter() if _perf_audit_enabled() else 0.0
             _payload = _summary_payload()
             if _perf_audit_enabled():
@@ -14893,6 +14925,23 @@ async def upload_structured_bore_files(
                     phase="bore_log_upload",
                     bytes_out=len(json.dumps(_payload, default=str)),
                 )
+            # Always-on one-line summary so the bore-upload choke point is visible
+            # in normal Render logs WITHOUT enabling TRUELINE_PERF_AUDIT. Counts
+            # only (no extra serialization) → negligible overhead, one line/upload.
+            try:
+                logging.info(
+                    "[bore_upload] sid=%s files=%d rows=%d rebuild_ms=%.0f total_ms=%.0f "
+                    "redline_segments=%d station_points=%d",
+                    resolved_session_id,
+                    len(prepared_files),
+                    len(merged_rows),
+                    _rebuild_ms,
+                    (time.perf_counter() - _bore_t0) * 1000.0,
+                    len(STATE.get("redline_segments") or []),
+                    len(STATE.get("station_points") or []),
+                )
+            except Exception:
+                pass
             return _ok(session_id=resolved_session_id, message="Bore logs uploaded successfully", **_payload)
     except Exception as exc:
         return _err(str(exc), session_id=resolved_session_id)
