@@ -185,10 +185,14 @@ def verify_and_resolve(doc, resolution, sheet_offset, out_dir):
                 page, bbox, os.path.join(out_dir, fn),
                 caption=f"{bore} {a.get('role', '')} {a.get('kind', 'label')} {lbl} (sheet {a['sheet']})")
             if outp:
+                # ``bbox`` is the already-computed page-space anchor box (METADATA only — it does
+                # not affect verification/gating/``resolved``). It lets a consumer draw a
+                # structure-to-structure connector between PROVEN anchor centroids.
                 overlays.append({"sheet": a["sheet"], "kind": a.get("kind", "label"), "id": lbl,
                                  "label": a.get("label", lbl),
                                  "station": a.get("station") or a.get("phys_sta") or "",
-                                 "role": a.get("role"), "image": os.path.abspath(outp)})
+                                 "role": a.get("role"), "bbox": list(bbox),
+                                 "image": os.path.abspath(outp)})
 
     resolved = bool(overlays) and all(gating) and len(overlays) == len(resolution["anchors"])
     cross_sheet = bool(seam)

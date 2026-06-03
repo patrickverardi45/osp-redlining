@@ -239,6 +239,55 @@ def _resolver_overrides_false_A(log_id: str, rec: Mapping[str, Any], doc: Any,
         return None  # any failure -> do NOT override; leave the engine's A trace untouched
 
 
+def _struct_connector_enabled() -> bool:
+    """Default-OFF (stacks on TRUELINE_MATCHLINE_FRAME_RESOLVER). When ON, a SINGLE-SHEET
+    start->end resolver frame whose two ends are PROVEN structures on one sheet (e.g. log66's
+    straight HH-HH street crossing) also gets a RED structure-to-structure connector drawn between
+    the two proven anchor centroids. OFF -> proof boxes only (unchanged). NEVER applies to a
+    cross-sheet/matchline frame (log56/58) and NEVER traces or guesses a curved duct path."""
+    return str(os.environ.get("TRUELINE_REDLINE_STRUCT_CONNECTOR", "")).strip().lower() in {
+        "1", "true", "yes", "on"}
+
+
+def _render_struct_connector(mr: Mapping[str, Any], res: Mapping[str, Any], doc: Any,
+                             sheet_offset: int, out_dir: str) -> Optional[str]:
+    """Draw a RED structure-to-structure connector between the two PROVEN anchor centroids of a
+    single-sheet start->end resolver frame, reusing the engine's ``render_redline_overlay``.
+    Returns the overlay basename or None. STRICTLY bounded: single-sheet only (no matchline seam);
+    needs a proven start anchor + a proven end anchor with captured bboxes on the SAME sheet
+    (log54 host-only frames are excluded — no role=end). It is a straight line between two AUTHORED
+    structures (honest for a straight HH-HH crossing), labeled structure_to_structure — NOT a
+    traced duct vector, never a curved guess. Never raises."""
+    try:
+        if mr.get("seam"):  # cross-sheet -> NOT a single straight crossing (leave 56/58 alone)
+            return None
+        overlays = mr.get("overlays") or []
+        start = next((o for o in overlays
+                      if o.get("role") in ("start", "reset_origin", "reset") and o.get("bbox")), None)
+        end = next((o for o in overlays if o.get("role") == "end" and o.get("bbox")), None)
+        if not (start and end) or start.get("sheet") != end.get("sheet"):
+            return None
+        from redline_pdf_first.pdf import text_extract, crop
+
+        def ctr(b):
+            return [(float(b[0]) + float(b[2])) / 2.0, (float(b[1]) + float(b[3])) / 2.0]
+
+        page = text_extract.get_page(doc, start["sheet"], sheet_offset)
+        elements = [{"role": "endpoint", "bbox_display": list(start["bbox"])},
+                    {"role": "endpoint", "bbox_display": list(end["bbox"])}]
+        pts = [ctr(start["bbox"]), ctr(end["bbox"])]
+        bore = res.get("bore_id", "bore")
+        fn = f"{bore}_s{start['sheet']}_structure_to_structure.png"
+        cap = (f"{bore} structure-to-structure redline "
+               f"({start.get('label') or start.get('station')} -> "
+               f"{end.get('label') or end.get('station')}; straight crossing, not a traced duct)")
+        outp = crop.render_redline_overlay(page, elements, pts, os.path.join(out_dir, fn),
+                                           accent=(220, 25, 25), dashed=False, caption=cap)
+        return os.path.basename(outp) if outp else None
+    except Exception:
+        return None
+
+
 def _resolver_card(log_id: str, mr: Mapping[str, Any], rec: Mapping[str, Any],
                    res: Mapping[str, Any]) -> Dict[str, Any]:
     """Translate a verified resolver result into a review-grade evidence card. The ``geo`` block
@@ -250,6 +299,7 @@ def _resolver_card(log_id: str, mr: Mapping[str, Any], rec: Mapping[str, Any],
     overlays = mr.get("overlays") or []
     prim = next((o for o in overlays if o.get("role") == "end"), overlays[0] if overlays else None)
     prim_name = os.path.basename(prim["image"]) if (prim and prim.get("image")) else None
+    sc = mr.get("struct_connector")  # drawn structure-to-structure connector (single-sheet crossing)
     ov_refs = [{"sheet": o.get("sheet"), "role": o.get("role"), "id": o.get("id"),
                 "label": o.get("label"), "station": o.get("station"), "kind": o.get("kind"),
                 "artifact_name": (os.path.basename(o["image"]) if o.get("image") else None)}
@@ -270,8 +320,16 @@ def _resolver_card(log_id: str, mr: Mapping[str, Any], rec: Mapping[str, Any],
             "verification_trail": mr.get("verification_trail"),
         },
     }
-    # Mirror the primary overlay into the existing-frontend slot (no FE change needed).
-    if cross_sheet:
+    # Mirror the displayed overlay into the existing-frontend slot (no FE change needed).
+    if sc:
+        # Drawn structure-to-structure redline -> path-trace slot (single-sheet -> Group A "drawn").
+        geo["pdf_path_trace"] = {
+            "artifact_name": sc, "trace_status": "STRUCTURE_TO_STRUCTURE",
+            "path_basis": "structure_to_structure (authored straight crossing; not a traced duct vector)"}
+        geo["matchline_resolution"]["redline_path"] = {
+            "kind": "structure_to_structure", "sheet": (prim.get("sheet") if prim else None),
+            "artifact_name": sc}
+    elif cross_sheet:
         geo["pdf_path_trace"] = {"artifact_name": prim_name,
                                  "trace_status": mr.get("geometry_status"),
                                  "path_basis": "authored matchline frame"}
@@ -309,7 +367,7 @@ def _resolver_card(log_id: str, mr: Mapping[str, Any], rec: Mapping[str, Any],
         "evidence": [o.get("label") or o.get("id") for o in overlays],
         "caveat": {"code": mr.get("geometry_status"), "text": cav_text},
         "render_target": "evidence_card",
-        "render_artifact_ref": prim_name,
+        "render_artifact_ref": (sc or prim_name),
         "geo": geo,
     }
 
@@ -344,6 +402,14 @@ def apply_resolver(log_id: str, env: Dict[str, Any], doc: Any, sheet_offset: int
         if not (mr and mr.get("resolved")):
             return env
 
+        # Step A (default-OFF TRUELINE_REDLINE_STRUCT_CONNECTOR): for a single-sheet start->end
+        # frame (e.g. log66's straight HH-HH crossing) draw a red structure-to-structure connector
+        # between the two PROVEN anchor centroids. Failure-safe -> falls back to proof boxes.
+        if _struct_connector_enabled():
+            _sc = _render_struct_connector(mr, res, doc, sheet_offset, out_dir)
+            if _sc:
+                mr = dict(mr)
+                mr["struct_connector"] = _sc
         card = _resolver_card(log_id, mr, rec, res)
         if mr.get("override"):
             # clear the superseded geometry-only A placement(s) for this log

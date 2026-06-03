@@ -144,3 +144,30 @@ def test_apply_resolver_noop_without_resolution():
     out = consult.apply_resolver("bore_logZZ", env, doc=None, sheet_offset=13,
                                  out_dir=os.path.join(DATA_DIR, "_nope"), data_dir=DATA_DIR)
     assert json.dumps(out, sort_keys=True, default=str) == before  # envelope untouched
+
+
+# ── Step A: structure-to-structure connector (log66) is default-OFF + bounded ────────────────
+def test_struct_connector_flag_default_off(monkeypatch):
+    monkeypatch.delenv("TRUELINE_REDLINE_STRUCT_CONNECTOR", raising=False)
+    assert consult._struct_connector_enabled() is False
+    monkeypatch.setenv("TRUELINE_REDLINE_STRUCT_CONNECTOR", "1")
+    assert consult._struct_connector_enabled() is True
+
+
+def test_struct_connector_excludes_cross_sheet_and_incomplete(tmp_path):
+    out = str(tmp_path)
+    # cross-sheet (matchline seam) -> NEVER a straight connector (log56/58 excluded); returns
+    # None BEFORE touching the PDF, so doc=None is safe.
+    assert consult._render_struct_connector(
+        {"seam": {"home_sta": "1+60"}, "overlays": [{"role": "start", "sheet": 10, "bbox": [0, 0, 1, 1]},
+                                                    {"role": "end", "sheet": 13, "bbox": [0, 0, 1, 1]}]},
+        {"bore_id": "x"}, None, 13, out) is None
+    # single-sheet but no proven END anchor (e.g. host-only frame) -> None
+    assert consult._render_struct_connector(
+        {"seam": None, "overlays": [{"role": "start", "sheet": 10, "bbox": [0, 0, 1, 1]}]},
+        {"bore_id": "x"}, None, 13, out) is None
+    # start + end on DIFFERENT sheets -> None (single-sheet crossing only)
+    assert consult._render_struct_connector(
+        {"seam": None, "overlays": [{"role": "start", "sheet": 10, "bbox": [0, 0, 1, 1]},
+                                    {"role": "end", "sheet": 11, "bbox": [0, 0, 1, 1]}]},
+        {"bore_id": "x"}, None, 13, out) is None
