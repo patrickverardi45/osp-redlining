@@ -15,11 +15,15 @@ Drives the functions directly (no TestClient/auth). Run from repo root:
 """
 from __future__ import annotations
 
+import asyncio
+import json
 import os
 import pathlib
 import tempfile
 import time
 import unittest
+
+from fastapi import BackgroundTasks
 
 os.environ.setdefault("TRUELINE_JWT_SECRET", "rebuild-status-test")
 os.environ.setdefault("TRUELINE_AUTH_JWT_SECRET", "rebuild-status-auth")
@@ -99,6 +103,54 @@ class TestRunBoreRebuildBackground(unittest.TestCase):
         self.assertEqual(loaded.get("rebuild_status"), "failed")
         self.assertIn("simulated rebuild failure", str(loaded.get("rebuild_error")))
         self.assertIsNotNone(loaded.get("rebuild_finished_at"))
+
+
+class _FakeReq:
+    def __init__(self, query=None):
+        self.query_params = query or {}
+
+
+class TestBoreUploadReturnNoDuplicateKeyword(unittest.TestCase):
+    """Regression: the bore-upload _ok() returns must not pass rebuild_status both
+    explicitly AND via **_summary_payload() — that raised
+    "_ok() got multiple values for keyword argument 'rebuild_status'", which the
+    endpoint's outer except turned into success=False. Empty files still reach the
+    return _ok(**_payload) path, so this exercises it without a real bore file."""
+
+    def _upload(self, sid):
+        return asyncio.run(
+            M.upload_structured_bore_files(_FakeReq(), BackgroundTasks(), files=[], session_id=sid)
+        )
+
+    def test_async_return_is_clean_pending(self):
+        prev = os.environ.get("TRUELINE_BORE_ASYNC_REBUILD")
+        os.environ["TRUELINE_BORE_ASYNC_REBUILD"] = "1"
+        try:
+            resp = self._upload("bore-dup-async")
+        finally:
+            if prev is None:
+                os.environ.pop("TRUELINE_BORE_ASYNC_REBUILD", None)
+            else:
+                os.environ["TRUELINE_BORE_ASYNC_REBUILD"] = prev
+        body = json.loads(bytes(resp.body).decode())
+        self.assertTrue(body.get("success"), body.get("error"))
+        self.assertNotIn("multiple values for keyword", str(body.get("error") or ""))
+        self.assertEqual(body.get("rebuild_status"), "pending")
+
+    def test_sync_return_is_clean_ready(self):
+        prev = os.environ.get("TRUELINE_BORE_ASYNC_REBUILD")
+        os.environ["TRUELINE_BORE_ASYNC_REBUILD"] = "0"
+        try:
+            resp = self._upload("bore-dup-sync")
+        finally:
+            if prev is None:
+                os.environ.pop("TRUELINE_BORE_ASYNC_REBUILD", None)
+            else:
+                os.environ["TRUELINE_BORE_ASYNC_REBUILD"] = prev
+        body = json.loads(bytes(resp.body).decode())
+        self.assertTrue(body.get("success"), body.get("error"))
+        self.assertNotIn("multiple values for keyword", str(body.get("error") or ""))
+        self.assertEqual(body.get("rebuild_status"), "ready")
 
 
 if __name__ == "__main__":

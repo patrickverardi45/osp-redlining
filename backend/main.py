@@ -15105,7 +15105,10 @@ async def upload_structured_bore_files(
                 return _ok(
                     session_id=resolved_session_id,
                     message="Bore logs uploaded. Redlines are processing — refresh in a moment.",
-                    rebuild_status="pending",
+                    # rebuild_status ("pending") is already in _payload via
+                    # _summary_payload()/_rebuild_status_fields(); passing it
+                    # explicitly here would raise "multiple values for keyword
+                    # argument 'rebuild_status'" in _ok(). Single source = _payload.
                     **_payload,
                 )
 
@@ -15151,7 +15154,10 @@ async def upload_structured_bore_files(
                 )
             except Exception:
                 pass
-            return _ok(session_id=resolved_session_id, message="Bore logs uploaded successfully", rebuild_status="ready", **_payload)
+            # rebuild_status ("ready") is already in _payload via _summary_payload()/
+            # _rebuild_status_fields(); passing it explicitly would duplicate the
+            # keyword in _ok(). Single source = _payload.
+            return _ok(session_id=resolved_session_id, message="Bore logs uploaded successfully", **_payload)
     except Exception as exc:
         return _err(str(exc), session_id=resolved_session_id)
 
