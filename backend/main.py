@@ -14381,6 +14381,50 @@ def _build_semantic_match_shadow() -> Optional[Dict[str, Any]]:
     }
 
 
+# Async bore rebuild — how long a pending/running rebuild may sit before
+# /api/current-state ages it out to a terminal "failed" status. The background
+# task cannot write its own failure when SIGKILLed (OOM / gunicorn worker
+# timeout), so this read-side watchdog guarantees the UI never hangs forever on
+# "processing". Generous: a 58-bore rebuild finishes in well under this.
+try:
+    REBUILD_STALE_SECONDS = float(os.getenv("TRUELINE_REBUILD_STALE_SECONDS", "300"))
+except (TypeError, ValueError):
+    REBUILD_STALE_SECONDS = 300.0
+
+
+def _rebuild_status_fields() -> Dict[str, Any]:
+    """Read-only rebuild-status projection for /api/current-state.
+
+    Returns the durable rebuild_status/error/timings from STATE, and DERIVES a
+    terminal "failed" status when a pending/running rebuild has not completed
+    within REBUILD_STALE_SECONDS — covering the SIGKILL case where the background
+    task died (OOM / worker timeout) and could never persist its own failure.
+    Never mutates STATE, so it is safe under the readonly current-state scope.
+    """
+    status = (str(STATE.get("rebuild_status") or "").strip() or None)
+    fields: Dict[str, Any] = {
+        "rebuild_status": status,
+        "rebuild_error": STATE.get("rebuild_error"),
+        "rebuild_started_at": STATE.get("rebuild_started_at"),
+        "rebuild_finished_at": STATE.get("rebuild_finished_at"),
+        "rebuild_elapsed_ms": STATE.get("rebuild_elapsed_ms"),
+    }
+    if status in ("pending", "running"):
+        started_at = STATE.get("rebuild_started_at")
+        try:
+            if started_at is not None and (time.time() - float(started_at)) > REBUILD_STALE_SECONDS:
+                fields["rebuild_status"] = "failed"
+                fields["rebuild_stalled"] = True
+                fields["rebuild_error"] = (
+                    STATE.get("rebuild_error")
+                    or "Redline rebuild did not finish in time (likely out of memory or a "
+                       "worker restart). Your bore rows are saved — re-upload the bore logs to retry."
+                )
+        except (TypeError, ValueError):
+            pass
+    return fields
+
+
 def _summary_payload(include_debug: bool = False) -> Dict[str, Any]:
     route_id = STATE.get("route_id")
     route_coords = STATE.get("route_coords", []) or []
@@ -14554,6 +14598,7 @@ def _summary_payload(include_debug: bool = False) -> Dict[str, Any]:
             "photo_points": photo_points,
             "closeout_lock": _normalize_closeout_lock(STATE.get("closeout_lock")),
             **_closeout_flat_fields(),
+            **_rebuild_status_fields(),
         }
         # VO.1a — gated read-only overlay envelope. Field absent from payload
         # when TRUELINE_PLAN_OVERLAY_PAYLOAD is off (default). Lazy import
@@ -14647,6 +14692,7 @@ def _summary_payload(include_debug: bool = False) -> Dict[str, Any]:
         # emits it.
         "closeout_lock": _normalize_closeout_lock(STATE.get("closeout_lock")),
         **_closeout_flat_fields(),
+        **_rebuild_status_fields(),
     }
     # VO.1a — gated read-only overlay envelope. Field absent from payload
     # when TRUELINE_PLAN_OVERLAY_PAYLOAD is off (default). Lazy import
@@ -14886,21 +14932,60 @@ def _trueline_bore_async_rebuild_enabled() -> bool:
 
 def _run_bore_rebuild_background(session_id: str) -> None:
     """Run the ROWS_ONLY field-data rebuild for an already-persisted bore upload.
-    Used as a FastAPI BackgroundTask when TRUELINE_BORE_ASYNC_REBUILD=1. The rows
-    are persisted by the upload handler BEFORE this runs, so a failure (or even an
-    OOM that kills the worker) here never loses field data — it only leaves
-    rebuild_status != "ready". Never raises out of the task."""
+
+    Used as a FastAPI BackgroundTask when TRUELINE_BORE_ASYNC_REBUILD=1. Rows are
+    persisted by the upload handler BEFORE this runs, so a failure (or an OOM /
+    worker-timeout SIGKILL) never loses field data.
+
+    Status lifecycle (durable, persisted): pending (set by the upload) → running
+    (here, BEFORE the heavy work, with a start timestamp) → complete (outputs
+    persisted) or failed (reason persisted). If the task is SIGKILLed mid-rebuild
+    it cannot write "failed" — but the persisted "running" + rebuild_started_at let
+    /api/current-state age it out to "failed" via _rebuild_status_fields(), so the
+    UI never hangs forever on "processing". Never raises out of the task.
+    """
+    _t0 = time.perf_counter()
+    rows = 0
+    # Mark running + start time and persist BEFORE the heavy rebuild.
+    try:
+        with _session_scope(session_id):
+            rows = len(STATE.get("committed_rows", []) or [])
+            STATE["rebuild_status"] = "running"
+            STATE["rebuild_started_at"] = time.time()
+            STATE["rebuild_finished_at"] = None
+            STATE["rebuild_elapsed_ms"] = None
+            STATE["rebuild_error"] = None
+    except Exception as exc:
+        logging.error("[bore_upload] async rebuild could not mark running sid=%s: %s", session_id, exc)
+    logging.info("[bore_upload] async rebuild START sid=%s rows=%d", session_id, rows)
+
     try:
         with _session_scope(session_id):
             _rebuild_field_data_outputs(scope=RebuildScope.ROWS_ONLY)
-            STATE["rebuild_status"] = "ready"
-        logging.info("[bore_upload] async rebuild complete sid=%s", session_id)
+            _sp = len(STATE.get("station_points", []) or [])
+            _seg = len(STATE.get("redline_segments", []) or [])
+            _elapsed_ms = round((time.perf_counter() - _t0) * 1000.0, 1)
+            STATE["rebuild_status"] = "complete"
+            STATE["rebuild_finished_at"] = time.time()
+            STATE["rebuild_elapsed_ms"] = _elapsed_ms
+            STATE["rebuild_error"] = None
+        logging.info(
+            "[bore_upload] async rebuild COMPLETE sid=%s rows=%d station_points=%d "
+            "redline_segments=%d elapsed_ms=%.1f",
+            session_id, rows, _sp, _seg, _elapsed_ms,
+        )
     except Exception as exc:
-        logging.error("[bore_upload] async rebuild FAILED sid=%s: %s", session_id, exc)
+        _elapsed_ms = round((time.perf_counter() - _t0) * 1000.0, 1)
+        logging.error(
+            "[bore_upload] async rebuild FAILED sid=%s rows=%d elapsed_ms=%.1f err=%s",
+            session_id, rows, _elapsed_ms, exc,
+        )
         try:
             with _session_scope(session_id):
                 STATE["rebuild_status"] = "failed"
                 STATE["rebuild_error"] = str(exc)
+                STATE["rebuild_finished_at"] = time.time()
+                STATE["rebuild_elapsed_ms"] = _elapsed_ms
         except Exception:
             pass
 
@@ -14987,6 +15072,11 @@ async def upload_structured_bore_files(
             STATE["loaded_field_data_files"] = len(existing_by_file)
             STATE["latest_structured_file"] = latest_name
             STATE["rebuild_status"] = "pending"
+            # Start the staleness clock at upload time so /api/current-state can age
+            # a never-started/never-finished rebuild out to "failed" even if the
+            # background task is killed before it marks "running".
+            STATE["rebuild_started_at"] = time.time()
+            STATE["rebuild_error"] = None
 
             # SURVIVAL: persist the parsed/merged rows to disk BEFORE the heavy
             # rebuild, so an OOM/timeout SIGKILL mid-rebuild cannot lose the field

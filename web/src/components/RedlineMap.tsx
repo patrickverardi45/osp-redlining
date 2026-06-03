@@ -3778,7 +3778,21 @@ ${redlinePlacemarks.length > 0 ? buildEngFolder("Redlines", redlinePlacemarks, 1
       setState(withoutClearedEngineeringPlans(data, projectId, sessionId));
       onWorkspaceStateChanged?.();
       fetchPipelineDiag(); // Nova Phase 1 — non-blocking refresh
-      if (data.warning) {
+      // Surface the async bore-rebuild status from current-state so a refresh
+      // resolves the "processing" banner to done/failed instead of hanging. The
+      // backend ages a stalled rebuild out to "failed" with a reason, so this
+      // never sits forever. Status banner only — no map/draw change.
+      const _rbStatus = (data as { rebuild_status?: string }).rebuild_status;
+      const _rbError = (data as { rebuild_error?: string }).rebuild_error;
+      if (_rbStatus === "failed") {
+        setStatusText(
+          String(_rbError || "Redline rebuild failed. Your bore rows are saved — re-upload the bore logs to retry."),
+        );
+        setStatusTone("error");
+      } else if (_rbStatus === "running" || _rbStatus === "pending") {
+        setStatusText("Bore logs saved. Redlines are processing — refresh in a moment to see them.");
+        setStatusTone("warning");
+      } else if (data.warning) {
         setStatusText(String(data.warning));
         setStatusTone("warning");
       } else if (data.message) {
