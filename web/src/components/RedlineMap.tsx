@@ -4006,7 +4006,18 @@ ${redlinePlacemarks.length > 0 ? buildEngFolder("Redlines", redlinePlacemarks, 1
       Array.from(files).forEach((file) => form.append("files", file));
       appendSessionIdToForm(form, projectId);
       const response = await apiFetch(`${API_BASE}/api/upload-structured-bore-files`, { method: "POST", body: form });
-      const data: BackendState = await response.json();
+      // Read text first so a non-JSON gateway response (e.g. a Vercel 504 HTML
+      // page when the full bore rebuild exceeds the proxy timeout) surfaces a
+      // clean error instead of an "Unexpected token '<'" JSON.parse crash.
+      // Mirrors loadCurrentState. JSON/error handling only.
+      const responseText = await response.text();
+      let data: BackendState;
+      try {
+        data = (responseText ? JSON.parse(responseText) : {}) as BackendState;
+      } catch {
+        const snippet = responseText.slice(0, 200).trim() || `HTTP ${response.status}`;
+        throw new Error(`Field data upload failed (${response.status}): ${snippet}`);
+      }
       acceptSessionFromMutation(data, projectId);
       if (!response.ok || data.success === false) throw new Error(data.error || "Field data upload failed.");
       setState(data);

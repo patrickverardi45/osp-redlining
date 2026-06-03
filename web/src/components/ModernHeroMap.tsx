@@ -2594,7 +2594,17 @@ export default function ModernHeroMap({
           ),
           { cache: "no-store" },
         );
-        const data = await res.json();
+        // Read text first so a non-JSON gateway response surfaces a clean error
+        // instead of an "Unexpected token '<'" JSON.parse crash. Mirrors
+        // RedlineMap.loadCurrentState. JSON/error handling only.
+        const responseText = await res.text();
+        let data: { success?: boolean; error?: string; photos?: unknown };
+        try {
+          data = responseText ? JSON.parse(responseText) : {};
+        } catch {
+          const snippet = responseText.slice(0, 200).trim() || `HTTP ${res.status}`;
+          throw new Error(`Unable to load station photos (${res.status}): ${snippet}`);
+        }
         if (!res.ok || data.success === false) {
           throw new Error(data.error || "Unable to load station photos.");
         }
