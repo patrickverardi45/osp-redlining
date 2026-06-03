@@ -4953,7 +4953,26 @@ ${redlinePlacemarks.length > 0 ? buildEngFolder("Redlines", redlinePlacemarks, 1
               <span style={{ fontWeight: 800, color: "#0f172a" }}>Workflow: </span>
                     Shown in order: reference plan PDFs, KMZ design, then field data. Reference plans are optional closeout evidence and do not drive map generation.
             </div>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 16, alignItems: "start", order: 2 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 16, alignItems: "start" }}>
+              <label style={uploadCardStyle(engPlansBusy || closeoutLocked)}>
+                <input
+                  type="file"
+                  accept=".pdf,application/pdf"
+                  multiple
+                  style={{ display: "none" }}
+                  disabled={engPlansBusy || closeoutLocked}
+                  onChange={(e) => {
+                    handleEngineeringPlansUpload(e.target.files);
+                    e.currentTarget.value = "";
+                  }}
+                />
+                <div style={{ fontWeight: 800, fontSize: 16 }}>Upload Engineering Plan PDFs</div>
+                <div style={{ marginTop: 6, fontSize: 13, color: "#64748b", lineHeight: 1.55 }}>Reference plan PDF evidence for office review. Optional — does not drive map generation.</div>
+                <div style={{ marginTop: 14, fontSize: 12, color: (state?.engineering_plans?.length ?? 0) > 0 ? "#166534" : "#64748b", fontWeight: 700 }}>
+                  {(state?.engineering_plans?.length ?? 0) > 0 ? `${state!.engineering_plans!.length} plan(s) uploaded.` : "No plans uploaded yet."}
+                </div>
+              </label>
+
               <label style={uploadCardStyle(busy || closeoutLocked)}>
                 <input
                   type="file"
@@ -4992,18 +5011,20 @@ ${redlinePlacemarks.length > 0 ? buildEngFolder("Redlines", redlinePlacemarks, 1
                 </div>
               </label>
 
-              <div style={{ border: "1px solid #dbe4ee", borderRadius: 16, background: "#fbfdff", padding: 16 }}>
-                <div style={{ fontWeight: 800, fontSize: 15 }}>File status</div>
-                <div style={{ marginTop: 12, display: "grid", gap: 10 }}>
-                  <Pill label="Design" value={hasDesign ? "Loaded" : "Waiting"} />
-                  <Pill label="Field data files" value={String(state?.loaded_field_data_files || 0)} />
-                  <Pill label="Latest file" value={state?.latest_structured_file || "--"} />
-                  <Pill label="Output ready" value={hasGeneratedOutput ? "Yes" : "No"} />
-                </div>
+            </div>
+
+            {/* Status card — alignment/diagnostics only, not part of the upload sequence. */}
+            <div style={{ border: "1px solid #dbe4ee", borderRadius: 16, background: "#fbfdff", padding: 16 }}>
+              <div style={{ fontWeight: 800, fontSize: 15 }}>File status</div>
+              <div style={{ marginTop: 12, display: "flex", flexWrap: "wrap", gap: 10 }}>
+                <Pill label="Design" value={hasDesign ? "Loaded" : "Waiting"} />
+                <Pill label="Field data files" value={String(state?.loaded_field_data_files || 0)} />
+                <Pill label="Latest file" value={state?.latest_structured_file || "--"} />
+                <Pill label="Output ready" value={hasGeneratedOutput ? "Yes" : "No"} />
               </div>
             </div>
 
-            <div style={{ border: "1px solid #dbe4ee", borderRadius: 16, background: "#fbfdff", marginTop: 16, overflow: "hidden", order: 1 }}>
+            <div style={{ border: "1px solid #dbe4ee", borderRadius: 16, background: "#fbfdff", marginTop: 16, overflow: "hidden" }}>
               <button
                 type="button"
                 onClick={() => setEngineeringPlansExpanded((prev) => !prev)}
@@ -5023,7 +5044,7 @@ ${redlinePlacemarks.length > 0 ? buildEngFolder("Redlines", redlinePlacemarks, 1
               >
                 <div>
                   <div style={{ fontWeight: 800, fontSize: 14, color: "#0f172a" }}>
-                    Reference Plans / Closeout Evidence
+                    Advanced PDF tools
                     {(state?.engineering_plans?.length ?? 0) > 0 ? (
                       <span style={{ marginLeft: 8, fontSize: 12, fontWeight: 600, color: "#64748b" }}>
                         ({state!.engineering_plans!.length})
@@ -5031,7 +5052,7 @@ ${redlinePlacemarks.length > 0 ? buildEngFolder("Redlines", redlinePlacemarks, 1
                     ) : null}
                   </div>
                   <div style={{ marginTop: 3, fontSize: 12, color: "#64748b" }}>
-                    Optional documentation for office review and closeout packages.
+                    PDF map overlay, plan viewer, upload diagnostics, and reference-plan list.
                   </div>
                 </div>
                 <span style={{ fontSize: 12, color: "#64748b", fontWeight: 700 }}>
