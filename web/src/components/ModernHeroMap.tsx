@@ -1051,9 +1051,22 @@ export default function ModernHeroMap({
         const res = await apiFetch(appendSessionId(`${API_BASE}/api/current-state`, projectId), {
           cache: "no-store",
         });
-        const data = (await res.json()) as BackendState;
+        // Read text first so a transient non-JSON gateway error (e.g. a 502/504
+        // HTML page returned while the worker finishes a heavy field-data rebuild
+        // — this refetch fires via refreshVersion right after an upload) surfaces
+        // a readable status instead of an "Unexpected token '<'" JSON.parse crash.
+        // Mirrors the already-hardened RedlineMap.loadCurrentState. JSON/error
+        // handling only — no map/render/bridge change.
+        const responseText = await res.text();
+        let data: BackendState;
+        try {
+          data = (responseText ? JSON.parse(responseText) : {}) as BackendState;
+        } catch {
+          const snippet = responseText.slice(0, 200).trim() || `HTTP ${res.status}`;
+          throw new Error(`Current state load failed (${res.status}): ${snippet}`);
+        }
         if (!res.ok || data.success === false) {
-          throw new Error(data.error || "Unable to load current state.");
+          throw new Error(data.error || `Current state load failed (${res.status}).`);
         }
         if (!cancelled) setState(data);
       } catch (e) {
