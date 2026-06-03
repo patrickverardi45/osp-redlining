@@ -249,6 +249,17 @@ def _struct_connector_enabled() -> bool:
         "1", "true", "yes", "on"}
 
 
+def _physical_anchor_enabled() -> bool:
+    """Default-OFF (stacks on TRUELINE_REDLINE_STRUCT_CONNECTOR). When ON, the single-
+    sheet connector draws to the DETERMINISTIC physical structure node (authored CAD
+    layer, uniqueness-gated via physical_anchor_resolver) instead of the callout-text
+    centroid. If a unique physical anchor cannot be proven for BOTH ends, it FALLS BACK
+    to the text centroid (never a guess). Seeded for bore_log66; single-sheet only;
+    NEVER applies to a cross-sheet/matchline frame."""
+    return str(os.environ.get("TRUELINE_PHYSICAL_ANCHOR_RESOLVER", "")).strip().lower() in {
+        "1", "true", "yes", "on"}
+
+
 def _render_struct_connector(mr: Mapping[str, Any], res: Mapping[str, Any], doc: Any,
                              sheet_offset: int, out_dir: str) -> Optional[str]:
     """Draw a RED structure-to-structure connector between the two PROVEN anchor centroids of a
@@ -276,6 +287,29 @@ def _render_struct_connector(mr: Mapping[str, Any], res: Mapping[str, Any], doc:
         elements = [{"role": "endpoint", "bbox_display": list(start["bbox"])},
                     {"role": "endpoint", "bbox_display": list(end["bbox"])}]
         pts = [ctr(start["bbox"]), ctr(end["bbox"])]
+        # PHYSICAL-ANCHOR resolver (default-OFF, stacks on the struct connector). The
+        # callout bbox PROVED identity upstream; re-anchor the DRAW to the authored
+        # physical structure node when it resolves UNIQUELY on an allowed CAD layer
+        # (never nearest-guessing). Falls back to the text centroid (the values already
+        # in `pts`/`elements`) when not uniquely proven for BOTH ends. Single-sheet only
+        # (this whole function already returns above for matchline-seam frames).
+        if _physical_anchor_enabled():
+            try:
+                from . import physical_anchor_resolver as _par
+                from redline_pdf_first.pdf import vector_extract as _ve
+                _pa = _par.resolve_connector_anchors(
+                    list(start["bbox"]), list(end["bbox"]), _ve.extract_paths(page))
+                if _pa.get("resolved"):
+                    elements = [{"role": "endpoint", "bbox_display": list(_pa["start"]["bbox"])},
+                                {"role": "endpoint", "bbox_display": list(_pa["end"]["bbox"])}]
+                    pts = [list(_pa["start_anchor"]), list(_pa["end_anchor"])]
+                    _pa["applied"] = True
+                else:
+                    _pa["applied"] = False
+                if isinstance(mr, dict):
+                    mr["physical_anchor"] = _pa
+            except Exception:
+                pass  # any resolver failure -> keep the proven text-box anchor (no guess)
         bore = res.get("bore_id", "bore")
         fn = f"{bore}_s{start['sheet']}_structure_to_structure.png"
         cap = (f"{bore} structure-to-structure redline "
