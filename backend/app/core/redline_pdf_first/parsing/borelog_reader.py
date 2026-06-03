@@ -100,18 +100,28 @@ def read_borelog(path: str) -> Dict[str, Any]:
 
     header = [str(h).strip().lower() if h is not None else "" for h in rows[0]]
 
-    def col(name: str):
-        return header.index(name) if name in header else None
+    def col(*names: str):
+        # First matching header wins. Aliases accept either the canonical *_ft
+        # header (depth_ft / boc_ft) or the legacy bare header (depth / boc): both
+        # are feet, so this normalizes units WITHOUT guessing and stays
+        # byte-identical for existing depth/boc sheets. Mirrors from_rows and the
+        # module's documented "boc_ft carried under extras, never dropped" contract.
+        for name in names:
+            if name in header:
+                return header.index(name)
+        return None
 
     ci_station = col("station")
     ci_print = col("print")
-    ci_depth = col("depth")
+    ci_depth = col("depth_ft", "depth")
+    ci_boc = col("boc_ft", "boc")
     if ci_station is None:
         ci_station = 0
 
     stations: List = []
     print_val = None
     depths: List[float] = []
+    boc_vals: List[float] = []
     for r in rows[1:]:
         if not r:
             continue
@@ -125,8 +135,14 @@ def read_borelog(path: str) -> Dict[str, Any]:
                 print_val = pv
         if ci_depth is not None and ci_depth < len(r) and _is_number(r[ci_depth]):
             depths.append(float(r[ci_depth]))
+        if ci_boc is not None and ci_boc < len(r) and _is_number(r[ci_boc]):
+            boc_vals.append(float(r[ci_boc]))
 
-    return _build_bore_model(stations, print_val, depths, path)
+    # boc_ft carried under extras (NOT a selection input) so the file path stops
+    # dropping the 'boc' column — matching from_rows. No boc column -> extras stays
+    # None and the model is byte-identical to before this change.
+    extras = {"boc_ft_min": min(boc_vals)} if boc_vals else None
+    return _build_bore_model(stations, print_val, depths, path, extras=extras)
 
 
 def from_rows(rows: Sequence[Mapping[str, Any]],
