@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import contextlib
 import copy
+import gc
 import hashlib
 import io
 import json
@@ -11864,6 +11865,76 @@ def _apply_terminal_tail_placement_override() -> None:
         pass
 
 
+# ── LP.4 rebuild memory instrumentation + lean persist ───────────────────────
+# How often (in groups) to emit a per-group memory line and run gc during the
+# matcher loop. The matcher must hold every group's candidate detail through
+# batch/collision resolution, so peak memory grows with group count; these logs
+# pinpoint the exact group/phase + RSS where a constrained worker is killed.
+try:
+    _REBUILD_MEM_LOG_EVERY = max(1, int(os.getenv("TRUELINE_REBUILD_MEM_LOG_EVERY", "1")))
+except (TypeError, ValueError):
+    _REBUILD_MEM_LOG_EVERY = 1
+try:
+    _REBUILD_GC_EVERY = max(1, int(os.getenv("TRUELINE_REBUILD_GC_EVERY", "16")))
+except (TypeError, ValueError):
+    _REBUILD_GC_EVERY = 16
+
+
+def _rss_mb() -> Optional[float]:
+    """Best-effort current process RSS in MB. Reads /proc/self/status on Linux
+    (Render); falls back to resource.getrusage; returns None where unavailable
+    (e.g. Windows dev). Pure diagnostic — never raises."""
+    try:
+        with open("/proc/self/status", "r", encoding="utf-8") as _fh:
+            for _line in _fh:
+                if _line.startswith("VmRSS:"):
+                    return round(int(_line.split()[1]) / 1024.0, 1)  # kB -> MB
+    except Exception:
+        pass
+    try:
+        import resource  # Unix-only; absent on Windows dev
+        # Linux ru_maxrss is kB.
+        return round(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024.0, 1)
+    except Exception:
+        return None
+
+
+def _rebuild_log_mem(tag: str, **extra: Any) -> None:
+    """Emit one concise [rebuild_mem] line: RSS in MB + key=val context. Never
+    raises (diagnostic only). Lets Render logs show exactly where the matcher
+    rebuild peaks/dies without a local repro."""
+    try:
+        rss = _rss_mb()
+        ctx = " ".join(f"{k}={v}" for k, v in extra.items())
+        logging.info("[rebuild_mem] %s rss_mb=%s %s", tag, "n/a" if rss is None else rss, ctx)
+    except Exception:
+        pass
+
+
+_REBUILD_INTERNAL_FIELDS = ("_normalized_group", "_matched_route", "_evaluated_hypotheses")
+
+
+def _trim_rebuild_internal_fields(
+    group_matches: List[Dict[str, Any]],
+    fields: Sequence[str] = _REBUILD_INTERNAL_FIELDS,
+) -> None:
+    """Drop heavy rebuild-INTERNAL fields from candidate entries in place.
+
+    These ``_``-prefixed structures are consumed only DURING the rebuild
+    (selection, batch/collision resolution, match-audit); no post-rebuild consumer
+    (current-state, map, MRQ, trust-ledger) reads them. Dropping them as soon as
+    each is no longer needed frees memory ahead of the rebuild's peak phases and
+    shrinks the persisted session. Skipped when TRUELINE_REBUILD_KEEP_INTERNALS=1
+    (debug). Never touches station_points / redline_segments / candidate_rankings /
+    validation — map outputs and MRQ-visible fields are unchanged."""
+    if os.getenv("TRUELINE_REBUILD_KEEP_INTERNALS", "0").strip() == "1":
+        return
+    for _m in group_matches:
+        if isinstance(_m, dict):
+            for _f in fields:
+                _m.pop(_f, None)
+
+
 def _rebuild_field_data_outputs(scope: RebuildScope = RebuildScope.FULL) -> None:
     # RI.1: scope is accepted but not yet consumed by the function body.
     # RI.2 adds the plan topology cache lookup; RI.4 branches on scope for
@@ -11875,6 +11946,7 @@ def _rebuild_field_data_outputs(scope: RebuildScope = RebuildScope.FULL) -> None
     )
     rows = STATE.get("committed_rows", []) or []
     groups = _group_rows_for_matching(rows)
+    _rebuild_log_mem("rebuild_start", scope=scope.value, rows=len(rows), groups=len(groups))
 
     # Load engineering plans once for the whole rebuild pass.
     # Used by _plan_aware_ranking_boost — non-fatal if unavailable.
@@ -12890,6 +12962,21 @@ def _rebuild_field_data_outputs(scope: RebuildScope = RebuildScope.FULL) -> None
                 }
 
         pipeline_diag.append(_diag)
+        # LP.4 — per-group memory/progress line + periodic gc. Pinpoints which
+        # group (and RSS) a constrained worker dies on, and releases cyclic
+        # garbage to cap peak. Diagnostic/GC only — never affects selection.
+        if (group_idx % _REBUILD_MEM_LOG_EVERY == 0) or (group_idx == len(groups) - 1):
+            _rebuild_log_mem(
+                "per_group",
+                grp=group_idx,
+                of=len(groups),
+                src=str(_diag.get("source_file") or "")[:48],
+                cands=_diag.get("strict_candidate_count_after_filter"),
+                group_matches=len(group_matches),
+                pipeline_diag=len(pipeline_diag),
+            )
+        if group_idx and (group_idx % _REBUILD_GC_EVERY == 0):
+            gc.collect()
         if _perf_audit_enabled():
             try:
                 _emit_perf_audit_row(
@@ -12902,8 +12989,19 @@ def _rebuild_field_data_outputs(scope: RebuildScope = RebuildScope.FULL) -> None
                 pass
 
     STATE["pipeline_diag"] = pipeline_diag
+    _rebuild_log_mem("loop_done", groups=len(groups), group_matches=len(group_matches))
+    gc.collect()
 
     group_matches = _apply_batch_level_conflict_resolution(group_matches)
+    # LP.4 — _evaluated_hypotheses is consumed only by per-group selection and
+    # batch route-ownership resolution (above); nothing after this point reads it
+    # (collision resolution + assembly use candidate_rankings + geometry). Drop it
+    # NOW to free memory before the collision-resolution + assembly phases, which
+    # are the rebuild's peak. Proven-equivalent: no output or downstream consumer
+    # depends on it after batch ownership.
+    _trim_rebuild_internal_fields(group_matches, ("_evaluated_hypotheses",))
+    gc.collect()
+    _rebuild_log_mem("batch_conflict_done", group_matches=len(group_matches))
     # Coverage sanity diagnostic — post-loop, read-only. Surfaces route
     # over-concentration ("4-5 routes absorbing 500 stations" pattern) so
     # operators can investigate. Never modifies group_matches.
@@ -13329,6 +13427,8 @@ def _rebuild_field_data_outputs(scope: RebuildScope = RebuildScope.FULL) -> None
                     "applied": False,
                     "error": "route_collision_resolver_failed",
                 }
+    _rebuild_log_mem("collision_done", group_matches=len(group_matches))
+    gc.collect()
     _pa_aggregate_t0 = time.perf_counter() if _perf_audit_enabled() else 0.0
     all_station_points = []
     all_redline_segments = []
@@ -13400,6 +13500,19 @@ def _rebuild_field_data_outputs(scope: RebuildScope = RebuildScope.FULL) -> None
     _append_match_audit_v2_entries(group_matches)
     # Phase 1H-A — shadow-compare audit (additive, never raises).
     _append_match_shadow_compare_entries(group_matches)
+    # LP.4 — now that selection, batch/collision resolution, and the match audits
+    # above have consumed the heavy rebuild-internal fields, drop them from the
+    # persisted candidates. Shrinks the persisted session + frees memory before the
+    # final persist; map outputs and MRQ-visible fields (candidate_rankings,
+    # validation, geometry) are unchanged.
+    _trim_rebuild_internal_fields(group_matches)
+    gc.collect()
+    _rebuild_log_mem(
+        "rebuild_done",
+        station_points=len(all_station_points),
+        redline_segments=len(all_redline_segments),
+        group_matches=len(group_matches),
+    )
     warn_count = sum(1 for record in matching_debug if str(record.get("validation", {}).get("validation_status") or "") == "warn")
     fail_count = sum(1 for record in matching_debug if str(record.get("validation", {}).get("validation_status") or "") == "fail")
     blocked_count = sum(1 for match in group_matches if not bool(match.get("render_allowed")))
