@@ -4069,33 +4069,61 @@ ${redlinePlacemarks.length > 0 ? buildEngFolder("Redlines", redlinePlacemarks, 1
       return;
     }
 
-    // PT.IU R1 — direct-to-Render upload bypasses Vercel ~4.5 MB serverless ceiling.
-    // Resolves at build time via Next.js inline-replacement of NEXT_PUBLIC_* vars.
-    // If unset (dev/local without env), falls back to same-origin proxy with the
-    // original 4 MB safety cap preserved.
+    // PT.IU R4 — SAME-ORIGIN PROXY IS THE DEFAULT. The browser posts to the
+    // Next.js route on its own origin (/api/upload-engineering-plans) and the
+    // Vercel server proxies to Render server-side (proxyAppRoute forwards the
+    // multipart body, Authorization, cookies, and ?session_id=). Because the
+    // request is same-origin there is NO CORS preflight — so a brand-new Vercel
+    // preview URL never has to be added to TRUELINE_ALLOWED_ORIGINS. This is the
+    // permanent fix for the preview-URL allowlist treadmill.
+    //
+    // Direct-to-Render is retained ONLY as an explicit fallback for files that
+    // exceed Vercel's ~4.5 MB serverless request-body ceiling (e.g. the full
+    // ~13 MB Brenham plan set), and ONLY when an opt-in cross-origin base is
+    // configured. Such files physically cannot traverse the buffered Vercel
+    // proxy, so the cross-origin path (which does still require the origin to be
+    // allowlisted on Render) is unavoidable for them — but normal PDFs never use it.
+    const SAME_ORIGIN_URL = `${API_BASE}/api/upload-engineering-plans`;
     const RENDER_BASE = (
       process.env.NEXT_PUBLIC_API_BASE ||
       process.env.NEXT_PUBLIC_API_BASE_URL ||
       ""
     ).replace(/\/+$/, "");
-    const uploadUrl = RENDER_BASE
-      ? `${RENDER_BASE}/api/upload-engineering-plans`
-      : `${API_BASE}/api/upload-engineering-plans`;
-    const directToRender = Boolean(RENDER_BASE);
 
-    // PT.IU R1 — per-file size cap. 100 MB direct-to-Render; 4 MB on proxy fallback.
-    // Rationale: Brenham max is ~14 MB; 100 MB provides headroom for future
-    // GIS/DWG/LiDAR artifacts while keeping Render memory spike bounded
-    // (file_bytes is read into RAM in upload_engineering_plans; ~512 MB container cap).
-    const PER_FILE_MAX_MB = directToRender ? 100 : 4;
+    // Vercel serverless functions reject request bodies larger than ~4.5 MB at
+    // the platform edge (FUNCTION_PAYLOAD_TOO_LARGE) before the proxy route code
+    // runs. Keep a safe margin below that for the same-origin path.
+    const PROXY_MAX_MB = 4;
+    // Direct-to-Render ceiling. Render reads file_bytes into RAM in
+    // upload_engineering_plans; 100 MB keeps the memory spike bounded under the
+    // container cap while covering oversized GIS/DWG/LiDAR artifacts.
+    const DIRECT_MAX_MB = 100;
+
+    // Only a file that cannot fit through the proxy may use the cross-origin
+    // fallback, and only when a direct base is actually configured. Normal PDFs
+    // (≤ PROXY_MAX_MB, e.g. the ~1 MB Brenham set) ALWAYS take the same-origin
+    // proxy even though NEXT_PUBLIC_API_BASE is set in the build.
+    const hasOversizedFile = Array.from(files).some(
+      (f) => f.size / (1024 * 1024) > PROXY_MAX_MB,
+    );
+    const directToRender = hasOversizedFile && Boolean(RENDER_BASE);
+    const uploadUrl = directToRender
+      ? `${RENDER_BASE}/api/upload-engineering-plans`
+      : SAME_ORIGIN_URL;
+
+    // Per-file size cap for whichever path is active.
+    const PER_FILE_MAX_MB = directToRender ? DIRECT_MAX_MB : PROXY_MAX_MB;
     const oversized = Array.from(files).filter((f) => f.size / (1024 * 1024) > PER_FILE_MAX_MB);
     if (oversized.length > 0) {
       const list = oversized
         .map((f) => `${f.name} (${(f.size / (1024 * 1024)).toFixed(1)} MB)`)
         .join(", ");
-      const hint = directToRender
+      // We only reach here when a file is too large for the active path. If the
+      // proxy is active it means no direct-to-Render base is configured to take
+      // the oversized file — say so explicitly rather than blaming size alone.
+      const hint = RENDER_BASE
         ? `Per-file maximum is ${PER_FILE_MAX_MB} MB.`
-        : `Vercel proxy limit applies (${PER_FILE_MAX_MB} MB); contact support if direct upload is unavailable.`;
+        : `These exceed Vercel's same-origin proxy ceiling (${PROXY_MAX_MB} MB) and no direct-upload base (NEXT_PUBLIC_API_BASE) is configured for this build, so the large-file fallback is unavailable.`;
       setStatusText(`Engineering plan file(s) exceed the size limit: ${list}. ${hint}`);
       setStatusTone("error");
       return;
@@ -4239,7 +4267,9 @@ ${redlinePlacemarks.length > 0 ? buildEngFolder("Redlines", redlinePlacemarks, 1
       const _failNetwork = error instanceof TypeError;
       setStatusText(
         _failNetwork
-          ? `Engineering plan upload couldn't reach the backend (${_classifyUploadException(error)}). Likely a CORS preflight or network failure on the direct-to-Render upload — confirm this site's origin is in the backend allowlist (TRUELINE_ALLOWED_ORIGINS) and the file is within size limits. (${error.message})`
+          ? directToRender
+            ? `Engineering plan upload couldn't reach the backend (${_classifyUploadException(error)}). This file is over ${PROXY_MAX_MB} MB so it used the direct-to-Render fallback — confirm this site's origin is in the backend allowlist (TRUELINE_ALLOWED_ORIGINS) and the file is within size limits. (${error.message})`
+            : `Engineering plan upload couldn't reach the backend (${_classifyUploadException(error)}) through the same-origin proxy. This is a network or proxy error, not CORS — the request is same-origin, so no origin allowlist is involved. Retry; if it persists the Vercel proxy route or the Render backend may be unavailable. (${error.message})`
           : error instanceof Error
           ? error.message
           : "Engineering plan upload failed.",
