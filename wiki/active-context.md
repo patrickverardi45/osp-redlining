@@ -3,10 +3,57 @@
 > Compact session bootstrap. Read this before hot.md/current-sprint/log/current-bugs.
 > Those big logs are historical truth — open them only when a specific question needs them.
 
-## Repo state
-- Branch: `pdf-ap-route-shadow`
-- `origin/main` = `ba6c155` (local HEAD tracks it). PDF-extraction chain shipped: Targets #18–#43 pushed. **#37 = first extractor fix: Primitive-A phantom-competitor gate → AP-164 PROMOTE_TRUSTED + AP-155 recovered; 9 confirmed endpoints, precision 1.00, recall 0.90.** **#39–#42 = bore→drive + segmentation + corpus resolvers (no .FS): placeable set from delivered files = exactly {bore_log7}, proven across 58 bores; bore_log57 blocked on one field.** **#43 = default-OFF ambiguity-resolution input seam (schema + pure resolver + template + #14-style integration seam) — give it bore_log57's start structure and it deterministically places; no ground truth invented.** #35 AP-160 KEEP_TRUSTED_REVIEW.
-- Tree: tracked clean; untracked diagnostics live in `scripts/` (offline probes, *_replay.py, bore_log7_*).
+## Repo state (SESSION SAVE — 2026-06-03)
+- Branch: `pdf-ap-route-shadow`. **HEAD = `98d108a`** = `origin/pdf-ap-route-shadow` (pushed).
+  `origin/main` untouched — this whole lane lives on the feature branch.
+- Tree: tracked clean. (`_artifact_proof/` PNGs + `scripts/` probes are scratch/untracked, not committed.)
+
+## ⭐ CURRENT LANE — PDF-first live wiring + design_path_binder (READ THIS FIRST)
+
+### Shipped commits this lane (newest first)
+- `98d108a` **product correction** — binder separates FIELD_TRUTH (billable) from DRAW_DECISION (auto-draw).
+- `8f21e66` pure `design_path_binder` module created (`geometry/`) + 8 tests.
+- `af86655` Step A structure-connector EXPERIMENT — **REJECTED; keep `TRUELINE_REDLINE_STRUCT_CONNECTOR`
+  OFF** (it connected HH *text-label* anchors, not the physical HH/conduit endpoints).
+- `9810134` PDF-first REVIEW overlays recolored to TrueLine **red** (was amber).
+- `f84dd1f` KMZ/bore upload **session-binding hotfix** — `upload-design` / `upload-structured-bore-files`
+  now bind to the active session (form→query→error), never mint a throwaway session.
+- `fb4669b` PDF-first **resolver/correction/BOC consult wired into the live row-fed adapter** (vendored
+  clean-room engine + owner ledgers into `backend/app/core/`; default-OFF `TRUELINE_MATCHLINE_FRAME_RESOLVER`).
+
+### Doctrine (current — supersedes older "deterministic auto-placement" framing below)
+- Design / KMZ / PDF = INTENDED / reference COORDINATE truth.
+- Bore logs / redlines = ACTUAL field / **BILLABLE** truth.
+- **Preserve billable field truth even when auto-draw abstains.** ABSTAIN = abstain from AUTO-DRAW,
+  NOT from the bore log. Only draw after a successful DETERMINISTIC design-geometry bind. No guessed lines.
+
+### design_path_binder status (the next real engine layer)
+- `backend/app/core/redline_pdf_first/geometry/design_path_binder.py` — **PURE module, NO production
+  wiring** (no main.py / adapter / UI / renderer / Hero bridge touched). Pure import (no fitz). 8 tests green.
+- Two orthogonal axes: `field_truth` (CONFIRMED|ABSENT) + `billable` ; `draw_decision`
+  = DRAWING_GEOMETRY_BOUND | DRAWING_NEEDS_REVIEW | ABSTAIN_FROM_AUTO_DRAW. Legacy `status` = coarse alias.
+- bore_log7 = FIELD_TRUTH_CONFIRMED + billable + **DRAWING_GEOMETRY_BOUND** (route_469, within tol — via fixture).
+- log66    = FIELD_TRUTH_CONFIRMED + billable + **DRAWING_NEEDS_REVIEW** (HH endpoints are not AP/SPLICE anchors).
+- log58    = FIELD_TRUTH_CONFIRMED + **DRAWING_NEEDS_REVIEW** / `cross_sheet_stitch_not_implemented`.
+
+### Live demo (Match Review)
+- Working session: **`9e47124b3f8d4ebdbf452bd2a9186177`** (has Brenham plan + committed rows for 56/58/66).
+- Flags **ON** for the PDF-first demo: `TRUELINE_PDF_FIRST_ENGINE`, `TRUELINE_AP_ANCHORED_GEOMETRY`,
+  `TRUELINE_PDF_REDLINE_RENDER`, `TRUELINE_PDF_PATH_TRACE`, `TRUELINE_PDF_PATH_TRACE_DASH_CHAIN`,
+  `TRUELINE_MATCHLINE_FRAME_RESOLVER`. **OFF: `TRUELINE_REDLINE_STRUCT_CONNECTOR`** (label-not-HH; rejected).
+- Proven resolver wins (flag-on): log56 MATCHLINE_FRAME_RESOLVED [17,21] (false-A sheet-2 overridden);
+  log58 [10,13] (HH_HH_DISTANCE, corrected 2+56→2+36); log66 STATION_FRAME_RESOLVED [10].
+
+### Next fresh session should start with (NO drawing yet)
+1. UI polish: order **PDF first, KMZ second, bore logs third**; a visible Match Review button.
+2. Performance/caching audit for PDF evidence rendering.
+3. Read-only **binder REPORT wiring** — surface BOUND / NEEDS_REVIEW / ABSTAIN + `billable`; still NO drawing.
+4. Later: feed live `route_catalog` + full anchor tables as binder `design_refs` (real BOUND bores).
+5. Later: station→pixel alignment model so the binder can emit a drawable PDF `pdf_path`.
+6. Later: seam-stitched station model to lift `cross_sheet_stitch_not_implemented` (log56/log58).
+7. Later: Hero/KMZ bridge — ONLY after BOUND `map_path`s exist.
+
+> NOTE: the "## Last shipped / Target #18–#43" history below predates this lane and is HISTORICAL.
 
 ## Mission (non-negotiable)
 Deterministic auto-placement of **ALL** redlines from source files. Manual placement is NOT the product.
