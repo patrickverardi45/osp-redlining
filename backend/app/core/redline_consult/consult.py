@@ -260,6 +260,16 @@ def _physical_anchor_enabled() -> bool:
         "1", "true", "yes", "on"}
 
 
+def _cross_sheet_seam_stitch_enabled() -> bool:
+    """Default-OFF (stacks on TRUELINE_MATCHLINE_FRAME_RESOLVER). When ON, a cross-sheet
+    (matchline-seam) frame draws TWO per-sheet redline segments via the bore-run tracer +
+    physical_anchor_resolver, using an owner-reviewed+machine-verified seam anchor on the
+    side whose delivered vectors are disconnected. log56-only slice; abstains (no draw)
+    unless all four anchors resolve. NEVER one continuous cross-page line."""
+    return str(os.environ.get("TRUELINE_CROSS_SHEET_SEAM_STITCH", "")).strip().lower() in {
+        "1", "true", "yes", "on"}
+
+
 def _render_struct_connector(mr: Mapping[str, Any], res: Mapping[str, Any], doc: Any,
                              sheet_offset: int, out_dir: str) -> Optional[str]:
     """Draw a RED structure-to-structure connector between the two PROVEN anchor centroids of a
@@ -322,6 +332,106 @@ def _render_struct_connector(mr: Mapping[str, Any], res: Mapping[str, Any], doc:
         return None
 
 
+def _render_cross_sheet_seam_stitch(mr: Mapping[str, Any], res: Mapping[str, Any], doc: Any,
+                                    sheet_offset: int, out_dir: str) -> Optional[Dict[str, Any]]:
+    """Cross-sheet (matchline-seam) seam stitch — log56-only, default-OFF
+    (TRUELINE_CROSS_SHEET_SEAM_STITCH). Draws TWO per-sheet redline segments:
+      sheet 17: physical start HH -> machine-traced sheet-17 seam crossing
+      sheet 21: owner-reviewed+VERIFIED sheet-21 seam crossing -> physical endpoint HH
+    THREE anchors are machine-resolved (start HH, s17 seam crossing, endpoint HH); the s21
+    seam is an owner-reviewed fixture machine-VERIFIED against the authored matchline edge +
+    BORE-PORT entry (the delivered s21 vectors are disconnected). Renders ONLY if all four
+    resolve; otherwise stashes an abstain record on mr and returns None. Never one continuous
+    cross-page line — two separate per-page overlays tied by evidence. Never raises."""
+    try:
+        if not mr.get("seam"):
+            return None
+        if str(res.get("bore_id")) != "bore_log56":          # narrow slice: log56 only
+            return None
+        s21_override = next((o for o in (res.get("seam_anchor_overrides") or [])
+                             if int(o.get("sheet", -1)) == 21), None)
+        if not s21_override:
+            return None
+        from . import physical_anchor_resolver as _par
+        from . import cross_sheet_seam_tracer as _cst
+        from redline_pdf_first.pdf import text_extract as _tx, vector_extract as _ve, crop as _crop
+
+        ov = {o.get("role"): o for o in (mr.get("overlays") or []) if o.get("bbox")}
+        start_ov, end_ov = ov.get("start"), ov.get("end")
+        if not (start_ov and end_ov):
+            if isinstance(mr, dict):
+                mr["cross_sheet_seam_stitch"] = {"resolved": False, "reason": "missing_start_or_end_overlay"}
+            return None
+        s17, s21 = int(start_ov["sheet"]), int(end_ov["sheet"])
+        page17 = _tx.get_page(doc, s17, sheet_offset)
+        page21 = _tx.get_page(doc, s21, sheet_offset)
+
+        # (a) machine: sheet-17 physical start HH
+        start_hh = _par.resolve_physical_anchor(list(start_ov["bbox"]), _ve.extract_paths(page17))
+        # (b) machine: sheet-17 seam crossing (bore-run tracer)
+        s17_ml = [p for p in _ve.extract_paths(page17) if str(p.get("layer")) == "MATCHLINE"]
+        s17_seam = (_cst.trace_seam_anchor(_ve.extract_segments(page17), s17_ml, start_hh["anchor"])
+                    if start_hh.get("resolved") else {"resolved": False, "reason": "start_hh_unresolved"})
+        # (c) machine: sheet-21 physical endpoint HH
+        end_hh = _par.resolve_physical_anchor(list(end_ov["bbox"]), _ve.extract_paths(page21))
+        # (d) owner-reviewed + MACHINE-VERIFIED: sheet-21 seam entry (delivered s21 vectors disconnected)
+        s21_ml = [p for p in _ve.extract_paths(page21) if str(p.get("layer")) == "MATCHLINE"]
+        owner = _cst.verify_owner_seam_anchor(
+            s21_override.get("proposed_xy"), s21_ml, _ve.extract_segments(page21),
+            sheet=int(s21_override.get("sheet")), expected_sheet=21)
+
+        anchors = {
+            "sheet17_start_hh": {"source": "machine", "resolved": bool(start_hh.get("resolved")),
+                                 "xy": start_hh.get("anchor"), "reason": start_hh.get("reason")},
+            "sheet17_seam_crossing": {"source": "machine", "resolved": bool(s17_seam.get("resolved")),
+                                      "xy": s17_seam.get("seam_anchor"), "reason": s17_seam.get("reason")},
+            "sheet21_seam_crossing": {"source": "owner_reviewed_machine_verified",
+                                      "resolved": bool(owner.get("verified")), "xy": owner.get("snapped_xy"),
+                                      "reason": owner.get("reason"), "checks": owner.get("checks")},
+            "sheet21_end_hh": {"source": "machine", "resolved": bool(end_hh.get("resolved")),
+                               "xy": end_hh.get("anchor"), "reason": end_hh.get("reason")},
+        }
+        all_ok = bool(start_hh.get("resolved") and s17_seam.get("resolved")
+                      and end_hh.get("resolved") and owner.get("verified"))
+        if not all_ok:
+            if isinstance(mr, dict):
+                mr["cross_sheet_seam_stitch"] = {
+                    "resolved": False, "run_id": "bore_log56", "reason": "cross_sheet_seam_stitch_abstain",
+                    "machine_resolved_anchors": 3, "owner_verified_anchors": 1, "anchors": anchors,
+                    "note": "required all four anchors; delivered sheet-21 vector run is disconnected"}
+            return None
+
+        def _bx(pt, r=4.0):
+            return [pt[0] - r, pt[1] - r, pt[0] + r, pt[1] + r]
+        bore = str(res.get("bore_id"))
+        p17 = [list(start_hh["anchor"]), list(s17_seam["seam_anchor"])]
+        seg17 = _crop.render_redline_overlay(
+            page17, [{"role": "endpoint", "bbox_display": _bx(p17[0])},
+                     {"role": "endpoint", "bbox_display": _bx(p17[1])}], p17,
+            os.path.join(out_dir, f"{bore}_s{s17}_seam_stitch.png"), accent=(220, 25, 25), dashed=False,
+            caption=f"{bore} sheet {s17}: start HH -> seam crossing (cross-sheet run 1/2)")
+        p21 = [list(owner["snapped_xy"]), list(end_hh["anchor"])]
+        seg21 = _crop.render_redline_overlay(
+            page21, [{"role": "endpoint", "bbox_display": _bx(p21[0])},
+                     {"role": "endpoint", "bbox_display": _bx(p21[1])}], p21,
+            os.path.join(out_dir, f"{bore}_s{s21}_seam_stitch.png"), accent=(220, 25, 25), dashed=False,
+            caption=f"{bore} sheet {s21}: seam crossing -> endpoint HH (cross-sheet run 2/2)")
+        rec = {"resolved": bool(seg17 and seg21), "run_id": "bore_log56",
+               "reason": "cross_sheet_seam_stitched", "machine_resolved_anchors": 3, "owner_verified_anchors": 1,
+               "owner_seam_reason": s21_override.get("reason"), "anchors": anchors,
+               "segments": [{"sheet": s17, "from": "sheet17_start_hh", "to": "sheet17_seam_crossing",
+                             "artifact_name": (os.path.basename(seg17) if seg17 else None)},
+                            {"sheet": s21, "from": "sheet21_seam_crossing", "to": "sheet21_end_hh",
+                             "artifact_name": (os.path.basename(seg21) if seg21 else None)}],
+               "note": "two per-sheet overlays = ONE cross-sheet bore_log56 run; s21 seam is "
+                       "owner-reviewed + machine-verified because the delivered s21 vectors are disconnected"}
+        if isinstance(mr, dict):
+            mr["cross_sheet_seam_stitch"] = rec
+        return rec if rec["resolved"] else None
+    except Exception:
+        return None
+
+
 def _resolver_card(log_id: str, mr: Mapping[str, Any], rec: Mapping[str, Any],
                    res: Mapping[str, Any]) -> Dict[str, Any]:
     """Translate a verified resolver result into a review-grade evidence card. The ``geo`` block
@@ -354,6 +464,13 @@ def _resolver_card(log_id: str, mr: Mapping[str, Any], rec: Mapping[str, Any],
             "verification_trail": mr.get("verification_trail"),
         },
     }
+    # Cross-sheet seam-stitch evidence (default-OFF). Surfaces the two per-sheet segments +
+    # the 3-machine / 1-owner-verified anchor breakdown. Additive; absent when the flag is off.
+    _css = mr.get("cross_sheet_seam_stitch")
+    if isinstance(_css, dict):
+        geo["cross_sheet_seam_stitch"] = _css
+        if _css.get("resolved"):
+            geo["matchline_resolution"]["cross_sheet_segments"] = _css.get("segments")
     # Mirror the displayed overlay into the existing-frontend slot (no FE change needed).
     if sc:
         # Drawn structure-to-structure redline -> path-trace slot (single-sheet -> Group A "drawn").
@@ -444,6 +561,13 @@ def apply_resolver(log_id: str, env: Dict[str, Any], doc: Any, sheet_offset: int
             if _sc:
                 mr = dict(mr)
                 mr["struct_connector"] = _sc
+        # Cross-sheet seam stitch (default-OFF TRUELINE_CROSS_SHEET_SEAM_STITCH; log56-only):
+        # two per-sheet segments from 3 machine anchors + 1 owner-reviewed+verified s21 seam
+        # anchor. Stashes onto mr (resolved or abstain); never draws unless all four resolve.
+        if _cross_sheet_seam_stitch_enabled():
+            if not isinstance(mr, dict):
+                mr = dict(mr)
+            _render_cross_sheet_seam_stitch(mr, res, doc, sheet_offset, out_dir)
         card = _resolver_card(log_id, mr, rec, res)
         if mr.get("override"):
             # clear the superseded geometry-only A placement(s) for this log

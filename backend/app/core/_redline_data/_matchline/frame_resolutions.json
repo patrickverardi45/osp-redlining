@@ -88,6 +88,17 @@
       "approved_by": "owner-directed (matchline-resolver, log56 screenshots + walkthrough)",
       "reviewed_at": "2026-06-02",
       "boc_ft": 11,
+      "seam_anchor_overrides": [
+        {
+          "sheet": 21,
+          "proposed_xy": [176.0, 139.0],
+          "role": "seam_entry",
+          "verify": {"on_matchline_edge": true, "near_bore_port_entry": true, "expected_sheet": 21},
+          "reason": "Delivered sheet-21 vector run is DISCONNECTED: the endpoint-HH bore stub does not chain to the seam entry on any authored layer (BORE-*, NEXTLINK, STA-TIC-MARK, CENTERLINE, WATER, SEWER all tested). Owner-reviewed seam entry, MACHINE-VERIFIED against the authored matchline edge + BORE-PORT entry before use; abstains if it fails to verify. NOT a generic manual-placement fallback — narrow log56 / sheet-21 fixture only.",
+          "approved_by": "owner-directed (log56 sheet-21 seam, option b)",
+          "reviewed_at": "2026-06-03"
+        }
+      ],
       "evidence": "Owner screenshots + walkthrough (log56): ONE authored cross-sheet run, local span 0+00->2+76 (boc=11; endpoint OCR-corrected 2+96->2+76 in ../_corrections/corrections.json). Start authored on sheet 17 as station-equation STA 4+57=0+00 co-located with a 13\"X24\"X24\" INSTALLER HH (red/white box on the magenta run). Authored matchline STA 1+61/1+59 - SEE SHEET 21 carries the run to sheet 21 (reciprocal on sheet 21: MATCHLINE STA 1+61/1+59 - SEE SHEET 17); endpoint authored on sheet 21 as STA 2+76 13\"X24\"X24\" INSTALLER HH. The black BOC offset stack incl. 11' is co-located with the run on BOTH sheets (s17 11' ~142px from the reset; s21 11' ~91px from STA 2+76), matching the bore-log boc=11. Resolved by authored equation + matchline continuity + authored endpoint structure + BOC offset; never nearest/snapping/scoring, never span-only. Blocks the prior sheet-2 station/footage-only A trace (sheet 2 has no authored STA 2+76 endpoint and no matching BOC/run context)."
     },
     {
