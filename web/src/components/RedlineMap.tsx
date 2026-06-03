@@ -4218,7 +4218,20 @@ ${redlinePlacemarks.length > 0 ? buildEngFolder("Redlines", redlinePlacemarks, 1
         failure_class: _classifyUploadException(error),
         ..._engUploadEnvSnapshot(),
       });
-      setStatusText(error instanceof Error ? error.message : "Engineering plan upload failed.");
+      // A fetch REJECTION (browser "Failed to fetch" — a TypeError) means the
+      // request never completed: a CORS preflight block or a connection reset on
+      // the cross-origin direct-to-Render upload, NOT an HTTP error with a body.
+      // Surface an actionable hint in the prominent status banner (the full
+      // context is already in the engUploadDiag panel). Diagnostics only — no
+      // change to the request path or behavior.
+      const _failNetwork = error instanceof TypeError;
+      setStatusText(
+        _failNetwork
+          ? `Engineering plan upload couldn't reach the backend (${_classifyUploadException(error)}). Likely a CORS preflight or network failure on the direct-to-Render upload — confirm this site's origin is in the backend allowlist (TRUELINE_ALLOWED_ORIGINS) and the file is within size limits. (${error.message})`
+          : error instanceof Error
+          ? error.message
+          : "Engineering plan upload failed.",
+      );
       setStatusTone("error");
     } finally {
       setEngPlansBusy(false);
