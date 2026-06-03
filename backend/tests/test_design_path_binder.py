@@ -56,6 +56,9 @@ def test_bore_log7_positive_control_bound_route469():
     assert out["binding"]["start"]["identity"] == {"kind": "SPLICE_LOC", "id": "LOC46"}
     assert out["validation"]["within_tol"] is True
     assert 0.95 <= out["validation"]["ratio"] <= 1.0       # 451/459 = 0.982
+    assert out["field_truth"] == B.FIELD_TRUTH_CONFIRMED
+    assert out["billable"] is True
+    assert out["draw_decision"] == B.DRAW_GEOMETRY_BOUND
     assert out["pdf_path"] is None                          # page model deferred (documented)
     assert out["abstain_reason"] is None
 
@@ -72,6 +75,10 @@ def test_log66_abstains_no_anchor_bind():
     assert out["binding"]["end"]["identity"] is None        # HH/station endpoints carry no AP/SPLICE id
     assert out["binding"]["start"]["identity"] is None
     assert "no station-indexed design geometry" in out["abstain_detail"]["note"]
+    # PRODUCT CORRECTION: ABSTAIN means "do not auto-draw", NOT "this bore does not count".
+    assert out["field_truth"] == B.FIELD_TRUTH_CONFIRMED    # the 55' HH-HH bore is real/billable
+    assert out["billable"] is True
+    assert out["draw_decision"] == B.DRAW_NEEDS_REVIEW       # surfaces for review; never erased
 
 
 # ── 3) log58 -> ABSTAIN cross_sheet_stitch_not_implemented (real matchline seam) ──────────────
@@ -81,6 +88,8 @@ def test_log58_abstains_cross_sheet():
     out = B.bind_design_path(bore, proof, {"anchor_tables": identity_binder.load_tables(DATA)})
     assert out["status"] == B.STATUS_ABSTAIN
     assert out["abstain_reason"] == B.ABSTAIN_CROSS_SHEET, out
+    assert out["field_truth"] == B.FIELD_TRUTH_CONFIRMED    # field truth preserved across the seam
+    assert out["draw_decision"] == B.DRAW_NEEDS_REVIEW
 
 
 # ── 4) both endpoints bound but NO route geometry -> ABSTAIN no_design_geometry ───────────────
@@ -134,5 +143,26 @@ def test_schema_shape_and_empty():
     assert out["schema_version"] == "design-path-binder-1"
     assert out["status"] == B.STATUS_ABSTAIN
     assert out["abstain_reason"] == B.ABSTAIN_NO_ENDPOINTS
-    for k in ("binding", "pdf_path", "map_path", "validation", "evidence", "abstain_reason"):
+    assert out["field_truth"] == B.FIELD_TRUTH_ABSENT       # no real bore in {} -> not billable
+    assert out["billable"] is False
+    assert out["draw_decision"] == B.DRAW_ABSTAIN           # nothing to bill/review -> hard abstain
+    for k in ("field_truth", "billable", "draw_decision",
+              "binding", "pdf_path", "map_path", "validation", "evidence", "abstain_reason"):
         assert k in out
+
+
+# ── 8) product invariant: abstaining from auto-draw NEVER erases a confirmed field bore ───────
+def test_field_truth_preserved_when_auto_draw_abstains():
+    bore = {"bore_log_id": "bore_log66", "source_file": "bore_log66.xlsx",
+            "footage_ft": 55.0, "boc_ft": 10}
+    out = B.bind_design_path(bore, _resolution("bore_log66"),
+                             {"anchor_tables": identity_binder.load_tables(DATA)})
+    # real/billable field truth is preserved...
+    assert out["billable"] is True
+    assert out["field_truth"] == B.FIELD_TRUTH_CONFIRMED
+    # ...auto-draw is withheld (no guessed line) but the bore is surfaced for review...
+    assert out["draw_decision"] == B.DRAW_NEEDS_REVIEW
+    assert out["draw_decision"] != B.DRAW_GEOMETRY_BOUND
+    # ...with a clear reason + an explicit "not erased" note (so it does not disappear / unbill).
+    assert out["abstain_reason"]
+    assert out["evidence"]["field_truth_note"].startswith("bore log is a confirmed billable")

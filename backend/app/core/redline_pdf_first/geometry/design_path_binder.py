@@ -13,10 +13,20 @@ Mental model (owner/product truth)
     validated against the bore footage — NOT drawn from labels, NOT from HH-symbol hunting,
     NOT from guessed conduit fragments, and NEVER fabricated.
 
-This module ONLY decides BOUND vs ABSTAIN and emits the drawable-path spec. It draws nothing
-and wires into nothing. Only a BOUND result may later be rendered. It is SINGLE-SHEET; a
-cross-sheet (matchline-seam) frame ABSTAINs with ``cross_sheet_stitch_not_implemented`` (the
-seam-stitched station model for log56/log58 is a later layer).
+This module decides the AUTO-DRAW question and emits the drawable-path spec. It draws nothing
+and wires into nothing. It reports along TWO ORTHOGONAL AXES so abstaining never erases a real
+bore:
+  * ``field_truth`` (CONFIRMED | ABSENT) + ``billable`` — is this a real, parsed/corrected field
+    bore? A CONFIRMED bore stays billable/reviewable REGARDLESS of the draw decision; the binder
+    never downgrades it.
+  * ``draw_decision`` — DRAWING_GEOMETRY_BOUND (deterministic, safe to auto-draw) /
+    DRAWING_NEEDS_REVIEW (real field truth, placement needs review/more evidence) /
+    ABSTAIN_FROM_AUTO_DRAW (no field truth or cannot assess — never a guessed line).
+The legacy ``status`` (BOUND | ABSTAIN) is a coarse alias of the draw axis; "ABSTAIN" means
+abstain from AUTO-DRAW only, NEVER "this bore does not count". Only DRAWING_GEOMETRY_BOUND may
+later be rendered. SINGLE-SHEET only; a cross-sheet (matchline-seam) frame is field-CONFIRMED +
+DRAWING_NEEDS_REVIEW with reason ``cross_sheet_stitch_not_implemented`` (the seam-stitched station
+model for log56/log58 is a later layer).
 
 Determinism rules (by construction):
   * Endpoints bind by EXACT (kind,id,sheet) join to the resolved anchor table (reusing
@@ -37,15 +47,29 @@ from .identity_binder import normalize_identity  # pure AP/SPLICE id parser (reu
 
 SCHEMA_VERSION = "design-path-binder-1"
 
+# Legacy coarse status (kept for back-compat): BOUND iff draw_decision == DRAWING_GEOMETRY_BOUND.
+# "ABSTAIN" here means ABSTAIN FROM AUTO-DRAW ONLY — never "this bore is not real / not billable".
 STATUS_BOUND = "BOUND"
 STATUS_ABSTAIN = "ABSTAIN"
 
-# Machine-readable abstain reason codes.
+# ── TWO ORTHOGONAL AXES ──────────────────────────────────────────────────────────────────────
+# Axis 1 — FIELD TRUTH (billable/reviewable). A real parsed/corrected bore is ALWAYS confirmed and
+# is NEVER erased or downgraded because design geometry cannot be auto-drawn.
+FIELD_TRUTH_CONFIRMED = "FIELD_TRUTH_CONFIRMED"
+FIELD_TRUTH_ABSENT = "FIELD_TRUTH_ABSENT"
+# Axis 2 — DRAW DECISION (auto-draw safety). Whether/how to auto-draw the design geometry.
+DRAW_GEOMETRY_BOUND = "DRAWING_GEOMETRY_BOUND"    # deterministic design geometry -> safe to auto-draw
+DRAW_NEEDS_REVIEW = "DRAWING_NEEDS_REVIEW"         # real field truth, placement needs review/more evidence
+DRAW_ABSTAIN = "ABSTAIN_FROM_AUTO_DRAW"           # do not draw a guessed line (no field truth / cannot assess)
+
+# Machine-readable AUTO-DRAW reason codes (kept under the legacy key ``abstain_reason``; they are a
+# draw-placement judgment, NOT a field-truth/billing judgment).
 ABSTAIN_NO_ENDPOINTS = "resolver_proof_missing_endpoints"
 ABSTAIN_CROSS_SHEET = "cross_sheet_stitch_not_implemented"
 ABSTAIN_ENDPOINT_NOT_ANCHORED = "endpoint_not_bound_to_resolved_design_anchor"
 ABSTAIN_NO_DESIGN_GEOMETRY = "no_station_indexed_design_geometry_for_span"
 ABSTAIN_LENGTH_MISMATCH = "as_built_footage_mismatches_design_length"
+ABSTAIN_INTERNAL_ERROR = "binder_internal_error"
 
 # As-built footage / design length ratio band. Outside -> the design path is not the as-built.
 _TOL_LO, _TOL_HI = 0.80, 1.25
@@ -152,14 +176,33 @@ def _ep_binding(role_res: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def _field_truth(bore_truth: Dict[str, Any]) -> Tuple[str, bool]:
+    """Axis 1 — is this a real, parsed/corrected field bore (billable/reviewable)? CONFIRMED when a
+    ``bore_log_id`` plus a footage / HH-HH / station span is present. This NEVER depends on whether
+    design geometry can be auto-drawn — a confirmed bore stays billable even when we abstain."""
+    bt = bore_truth or {}
+    confirmed = bool(bt.get("bore_log_id")) and (
+        _num(bt.get("footage_ft")) is not None or _num(bt.get("hh_hh_ft")) is not None
+        or bt.get("station_start") is not None or bt.get("station_end") is not None)
+    return (FIELD_TRUTH_CONFIRMED if confirmed else FIELD_TRUTH_ABSENT, confirmed)
+
+
 def _abstain(bore_truth: Dict[str, Any], resolver_proof: Dict[str, Any], reason: str,
              detail: Optional[Dict[str, Any]] = None,
              binding: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    field_truth, billable = _field_truth(bore_truth or {})
+    # A CONFIRMED field bore is NEVER erased: at worst it NEEDS_REVIEW (surface it, withhold
+    # auto-draw). Pure ABSTAIN_FROM_AUTO_DRAW is reserved for no-real-bore / internal-error.
+    draw_decision = (DRAW_ABSTAIN if (not billable or reason == ABSTAIN_INTERNAL_ERROR)
+                     else DRAW_NEEDS_REVIEW)
     return {
         "schema_version": SCHEMA_VERSION,
-        "bore_log_id": bore_truth.get("bore_log_id"),
-        "source_file": bore_truth.get("source_file"),
-        "status": STATUS_ABSTAIN,
+        "bore_log_id": (bore_truth or {}).get("bore_log_id"),
+        "source_file": (bore_truth or {}).get("source_file"),
+        "field_truth": field_truth,    # axis 1: billable/reviewable regardless of draw decision
+        "billable": billable,
+        "draw_decision": draw_decision,  # axis 2: how/whether to auto-draw
+        "status": STATUS_ABSTAIN,        # legacy coarse alias — "ABSTAIN" = abstain from AUTO-DRAW only
         "binding": binding or {},
         "pdf_path": None,
         "map_path": None,
@@ -169,8 +212,11 @@ def _abstain(bore_truth: Dict[str, Any], resolver_proof: Dict[str, Any], reason:
             "home_sheet": resolver_proof.get("home_sheet"),
             "seam": resolver_proof.get("seam") or resolver_proof.get("matchline_seam"),
             "why": reason,
+            "field_truth_note": ("bore log is a confirmed billable/reviewable field record; "
+                                 "auto-draw withheld for placement safety, not erased"
+                                 if billable else "no parsed field bore in this input"),
         },
-        "abstain_reason": reason,
+        "abstain_reason": reason,        # the AUTO-DRAW reason (NOT a field-truth/billing judgment)
         "abstain_detail": detail or {},
     }
 
@@ -277,10 +323,14 @@ def bind_design_path(bore_truth: Dict[str, Any], resolver_proof: Dict[str, Any],
         # BOUND. Emit the drawable map path (Hero/KMZ bridge consumes it LATER). pdf_path needs a
         # station->pixel alignment model (not in these refs) -> None for now (documented, deferred).
         sc, ec = res["start"]["resolved"].get("sta"), res["end"]["resolved"].get("sta")
+        field_truth, billable = _field_truth(bore_truth)
         return {
             "schema_version": SCHEMA_VERSION,
             "bore_log_id": bore_truth.get("bore_log_id"),
             "source_file": bore_truth.get("source_file"),
+            "field_truth": field_truth,                 # axis 1: billable/reviewable
+            "billable": billable,
+            "draw_decision": DRAW_GEOMETRY_BOUND,        # axis 2: deterministic -> safe to auto-draw
             "status": STATUS_BOUND,
             "binding": binding,
             "pdf_path": None,
@@ -304,12 +354,14 @@ def bind_design_path(bore_truth: Dict[str, Any], resolver_proof: Dict[str, Any],
             "abstain_detail": None,
         }
     except Exception as exc:  # pure: never raise into a caller
-        return _abstain(bore_truth or {}, resolver_proof or {}, "binder_internal_error",
+        return _abstain(bore_truth or {}, resolver_proof or {}, ABSTAIN_INTERNAL_ERROR,
                         {"error": "%s: %s" % (type(exc).__name__, exc)})
 
 
 __all__ = [
     "bind_design_path", "SCHEMA_VERSION", "STATUS_BOUND", "STATUS_ABSTAIN",
+    "FIELD_TRUTH_CONFIRMED", "FIELD_TRUTH_ABSENT",
+    "DRAW_GEOMETRY_BOUND", "DRAW_NEEDS_REVIEW", "DRAW_ABSTAIN",
     "ABSTAIN_NO_ENDPOINTS", "ABSTAIN_CROSS_SHEET", "ABSTAIN_ENDPOINT_NOT_ANCHORED",
-    "ABSTAIN_NO_DESIGN_GEOMETRY", "ABSTAIN_LENGTH_MISMATCH",
+    "ABSTAIN_NO_DESIGN_GEOMETRY", "ABSTAIN_LENGTH_MISMATCH", "ABSTAIN_INTERNAL_ERROR",
 ]
