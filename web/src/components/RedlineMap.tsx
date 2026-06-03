@@ -4069,65 +4069,47 @@ ${redlinePlacemarks.length > 0 ? buildEngFolder("Redlines", redlinePlacemarks, 1
       return;
     }
 
-    // PT.IU R4 — SAME-ORIGIN PROXY IS THE DEFAULT. The browser posts to the
-    // Next.js route on its own origin (/api/upload-engineering-plans) and the
-    // Vercel server proxies to Render server-side (proxyAppRoute forwards the
-    // multipart body, Authorization, cookies, and ?session_id=). Because the
-    // request is same-origin there is NO CORS preflight — so a brand-new Vercel
-    // preview URL never has to be added to TRUELINE_ALLOWED_ORIGINS. This is the
-    // permanent fix for the preview-URL allowlist treadmill.
+    // LP.1 — SAME-ORIGIN ONLY: NO CORS, NO VERCEL BODY LIMIT.
     //
-    // Direct-to-Render is retained ONLY as an explicit fallback for files that
-    // exceed Vercel's ~4.5 MB serverless request-body ceiling (e.g. the full
-    // ~13 MB Brenham plan set), and ONLY when an opt-in cross-origin base is
-    // configured. Such files physically cannot traverse the buffered Vercel
-    // proxy, so the cross-origin path (which does still require the origin to be
-    // allowlisted on Render) is unavoidable for them — but normal PDFs never use it.
+    // Small files (≤ PROXY_MAX_MB) post in a single request to the same-origin
+    // route /api/upload-engineering-plans (proxied to Render server-side). Large
+    // files (e.g. the ~13 MB Brenham plan set) exceed Vercel's ~4.5 MB serverless
+    // request-body ceiling, so they are SLICED into sub-ceiling chunks and posted
+    // to the same-origin route /api/upload-engineering-plans/chunk; the backend
+    // stages the chunks and reassembles + registers them on the final chunk.
+    //
+    // Both paths are same-origin, so neither triggers a CORS preflight — a brand
+    // new Vercel preview URL never has to be added to TRUELINE_ALLOWED_ORIGINS.
+    // The previous cross-origin direct-to-Render fallback (the CORS source) is
+    // removed entirely; large files no longer depend on the origin allowlist.
     const SAME_ORIGIN_URL = `${API_BASE}/api/upload-engineering-plans`;
-    const RENDER_BASE = (
-      process.env.NEXT_PUBLIC_API_BASE ||
-      process.env.NEXT_PUBLIC_API_BASE_URL ||
-      ""
-    ).replace(/\/+$/, "");
+    const SAME_ORIGIN_CHUNK_URL = `${API_BASE}/api/upload-engineering-plans/chunk`;
 
-    // Vercel serverless functions reject request bodies larger than ~4.5 MB at
-    // the platform edge (FUNCTION_PAYLOAD_TOO_LARGE) before the proxy route code
-    // runs. Keep a safe margin below that for the same-origin path.
+    // Vercel serverless functions reject request bodies over ~4.5 MB at the
+    // platform edge (FUNCTION_PAYLOAD_TOO_LARGE) before the route runs; keep each
+    // chunk safely under that.
     const PROXY_MAX_MB = 4;
-    // Direct-to-Render ceiling. Render reads file_bytes into RAM in
-    // upload_engineering_plans; 100 MB keeps the memory spike bounded under the
-    // container cap while covering oversized GIS/DWG/LiDAR artifacts.
-    const DIRECT_MAX_MB = 100;
+    const CHUNK_BYTES = Math.floor(3.5 * 1024 * 1024); // ~3.5 MB per chunk
+    // Assembled-file hard cap; mirrors the backend ENGINEERING_PLAN_UPLOAD_MAX_BYTES.
+    const UPLOAD_MAX_MB = 100;
 
-    // Only a file that cannot fit through the proxy may use the cross-origin
-    // fallback, and only when a direct base is actually configured. Normal PDFs
-    // (≤ PROXY_MAX_MB, e.g. the ~1 MB Brenham set) ALWAYS take the same-origin
-    // proxy even though NEXT_PUBLIC_API_BASE is set in the build.
-    const hasOversizedFile = Array.from(files).some(
-      (f) => f.size / (1024 * 1024) > PROXY_MAX_MB,
-    );
-    const directToRender = hasOversizedFile && Boolean(RENDER_BASE);
-    const uploadUrl = directToRender
-      ? `${RENDER_BASE}/api/upload-engineering-plans`
-      : SAME_ORIGIN_URL;
-
-    // Per-file size cap for whichever path is active.
-    const PER_FILE_MAX_MB = directToRender ? DIRECT_MAX_MB : PROXY_MAX_MB;
-    const oversized = Array.from(files).filter((f) => f.size / (1024 * 1024) > PER_FILE_MAX_MB);
-    if (oversized.length > 0) {
-      const list = oversized
+    // Hard ceiling regardless of path.
+    const tooLarge = Array.from(files).filter((f) => f.size / (1024 * 1024) > UPLOAD_MAX_MB);
+    if (tooLarge.length > 0) {
+      const list = tooLarge
         .map((f) => `${f.name} (${(f.size / (1024 * 1024)).toFixed(1)} MB)`)
         .join(", ");
-      // We only reach here when a file is too large for the active path. If the
-      // proxy is active it means no direct-to-Render base is configured to take
-      // the oversized file — say so explicitly rather than blaming size alone.
-      const hint = RENDER_BASE
-        ? `Per-file maximum is ${PER_FILE_MAX_MB} MB.`
-        : `These exceed Vercel's same-origin proxy ceiling (${PROXY_MAX_MB} MB) and no direct-upload base (NEXT_PUBLIC_API_BASE) is configured for this build, so the large-file fallback is unavailable.`;
-      setStatusText(`Engineering plan file(s) exceed the size limit: ${list}. ${hint}`);
+      setStatusText(`Engineering plan file(s) exceed the ${UPLOAD_MAX_MB} MB maximum: ${list}.`);
       setStatusTone("error");
       return;
     }
+
+    // Files over the proxy ceiling take the chunked same-origin path. If ANY file
+    // in the batch is large, every file is sent via the chunk endpoint (small
+    // files become single-chunk uploads) so the batch uses one uniform path.
+    const largeFiles = Array.from(files).filter((f) => f.size / (1024 * 1024) > PROXY_MAX_MB);
+    const usingChunked = largeFiles.length > 0;
+    const target = usingChunked ? SAME_ORIGIN_CHUNK_URL : SAME_ORIGIN_URL;
 
     // PT.IU R1 — structured observability for future GIS-scale debugging.
     const totalBytes = Array.from(files).reduce((sum, f) => sum + f.size, 0);
@@ -4135,22 +4117,22 @@ ${redlinePlacemarks.length > 0 ? buildEngFolder("Redlines", redlinePlacemarks, 1
     console.info("[eng-plan-upload]", {
       event: "upload_start",
       ts: new Date().toISOString(),
-      target: uploadUrl,
-      direct_to_render: directToRender,
+      target,
+      direct_to_render: false,
+      chunked: usingChunked,
       file_count: files.length,
       total_bytes: totalBytes,
       total_mb: Number((totalBytes / (1024 * 1024)).toFixed(2)),
     });
     // PT.IU R2 — mirror the structured event into operator-visible state.
     // PT.IU R3 — also capture browser/runtime context (origin, href, UA,
-    // build-time NEXT_PUBLIC_API_BASE, token-presence boolean, planned
-    // request header names) so the operator can correlate against the
-    // manual curl preflight without DevTools.
+    // build-time NEXT_PUBLIC_API_BASE, token-presence boolean) so the operator
+    // can correlate failures without DevTools.
     setEngUploadDiag({
       event: "upload_start",
       ts: new Date().toISOString(),
-      target: uploadUrl,
-      direct_to_render: directToRender,
+      target,
+      direct_to_render: false,
       file_count: files.length,
       total_mb: Number((totalBytes / (1024 * 1024)).toFixed(2)),
       ..._engUploadEnvSnapshot(),
@@ -4159,19 +4141,79 @@ ${redlinePlacemarks.length > 0 ? buildEngFolder("Redlines", redlinePlacemarks, 1
     setEngPlansBusy(true);
     setStatusText(`Uploading ${files.length} engineering plan file${files.length > 1 ? "s" : ""}...`);
     setStatusTone("neutral");
+
+    // LP.1 — same-origin chunked upload for one file. Slices the file into
+    // sub-ceiling chunks (each under Vercel's body limit; all same-origin so none
+    // triggers a CORS preflight) and posts them in order to the chunk proxy. The
+    // final chunk's response IS the registration result, returned here so the
+    // shared parse/handle below treats it like any other upload response.
+    const _postFileChunked = async (file: File): Promise<Response> => {
+      const uploadId =
+        typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+          ? crypto.randomUUID()
+          : `up-${uploadStartedAt}-${file.size}`;
+      const totalChunks = Math.max(1, Math.ceil(file.size / CHUNK_BYTES));
+      let lastResp: Response | null = null;
+      for (let i = 0; i < totalChunks; i++) {
+        const start = i * CHUNK_BYTES;
+        const blob = file.slice(start, Math.min(start + CHUNK_BYTES, file.size));
+        const chunkForm = new FormData();
+        chunkForm.append("upload_id", uploadId);
+        chunkForm.append("chunk_index", String(i));
+        chunkForm.append("total_chunks", String(totalChunks));
+        chunkForm.append("file_name", file.name);
+        chunkForm.append("session_id", activeSessionId);
+        chunkForm.append("chunk", blob, file.name);
+        const isLast = i === totalChunks - 1;
+        setStatusText(
+          isLast
+            ? `Reassembling & registering "${file.name}"...`
+            : `Uploading "${file.name}" — chunk ${i + 1}/${totalChunks} (${Math.round(((i + 1) / totalChunks) * 100)}%)`,
+        );
+        lastResp = await apiFetch(
+          appendSessionIdReadOnly(SAME_ORIGIN_CHUNK_URL, projectId),
+          { method: "POST", body: chunkForm },
+        );
+        // A non-final chunk ack must be OK to continue; surface failures text-first.
+        if (!isLast && !lastResp.ok) {
+          const t = await lastResp.text();
+          throw new Error(
+            `Large plan upload failed at chunk ${i + 1}/${totalChunks} (${lastResp.status}): ${t.slice(0, 200).trim()}`,
+          );
+        }
+      }
+      return lastResp as Response;
+    };
+
     try {
-      const form = new FormData();
-      // Carry the active session in BOTH the form and the URL query param so it
-      // survives the direct-to-Render multipart path (where the form field can
-      // be dropped). appendSessionIdReadOnly never mints — activeSessionId is
-      // already guaranteed non-null by the guard above.
-      form.append("session_id", activeSessionId);
-      Array.from(files).forEach((f) => form.append("files", f));
-      const response = await apiFetch(appendSessionIdReadOnly(uploadUrl, projectId), { method: "POST", body: form });
-      // Read body once as text; backend always returns JSON via _ok()/_err(),
-      // so any non-JSON body means an upstream gateway error (Vercel timeout
-      // 504, payload-too-large 413, Render 5xx, etc.). Surface that raw text
-      // instead of a generic "Unexpected token R..." JSON.parse failure.
+      let response: Response;
+      if (!usingChunked) {
+        // Small-only batch: one same-origin multipart POST. Carry the active
+        // session in BOTH the form and the query param. appendSessionIdReadOnly
+        // never mints — activeSessionId is guaranteed non-null by the guard above.
+        const form = new FormData();
+        form.append("session_id", activeSessionId);
+        Array.from(files).forEach((f) => form.append("files", f));
+        response = await apiFetch(
+          appendSessionIdReadOnly(SAME_ORIGIN_URL, projectId),
+          { method: "POST", body: form },
+        );
+      } else {
+        // At least one file exceeds the Vercel body ceiling: upload EVERY file in
+        // the batch via the same-origin chunk endpoint, one at a time (small files
+        // become single-chunk uploads). The backend returns the full session plan
+        // list on each finalize, so the LAST file's finalize response is complete.
+        let last: Response | null = null;
+        for (const f of Array.from(files)) {
+          last = await _postFileChunked(f);
+        }
+        response = last as Response;
+      }
+
+      // Read body once as text; backend always returns JSON via _ok()/_err(), so
+      // any non-JSON body means an upstream gateway error (Vercel timeout 504,
+      // payload-too-large 413, Render 5xx, etc.). Surface that raw text instead of
+      // a generic "Unexpected token R..." JSON.parse failure.
       const responseText = await response.text();
       let data: { success?: boolean; error?: string; message?: string; engineering_plans?: EngineeringPlan[] } = {};
       try {
@@ -4181,15 +4223,15 @@ ${redlinePlacemarks.length > 0 ? buildEngFolder("Redlines", redlinePlacemarks, 1
         console.warn("[eng-plan-upload]", {
           event: "non_json_response",
           ts: new Date().toISOString(),
-          target: uploadUrl,
+          target,
           status: response.status,
           body_snippet: snippet,
         });
         setEngUploadDiag({
           event: "non_json_response",
           ts: new Date().toISOString(),
-          target: uploadUrl,
-          direct_to_render: directToRender,
+          target,
+          direct_to_render: false,
           status: response.status,
           body_snippet: snippet,
         });
@@ -4200,15 +4242,15 @@ ${redlinePlacemarks.length > 0 ? buildEngFolder("Redlines", redlinePlacemarks, 1
         console.warn("[eng-plan-upload]", {
           event: "upload_failed",
           ts: new Date().toISOString(),
-          target: uploadUrl,
+          target,
           status: response.status,
           backend_error: data.error,
         });
         setEngUploadDiag({
           event: "upload_failed",
           ts: new Date().toISOString(),
-          target: uploadUrl,
-          direct_to_render: directToRender,
+          target,
+          direct_to_render: false,
           status: response.status,
           backend_error: data.error,
         });
@@ -4223,7 +4265,7 @@ ${redlinePlacemarks.length > 0 ? buildEngFolder("Redlines", redlinePlacemarks, 1
       console.info("[eng-plan-upload]", {
         event: "upload_success",
         ts: new Date().toISOString(),
-        target: uploadUrl,
+        target,
         status: response.status,
         uploaded_count: data.engineering_plans?.length ?? 0,
         elapsed_ms: Date.now() - uploadStartedAt,
@@ -4231,8 +4273,8 @@ ${redlinePlacemarks.length > 0 ? buildEngFolder("Redlines", redlinePlacemarks, 1
       setEngUploadDiag({
         event: "upload_success",
         ts: new Date().toISOString(),
-        target: uploadUrl,
-        direct_to_render: directToRender,
+        target,
+        direct_to_render: false,
         status: response.status,
         uploaded_count: data.engineering_plans?.length ?? 0,
         elapsed_ms: Date.now() - uploadStartedAt,
@@ -4243,33 +4285,29 @@ ${redlinePlacemarks.length > 0 ? buildEngFolder("Redlines", redlinePlacemarks, 1
       console.warn("[eng-plan-upload]", {
         event: "upload_exception",
         ts: new Date().toISOString(),
-        target: uploadUrl,
+        target,
         message: error instanceof Error ? error.message : "Unknown error",
       });
       setEngUploadDiag({
         event: "upload_exception",
         ts: new Date().toISOString(),
-        target: uploadUrl,
-        direct_to_render: directToRender,
+        target,
+        direct_to_render: false,
         message: error instanceof Error ? error.message : "Unknown error",
         elapsed_ms: Date.now() - uploadStartedAt,
-        // PT.IU R3 — heuristic class + browser/runtime context for the
-        // operator to see immediately on a "Failed to fetch" exception.
+        // PT.IU R3 — heuristic class + browser/runtime context for the operator
+        // to see immediately on a "Failed to fetch" exception.
         failure_class: _classifyUploadException(error),
         ..._engUploadEnvSnapshot(),
       });
       // A fetch REJECTION (browser "Failed to fetch" — a TypeError) means the
-      // request never completed: a CORS preflight block or a connection reset on
-      // the cross-origin direct-to-Render upload, NOT an HTTP error with a body.
-      // Surface an actionable hint in the prominent status banner (the full
-      // context is already in the engUploadDiag panel). Diagnostics only — no
-      // change to the request path or behavior.
+      // request never completed. Both upload paths are SAME-ORIGIN now, so this is
+      // a network/proxy error, NOT a CORS preflight block — no origin allowlist is
+      // involved. Surface an actionable hint (full context is in the diag panel).
       const _failNetwork = error instanceof TypeError;
       setStatusText(
         _failNetwork
-          ? directToRender
-            ? `Engineering plan upload couldn't reach the backend (${_classifyUploadException(error)}). This file is over ${PROXY_MAX_MB} MB so it used the direct-to-Render fallback — confirm this site's origin is in the backend allowlist (TRUELINE_ALLOWED_ORIGINS) and the file is within size limits. (${error.message})`
-            : `Engineering plan upload couldn't reach the backend (${_classifyUploadException(error)}) through the same-origin proxy. This is a network or proxy error, not CORS — the request is same-origin, so no origin allowlist is involved. Retry; if it persists the Vercel proxy route or the Render backend may be unavailable. (${error.message})`
+          ? `Engineering plan upload couldn't reach the backend (${_classifyUploadException(error)}) through the same-origin proxy. This is a network or proxy error, not CORS — the request is same-origin, so no origin allowlist is involved. Retry; if it persists the Vercel proxy route or the Render backend may be unavailable. (${error.message})`
           : error instanceof Error
           ? error.message
           : "Engineering plan upload failed.",

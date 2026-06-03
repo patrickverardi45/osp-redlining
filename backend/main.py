@@ -20245,6 +20245,19 @@ NOVA_OVERRIDES_INDEX_PATH = NOVA_OVERRIDES_ROOT / "index.json"
 ENGINEERING_PLAN_ALLOWED_EXTENSIONS = {".pdf", ".png", ".jpg", ".jpeg"}
 ENGINEERING_PLAN_MAX_FILES_PER_UPLOAD = 20
 
+# ── Chunked large-plan upload (LP.1) ─────────────────────────────────────────
+# Files that exceed the Vercel ~4.5 MB serverless request-body ceiling cannot
+# traverse the same-origin proxy in a single POST. Instead the browser slices
+# them into sub-ceiling chunks, posts each to the same-origin proxy (no CORS,
+# no Vercel body limit), and the backend stages chunks on disk keyed by
+# (session, upload_id) and reassembles + registers them on the final chunk —
+# through the exact same auth/session/tenant path as the normal upload. No
+# public endpoint, no cross-origin request, identical record + JSON output.
+ENGINEERING_PLAN_CHUNK_ROOT = ENGINEERING_PLAN_ROOT / "_chunks"
+ENGINEERING_PLAN_CHUNK_MAX_BYTES = 8 * 1024 * 1024          # per-chunk hard cap (frontend slices at ~3.5 MB)
+ENGINEERING_PLAN_UPLOAD_MAX_BYTES = 100 * 1024 * 1024       # assembled-file hard cap (matches frontend UPLOAD_MAX_MB)
+ENGINEERING_PLAN_CHUNK_MAX_COUNT = 512                      # total_chunks sanity bound
+
 
 # ── Nova override persistence helpers ────────────────────────────────────────
 
@@ -20367,45 +20380,25 @@ def _load_engineering_plan_index_for_session(session_id: str) -> List[Dict[str, 
         return []
 
 
-@protected_router.post("/api/upload-engineering-plans")
-async def upload_engineering_plans(
-    request: Request,
-    files: List[UploadFile] = File(...),
-    session_id: Optional[str] = Form(None),
-    plan_date: Optional[str] = Form(None),
-    print_numbers: Optional[str] = Form(None),
-    sheet_numbers: Optional[str] = Form(None),
-    street_hints: Optional[str] = Form(None),
-    notes: Optional[str] = Form(None),
+def _register_engineering_plan_files(
+    resolved_session_id: str,
+    files: List[Tuple[str, bytes]],
+    *,
+    plan_date: Optional[str] = None,
+    print_numbers: Optional[str] = None,
+    sheet_numbers: Optional[str] = None,
+    street_hints: Optional[str] = None,
+    notes: Optional[str] = None,
 ) -> JSONResponse:
-    # Engineering plans must attach to the ACTIVE workspace session. Resolve
-    # from the form field, then the URL query param (the query param survives
-    # the direct-to-Render multipart path where the form field can be lost).
-    # Never mint a new session here — minting orphans the plan onto a throwaway
-    # session, the binding bug where the active workspace showed
-    # engineering_plans=0. See _resolve_engineering_plan_session_id.
-    _query_session_id = request.query_params.get("session_id")
-    resolved_session_id = _resolve_engineering_plan_session_id(session_id, _query_session_id)
-    print(
-        f"[ENG_PLAN_TRACE] upload_engineering_plans enter form_session_id={session_id!r} "
-        f"query_session_id={_query_session_id!r} resolved_session_id={resolved_session_id!r}",
-        flush=True,
-    )
-    if not resolved_session_id:
-        return _err(
-            "An active workspace session is required to attach engineering plans. "
-            "Open the project workspace (load the KMZ design) and try again.",
-            session_id=None,
-        )
+    """Persist already-read engineering-plan file bytes for a resolved session and
+    return the standard _ok() payload.
 
-    if not files:
-        return _err("At least one file is required.", session_id=resolved_session_id)
-    if len(files) > ENGINEERING_PLAN_MAX_FILES_PER_UPLOAD:
-        return _err(
-            f"Upload up to {ENGINEERING_PLAN_MAX_FILES_PER_UPLOAD} files at a time.",
-            session_id=resolved_session_id,
-        )
-
+    Shared by the normal multipart upload and the chunked-upload finalize path so
+    both produce byte-identical records + JSON. The caller is responsible for
+    session resolution and file-count validation; this helper owns the closeout
+    lock check, disk write, index update, and response shape. Unsupported
+    extensions are skipped silently (unchanged behavior).
+    """
     with _session_scope(resolved_session_id):
         if _is_closeout_locked():
             return _json_closeout_locked_response()
@@ -20420,14 +20413,13 @@ async def upload_engineering_plans(
     created: List[Dict[str, Any]] = []
     timestamp = int(datetime.utcnow().timestamp() * 1000)
 
-    for upload in files:
-        original_filename = _safe_filename(upload.filename or "plan")
+    for original_filename_raw, file_bytes in files:
+        original_filename = _safe_filename(original_filename_raw or "plan")
         extension = Path(original_filename).suffix.lower()
 
         if extension not in ENGINEERING_PLAN_ALLOWED_EXTENSIONS:
             continue  # skip unsupported files silently
 
-        file_bytes = await upload.read()
         size_bytes = len(file_bytes)
 
         plan_id = hashlib.sha256(
@@ -20483,6 +20475,213 @@ async def upload_engineering_plans(
         uploaded=created,
         engineering_plans=all_session_plans,
     )
+
+
+@protected_router.post("/api/upload-engineering-plans")
+async def upload_engineering_plans(
+    request: Request,
+    files: List[UploadFile] = File(...),
+    session_id: Optional[str] = Form(None),
+    plan_date: Optional[str] = Form(None),
+    print_numbers: Optional[str] = Form(None),
+    sheet_numbers: Optional[str] = Form(None),
+    street_hints: Optional[str] = Form(None),
+    notes: Optional[str] = Form(None),
+) -> JSONResponse:
+    # Engineering plans must attach to the ACTIVE workspace session. Resolve
+    # from the form field, then the URL query param (the query param survives
+    # the direct-to-Render multipart path where the form field can be lost).
+    # Never mint a new session here — minting orphans the plan onto a throwaway
+    # session, the binding bug where the active workspace showed
+    # engineering_plans=0. See _resolve_engineering_plan_session_id.
+    _query_session_id = request.query_params.get("session_id")
+    resolved_session_id = _resolve_engineering_plan_session_id(session_id, _query_session_id)
+    print(
+        f"[ENG_PLAN_TRACE] upload_engineering_plans enter form_session_id={session_id!r} "
+        f"query_session_id={_query_session_id!r} resolved_session_id={resolved_session_id!r}",
+        flush=True,
+    )
+    if not resolved_session_id:
+        return _err(
+            "An active workspace session is required to attach engineering plans. "
+            "Open the project workspace (load the KMZ design) and try again.",
+            session_id=None,
+        )
+
+    if not files:
+        return _err("At least one file is required.", session_id=resolved_session_id)
+    if len(files) > ENGINEERING_PLAN_MAX_FILES_PER_UPLOAD:
+        return _err(
+            f"Upload up to {ENGINEERING_PLAN_MAX_FILES_PER_UPLOAD} files at a time.",
+            session_id=resolved_session_id,
+        )
+
+    with _session_scope(resolved_session_id):
+        if _is_closeout_locked():
+            return _json_closeout_locked_response()
+
+    # Read each supported UploadFile into memory, then hand off to the shared
+    # registration helper (also used by the chunked-upload finalize path). The
+    # extension filter mirrors the helper so unsupported files are skipped before
+    # being read into memory.
+    read_files: List[Tuple[str, bytes]] = []
+    for upload in files:
+        original_filename = upload.filename or "plan"
+        extension = Path(_safe_filename(original_filename)).suffix.lower()
+        if extension not in ENGINEERING_PLAN_ALLOWED_EXTENSIONS:
+            continue  # skip unsupported files silently
+        read_files.append((original_filename, await upload.read()))
+
+    return _register_engineering_plan_files(
+        resolved_session_id,
+        read_files,
+        plan_date=plan_date,
+        print_numbers=print_numbers,
+        sheet_numbers=sheet_numbers,
+        street_hints=street_hints,
+        notes=notes,
+    )
+
+
+@protected_router.post("/api/upload-engineering-plans/chunk")
+async def upload_engineering_plans_chunk(
+    request: Request,
+    chunk: UploadFile = File(...),
+    upload_id: str = Form(...),
+    chunk_index: int = Form(...),
+    total_chunks: int = Form(...),
+    file_name: str = Form(...),
+    session_id: Optional[str] = Form(None),
+    plan_date: Optional[str] = Form(None),
+    print_numbers: Optional[str] = Form(None),
+    sheet_numbers: Optional[str] = Form(None),
+    street_hints: Optional[str] = Form(None),
+    notes: Optional[str] = Form(None),
+) -> JSONResponse:
+    """Chunked same-origin upload for large engineering plans (LP.1).
+
+    Large PDFs (e.g. the ~13 MB Brenham plan set) exceed the Vercel ~4.5 MB
+    serverless body ceiling and cannot traverse the same-origin proxy in one
+    POST. The browser slices the file into sub-ceiling chunks and posts each here
+    via the same-origin proxy (no CORS, no allowlist). Chunks are staged on disk
+    keyed by (session, upload_id); on the final chunk we reassemble in index
+    order and register through the SAME path as a normal upload. Tenant/session
+    isolation and auth are identical to /api/upload-engineering-plans (same
+    protected_router dependency + non-minting session resolver).
+    """
+    _query_session_id = request.query_params.get("session_id")
+    resolved_session_id = _resolve_engineering_plan_session_id(session_id, _query_session_id)
+    if not resolved_session_id:
+        return _err(
+            "An active workspace session is required to attach engineering plans. "
+            "Open the project workspace (load the KMZ design) and try again.",
+            status_code=400,
+            session_id=None,
+        )
+
+    # Refuse before staging any bytes if the workspace is closeout-locked.
+    with _session_scope(resolved_session_id):
+        if _is_closeout_locked():
+            return _json_closeout_locked_response()
+
+    # ── validate chunk metadata ──
+    # upload_id is client-supplied and used to build the on-disk staging path, so
+    # restrict it to a safe charset (no '/', '\\', '..') to prevent traversal.
+    safe_upload_id = _safe_filename(upload_id)
+    if (
+        not safe_upload_id
+        or len(safe_upload_id) > 128
+        or not all(c.isalnum() or c in "-_" for c in safe_upload_id)
+    ):
+        return _err(
+            "upload_id must be 1-128 characters of letters, digits, '-' or '_'.",
+            status_code=400,
+            session_id=resolved_session_id,
+        )
+    if not isinstance(total_chunks, int) or total_chunks < 1 or total_chunks > ENGINEERING_PLAN_CHUNK_MAX_COUNT:
+        return _err(
+            f"total_chunks must be between 1 and {ENGINEERING_PLAN_CHUNK_MAX_COUNT}.",
+            status_code=400,
+            session_id=resolved_session_id,
+        )
+    if not isinstance(chunk_index, int) or chunk_index < 0 or chunk_index >= total_chunks:
+        return _err(
+            f"chunk_index must be in [0, {total_chunks - 1}].",
+            status_code=400,
+            session_id=resolved_session_id,
+        )
+
+    extension = Path(_safe_filename(file_name or "plan")).suffix.lower()
+    if extension not in ENGINEERING_PLAN_ALLOWED_EXTENSIONS:
+        return _err(
+            f"Unsupported file type {extension or '(none)'!r}. Allowed: "
+            f"{', '.join(sorted(ENGINEERING_PLAN_ALLOWED_EXTENSIONS))}.",
+            status_code=400,
+            session_id=resolved_session_id,
+        )
+
+    chunk_bytes = await chunk.read()
+    if len(chunk_bytes) > ENGINEERING_PLAN_CHUNK_MAX_BYTES:
+        return _err(
+            f"Chunk exceeds the maximum size "
+            f"({ENGINEERING_PLAN_CHUNK_MAX_BYTES // (1024 * 1024)} MB).",
+            status_code=400,
+            session_id=resolved_session_id,
+        )
+
+    # ── stage chunk on disk: <chunk_root>/<session>/<upload_id>/<index>.part ──
+    staging_dir = (
+        ENGINEERING_PLAN_CHUNK_ROOT
+        / _safe_filename(resolved_session_id)
+        / safe_upload_id
+    )
+    staging_dir.mkdir(parents=True, exist_ok=True)
+    (staging_dir / f"{chunk_index:06d}.part").write_bytes(chunk_bytes)
+
+    # ── not all chunks present yet: ack this chunk and wait for the rest ──
+    received = sorted(staging_dir.glob("*.part"))
+    if len(received) < total_chunks:
+        return _ok(
+            session_id=resolved_session_id,
+            phase="uploading",
+            upload_id=safe_upload_id,
+            received_chunks=len(received),
+            total_chunks=total_chunks,
+            message=f"Received chunk {len(received)}/{total_chunks}.",
+        )
+
+    # ── all chunks present: reassemble in index order, enforce the total cap,
+    #    register through the shared path, then always clean up staging. ──
+    try:
+        assembled = bytearray()
+        for i in range(total_chunks):
+            part_path = staging_dir / f"{i:06d}.part"
+            if not part_path.exists():
+                return _err(
+                    f"Missing chunk {i} during reassembly; please re-upload the file.",
+                    status_code=409,
+                    session_id=resolved_session_id,
+                )
+            assembled.extend(part_path.read_bytes())
+            if len(assembled) > ENGINEERING_PLAN_UPLOAD_MAX_BYTES:
+                return _err(
+                    f"Assembled file exceeds the maximum size "
+                    f"({ENGINEERING_PLAN_UPLOAD_MAX_BYTES // (1024 * 1024)} MB).",
+                    status_code=400,
+                    session_id=resolved_session_id,
+                )
+        return _register_engineering_plan_files(
+            resolved_session_id,
+            [(file_name, bytes(assembled))],
+            plan_date=plan_date,
+            print_numbers=print_numbers,
+            sheet_numbers=sheet_numbers,
+            street_hints=street_hints,
+            notes=notes,
+        )
+    finally:
+        # Best-effort staging cleanup whether or not registration succeeded.
+        shutil.rmtree(staging_dir, ignore_errors=True)
 
 
 @protected_router.get("/api/engineering-plans")
