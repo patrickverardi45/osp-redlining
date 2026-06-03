@@ -164,11 +164,52 @@ def _init_session_db():
     except Exception as e:
         logging.warning(f"Failed to initialize session DB: {e}")
 
+# Instrumentation: when a persisted session JSON exceeds this threshold, log a
+# WARNING with the total size and the largest top-level keys. Zero overhead on
+# the common (small) path — per-key sizes are only computed once already over the
+# threshold. Tune via TRUELINE_SESSION_SIZE_WARN_BYTES; set to 0 to silence.
+try:
+    SESSION_SIZE_WARN_BYTES = int(os.getenv("TRUELINE_SESSION_SIZE_WARN_BYTES", str(3 * 1024 * 1024)))
+except (TypeError, ValueError):
+    SESSION_SIZE_WARN_BYTES = 3 * 1024 * 1024
+
+
+def _log_session_size_if_large(session_id: str, session_data: Dict[str, Any], session_json: str) -> None:
+    """Emit a WARNING with top-level key byte sizes when a session blob is large.
+
+    Diagnostic only; never raises. Lets prod logs pinpoint the exact bloating
+    field(s) the moment a session crosses the threshold (e.g. route_match_candidates,
+    pipeline_diag, kmz_semantic) without needing a repro.
+    """
+    try:
+        if SESSION_SIZE_WARN_BYTES <= 0:
+            return
+        total = len(session_json)
+        if total < SESSION_SIZE_WARN_BYTES:
+            return
+        sizes = sorted(
+            ((k, len(json.dumps(v, default=str))) for k, v in session_data.items()),
+            key=lambda kv: kv[1],
+            reverse=True,
+        )[:8]
+        top = ", ".join(f"{k}={round(v / 1024)}KB" for k, v in sizes)
+        logging.warning(
+            "[session_size] sid=%s total=%.2fMB threshold=%dMB top_keys: %s",
+            str(session_id)[:16],
+            total / 1024 / 1024,
+            SESSION_SIZE_WARN_BYTES // (1024 * 1024),
+            top,
+        )
+    except Exception:
+        pass
+
+
 def _persist_session(session_id: str, session_data: Dict[str, Any]):
     """Persist session snapshot to SQLite. Never blocks operational flow."""
     _pa_save_t0 = time.perf_counter() if _perf_audit_enabled() else 0.0
     try:
         session_json = json.dumps(session_data)
+        _log_session_size_if_large(session_id, session_data, session_json)
         updated_at = datetime.now(timezone.utc).isoformat()
         with sqlite3.connect(SESSION_DB_PATH) as conn:
             conn.execute("""
@@ -759,8 +800,15 @@ def _get_session(session_id: str) -> Dict[str, Any]:
 
 
 class _session_scope:
-    def __init__(self, session_id: str) -> None:
+    def __init__(self, session_id: str, *, readonly: bool = False) -> None:
         self.session_id = session_id
+        # readonly=True skips the on-exit snapshot copy + SQLite persist. Use on
+        # read-only routes (e.g. /api/current-state) so a poll does not
+        # re-serialize and rewrite the entire multi-MB session JSON on every
+        # request — a major source of memory/IO churn under polling. Tenant
+        # enforcement and any first-time tenant stamp still run in __enter__ and
+        # remain on the in-memory session object; only the disk write is skipped.
+        self.readonly = readonly
 
     def __enter__(self) -> str:
         _SESSION_LOCK.acquire()
@@ -790,11 +838,19 @@ class _session_scope:
 
     def __exit__(self, exc_type, exc_value, traceback) -> None:
         try:
-            # Update metadata before saving.
+            if self.readonly:
+                # No mutation intended on this scope: skip the snapshot copy and
+                # the full-session json.dumps + SQLite write entirely. Any tenant
+                # stamp made in __enter__ is already on the in-memory session
+                # object (_SESSIONS) and will persist on the next writing scope.
+                return
+            # Update metadata before saving. Build ONE snapshot and reuse it for
+            # both the in-memory cache and the disk persist (previously two
+            # separate dict(STATE) copies of a multi-MB blob per write).
             STATE["updated_at"] = datetime.now(timezone.utc).isoformat()
-            _SESSIONS[self.session_id] = dict(STATE)
-            # Persist latest snapshot to disk.
-            _persist_session(self.session_id, dict(STATE))
+            snapshot = dict(STATE)
+            _SESSIONS[self.session_id] = snapshot
+            _persist_session(self.session_id, snapshot)
         finally:
             _SESSION_LOCK.release()
 
@@ -15030,7 +15086,10 @@ def current_state(session_id: Optional[str] = None) -> JSONResponse:
         f"(if query was empty/omitted, resolved is a NEW uuid each request)",
         flush=True,
     )
-    with _session_scope(resolved_session_id):
+    # READ-ONLY scope: current-state is polled frequently; persisting the full
+    # multi-MB session JSON on every poll is pure memory/IO churn. readonly=True
+    # keeps tenant enforcement (in __enter__) but skips the on-exit save.
+    with _session_scope(resolved_session_id, readonly=True):
         _sem = STATE.get("kmz_semantic")
         _fc = (
             len(_sem["features"])
@@ -19509,7 +19568,9 @@ def get_engineering_kmz_payload(session_id: Optional[str] = None) -> JSONRespons
     it without requiring TRUELINE_OBS_TOKEN.  Read-only; no STATE writes.
     """
     resolved_session_id = _resolve_session_id(session_id)
-    with _session_scope(resolved_session_id):
+    # READ-ONLY scope (this endpoint declares "no STATE writes"): skip the on-exit
+    # full-session persist to avoid needless multi-MB serialization on a read.
+    with _session_scope(resolved_session_id, readonly=True):
         _sem = STATE.get("kmz_semantic")
         return JSONResponse(_build_kmz_render_payload(
             _sem if isinstance(_sem, dict) else None
@@ -20580,7 +20641,11 @@ async def upload_engineering_plans_chunk(
         )
 
     # Refuse before staging any bytes if the workspace is closeout-locked.
-    with _session_scope(resolved_session_id):
+    # READ-ONLY scope: this runs on EVERY chunk and only reads the closeout flag
+    # + enforces tenant ownership (in __enter__); it must not re-persist the full
+    # multi-MB session JSON per chunk. The final-chunk registration path does a
+    # normal writing scope via _register_engineering_plan_files.
+    with _session_scope(resolved_session_id, readonly=True):
         if _is_closeout_locked():
             return _json_closeout_locked_response()
 

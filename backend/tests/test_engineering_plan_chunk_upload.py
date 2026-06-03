@@ -31,13 +31,25 @@ import unittest
 os.environ.setdefault("TRUELINE_JWT_SECRET", "lp1-chunk-test-secret")
 os.environ.setdefault("TRUELINE_AUTH_JWT_SECRET", "lp1-chunk-test-auth-secret")
 os.environ.setdefault("TRUELINE_ALLOWED_ORIGINS", "http://localhost:3000")
-# Redirect ALL upload storage to a throwaway dir BEFORE importing main — the
-# storage roots (UPLOADS_DIR / ENGINEERING_PLAN_ROOT / ENGINEERING_PLAN_CHUNK_ROOT)
-# are computed at import time from OSP_UPLOAD_DIR.
 os.environ["OSP_UPLOAD_DIR"] = tempfile.mkdtemp(prefix="lp1_chunk_uploads_")
+
+import pathlib  # noqa: E402
 
 from starlette.datastructures import UploadFile  # noqa: E402 — after env defaults
 from backend import main as M  # noqa: E402 — after env defaults
+
+# Hard-isolate storage from the real backend/uploads REGARDLESS of test import
+# order. The storage roots are computed at import time, and another test module
+# may import backend.main first (binding the real uploads dir before our env var
+# takes effect), so override the module globals to a private temp dir here and
+# (re)create the session DB there.
+_TMP_ROOT = pathlib.Path(tempfile.mkdtemp(prefix="lp1_chunk_iso_"))
+M.UPLOADS_DIR = _TMP_ROOT
+M.SESSION_DB_PATH = _TMP_ROOT / "session_store.db"
+M.ENGINEERING_PLAN_ROOT = _TMP_ROOT / "engineering_plans"
+M.ENGINEERING_PLAN_INDEX_PATH = M.ENGINEERING_PLAN_ROOT / "index.json"
+M.ENGINEERING_PLAN_CHUNK_ROOT = M.ENGINEERING_PLAN_ROOT / "_chunks"
+M._init_session_db()
 
 
 class _FakeReq:
