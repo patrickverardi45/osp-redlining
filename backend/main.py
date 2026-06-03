@@ -14581,16 +14581,28 @@ def _summary_payload(include_debug: bool = False) -> Dict[str, Any]:
 
 @protected_router.post("/api/upload-design")
 async def upload_design(
+    request: Request,
     file: UploadFile = File(...),
     session_id: Optional[str] = Form(None),
     project_id: Optional[str] = Form(None),
 ) -> JSONResponse:
-    resolved_session_id = _resolve_session_id(session_id)
+    # Session-binding hotfix: bind the design/KMZ to the ACTIVE workspace session — form field,
+    # then URL query param — and NEVER mint a throwaway session. Minting orphaned route_catalog
+    # off the active project (e.g. beta-test), leaving the workspace with "No route catalog".
+    # Same non-minting resolver the engineering-plan upload uses.
+    _query_session_id = request.query_params.get("session_id")
+    resolved_session_id = _resolve_engineering_plan_session_id(session_id, _query_session_id)
     print(
         f"[KMZ_SEM_TRACE] upload_design enter form_session_id={session_id!r} "
-        f"resolved_session_id={resolved_session_id}",
+        f"query_session_id={_query_session_id!r} resolved_session_id={resolved_session_id!r}",
         flush=True,
     )
+    if not resolved_session_id:
+        return _err(
+            "An active workspace session is required to attach the design/KMZ. "
+            "Open the project workspace and try again.",
+            session_id=None,
+        )
     try:
         with _perf_audit_timer(
             "kmz.file_read",
@@ -14777,10 +14789,21 @@ async def select_active_route(
 
 @protected_router.post("/api/upload-structured-bore-files")
 async def upload_structured_bore_files(
+    request: Request,
     files: List[UploadFile] = File(...),
     session_id: Optional[str] = Form(None),
 ) -> JSONResponse:
-    resolved_session_id = _resolve_session_id(session_id)
+    # Session-binding hotfix: bind bore-log files to the ACTIVE workspace session — form field,
+    # then URL query param — and NEVER mint a throwaway session. Minting orphaned committed_rows
+    # off the active project (e.g. beta-test). Same non-minting resolver as engineering plans.
+    _query_session_id = request.query_params.get("session_id")
+    resolved_session_id = _resolve_engineering_plan_session_id(session_id, _query_session_id)
+    if not resolved_session_id:
+        return _err(
+            "An active workspace session is required to attach bore-log files. "
+            "Open the project workspace and try again.",
+            session_id=None,
+        )
     try:
         prepared_files: List[Tuple[str, bytes]] = []
         latest_name: Optional[str] = None
