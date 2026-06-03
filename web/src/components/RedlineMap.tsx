@@ -4934,8 +4934,9 @@ ${redlinePlacemarks.length > 0 ? buildEngFolder("Redlines", redlinePlacemarks, 1
 
           <Section
             title="1. Upload"
-            subtitle="KMZ design, field data, and optional reference plan evidence uploads."
+            subtitle="Reference plan PDFs, KMZ design, and field data uploads."
             style={{ display: activeWorkspaceTab === "workspace" ? "block" : "none" }}
+            contentStyle={{ display: "flex", flexDirection: "column", gap: 16 }}
           >
             <div
               style={{
@@ -4950,9 +4951,9 @@ ${redlinePlacemarks.length > 0 ? buildEngFolder("Redlines", redlinePlacemarks, 1
               }}
             >
               <span style={{ fontWeight: 800, color: "#0f172a" }}>Workflow: </span>
-                    Upload KMZ and field data first. Reference plans are optional closeout evidence and do not drive map generation.
+                    Shown in order: reference plan PDFs, KMZ design, then field data. Reference plans are optional closeout evidence and do not drive map generation.
             </div>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 16, alignItems: "start" }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 16, alignItems: "start", order: 2 }}>
               <label style={uploadCardStyle(busy || closeoutLocked)}>
                 <input
                   type="file"
@@ -5002,7 +5003,7 @@ ${redlinePlacemarks.length > 0 ? buildEngFolder("Redlines", redlinePlacemarks, 1
               </div>
             </div>
 
-            <div style={{ border: "1px solid #dbe4ee", borderRadius: 16, background: "#fbfdff", marginTop: 16, overflow: "hidden" }}>
+            <div style={{ border: "1px solid #dbe4ee", borderRadius: 16, background: "#fbfdff", marginTop: 16, overflow: "hidden", order: 1 }}>
               <button
                 type="button"
                 onClick={() => setEngineeringPlansExpanded((prev) => !prev)}

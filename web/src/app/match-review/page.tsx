@@ -22,9 +22,22 @@ function MatchReviewInner() {
   // Carry the same context (session_id / projectId) to the sibling review surface.
   const query = params.toString();
   const trustLedgerHref = query ? `/trust-ledger?${query}` : "/trust-ledger";
+  // Back-to-Workspace deep link. Only when projectId is known (never guessed);
+  // preserves session_id so the workspace rebinds to the same session. When
+  // projectId is absent the header "← Projects" link remains the fallback.
+  const workspaceHref = projectId
+    ? sessionId
+      ? `/projects/${encodeURIComponent(projectId)}?session_id=${encodeURIComponent(sessionId)}`
+      : `/projects/${encodeURIComponent(projectId)}`
+    : null;
   return (
     <>
-      <div style={{ marginBottom: 16 }}>
+      <div style={{ marginBottom: 16, display: "flex", gap: 8, flexWrap: "wrap" }}>
+        {workspaceHref ? (
+          <Link href={workspaceHref} className="tl-btn tl-btn-primary" style={{ fontSize: 12 }}>
+            ← Back to Workspace
+          </Link>
+        ) : null}
         <Link href={trustLedgerHref} className="tl-btn tl-btn-ghost" style={{ fontSize: 12 }}>
           Trust Ledger →
         </Link>
