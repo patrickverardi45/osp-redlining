@@ -61,7 +61,7 @@ def render_redline_overlay(page: "fitz.Page", elements: List[dict],
                            connector_points_display: List[List[float]], out_path: str,
                            zoom: float = 3.0, pad: float = 130.0,
                            caption: Optional[str] = None,
-                           accent=(230, 140, 20), dashed: bool = True,
+                           accent=(220, 25, 25), dashed: bool = True,
                            grey=(110, 110, 110)) -> Optional[str]:
     """Render a de-rotated overlay PNG: highlight each authored element bbox and
     draw the connector (DASHED for review candidates, SOLID for AP_ANCHORED) in

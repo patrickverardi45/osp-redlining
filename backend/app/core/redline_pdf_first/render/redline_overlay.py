@@ -249,7 +249,7 @@ def render_and_attach_redline(result, pdf_path: str, out_dir: str = DEFAULT_CARD
         for seg in segs:
             gs = seg.placement.geometry_status
             if gs == GEOMETRY_STATUS_FRAME_WITH_DROP_TERMINAL_CANDIDATE:
-                spec, accent, dashed, tag = build_pdf_redline_spec(seg), (230, 140, 20), True, "REVIEW DROP_TERMINAL_CANDIDATE"
+                spec, accent, dashed, tag = build_pdf_redline_spec(seg), (220, 25, 25), True, "REVIEW DROP_TERMINAL_CANDIDATE"
             else:  # AP_ANCHORED
                 spec, accent, dashed, tag = ap_anchored_spec(seg, doc, sheet_offset), (40, 150, 40), False, "AP_ANCHORED"
             if not spec:
@@ -319,7 +319,7 @@ def render_and_attach_path_trace(result, pdf_path: str, out_dir: str = DEFAULT_C
             reconstructed = status in (PDF_PATH_TRACE_READY_DASH_CHAINED,
                                        PDF_PATH_TRACE_REVIEW_DASH_CHAINED)
             ready = status in (PDF_PATH_TRACE_READY, PDF_PATH_TRACE_READY_DASH_CHAINED)
-            accent = (40, 150, 40) if ready else (230, 140, 20)   # green READY / amber REVIEW
+            accent = (40, 150, 40) if ready else (220, 25, 25)   # green READY / RED review (TrueLine redline)
             fn = _safe(f"{seg.segment_id}_pathtrace_s{sheet}.png")
             mark = "DASH-RECONSTRUCTED" if reconstructed else "authored run trace"
             cap = f"{seg.segment_id} {status} ({mark})"
