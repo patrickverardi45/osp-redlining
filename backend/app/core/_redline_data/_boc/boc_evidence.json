@@ -1,0 +1,19 @@
+{
+  "schema": "boc-offset-placement-proof-1",
+  "note": "OWNER-REVIEWED BOC-offset placement evidence. Every bore log carries a per-station BOC (back-of-curb) offset in the xlsx 'boc' column; the file-fed engine path (read_borelog) DROPS it, so station/footage geometry can win on the wrong sheet. A placement candidate must carry, on its sheet, the authored endpoint STATION+STRUCTURE and a co-located authored '<boc>'' offset callout; a station/footage-only candidate is BLOCKED. DEFAULT-OFF: engine truth path untouched; consulted only by prove_log56_boc.py. Exact authored-text only — never nearest/snapping/scoring/span.",
+  "logs": [
+    {
+      "bore_id": "bore_log56",
+      "endpoint_station": "2+76",
+      "endpoint_structure": "INSTALLER HH",
+      "boc_ft": 11,
+      "candidates": [
+        {"sheet": 21, "expect": "BOC_CONTEXT_CORROBORATED", "role": "authored endpoint (owner visual)"},
+        {"sheet": 2,  "expect": "BLOCKED_NO_AUTHORED_ENDPOINT_STRUCTURE", "role": "engine geometry/footage A-grade (suspect)"}
+      ],
+      "approved_by": "owner-directed (BOC evidence model)",
+      "reviewed_at": "2026-06-02",
+      "evidence": "Source bore_log56.xlsx 'boc' column = 11/12/12/11/11/11/11 across stations 0+00..2+96; ENDPOINT row (2+96 -> corrected 2+76) boc = 11 ft. read_borelog drops 'boc', so the engine placed log56 by station/footage on sheet 2 (A path_trace) where there is NO authored 'STA 2+76' label and NO 2+76 INSTALLER HH (sheet-2 installer HHs are STA 0+46 / STA 1+71). Sheet 21 carries the exact authored 'STA 2+76 13\"X24\"X24\" INSTALLER HH' with two authored '11'' offset callouts co-located (~91 / ~113 px) matching boc=11. BOC offset + endpoint structure disambiguate to sheet 21; the sheet-2 candidate wins only by geometry and is blocked. No nearest/snapping/scoring; exact text + fixed co-location gate."
+    }
+  ]
+}

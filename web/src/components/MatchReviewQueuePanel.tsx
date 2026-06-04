@@ -13,6 +13,7 @@ import { apiFetch } from "@/lib/apiFetch";
 import { peekSessionId } from "@/lib/session";
 import PlanSheetGraphEvidenceBadge from "@/components/PlanSheetGraphEvidenceBadge";
 import MatchReviewEvidence, { getPdfRouteVerdict } from "@/components/MatchReviewEvidence";
+import PdfFirstEvidencePanel from "@/components/PdfFirstEvidencePanel";
 import type {
   MatchReviewQueueResponse,
   MatchReviewRow,
@@ -220,6 +221,12 @@ export default function MatchReviewQueuePanel({
 
       {sid && !error && (
         <>
+          {data?.pdf_first_evidence && (
+            <PdfFirstEvidencePanel
+              evidence={data.pdf_first_evidence}
+              sessionId={data.session_id ?? sid}
+            />
+          )}
           {withEvidence > 0 ? (
             <p className="tl-subtle" style={{ margin: "0 0 12px", fontSize: 13 }}>
               <strong style={{ color: "var(--tl-text)" }}>

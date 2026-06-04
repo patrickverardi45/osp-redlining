@@ -1,0 +1,76 @@
+{
+  "schema": "pdf-first-station-corrections-1",
+  "category": "SOURCE_STATION_OCR_CORRECTION",
+  "note": "Explicit, OWNER-APPROVED OCR/import station-text corrections. NON-MUTATING: the original .xlsx is never altered; each correction is applied to a derived copy under _corrected_logs/ and fed to the engine through the normal file-fed path. NEVER auto-generated, NEVER a guessed value, NEVER a blanket digit replacement. Each entry is per-log, per-cell, owner-approved, and MUST carry reviewer (approved_by), reason, reviewed_at (timestamp) + evidence. A station_map key that does not match the current extracted value is REFUSED (correction_lib strict=True), so a stale/typo'd correction can never silently proceed. Adding a log here + rerunning build_coverage.py (or apply_and_rerun.py) is the only way a correction takes effect.",
+  "corrections": [
+    {
+      "log_id": "bore_log16",
+      "source_date": "2025-12-11",
+      "approved_by": "owner",
+      "reviewed_at": "2026-06-01",
+      "reason": "SOURCE_STATION_OCR_CORRECTION",
+      "evidence": "Owner correction 2026-06-01: for bore logs dated 12/11/25, OCR/import misread a handwritten leading '3' as '5' (31+00 was read as 51+00 - 'the 5s are actually 3s'). bore_log16 (12/11/25, crew tx1-1, print 8,9,10) is entirely 5x+xx stations in a monotonic 50-ft cadence; correcting the leading 5->3 yields a monotonic 31+00->39+50 bore that falls within the authored STA-box bands on sheets 8 (30+64-33+93), 9 (33+93-38+90) and 10 (38+90-45+33). The uncorrected 51+00->59+50 (5100-5950 ft) lay ABOVE the highest authored station anywhere in the plan (45+33) -> NO_AUTHORED_BOX_MATCH_FOR_BORE_SPAN.",
+      "station_map": {
+        "51+00": "31+00", "51+50": "31+50", "52+00": "32+00", "52+50": "32+50",
+        "53+00": "33+00", "53+50": "33+50", "54+00": "34+00", "54+50": "34+50",
+        "55+00": "35+00", "55+50": "35+50", "56+00": "36+00", "56+50": "36+50",
+        "57+00": "37+00", "57+50": "37+50", "58+00": "38+00", "58+50": "38+50",
+        "59+00": "39+00", "59+19": "39+19", "59+50": "39+50"
+      }
+    },
+    {
+      "log_id": "bore_log12",
+      "source_date": "2025-12-02",
+      "approved_by": "owner-directed re-read (Claude vision)",
+      "reviewed_at": "2026-06-02",
+      "reason": "SOURCE_STATION_OCR_CORRECTION",
+      "evidence": "Owner-directed Claude-vision re-read of the handwritten source '2025-12-02_204203 - Jimenez Undergound Office.jpeg' (GAC BORE LOG, Print #3, Crew tx1-1). OCR/import errors: (a) attached the WRONG photo/date (the 12/08 Print 7,15 form) to log12; (b) misread the final endpoint as the unclear '10+39'/'10+29'; (c) recorded date 12/08 instead of 12/02. Claude read: ONE continuous bore wrapped across 2 columns, each written top->bottom DECREASING (col1 9+50->5+50, col2 10+92->9+50); the 9+50 at col1-top duplicates col2-bottom = the column-wrap join (correctly deduped). True endpoint = 10+92 (col2 top). NOTE: 10+92 is a Claude vision read of unclear handwriting -- PENDING OWNER CONFIRM.",
+      "reviewed_record": {
+        "date": "2025-12-02",
+        "print": "3",
+        "source_photo": "2025-12-02_204203 - Jimenez Undergound Office.jpeg",
+        "segmentation": "ONE_CONTINUOUS_BORE (not separate logs; 2-column wrap; 9+50 join deduped)",
+        "read_order": "each column written top-to-bottom DECREASING; continuous order = bottom-to-top within col1 then col2",
+        "station_sequence": ["5+50","6+00","6+50","7+00","7+50","8+00","8+50","9+00","9+50","10+00","10+50","10+92"],
+        "span_ft": 542
+      },
+      "station_map": { "10+39": "10+92" }
+    },
+    {
+      "log_id": "bore_log43",
+      "source_date": "2025-12-12",
+      "approved_by": "owner-directed (correction-rerun)",
+      "reviewed_at": "2026-06-02",
+      "reason": "SOURCE_STATION_OCR_CORRECTION",
+      "evidence": "Owner-directed 2026-06-02: bore_log43 (12/12/25, crew tx1-1, print 10) body ascends 40+00->43+00 in ~50ft cadence; the continuation endpoint was OCR-misread '45+86' for '43+86' (handwritten 3 read as 5), giving span end 43+86 (43+00->43+86 = 86ft continuation, inside the authored sheet-10 band 38+90->45+33). NOTE: a trailing row '59+19' (5919 ft) is a MIS-MERGED contaminant from another log, far above the highest authored station (45+33); it cannot be repaired by a per-cell OCR remap (needs a whole-row drop, not a value remap) and is excluded via an explicit owner-reviewed row_exclusions entry. Endpoint cell correction + contaminant-row exclusion; owner's 39+79 start is NOT present in this source (body starts 40+00).",
+      "station_map": { "45+86": "43+86" },
+      "row_exclusions": [
+        {
+          "station": "59+19",
+          "reason": "MIS_MERGED_CONTAMINANT_ROW",
+          "approved_by": "owner-directed (correction-rerun)",
+          "reviewed_at": "2026-06-02",
+          "evidence": "Owner-reviewed 2026-06-02: source row station '59+19' (5919 ft) is a mis-merged contaminant from another bore log -- it lies far above the highest authored station in the plan (45+33) and poisons log43's span (NO_AUTHORED_BOX_MATCH_FOR_BORE_SPAN). It is NOT a value-OCR error (no remap is correct), so the entire row is superseded/excluded from the derived corrected copy. Exact source-station match required; original .xlsx untouched."
+        }
+      ]
+    },
+    {
+      "log_id": "bore_log56",
+      "source_date": null,
+      "approved_by": "owner-directed (endpoint re-read)",
+      "reviewed_at": "2026-06-02",
+      "reason": "SOURCE_STATION_OCR_CORRECTION",
+      "evidence": "Owner-directed re-read 2026-06-02: bore_log56 endpoint OCR-misread a handwritten '7' as '9' -> recorded '2+96' for true '2+76'. Source sequence is a clean 50-ft cadence (0+00,0+50,1+00,1+50,2+00,2+50,<end>); the recorded end '2+96' has ZERO PDF hits on any listed sheet (5,6,17,21,2), while '2+76' is authored on sheet 21 as 'STA 2+76 13\"X24\"X24\" INSTALLER HH'. Sheet 21 also carries authored station ticks at 0+00/1+00/2+00/2+76 ending at that installer HH -> the corrected endpoint lands on an authored structure, not a span guess. Per-cell endpoint correction only; original .xlsx untouched. Placement note: endpoint anchor is exact, but a resolver placement is DEFERRED pending owner confirmation of log56's local-0+00 START on sheet 21 (two resets present: STA 3+14=0+00 and STA 3+69=0+00) -- not chosen here, to avoid nearest/guess.",
+      "station_map": { "2+96": "2+76" }
+    },
+    {
+      "log_id": "bore_log58",
+      "source_date": null,
+      "approved_by": "owner-directed (endpoint re-read)",
+      "reviewed_at": "2026-06-02",
+      "reason": "SOURCE_STATION_OCR_CORRECTION",
+      "evidence": "Owner-directed re-read 2026-06-02: bore_log58 endpoint OCR/handwriting misread '2+56' for true '2+36' (span 256'->236', boc 7-8). Strict key-match confirmed (source cell row 7 = '2+56'). SOURCE correction ONLY -- it does NOT place log58: the station-frame-node model does not apply. No authored STA X=0+00 reset node on log58's corridor carries BOC=7/8 (the sheet-10 reset nodes are boc 10/12 or 2-5, belonging to other runs), and the corrected endpoint '2+36' is authored on sheet 13 (near SPLICE LOC 35), not at a bindable reset node. Corrected log58 stays E blocked (FRAME_ONLY on sheet 8) -- no false placement. Original .xlsx untouched.",
+      "station_map": { "2+56": "2+36" }
+    }
+  ]
+}

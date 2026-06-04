@@ -1,0 +1,241 @@
+{
+  "schema": "station-frame-nodes-1",
+  "default_off": true,
+  "note": "Exact authored STA X=0+00 local-frame nodes. A node may be a segment's start, end, shared_node, or unknown -- role is bound per bore segment, NEVER assumed from '=0+00'. Seed scope = log58 sheets.",
+  "scope_sheets": [
+    8,
+    10,
+    13
+  ],
+  "sibling_chains": {
+    "bore_log24": [
+      "bore_log57",
+      "bore_log58"
+    ]
+  },
+  "nodes": [
+    {
+      "sheet": 10,
+      "phys_sta": "0+55",
+      "structure": "INSTALLER HH",
+      "label": "STA 0+55=0+00 13\"X24\"X24\" INSTALLER HH",
+      "nearby_boc_ft": [
+        2,
+        10,
+        12
+      ],
+      "hh_hh_on_sheet": [
+        "HH - HH = 100'",
+        "HH - HH = 104'",
+        "HH - HH = 136'",
+        "HH - HH = 140'",
+        "HH - HH = 142'",
+        "HH - HH = 161'",
+        "HH - HH = 169'",
+        "HH - HH = 186'",
+        "HH - HH = 189'",
+        "HH - HH = 236'",
+        "HH - HH = 297'",
+        "HH - HH = 305'",
+        "HH - HH = 306'",
+        "HH - HH = 50'",
+        "HH - HH = 55'",
+        "HH - HH = 57'",
+        "HH - HH = 60'",
+        "HH - HH = 72'",
+        "HH - HH = 75'",
+        "HH - HH = 80'",
+        "HH - HH = 84'",
+        "HH - HH = 87'",
+        "HH - HH = 92'",
+        "HH - HH =312'"
+      ],
+      "matchlines_on_sheet": [
+        "MATCHLINE STA 1+39 - SEE SHEET 11",
+        "MATCHLINE STA 38+90/6+11 - SEE SHEET 9",
+        "MATCHLINE STA 1+91/1+92 - SEE SHEET 12",
+        "MATCHLINE STA 1+60/1+62 - SEE SHEET 13",
+        "MATCHLINE STA 1+67/1+66 - SEE SHEET 13",
+        "MATCHLINE STA 1+90/1+90 - SEE SHEET 12"
+      ]
+    },
+    {
+      "sheet": 10,
+      "phys_sta": "44+08",
+      "structure": "NEXTLINK HH",
+      "label": "STA 44+08=0+00 PLACE 24\"X34\"X24\" NEXTLINK HH",
+      "nearby_boc_ft": [
+        2,
+        4
+      ],
+      "hh_hh_on_sheet": [
+        "HH - HH = 100'",
+        "HH - HH = 104'",
+        "HH - HH = 136'",
+        "HH - HH = 140'",
+        "HH - HH = 142'",
+        "HH - HH = 161'",
+        "HH - HH = 169'",
+        "HH - HH = 186'",
+        "HH - HH = 189'",
+        "HH - HH = 236'",
+        "HH - HH = 297'",
+        "HH - HH = 305'",
+        "HH - HH = 306'",
+        "HH - HH = 50'",
+        "HH - HH = 55'",
+        "HH - HH = 57'",
+        "HH - HH = 60'",
+        "HH - HH = 72'",
+        "HH - HH = 75'",
+        "HH - HH = 80'",
+        "HH - HH = 84'",
+        "HH - HH = 87'",
+        "HH - HH = 92'",
+        "HH - HH =312'"
+      ],
+      "matchlines_on_sheet": [
+        "MATCHLINE STA 1+39 - SEE SHEET 11",
+        "MATCHLINE STA 38+90/6+11 - SEE SHEET 9",
+        "MATCHLINE STA 1+91/1+92 - SEE SHEET 12",
+        "MATCHLINE STA 1+60/1+62 - SEE SHEET 13",
+        "MATCHLINE STA 1+67/1+66 - SEE SHEET 13",
+        "MATCHLINE STA 1+90/1+90 - SEE SHEET 12"
+      ]
+    },
+    {
+      "sheet": 10,
+      "phys_sta": "45+33",
+      "structure": "NEXTLINK HH",
+      "label": "STA 45+33=0+00 PLACE 24\"X34\"X24\" NEXTLINK HH",
+      "nearby_boc_ft": [
+        2,
+        10,
+        12,
+        26
+      ],
+      "hh_hh_on_sheet": [
+        "HH - HH = 100'",
+        "HH - HH = 104'",
+        "HH - HH = 136'",
+        "HH - HH = 140'",
+        "HH - HH = 142'",
+        "HH - HH = 161'",
+        "HH - HH = 169'",
+        "HH - HH = 186'",
+        "HH - HH = 189'",
+        "HH - HH = 236'",
+        "HH - HH = 297'",
+        "HH - HH = 305'",
+        "HH - HH = 306'",
+        "HH - HH = 50'",
+        "HH - HH = 55'",
+        "HH - HH = 57'",
+        "HH - HH = 60'",
+        "HH - HH = 72'",
+        "HH - HH = 75'",
+        "HH - HH = 80'",
+        "HH - HH = 84'",
+        "HH - HH = 87'",
+        "HH - HH = 92'",
+        "HH - HH =312'"
+      ],
+      "matchlines_on_sheet": [
+        "MATCHLINE STA 1+39 - SEE SHEET 11",
+        "MATCHLINE STA 38+90/6+11 - SEE SHEET 9",
+        "MATCHLINE STA 1+91/1+92 - SEE SHEET 12",
+        "MATCHLINE STA 1+60/1+62 - SEE SHEET 13",
+        "MATCHLINE STA 1+67/1+66 - SEE SHEET 13",
+        "MATCHLINE STA 1+90/1+90 - SEE SHEET 12"
+      ]
+    },
+    {
+      "sheet": 10,
+      "phys_sta": "2+72",
+      "structure": "INSTALLER HH",
+      "label": "STA 2+72=0+00 13\"X24\"X24\" INSTALLER HH",
+      "nearby_boc_ft": [
+        2,
+        3,
+        5
+      ],
+      "hh_hh_on_sheet": [
+        "HH - HH = 100'",
+        "HH - HH = 104'",
+        "HH - HH = 136'",
+        "HH - HH = 140'",
+        "HH - HH = 142'",
+        "HH - HH = 161'",
+        "HH - HH = 169'",
+        "HH - HH = 186'",
+        "HH - HH = 189'",
+        "HH - HH = 236'",
+        "HH - HH = 297'",
+        "HH - HH = 305'",
+        "HH - HH = 306'",
+        "HH - HH = 50'",
+        "HH - HH = 55'",
+        "HH - HH = 57'",
+        "HH - HH = 60'",
+        "HH - HH = 72'",
+        "HH - HH = 75'",
+        "HH - HH = 80'",
+        "HH - HH = 84'",
+        "HH - HH = 87'",
+        "HH - HH = 92'",
+        "HH - HH =312'"
+      ],
+      "matchlines_on_sheet": [
+        "MATCHLINE STA 1+39 - SEE SHEET 11",
+        "MATCHLINE STA 38+90/6+11 - SEE SHEET 9",
+        "MATCHLINE STA 1+91/1+92 - SEE SHEET 12",
+        "MATCHLINE STA 1+60/1+62 - SEE SHEET 13",
+        "MATCHLINE STA 1+67/1+66 - SEE SHEET 13",
+        "MATCHLINE STA 1+90/1+90 - SEE SHEET 12"
+      ]
+    },
+    {
+      "sheet": 10,
+      "phys_sta": "2+22",
+      "structure": "INSTALLER HH",
+      "label": "STA 2+22=0+00 13\"X24\"X24\" INSTALLER HH",
+      "nearby_boc_ft": [
+        2
+      ],
+      "hh_hh_on_sheet": [
+        "HH - HH = 100'",
+        "HH - HH = 104'",
+        "HH - HH = 136'",
+        "HH - HH = 140'",
+        "HH - HH = 142'",
+        "HH - HH = 161'",
+        "HH - HH = 169'",
+        "HH - HH = 186'",
+        "HH - HH = 189'",
+        "HH - HH = 236'",
+        "HH - HH = 297'",
+        "HH - HH = 305'",
+        "HH - HH = 306'",
+        "HH - HH = 50'",
+        "HH - HH = 55'",
+        "HH - HH = 57'",
+        "HH - HH = 60'",
+        "HH - HH = 72'",
+        "HH - HH = 75'",
+        "HH - HH = 80'",
+        "HH - HH = 84'",
+        "HH - HH = 87'",
+        "HH - HH = 92'",
+        "HH - HH =312'"
+      ],
+      "matchlines_on_sheet": [
+        "MATCHLINE STA 1+39 - SEE SHEET 11",
+        "MATCHLINE STA 38+90/6+11 - SEE SHEET 9",
+        "MATCHLINE STA 1+91/1+92 - SEE SHEET 12",
+        "MATCHLINE STA 1+60/1+62 - SEE SHEET 13",
+        "MATCHLINE STA 1+67/1+66 - SEE SHEET 13",
+        "MATCHLINE STA 1+90/1+90 - SEE SHEET 12"
+      ]
+    }
+  ]
+}
