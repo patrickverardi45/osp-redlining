@@ -335,14 +335,17 @@ def _render_struct_connector(mr: Mapping[str, Any], res: Mapping[str, Any], doc:
 def _render_cross_sheet_seam_stitch(mr: Mapping[str, Any], res: Mapping[str, Any], doc: Any,
                                     sheet_offset: int, out_dir: str) -> Optional[Dict[str, Any]]:
     """Cross-sheet (matchline-seam) seam stitch — log56-only, default-OFF
-    (TRUELINE_CROSS_SHEET_SEAM_STITCH). Draws TWO per-sheet redline segments:
-      sheet 17: physical start HH -> machine-traced sheet-17 seam crossing
-      sheet 21: owner-reviewed+VERIFIED sheet-21 seam crossing -> physical endpoint HH
-    THREE anchors are machine-resolved (start HH, s17 seam crossing, endpoint HH); the s21
-    seam is an owner-reviewed fixture machine-VERIFIED against the authored matchline edge +
-    BORE-PORT entry (the delivered s21 vectors are disconnected). Renders ONLY if all four
-    resolve; otherwise stashes an abstain record on mr and returns None. Never one continuous
-    cross-page line — two separate per-page overlays tied by evidence. Never raises."""
+    (TRUELINE_CROSS_SHEET_SEAM_STITCH). Each per-sheet segment FOLLOWS the AUTHORED bore
+    path (never a straight anchor-to-anchor connector):
+      sheet 17: physical start HH -> seam, drawn along the authored bore-run path the tracer
+                reconstructs (parent-tracked through the vector graph); abstains if not unique.
+      sheet 21: delivered vectors are DISCONNECTED -> no machine-traceable path; this segment
+                ABSTAINS (no diagonal) pending an owner-reviewed + machine-VERIFIED
+                seam_anchor_overrides[].path_xy polyline.
+    All four anchors (start HH, s17 seam crossing, owner-verified s21 seam entry, endpoint HH)
+    gate the run; each segment is then drawn ONLY from authored geometry. Resolves when at least
+    the authored s17 path draws; per-segment status/reason stashed on mr. Never one continuous
+    cross-page line. Never raises."""
     try:
         if not mr.get("seam"):
             return None
@@ -404,30 +407,56 @@ def _render_cross_sheet_seam_stitch(mr: Mapping[str, Any], res: Mapping[str, Any
         def _bx(pt, r=4.0):
             return [pt[0] - r, pt[1] - r, pt[0] + r, pt[1] + r]
         bore = str(res.get("bore_id"))
-        p17 = [list(start_hh["anchor"]), list(s17_seam["seam_anchor"])]
-        seg17 = _crop.render_redline_overlay(
-            page17, [{"role": "endpoint", "bbox_display": _bx(p17[0])},
-                     {"role": "endpoint", "bbox_display": _bx(p17[1])}], p17,
-            os.path.join(out_dir, f"{bore}_s{s17}_seam_stitch.png"), accent=(220, 25, 25), dashed=False,
-            caption=f"{bore} sheet {s17}: start HH -> seam crossing (cross-sheet run 1/2)")
-        p21 = [list(owner["snapped_xy"]), list(end_hh["anchor"])]
-        seg21 = _crop.render_redline_overlay(
-            page21, [{"role": "endpoint", "bbox_display": _bx(p21[0])},
-                     {"role": "endpoint", "bbox_display": _bx(p21[1])}], p21,
-            os.path.join(out_dir, f"{bore}_s{s21}_seam_stitch.png"), accent=(220, 25, 25), dashed=False,
-            caption=f"{bore} sheet {s21}: seam crossing -> endpoint HH (cross-sheet run 2/2)")
-        rec = {"resolved": bool(seg17 and seg21), "run_id": "bore_log56",
-               "reason": "cross_sheet_seam_stitched", "machine_resolved_anchors": 3, "owner_verified_anchors": 1,
+
+        # --- Sheet 17: draw the AUTHORED traced bore path (start HH -> seam), parent-tracked
+        #     through the vector graph -- NEVER a straight anchor-to-anchor connector. Abstains
+        #     (no draw) if that authored path is not unique.
+        s17_path = _cst.trace_seam_path(_ve.extract_segments(page17), s17_ml, start_hh["anchor"])
+        seg17 = None
+        if s17_path.get("resolved") and s17_path.get("path_xy"):
+            pts17 = [list(p) for p in s17_path["path_xy"]]
+            seg17 = _crop.render_redline_overlay(
+                page17, [{"role": "endpoint", "bbox_display": _bx(pts17[0])},
+                         {"role": "endpoint", "bbox_display": _bx(pts17[-1])}], pts17,
+                os.path.join(out_dir, f"{bore}_s{s17}_seam_stitch.png"), accent=(220, 25, 25), dashed=False,
+                caption=f"{bore} sheet {s17}: start HH -> seam, authored bore path (cross-sheet run 1/2)")
+        s17_seg = {"sheet": s17, "from": "sheet17_start_hh", "to": "sheet17_seam_crossing",
+                   "artifact_name": (os.path.basename(seg17) if seg17 else None),
+                   "geometry": ("authored_path_traced" if seg17 else None),
+                   "path_vertices": (len(s17_path.get("path_xy") or []) if seg17 else None),
+                   "status": ("drawn" if seg17 else "abstained"),
+                   "reason": (None if seg17 else s17_path.get("reason")),
+                   "evidence": s17_path.get("evidence")}
+
+        # --- Sheet 21: delivered vectors are DISCONNECTED (no authored seam->HH chain), so there
+        #     is NO machine-traceable path. Do NOT draw a straight diagonal -- ABSTAIN. A path-
+        #     following s21 segment needs an owner-reviewed, machine-VERIFIED polyline override
+        #     (seam_anchor_overrides[].path_xy), added + approved separately. The verified owner
+        #     seam POINT proves the seam ENTRY only, never the route.
+        seg21 = None
+        s21_seg = {"sheet": s21, "from": "sheet21_seam_crossing", "to": "sheet21_end_hh",
+                   "artifact_name": None, "geometry": None,
+                   "status": "abstained_requires_path_evidence",
+                   "reason": "s21_vectors_disconnected_no_authored_path",
+                   "verified_seam_entry_xy": owner.get("snapped_xy"),
+                   "endpoint_hh_xy": end_hh.get("anchor"),
+                   "owner_path_override": "absent",
+                   "note": "supply an owner-reviewed + machine-verified seam_anchor_overrides[].path_xy "
+                           "to draw the s21 route; a single owner seam point is entry-only"}
+
+        rec = {"resolved": bool(seg17 or seg21), "run_id": "bore_log56",
+               "reason": ("cross_sheet_seam_path_stitched" if (seg17 and seg21)
+                          else "cross_sheet_seam_path_partial_s17_only" if seg17
+                          else "cross_sheet_seam_path_abstain"),
+               "machine_resolved_anchors": 3, "owner_verified_anchors": 1,
                "owner_seam_reason": s21_override.get("reason"), "anchors": anchors,
-               "segments": [{"sheet": s17, "from": "sheet17_start_hh", "to": "sheet17_seam_crossing",
-                             "artifact_name": (os.path.basename(seg17) if seg17 else None)},
-                            {"sheet": s21, "from": "sheet21_seam_crossing", "to": "sheet21_end_hh",
-                             "artifact_name": (os.path.basename(seg21) if seg21 else None)}],
-               "note": "two per-sheet overlays = ONE cross-sheet bore_log56 run; s21 seam is "
-                       "owner-reviewed + machine-verified because the delivered s21 vectors are disconnected"}
+               "segments": [s17_seg, s21_seg],
+               "note": "two per-sheet overlays = ONE cross-sheet bore_log56 run, each FOLLOWING the "
+                       "authored bore path. s17 traced from authored vectors; s21 abstains "
+                       "(disconnected vectors) pending an owner-reviewed verified path_xy polyline."}
         if isinstance(mr, dict):
             mr["cross_sheet_seam_stitch"] = rec
-        return rec if rec["resolved"] else None
+        return rec if rec.get("resolved") else None
     except Exception:
         return None
 

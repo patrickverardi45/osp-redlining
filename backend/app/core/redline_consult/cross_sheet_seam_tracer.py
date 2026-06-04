@@ -20,6 +20,7 @@ Pure; never raises. Scope: log56 single-sheet seam; NOT a generic all-logs featu
 from __future__ import annotations
 
 import math
+from collections import deque
 from typing import Any, Dict, List, Sequence, Tuple
 
 # Authored bore/path layers the run is chained over (the duct line itself, by type).
@@ -130,6 +131,112 @@ def trace_seam_anchor(bore_segments: Sequence[Dict[str, Any]],
     except Exception as exc:  # pure: never raise into the connector path
         return {"resolved": False, "seam_anchor": None, "reason": "tracer_error:%s" % type(exc).__name__,
                 "evidence": {}}
+
+
+def trace_seam_path(bore_segments: Sequence[Dict[str, Any]],
+                    matchline_paths: Sequence[Dict[str, Any]],
+                    hh_anchor: Sequence[float], *,
+                    gap_tol: float = DEFAULT_GAP_TOL,
+                    start_tol: float = DEFAULT_START_TOL,
+                    edge_tol: float = DEFAULT_EDGE_TOL) -> Dict[str, Any]:
+    """Reconstruct the ORDERED authored bore-run path from ``hh_anchor`` to the UNIQUE seam
+    crossing, for drawing a path-FOLLOWING redline (never a straight anchor-to-anchor line).
+
+    Builds the same connectivity graph as :func:`trace_seam_anchor`, requires EXACTLY ONE seam
+    crossing in the start node's connected component, then reconstructs the route by breadth-
+    first PARENT tracking. Returns the ordered vertex list ``path_xy`` ([start .. crossing],
+    authored node coordinates) ONLY when that shortest authored path is UNIQUE.
+
+    Abstains (``resolved`` False, ``path_xy`` None) — never guesses — when:
+      * there are no bore segments / no start node within ``start_tol`` (as trace_seam_anchor);
+      * the component reaches 0 or >1 seam crossings;
+      * two or more distinct shortest authored routes reach the crossing (ambiguous); or
+      * the route degenerates to a single point (start already on the seam).
+
+    Returns ``{resolved, path_xy, seam_anchor, reason, evidence}``. Pure; never raises.
+    """
+    try:
+        bore = [s for s in (bore_segments or []) if str(s.get("layer")) in BORE_LAYERS]
+        nodes, adj = _build_graph(bore, gap_tol)
+        if not nodes:
+            return {"resolved": False, "path_xy": None, "seam_anchor": None,
+                    "reason": "no_bore_segments_on_sheet", "evidence": {"gap_tol": gap_tol}}
+        start, bd = None, start_tol
+        for i, n in enumerate(nodes):
+            d = math.hypot(n[0] - hh_anchor[0], n[1] - hh_anchor[1])
+            if d < bd:
+                bd, start = d, i
+        if start is None:
+            nearest = min((math.hypot(n[0] - hh_anchor[0], n[1] - hh_anchor[1]) for n in nodes), default=-1.0)
+            return {"resolved": False, "path_xy": None, "seam_anchor": None,
+                    "reason": "no_bore_run_node_within_start_tol",
+                    "evidence": {"start_tol": start_tol, "nearest_bore_node_dist": round(nearest, 1)}}
+        # BFS from start: distance, shortest-route COUNT (ambiguity signal), first parent.
+        dist = {start: 0}
+        npaths = {start: 1}
+        parent = {start: -1}
+        q = deque([start])
+        while q:
+            u = q.popleft()
+            for v in adj[u]:
+                if v not in dist:
+                    dist[v] = dist[u] + 1
+                    npaths[v] = npaths[u]
+                    parent[v] = u
+                    q.append(v)
+                elif dist[v] == dist[u] + 1:
+                    npaths[v] = npaths[v] + npaths[u]   # another equal-length route -> ambiguous
+        comp = sorted(dist)                             # connected component, deterministic order
+        edges = seam_edges(matchline_paths)
+        crossing_nodes: List[int] = []
+        for i in comp:
+            n = nodes[i]
+            for e in edges:
+                on = ((abs(n[0] - e["x"]) < edge_tol and e["bbox"][1] - edge_tol <= n[1] <= e["bbox"][3] + edge_tol)
+                      if e["vert"] else
+                      (abs(n[1] - e["y"]) < edge_tol and e["bbox"][0] - edge_tol <= n[0] <= e["bbox"][2] + edge_tol))
+                if on:
+                    crossing_nodes.append(i)
+                    break
+        clusters: List[int] = []
+        for i in crossing_nodes:
+            n = nodes[i]
+            if not any(math.hypot(n[0] - nodes[j][0], n[1] - nodes[j][1]) < gap_tol * 2 for j in clusters):
+                clusters.append(i)
+        branch_nodes = [[round(nodes[i][0], 1), round(nodes[i][1], 1)] for i in comp if len(adj[i]) >= 3]
+        ev = {"start_node": [round(nodes[start][0], 1), round(nodes[start][1], 1)],
+              "start_dist": round(bd, 1), "component_size": len(comp),
+              "branch_node_count": len(branch_nodes), "seam_edges": len(edges),
+              "seam_crossings": len(clusters), "gap_tol": gap_tol}
+        if not clusters:
+            return {"resolved": False, "path_xy": None, "seam_anchor": None,
+                    "reason": "seam_unreachable_from_hh_component", "evidence": ev}
+        if len(clusters) > 1:
+            return {"resolved": False, "path_xy": None, "seam_anchor": None,
+                    "reason": "multiple_seam_crossings", "evidence": ev}
+        cross = clusters[0]
+        if npaths.get(cross, 0) != 1:
+            ev["shortest_route_count"] = npaths.get(cross, 0)
+            return {"resolved": False, "path_xy": None, "seam_anchor": None,
+                    "reason": "ambiguous_path_multiple_routes", "evidence": ev}
+        chain: List[int] = []
+        u, guard = cross, 0
+        while u != -1 and guard <= len(nodes):
+            chain.append(u)
+            u = parent.get(u, -1)
+            guard += 1
+        chain.reverse()
+        path_xy = [[round(nodes[i][0], 1), round(nodes[i][1], 1)] for i in chain]
+        if len(path_xy) < 2:
+            return {"resolved": False, "path_xy": None,
+                    "seam_anchor": (path_xy[0] if path_xy else None),
+                    "reason": "degenerate_single_point_path", "evidence": ev}
+        ev["path_vertices"] = len(path_xy)
+        return {"resolved": True, "path_xy": path_xy, "seam_anchor": path_xy[-1],
+                "reason": "authored_path_traced", "evidence": ev}
+    except Exception as exc:
+        return {"resolved": False, "path_xy": None, "seam_anchor": None,
+                "reason": "tracer_error:%s" % type(exc).__name__, "evidence": {}}
 
 
 def verify_owner_seam_anchor(proposed_xy: Sequence[float],
