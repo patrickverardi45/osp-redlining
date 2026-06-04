@@ -408,25 +408,23 @@ def _render_cross_sheet_seam_stitch(mr: Mapping[str, Any], res: Mapping[str, Any
             return [pt[0] - r, pt[1] - r, pt[0] + r, pt[1] + r]
         bore = str(res.get("bore_id"))
 
-        # --- Sheet 17: draw the AUTHORED traced bore path (start HH -> seam), parent-tracked
-        #     through the vector graph -- NEVER a straight anchor-to-anchor connector. Abstains
-        #     (no draw) if that authored path is not unique.
-        s17_path = _cst.trace_seam_path(_ve.extract_segments(page17), s17_ml, start_hh["anchor"])
+        # --- Sheet 17: SAFETY GUARD (STEP 1) -- the topology-only graph trace (trace_seam_path)
+        #     is connectivity, NOT authored bore-path understanding: it ignores station order,
+        #     BOC/11' corridor, run color (the authored magenta duct), the NAMED matchline, and
+        #     per-bore structure identity, so a connected vector path is not provably the
+        #     bore_log56 duct. A wrong redline is worse than none -> ABSTAIN (draw nothing) until
+        #     the authored evidence-fusion path selector lands. The tracer + ledgers are PRESERVED
+        #     (intentionally unused here) for that selector; nothing is removed.
         seg17 = None
-        if s17_path.get("resolved") and s17_path.get("path_xy"):
-            pts17 = [list(p) for p in s17_path["path_xy"]]
-            seg17 = _crop.render_redline_overlay(
-                page17, [{"role": "endpoint", "bbox_display": _bx(pts17[0])},
-                         {"role": "endpoint", "bbox_display": _bx(pts17[-1])}], pts17,
-                os.path.join(out_dir, f"{bore}_s{s17}_seam_stitch.png"), accent=(220, 25, 25), dashed=False,
-                caption=f"{bore} sheet {s17}: start HH -> seam, authored bore path (cross-sheet run 1/2)")
         s17_seg = {"sheet": s17, "from": "sheet17_start_hh", "to": "sheet17_seam_crossing",
-                   "artifact_name": (os.path.basename(seg17) if seg17 else None),
-                   "geometry": ("authored_path_traced" if seg17 else None),
-                   "path_vertices": (len(s17_path.get("path_xy") or []) if seg17 else None),
-                   "status": ("drawn" if seg17 else "abstained"),
-                   "reason": (None if seg17 else s17_path.get("reason")),
-                   "evidence": s17_path.get("evidence")}
+                   "artifact_name": None, "geometry": None,
+                   "status": "abstained_pending_evidence_fusion",
+                   "reason": "authored_path_selector_required_topology_trace_disabled",
+                   "start_hh_xy": start_hh.get("anchor"),
+                   "named_seam_sta": (mr.get("seam") or {}).get("home_sta"),
+                   "seam_crossing_xy": s17_seam.get("seam_anchor"),
+                   "note": "topology-only trace disabled; awaiting evidence-fusion selection "
+                           "(run color + station order + BOC/11' corridor + named matchline + structures)"}
 
         # --- Sheet 21: delivered vectors are DISCONNECTED (no authored seam->HH chain), so there
         #     is NO machine-traceable path. Do NOT draw a straight diagonal -- ABSTAIN. A path-
@@ -447,7 +445,7 @@ def _render_cross_sheet_seam_stitch(mr: Mapping[str, Any], res: Mapping[str, Any
         rec = {"resolved": bool(seg17 or seg21), "run_id": "bore_log56",
                "reason": ("cross_sheet_seam_path_stitched" if (seg17 and seg21)
                           else "cross_sheet_seam_path_partial_s17_only" if seg17
-                          else "cross_sheet_seam_path_abstain"),
+                          else "cross_sheet_seam_abstain_pending_evidence_fusion"),
                "machine_resolved_anchors": 3, "owner_verified_anchors": 1,
                "owner_seam_reason": s21_override.get("reason"), "anchors": anchors,
                "segments": [s17_seg, s21_seg],
