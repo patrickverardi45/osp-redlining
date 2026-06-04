@@ -357,6 +357,7 @@ def _render_cross_sheet_seam_stitch(mr: Mapping[str, Any], res: Mapping[str, Any
             return None
         from . import physical_anchor_resolver as _par
         from . import cross_sheet_seam_tracer as _cst
+        from . import authored_path_selector as _aps
         from redline_pdf_first.pdf import text_extract as _tx, vector_extract as _ve, crop as _crop
 
         ov = {o.get("role"): o for o in (mr.get("overlays") or []) if o.get("bbox")}
@@ -408,23 +409,36 @@ def _render_cross_sheet_seam_stitch(mr: Mapping[str, Any], res: Mapping[str, Any
             return [pt[0] - r, pt[1] - r, pt[0] + r, pt[1] + r]
         bore = str(res.get("bore_id"))
 
-        # --- Sheet 17: SAFETY GUARD (STEP 1) -- the topology-only graph trace (trace_seam_path)
-        #     is connectivity, NOT authored bore-path understanding: it ignores station order,
-        #     BOC/11' corridor, run color (the authored magenta duct), the NAMED matchline, and
-        #     per-bore structure identity, so a connected vector path is not provably the
-        #     bore_log56 duct. A wrong redline is worse than none -> ABSTAIN (draw nothing) until
-        #     the authored evidence-fusion path selector lands. The tracer + ledgers are PRESERVED
-        #     (intentionally unused here) for that selector; nothing is removed.
+        # --- Sheet 17: AUTHORED EVIDENCE-FUSION selector (STEP 2). Draws ONLY when run color +
+        #     named matchline + a UNIQUE color-isolated candidate path + station monotonicity +
+        #     BOC/11' corridor ALL agree on one authored path; else ABSTAINS with a precise reason.
+        #     Connectivity is candidate geometry only, applied AFTER the authored discriminators.
+        _seam = mr.get("seam") or {}
+        _words17 = _tx.extract_words(page17)
+        sel17 = _aps.select_authored_s17_path(
+            segments=_ve.extract_segments(page17), matchline_paths=s17_ml,
+            start_xy=start_hh["anchor"], home_sta=_seam.get("home_sta"), neighbor_sta=_seam.get("neighbor_sta"),
+            station_callouts=_aps.parse_station_callouts(_words17),
+            matchline_callouts=_aps.parse_matchline_callouts(_tx.extract_blocks(page17)),
+            offset_callouts=_aps.parse_offset_callouts(_words17), boc_ft=res.get("boc_ft"))
         seg17 = None
+        if sel17.get("resolved") and sel17.get("path_xy"):
+            pts17 = [list(p) for p in sel17["path_xy"]]
+            seg17 = _crop.render_redline_overlay(
+                page17, [{"role": "endpoint", "bbox_display": _bx(pts17[0])},
+                         {"role": "endpoint", "bbox_display": _bx(pts17[-1])}], pts17,
+                os.path.join(out_dir, f"{bore}_s{s17}_seam_stitch.png"), accent=(220, 25, 25), dashed=False,
+                caption=f"{bore} sheet {s17}: start HH -> seam, authored evidence-fused path (cross-sheet run 1/2)")
         s17_seg = {"sheet": s17, "from": "sheet17_start_hh", "to": "sheet17_seam_crossing",
-                   "artifact_name": None, "geometry": None,
-                   "status": "abstained_pending_evidence_fusion",
-                   "reason": "authored_path_selector_required_topology_trace_disabled",
+                   "artifact_name": (os.path.basename(seg17) if seg17 else None),
+                   "geometry": ("authored_path_evidence_fused" if seg17 else None),
+                   "path_vertices": (len(sel17.get("path_xy") or []) if seg17 else None),
+                   "status": ("drawn" if seg17 else "abstained_pending_evidence_fusion"),
+                   "reason": (None if seg17 else sel17.get("reason")),
+                   "discriminators": sel17.get("discriminators"),
+                   "evidence": sel17.get("evidence"),
                    "start_hh_xy": start_hh.get("anchor"),
-                   "named_seam_sta": (mr.get("seam") or {}).get("home_sta"),
-                   "seam_crossing_xy": s17_seam.get("seam_anchor"),
-                   "note": "topology-only trace disabled; awaiting evidence-fusion selection "
-                           "(run color + station order + BOC/11' corridor + named matchline + structures)"}
+                   "named_seam_sta": _seam.get("home_sta")}
 
         # --- Sheet 21: delivered vectors are DISCONNECTED (no authored seam->HH chain), so there
         #     is NO machine-traceable path. Do NOT draw a straight diagonal -- ABSTAIN. A path-
