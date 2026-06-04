@@ -15074,9 +15074,15 @@ def match_review_queue_endpoint(session_id: Optional[str] = None) -> JSONRespons
             _pf_plan_pdf = str(_pf_plans[0]) if _pf_plans else None
             if _pf_plan_pdf:
                 from app.core import pdf_first_adapter
+                from app.core import mrq_evidence_cache as _mrq_cache
                 _pf_card_dir = str(UPLOADS_DIR / "pdf_first_cards" / _safe_filename(sid))
-                _pf_ev = pdf_first_adapter.build_session_evidence_from_committed_rows(
-                    _pf_plan_pdf, _pdf_first_rows, card_out_dir=_pf_card_dir,
+                # Default-OFF (TRUELINE_MRQ_EVIDENCE_CACHE): when ON, memoize the per-session
+                # PDF-first payload (keyed by committed_rows + plan-PDF identity + output flags)
+                # so repeated polls skip the heavy rebuild + PNG re-render. Flag OFF -> builds
+                # every call, byte-identical to prior behavior. Engine-truth payload unchanged.
+                _pf_ev = _mrq_cache.get_or_build(
+                    sid, _pdf_first_rows, _pf_plan_pdf, _pf_card_dir,
+                    pdf_first_adapter.build_session_evidence_from_committed_rows,
                 )
                 if _pf_ev:
                     _body["pdf_first_evidence"] = _pf_ev
