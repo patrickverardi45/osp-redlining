@@ -7,7 +7,7 @@
 
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { apiFetch } from "@/lib/apiFetch";
 import { peekSessionId } from "@/lib/session";
@@ -134,34 +134,65 @@ export default function MatchReviewQueuePanel({
     setSid(next ? next : peekSessionId(projectId ?? undefined));
   }, [sessionId, projectId]);
 
-  const load = useCallback(async () => {
-    if (!sid) {
-      setData(null);
-      setError(null);
-      return;
-    }
-    setLoading(true);
-    setError(null);
-    try {
-      const url = `/api/match-review-queue?session_id=${encodeURIComponent(sid)}`;
-      const res = await apiFetch(url, undefined, "match_review_queue");
-      if (!res.ok) {
-        setError(`Match review queue request failed (${res.status}).`);
+  // In-flight guard: at most ONE active /api/match-review-queue request per sid. A
+  // Suspense remount / re-render that re-invokes load() for the SAME sid is deduped
+  // (no concurrent duplicate); a sid change or an explicit refresh supersedes the prior
+  // request via AbortController. Read-only: does not change what is fetched or how
+  // evidence renders.
+  const inFlightRef = useRef<{ sid: string; controller: AbortController } | null>(null);
+
+  const load = useCallback(
+    async (opts?: { force?: boolean }) => {
+      if (!sid) {
+        inFlightRef.current?.controller.abort();
+        inFlightRef.current = null;
         setData(null);
+        setError(null);
         return;
       }
-      const json = (await res.json()) as MatchReviewQueueResponse;
-      setData(json);
-    } catch {
-      setError("Network error — could not reach the server.");
-      setData(null);
-    } finally {
-      setLoading(false);
-    }
-  }, [sid]);
+      const current = inFlightRef.current;
+      // Dedupe concurrent duplicates for the same sid unless the operator forced a refresh.
+      if (current && current.sid === sid && !opts?.force) return;
+      // Supersede any prior request (sid change, or forced refresh).
+      current?.controller.abort();
+      const controller = new AbortController();
+      inFlightRef.current = { sid, controller };
+      setLoading(true);
+      setError(null);
+      try {
+        const url = `/api/match-review-queue?session_id=${encodeURIComponent(sid)}`;
+        const res = await apiFetch(url, { signal: controller.signal }, "match_review_queue");
+        if (controller.signal.aborted) return;
+        if (!res.ok) {
+          setError(`Match review queue request failed (${res.status}).`);
+          setData(null);
+          return;
+        }
+        const json = (await res.json()) as MatchReviewQueueResponse;
+        if (!controller.signal.aborted) setData(json);
+      } catch (e) {
+        // A superseded/unmounted request aborts — not a user-facing error.
+        if (controller.signal.aborted || (e instanceof DOMException && e.name === "AbortError")) return;
+        setError("Network error — could not reach the server.");
+        setData(null);
+      } finally {
+        // Only the CURRENT request clears the shared in-flight flag + loading state.
+        if (inFlightRef.current?.controller === controller) {
+          inFlightRef.current = null;
+          setLoading(false);
+        }
+      }
+    },
+    [sid],
+  );
 
   useEffect(() => {
     void load();
+    // Abort any in-flight request on unmount/remount so a remount fires exactly one.
+    return () => {
+      inFlightRef.current?.controller.abort();
+      inFlightRef.current = null;
+    };
   }, [load]);
 
   const rows: MatchReviewRow[] = data?.rows ?? [];
@@ -190,7 +221,7 @@ export default function MatchReviewQueuePanel({
         <button
           className="tl-btn tl-btn-ghost"
           style={{ fontSize: 12, padding: "4px 12px" }}
-          onClick={() => void load()}
+          onClick={() => void load({ force: true })}
           disabled={loading || !sid}
         >
           {loading ? "Loading…" : "Refresh"}
