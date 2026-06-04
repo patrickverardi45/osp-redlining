@@ -156,6 +156,11 @@ function SegmentCard({ card, sessionId }: { card: PdfFirstCard; sessionId: strin
   const badge = neutralBadge(card);
   const overlay = overlayName(card);
   const geo = card.geo;
+  // Cross-sheet seam-stitch (default-OFF backend flag): when the stitch resolved, the card
+  // carries two per-sheet segment PNGs. Render them additively below the primary crop.
+  // Absent / abstained (resolved !== true) -> empty -> nothing extra renders (no regression).
+  const seam = geo?.cross_sheet_seam_stitch;
+  const seamSegs = seam?.resolved ? (seam.segments ?? []).filter((s) => !!s.artifact_name) : [];
   return (
     <li
       style={{
@@ -191,6 +196,28 @@ function SegmentCard({ card, sessionId }: { card: PdfFirstCard; sessionId: strin
       ) : (
         <div style={{ marginTop: 6, fontSize: 11, color: "var(--tl-text-muted)" }}>
           No overlay image for this item.
+        </div>
+      )}
+
+      {sessionId && seamSegs.length > 0 && (
+        <div style={{ marginTop: 10 }}>
+          <div style={{ fontSize: 12, fontWeight: 600, color: "var(--tl-text)" }}>
+            Cross-sheet redline (page-to-page) — {seamSegs.length} segment
+            {seamSegs.length === 1 ? "" : "s"}
+          </div>
+          {seamSegs.map((seg) => (
+            <div key={seg.artifact_name} style={{ marginTop: 6 }}>
+              <div style={{ fontSize: 11, color: "var(--tl-text-muted)" }}>
+                Cross-sheet redline segment — Sheet {seg.sheet ?? "?"}
+              </div>
+              <OverlayImage
+                key={`${sessionId}:${seg.artifact_name}`}
+                sessionId={sessionId}
+                name={seg.artifact_name!}
+                alt={`${logLabel(card)} cross-sheet seam segment — sheet ${seg.sheet ?? "?"}`}
+              />
+            </div>
+          ))}
         </div>
       )}
 

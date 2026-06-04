@@ -92,6 +92,26 @@ export interface PdfFirstOverlay {
   path_basis?: string | null; // pdf_path_trace only
 }
 
+// One per-sheet segment of a cross-sheet (matchline-seam) run. The backend renders a
+// cross-sheet bore as TWO page-space overlays (never one continuous cross-page line);
+// `artifact_name` is a BASENAME fetched through the same gated artifact route as the
+// primary overlay. Present only when TRUELINE_CROSS_SHEET_SEAM_STITCH is ON + resolved.
+export interface PdfFirstSeamSegment {
+  sheet?: number | null;
+  from?: string | null;
+  to?: string | null;
+  artifact_name?: string | null; // basename of the per-sheet seam-stitch PNG
+}
+
+// Cross-sheet seam-stitch evidence (default-OFF TRUELINE_CROSS_SHEET_SEAM_STITCH).
+// `resolved` true means all four anchors resolved and BOTH per-sheet segments rendered.
+export interface PdfFirstCrossSheetSeamStitch {
+  resolved?: boolean;
+  segments?: PdfFirstSeamSegment[];
+  machine_resolved_anchors?: number;
+  owner_verified_anchors?: number;
+}
+
 // Evidence-only geometry block (page-space; NO map/world coords). Present only when
 // TRUELINE_AP_ANCHORED_GEOMETRY (+ stacked flags) is ON.
 export interface PdfFirstGeo {
@@ -101,6 +121,9 @@ export interface PdfFirstGeo {
   // Coord-free chainage frame metadata. `multi_sheet` flags a bore that crosses a
   // matchline (the trace is the sheet-local portion only). NO world coords.
   frame?: { multi_sheet?: boolean; page?: number | null } | null;
+  // Cross-sheet (matchline-seam) run rendered as two per-sheet segments. Additive;
+  // present only when TRUELINE_CROSS_SHEET_SEAM_STITCH is ON + the stitch resolved.
+  cross_sheet_seam_stitch?: PdfFirstCrossSheetSeamStitch | null;
 }
 
 export interface PdfFirstCard {
