@@ -23,7 +23,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
+import time
 from collections import OrderedDict
 from typing import Any, Callable, Dict, Mapping, Optional, Sequence, Tuple
 
@@ -45,6 +47,8 @@ _OUTPUT_FLAGS: Tuple[str, ...] = (
 
 # session_id -> (key, payload). OrderedDict for LRU eviction.
 _CACHE: "OrderedDict[str, Tuple[str, Dict[str, Any]]]" = OrderedDict()
+
+_logger = logging.getLogger(__name__)
 
 
 def enabled() -> bool:
@@ -74,28 +78,72 @@ def cache_key(committed_rows: Sequence[Mapping[str, Any]], plan_pdf: str) -> str
     return h.hexdigest()
 
 
+# ── observability (default-safe; never alters the returned payload) ───────────
+_META_FIELDS: Tuple[str, ...] = (
+    "cache_enabled", "cache_hit", "cache_key_short",
+    "evidence_build_ms", "artifact_render_skipped", "sessions_cached",
+)
+
+
+def _short_key(key: Optional[str]) -> Optional[str]:
+    """First 12 hex chars of the cache key (None when the cache is disabled)."""
+    return key[:12] if key else None
+
+
+def _emit(meta: Dict[str, Any], meta_out: Optional[Dict[str, Any]]) -> None:
+    """Side-channel this call's cache metadata: fill the caller's ``meta_out`` dict
+    (per-request, so no cross-request race) and log one ``[mrq_cache]`` line. NEVER touches
+    the payload, so a flag-OFF response stays byte-identical to the pre-observability behavior."""
+    if meta_out is not None:
+        meta_out.update(meta)
+    try:
+        _logger.info("[mrq_cache] " + " ".join("%s=%s" % (k, meta.get(k)) for k in _META_FIELDS))
+    except Exception:
+        pass
+
+
 def get_or_build(session_id: str,
                  committed_rows: Sequence[Mapping[str, Any]],
                  plan_pdf: str,
                  card_out_dir: Optional[str],
-                 builder: Callable[..., Optional[Dict[str, Any]]]) -> Optional[Dict[str, Any]]:
+                 builder: Callable[..., Optional[Dict[str, Any]]],
+                 *,
+                 meta_out: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
     """Return the cached evidence on a key match, else call
     ``builder(plan_pdf, committed_rows, card_out_dir=card_out_dir)`` and memoize the result.
 
     Default-OFF: when the flag is off, ALWAYS builds (current behavior) and never touches the
     cache. A falsy payload (None/empty) is never cached, so it is rebuilt next time.
+
+    Observability (additive, default-safe): when ``meta_out`` is provided it is filled with
+    this call's ``cache_enabled / cache_hit / cache_key_short / evidence_build_ms /
+    artifact_render_skipped / sessions_cached``; the same is logged as one ``[mrq_cache]``
+    line. The RETURNED PAYLOAD is unchanged on every path.
     """
     if not enabled():
-        return builder(plan_pdf, committed_rows, card_out_dir=card_out_dir)
+        t0 = time.perf_counter()
+        payload = builder(plan_pdf, committed_rows, card_out_dir=card_out_dir)
+        _emit({"cache_enabled": False, "cache_hit": None, "cache_key_short": None,
+               "evidence_build_ms": round((time.perf_counter() - t0) * 1000.0, 1),
+               "artifact_render_skipped": False, "sessions_cached": 0}, meta_out)
+        return payload
     key = cache_key(committed_rows, plan_pdf)
     cached = _CACHE.get(session_id)
     if cached is not None and cached[0] == key:
         _CACHE.move_to_end(session_id)
+        _emit({"cache_enabled": True, "cache_hit": True, "cache_key_short": _short_key(key),
+               "evidence_build_ms": 0.0, "artifact_render_skipped": True,
+               "sessions_cached": len(_CACHE)}, meta_out)
         return cached[1]
+    t0 = time.perf_counter()
     payload = builder(plan_pdf, committed_rows, card_out_dir=card_out_dir)
+    build_ms = round((time.perf_counter() - t0) * 1000.0, 1)
     if payload:
         _CACHE[session_id] = (key, payload)
         _CACHE.move_to_end(session_id)
         while len(_CACHE) > _MAX_SESSIONS:
             _CACHE.popitem(last=False)
+    _emit({"cache_enabled": True, "cache_hit": False, "cache_key_short": _short_key(key),
+           "evidence_build_ms": build_ms, "artifact_render_skipped": False,
+           "sessions_cached": len(_CACHE)}, meta_out)
     return payload

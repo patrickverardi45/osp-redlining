@@ -15080,10 +15080,18 @@ def match_review_queue_endpoint(session_id: Optional[str] = None) -> JSONRespons
                 # PDF-first payload (keyed by committed_rows + plan-PDF identity + output flags)
                 # so repeated polls skip the heavy rebuild + PNG re-render. Flag OFF -> builds
                 # every call, byte-identical to prior behavior. Engine-truth payload unchanged.
+                _pf_cache_meta: Dict[str, Any] = {}
                 _pf_ev = _mrq_cache.get_or_build(
                     sid, _pdf_first_rows, _pf_plan_pdf, _pf_card_dir,
                     pdf_first_adapter.build_session_evidence_from_committed_rows,
+                    meta_out=_pf_cache_meta,
                 )
+                # Additive observability (default-safe): cache op metadata for THIS request
+                # (cache_enabled / cache_hit / cache_key_short / evidence_build_ms /
+                # artifact_render_skipped / sessions_cached). Present whenever the PDF-first
+                # build was attempted; the frontend ignores unknown keys. Never gates the queue.
+                if _pf_cache_meta:
+                    _body["pdf_first_evidence_cache"] = _pf_cache_meta
                 if _pf_ev:
                     _body["pdf_first_evidence"] = _pf_ev
         except Exception:

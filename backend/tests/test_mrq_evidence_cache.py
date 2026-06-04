@@ -112,3 +112,55 @@ def test_falsy_payload_not_cached(tmp_path, monkeypatch):
     calls, builder = _counting_builder()
     C.get_or_build("s1", ROWS_A, pdf, None, builder)        # rebuilds (nothing cached)
     assert calls["n"] == 1
+
+
+# ── observability metadata (additive meta_out; payload behavior unchanged) ────
+def test_meta_flag_off_reports_disabled(tmp_path, monkeypatch):
+    monkeypatch.delenv(C.CACHE_FLAG, raising=False)
+    pdf = _pdf(tmp_path)
+    _calls, builder = _counting_builder()
+    meta = {}
+    C.get_or_build("s1", ROWS_A, pdf, None, builder, meta_out=meta)
+    assert meta["cache_enabled"] is False
+    assert meta["cache_hit"] is None            # n/a when disabled
+    assert meta["cache_key_short"] is None      # no key computed when disabled
+    assert meta["artifact_render_skipped"] is False
+    assert meta["sessions_cached"] == 0
+    assert isinstance(meta["evidence_build_ms"], float) and meta["evidence_build_ms"] >= 0.0
+
+
+def test_meta_miss_then_hit_reports_render_skipped(tmp_path, monkeypatch):
+    monkeypatch.setenv(C.CACHE_FLAG, "1")
+    pdf = _pdf(tmp_path)
+    _calls, builder = _counting_builder()
+    m1, m2 = {}, {}
+    C.get_or_build("s1", ROWS_A, pdf, None, builder, meta_out=m1)   # miss -> build
+    C.get_or_build("s1", ROWS_A, pdf, None, builder, meta_out=m2)   # hit -> cached
+    assert m1["cache_enabled"] is True and m1["cache_hit"] is False
+    assert m1["artifact_render_skipped"] is False                   # built -> PNGs rendered
+    assert m1["sessions_cached"] == 1
+    assert m2["cache_hit"] is True
+    assert m2["artifact_render_skipped"] is True                    # hit -> PNG re-render skipped
+    assert m2["evidence_build_ms"] == 0.0
+    assert m1["cache_key_short"] and m1["cache_key_short"] == m2["cache_key_short"]
+    assert len(m1["cache_key_short"]) == 12
+
+
+def test_meta_key_short_changes_with_rows(tmp_path, monkeypatch):
+    monkeypatch.setenv(C.CACHE_FLAG, "1")
+    pdf = _pdf(tmp_path)
+    _calls, builder = _counting_builder()
+    ma, mb = {}, {}
+    C.get_or_build("s1", ROWS_A, pdf, None, builder, meta_out=ma)
+    C.get_or_build("s1", ROWS_B, pdf, None, builder, meta_out=mb)
+    assert ma["cache_key_short"] != mb["cache_key_short"]
+
+
+def test_meta_out_is_optional_backcompat(tmp_path, monkeypatch):
+    # Callers that pass NO meta_out keep working and get the same cached object.
+    monkeypatch.setenv(C.CACHE_FLAG, "1")
+    pdf = _pdf(tmp_path)
+    _calls, builder = _counting_builder()
+    p1 = C.get_or_build("s1", ROWS_A, pdf, None, builder)
+    p2 = C.get_or_build("s1", ROWS_A, pdf, None, builder)
+    assert p1 is p2
