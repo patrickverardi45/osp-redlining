@@ -1256,15 +1256,12 @@ export default function ModernHeroMap({
       ];
     }
 
-    // Construct the page-image URL.  Direct-to-Render via NEXT_PUBLIC_API_BASE
-    // when defined (mirrors the upload flow at RedlineMap.handleEngineeringPlansUpload);
-    // falls back to same-origin when the env is unset (dev/local without proxy).
-    const RENDER_BASE = (
-      process.env.NEXT_PUBLIC_API_BASE ||
-      process.env.NEXT_PUBLIC_API_BASE_URL ||
-      ""
-    ).replace(/\/+$/, "");
-    const baseUrl = RENDER_BASE || API_BASE;
+    // Plan-page image is a GET (no large request body), so it is served SAME-ORIGIN via the
+    // Vercel proxy route web/src/app/api/engineering-plans/[planId]/page/[pageIndex]/image —
+    // NOT direct-to-Render. The PDF-first review/display path therefore needs no CORS
+    // allowlisted origin; only the large multipart /api/upload-engineering-plans stays
+    // direct-to-Render (GET responses are not bound by Vercel's ~4.5 MB request-body limit).
+    const baseUrl = API_BASE;
     const planId = engineeringPlanOverlay.planId;
     const pageIndex = Math.max(0, Math.floor(engineeringPlanOverlay.pageIndex));
     const dpi = Math.min(300, Math.max(48, Math.floor(engineeringPlanOverlay.dpi || 96)));
