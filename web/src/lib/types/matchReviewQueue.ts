@@ -101,6 +101,13 @@ export interface PdfFirstSeamSegment {
   from?: string | null;
   to?: string | null;
   artifact_name?: string | null; // basename of the per-sheet seam-stitch PNG
+  // Per-segment draw DECISION + machine-readable abstain evidence. The canonical payload
+  // surfaces these; this mirror previously dropped them. `status` is e.g. "drawn" |
+  // "abstained_pending_evidence_fusion" | "abstained_requires_path_evidence". When
+  // abstained, `artifact_name` is null (NO fake geometry) and `reason` explains why.
+  status?: string | null;
+  reason?: string | null;
+  discriminators?: Record<string, unknown> | null; // D13 evidence-fusion discriminators
 }
 
 // Cross-sheet seam-stitch evidence (default-OFF TRUELINE_CROSS_SHEET_SEAM_STITCH).
@@ -110,6 +117,53 @@ export interface PdfFirstCrossSheetSeamStitch {
   segments?: PdfFirstSeamSegment[];
   machine_resolved_anchors?: number;
   owner_verified_anchors?: number;
+  // Additive evidence the canonical payload carries (read-only; previously dropped):
+  run_id?: string | null;
+  reason?: string | null;
+  owner_seam_reason?: string | null;
+  // Per-anchor resolution map, e.g. { sheet17_start_hh: {source, resolved, reason, xy}, ... }.
+  // Any page-space `xy` inside is EVIDENCE only — never a world/map coordinate.
+  anchors?: Record<string, unknown> | null;
+}
+
+// One page-space EVIDENCE anchor (AP/HH/structure) resolved on the plan. NOTE: `coord`
+// is PAGE-SPACE [x,y] at the rendered DPI — NOT lat/lon and NEVER a map join key. Bridge
+// joins must use `id`/`kind` (identity), per the PDF↔KMZ bridge doctrine.
+export interface PdfFirstGeoAnchor {
+  kind?: string | null;   // e.g. "AP" | "HH" | "SPLICE"
+  id?: string | null;     // e.g. "AP-120" — identity join key (normalize TYPE:number for KMZ)
+  sheet?: number | null;
+  sta?: string | null;
+  coord?: [number, number] | null; // PAGE-SPACE evidence only — never world coords
+  chainage_ft?: number | null;
+  pxdist?: number | null;
+  source?: string | null;
+  provenance?: string | null;
+}
+
+// Drawn structure-to-structure connector (single-sheet crossing, e.g. log66). `anchor` is
+// PAGE-SPACE [x,y] evidence, not a map coordinate. Canonical payload field; previously dropped.
+export interface PdfFirstStructConnector {
+  resolved?: boolean;
+  anchor?: [number, number] | null; // PAGE-SPACE evidence only
+  source?: string | null;           // e.g. "physical_anchor" | "text_anchor"
+  artifact_name?: string | null;
+  reason?: string | null;
+}
+
+// Coord-free chainage frame metadata. NO world coords. Superset of the prior inline shape
+// (back-compatible: existing readers of `multi_sheet`/`page` still work).
+export interface PdfFirstFrame {
+  multi_sheet?: boolean;
+  sheet?: number | null;
+  page?: number | null;
+  datum_ft?: number | null;
+  chainage_start_ft?: number | null;
+  chainage_end_ft?: number | null;
+  axis?: string | null;
+  eqs_used?: string[];
+  caveat?: string | null;
+  note?: string | null;
 }
 
 // Evidence-only geometry block (page-space; NO map/world coords). Present only when
@@ -118,12 +172,24 @@ export interface PdfFirstGeo {
   geometry_status?: string | null;
   pdf_path_trace?: PdfFirstOverlay | null;
   pdf_redline?: PdfFirstOverlay | null;
-  // Coord-free chainage frame metadata. `multi_sheet` flags a bore that crosses a
-  // matchline (the trace is the sheet-local portion only). NO world coords.
-  frame?: { multi_sheet?: boolean; page?: number | null } | null;
+  // Expanded coord-free chainage frame (now includes datum/chainage/axis/eqs). NO world coords.
+  frame?: PdfFirstFrame | null;
   // Cross-sheet (matchline-seam) run rendered as two per-sheet segments. Additive;
   // present only when TRUELINE_CROSS_SHEET_SEAM_STITCH is ON + the stitch resolved.
   cross_sheet_seam_stitch?: PdfFirstCrossSheetSeamStitch | null;
+  // EXACT page-space evidence anchors (AP/HH/structure IDENTITY + page coords). Canonical
+  // payload carries these; surfaced here for the bridge/identity layer (read-only).
+  geo_anchors?: PdfFirstGeoAnchor[];
+  // Single-sheet structure connector (e.g. log66). Canonical payload field; previously dropped.
+  struct_connector?: PdfFirstStructConnector | null;
+  // Matchline/station-frame resolution summary (resolver consult). Opaque read-only object.
+  matchline_resolution?: Record<string, unknown> | null;
+  // Narrative evidence trail (human-readable strings from the engine/resolver).
+  evidence_trail?: string[] | null;
+  // RESERVED contract slot — back-of-curb offset (feet). The backend does NOT yet emit this
+  // as a first-class field (today BOC appears only in evidence_trail/caveat text); typed here
+  // so the bridge layer can consume it once the backend surfaces it. May be absent.
+  boc_ft?: number | null;
 }
 
 export interface PdfFirstCard {
@@ -141,6 +207,10 @@ export interface PdfFirstCard {
   caveat?: { code?: string; text?: string } | null;
   render_artifact_ref?: string[] | string | null;
   geo?: PdfFirstGeo | null;
+  // RESERVED contract slot — numeric confidence in [0,1] for the placement/evidence. Does
+  // NOT exist in the backend payload yet (`tier` is the current proxy); typed here so the
+  // bridge layer can consume a confidence once the backend computes one. May be absent.
+  confidence?: number | null;
 }
 
 export interface PdfFirstFailSafeCard {
@@ -172,6 +242,14 @@ export interface PdfFirstEvidence {
   fail_safe?: PdfFirstFailSafeCard[];
   groups?: PdfFirstGroup[];
   warnings?: string[];
+  // Resolver consult summary — present only when TRUELINE_MATCHLINE_FRAME_RESOLVER is ON.
+  // Read-only evidence (counts + owner-reviewed correction provenance); no map geometry.
+  resolver?: {
+    flag?: string;
+    consult_active?: boolean;
+    resolved_count?: number;
+    corrections_applied?: Array<Record<string, unknown>>;
+  } | null;
 }
 
 export interface MatchReviewQueueResponse {

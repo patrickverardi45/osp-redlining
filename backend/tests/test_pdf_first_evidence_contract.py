@@ -82,7 +82,13 @@ def _sample_envelope():
         "log_ids": ["bore_log56"], "tier": "MATCHLINE_FRAME_RESOLVER", "surface": "review",
         "render_target": "evidence_card", "station_range": {"start": "0+00", "end": "2+76"},
         "end_structures": ["INSTALLER HH"], "evidence": ["eq 4+57=0+00 (s17)", "BOC 11'"],
-        "geo": {"geometry_status": "RESOLVED", "frame": {"multi_sheet": True, "page": 17},
+        "geo": {"geometry_status": "RESOLVED",
+                "frame": {"multi_sheet": True, "page": 17, "datum_ft": 0.0,
+                          "chainage_start_ft": 0.0, "chainage_end_ft": 276.0, "axis": "x"},
+                "geo_anchors": [
+                    {"kind": "AP", "id": "AP-139", "sheet": 17, "sta": "0+00",
+                     "coord": [254.0, 424.0], "chainage_ft": 0.0, "provenance": "authored_callout"},
+                ],
                 "cross_sheet_seam_stitch": _seam_stitch_block()},
     }
     log66_card = {
@@ -139,7 +145,7 @@ def test_abstained_seam_segments_never_carry_a_drawn_artifact():
 
 
 def test_seam_s17_abstain_surfaces_discriminators():
-    """Canonical payload carries the D13 discriminators (the typed frontend mirror drops them)."""
+    """Canonical payload carries the D13 discriminators (now ALSO typed in the frontend mirror)."""
     css = _card_for(_sample_envelope(), "bore_log56")["geo"]["cross_sheet_seam_stitch"]
     s17 = next(s for s in css["segments"] if s["sheet"] == 17)
     assert "discriminators" in s17 and isinstance(s17["discriminators"], dict)
@@ -150,3 +156,14 @@ def test_log66_connector_evidence_payload_exists():
     assert sc["resolved"] is True
     assert "anchor" in sc and isinstance(sc["anchor"], list)
     assert sc.get("artifact_name")                   # connector was drawn for log66
+
+
+def test_card_exposes_geo_anchors_and_frame_chainage():
+    """Identity + chainage evidence the bridge layer needs (now typed in matchReviewQueue.ts)."""
+    geo = _card_for(_sample_envelope(), "bore_log56")["geo"]
+    anchors = geo["geo_anchors"]
+    assert anchors and anchors[0]["id"] == "AP-139" and anchors[0]["kind"] == "AP"
+    # `coord` is PAGE-SPACE evidence only — present, but identity (id/kind) is the bridge join key.
+    assert isinstance(anchors[0]["coord"], list) and len(anchors[0]["coord"]) == 2
+    frame = geo["frame"]
+    assert frame["chainage_start_ft"] == 0.0 and frame["chainage_end_ft"] == 276.0
