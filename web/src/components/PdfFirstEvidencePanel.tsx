@@ -185,7 +185,29 @@ function WhyEvidence({ rr }: { rr?: ReviewReason | null }) {
   if (ev.boc_ft != null) facts.push(`BOC ${ev.boc_ft}'`);
   if (pa && typeof pa.resolved === "boolean") facts.push(`Handhole ${pa.resolved ? "physical ✓" : "text fallback"}`);
   return (
-    <div style={{ marginTop: 8, fontSize: 12 }}>
+    <div
+      style={{
+        marginTop: 8,
+        padding: "8px 10px",
+        borderRadius: 6,
+        border: "1px solid var(--tl-border)",
+        borderLeft: "3px solid #3f7a4b",
+        background: "var(--tl-bg-raised, rgba(255,255,255,0.03))",
+        fontSize: 12,
+      }}
+    >
+      <div
+        style={{
+          fontSize: 11,
+          fontWeight: 700,
+          textTransform: "uppercase",
+          letterSpacing: "0.3px",
+          color: "var(--tl-text-muted)",
+          marginBottom: 4,
+        }}
+      >
+        Why / Evidence
+      </div>
       {rr.message && <div style={{ color: "var(--tl-text)", fontWeight: 500 }}>{rr.message}</div>}
       {discs.length > 0 && (
         <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 6 }}>
