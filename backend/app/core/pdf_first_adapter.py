@@ -697,6 +697,27 @@ def build_session_evidence_from_rows(plan_pdf_path: str,
                 if res:
                     group_blocks.append(build_group_review(res, group_id=gid))
 
+        # Item-6 review reasons (Monday hardening) — pure, ADDITIVE per-card
+        # "why it drew / why it abstained" built from the already-merged geo
+        # evidence (frame/station, matchline_resolution, physical_anchor,
+        # cross_sheet_seam_stitch reasons/discriminators). Read-only: never
+        # alters any placement/draw/abstain/geometry decision; the key is omitted
+        # when there is no geo to explain. Lazy import (no module-load cycle).
+        try:
+            from app.core.match_review_queue import build_review_reason as _build_rr
+            for _rr_card in placements:
+                if isinstance(_rr_card, dict):
+                    _rr = _build_rr(_rr_card.get("geo"))
+                    if _rr is not None:
+                        _rr_card["review_reason"] = _rr
+            for _rr_card in review_items:
+                if isinstance(_rr_card, dict):
+                    _rr = _build_rr(_rr_card.get("geo"))
+                    if _rr is not None:
+                        _rr_card["review_reason"] = _rr
+        except Exception:
+            pass  # additive surface; never break the evidence envelope
+
         out = {
             "schema_version": SCHEMA_VERSION,
             "engine_version": getattr(eng, "ENGINE_VERSION", None) or getattr(eng, "__version__", None),

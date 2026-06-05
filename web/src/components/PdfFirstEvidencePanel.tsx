@@ -17,6 +17,7 @@ import type {
   PdfFirstCard,
   PdfFirstEvidence,
   PdfFirstFailSafeCard,
+  ReviewReason,
 } from "@/lib/types/matchReviewQueue";
 
 const chip: React.CSSProperties = {
@@ -150,6 +151,69 @@ function OverlayImage({
   );
 }
 
+const fmtFt = (v?: number | null): string => (v == null ? "?" : `${v}'`);
+
+function titleizeName(name?: string): string {
+  if (!name) return "—";
+  return name
+    .split(/[_\s]+/)
+    .filter(Boolean)
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(" ");
+}
+
+// Compact, additive "Why / Evidence" block (Monday hardening, item 6). Renders the
+// backend's review_reason: the plain-English why, per-check discriminators
+// (✓ proven / • not bound), what is missing on an abstain, and the key authored
+// evidence (station/chainage, matchline + sheets, BOC offset, physical anchor).
+// Read-only; renders nothing when review_reason is absent (no regression).
+function WhyEvidence({ rr }: { rr?: ReviewReason | null }) {
+  if (!rr) return null;
+  const discs = rr.discriminators ?? [];
+  const missing = rr.missing ?? [];
+  const ev = rr.evidence ?? {};
+  const sf = ev.station_frame ?? null;
+  const ml = ev.matchline ?? null;
+  const pa = ev.physical_anchor ?? null;
+  const facts: string[] = [];
+  if (sf && (sf.chainage_start_ft != null || sf.chainage_end_ft != null)) {
+    facts.push(`Station ${fmtFt(sf.chainage_start_ft)}→${fmtFt(sf.chainage_end_ft)}${sf.axis ? ` (${sf.axis})` : ""}`);
+  }
+  if (ml && (ml.sheets?.length || ml.status)) {
+    facts.push(`Matchline ${ml.sheets?.length ? ml.sheets.join("/") : ""} ${ml.status ?? ""}`.trim());
+  }
+  if (ev.boc_ft != null) facts.push(`BOC ${ev.boc_ft}'`);
+  if (pa && typeof pa.resolved === "boolean") facts.push(`Handhole ${pa.resolved ? "physical ✓" : "text fallback"}`);
+  return (
+    <div style={{ marginTop: 8, fontSize: 12 }}>
+      {rr.message && <div style={{ color: "var(--tl-text)", fontWeight: 500 }}>{rr.message}</div>}
+      {discs.length > 0 && (
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 6 }}>
+          {discs.map((d, i) => (
+            <span
+              key={`${d.name ?? "d"}-${i}`}
+              title={d.detail ?? undefined}
+              style={{ ...chip, color: d.ok ? "#7bbf8a" : "#d4a72c", borderColor: d.ok ? "#3f7a4b" : "#7a5b12" }}
+            >
+              {d.ok ? "✓" : "•"} {titleizeName(d.name)}
+            </span>
+          ))}
+        </div>
+      )}
+      {missing.length > 0 && (
+        <div style={{ marginTop: 6, color: "#d4a72c" }}>Missing: {missing.join("; ")}</div>
+      )}
+      {facts.length > 0 && (
+        <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginTop: 6, color: "var(--tl-text-muted)" }}>
+          {facts.map((f, i) => (
+            <span key={i}>{f}</span>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function SegmentCard({ card, sessionId }: { card: PdfFirstCard; sessionId: string | null }) {
   const sr = card.station_range;
   const station = sr && (sr.start || sr.end) ? `${sr.start ?? "?"} → ${sr.end ?? "?"}` : null;
@@ -185,6 +249,8 @@ function SegmentCard({ card, sessionId }: { card: PdfFirstCard; sessionId: strin
           value={card.end_structures && card.end_structures.length ? card.end_structures.join(", ") : null}
         />
       </div>
+
+      <WhyEvidence rr={card.review_reason} />
 
       {overlay && sessionId ? (
         <OverlayImage

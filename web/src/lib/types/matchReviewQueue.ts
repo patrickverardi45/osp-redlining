@@ -101,6 +101,8 @@ export interface PdfFirstSeamSegment {
   from?: string | null;
   to?: string | null;
   artifact_name?: string | null; // basename of the per-sheet seam-stitch PNG
+  status?: string | null; // drawn | abstained_* (additive; review reasons)
+  reason?: string | null; // per-segment abstain reason (additive)
 }
 
 // Cross-sheet seam-stitch evidence (default-OFF TRUELINE_CROSS_SHEET_SEAM_STITCH).
@@ -110,6 +112,8 @@ export interface PdfFirstCrossSheetSeamStitch {
   segments?: PdfFirstSeamSegment[];
   machine_resolved_anchors?: number;
   owner_verified_anchors?: number;
+  reason?: string | null; // stitch-level abstain reason (additive)
+  discriminators?: Array<{ name?: string; ok?: boolean; detail?: string | null }>; // additive
 }
 
 // Evidence-only geometry block (page-space; NO map/world coords). Present only when
@@ -120,10 +124,59 @@ export interface PdfFirstGeo {
   pdf_redline?: PdfFirstOverlay | null;
   // Coord-free chainage frame metadata. `multi_sheet` flags a bore that crosses a
   // matchline (the trace is the sheet-local portion only). NO world coords.
-  frame?: { multi_sheet?: boolean; page?: number | null } | null;
+  frame?: {
+    multi_sheet?: boolean;
+    page?: number | null;
+    chainage_start_ft?: number | null; // additive (review reasons)
+    chainage_end_ft?: number | null; // additive
+    axis?: string | null; // additive
+    eqs_used?: string[]; // additive — station equations applied (e.g. "STA 4+57=0+00")
+  } | null;
   // Cross-sheet (matchline-seam) run rendered as two per-sheet segments. Additive;
   // present only when TRUELINE_CROSS_SHEET_SEAM_STITCH is ON + the stitch resolved.
   cross_sheet_seam_stitch?: PdfFirstCrossSheetSeamStitch | null;
+  // Owner-reviewed matchline / station-frame resolver evidence (additive; present
+  // when TRUELINE_MATCHLINE_FRAME_RESOLVER lifted this bore). Extra keys ignored.
+  matchline_resolution?:
+    | ({ status?: string | null; class?: string | null; sheets?: number[]; boc_ft?: number | null; hh_hh_ft?: number | null } & Record<string, unknown>)
+    | null;
+  // Physical-handhole anchor resolution (additive): real CAD structure symbol vs
+  // text-label fallback. Extra keys ignored.
+  physical_anchor?: ({ resolved?: boolean; reason?: string | null } & Record<string, unknown>) | null;
+}
+
+// Operator-facing "why it drew / why it abstained" record (schema
+// pdf-first-review-reason-1). Additive + read-only: the backend builds it from
+// the already-computed geo evidence; it NEVER changes any draw/abstain decision.
+export interface ReviewReasonDiscriminator {
+  name?: string;
+  ok?: boolean;
+  detail?: string | null;
+}
+export interface ReviewReason {
+  schema_version?: string;
+  code?: string;
+  message?: string;
+  discriminators?: ReviewReasonDiscriminator[];
+  missing?: string[];
+  evidence?: {
+    geometry_status?: string | null;
+    station_frame?: {
+      chainage_start_ft?: number | null;
+      chainage_end_ft?: number | null;
+      axis?: string | null;
+      eqs_used?: string[];
+      multi_sheet?: boolean;
+    } | null;
+    matchline?: {
+      status?: string | null;
+      class?: string | null;
+      sheets?: number[];
+      hh_hh_ft?: number | null;
+    } | null;
+    physical_anchor?: { resolved?: boolean; reason?: string | null } | null;
+    boc_ft?: number | null;
+  } & Record<string, unknown>;
 }
 
 export interface PdfFirstCard {
@@ -141,6 +194,10 @@ export interface PdfFirstCard {
   caveat?: { code?: string; text?: string } | null;
   render_artifact_ref?: string[] | string | null;
   geo?: PdfFirstGeo | null;
+  // Additive (Monday hardening): present when the backend could summarize the
+  // card's geo evidence. Absent otherwise. Read-only; never affects rendering of
+  // the overlay/placement.
+  review_reason?: ReviewReason | null;
 }
 
 export interface PdfFirstFailSafeCard {
