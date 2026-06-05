@@ -94,6 +94,7 @@ from app.core.route_collision_alternate_search import (
 )
 from app.core.route_collision_resolver import resolve_route_collisions
 from app.services import engineering_plan_parser as _engineering_plan_parser
+from app.utils.geo import _haversine_feet, _route_length_ft, _route_bbox
 from starlette.middleware.base import BaseHTTPMiddleware
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -977,41 +978,8 @@ def _safe_filename(value: Any) -> str:
         return ""
 
 
-def _haversine_feet(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
-    r_m = 6371000.0
-    phi1 = math.radians(lat1)
-    phi2 = math.radians(lat2)
-    dphi = math.radians(lat2 - lat1)
-    dlambda = math.radians(lon2 - lon1)
-    a = math.sin(dphi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(dlambda / 2) ** 2
-    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
-    return r_m * c * 3.28084
-
-
-def _route_length_ft(coords: Sequence[Sequence[float]]) -> float:
-    total = 0.0
-    for i in range(1, len(coords)):
-        total += _haversine_feet(
-            float(coords[i - 1][0]),
-            float(coords[i - 1][1]),
-            float(coords[i][0]),
-            float(coords[i][1]),
-        )
-    return total
-
-def _route_bbox(coords: Sequence[Sequence[float]]) -> Optional[Dict[str, float]]:
-    if not coords:
-        return None
-    lats = [float(pt[0]) for pt in coords if len(pt) >= 2]
-    lons = [float(pt[1]) for pt in coords if len(pt) >= 2]
-    if not lats or not lons:
-        return None
-    return {
-        "min_lat": min(lats),
-        "max_lat": max(lats),
-        "min_lon": min(lons),
-        "max_lon": max(lons),
-    }
+# _haversine_feet, _route_length_ft, _route_bbox were extracted to app/utils/geo.py (PR-1
+# cleanup) and are imported above under the same names — call sites unchanged.
 
 
 def _route_centroid(coords: Sequence[Sequence[float]]) -> Optional[Tuple[float, float]]:
