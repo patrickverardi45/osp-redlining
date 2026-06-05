@@ -94,6 +94,7 @@ from app.core.route_collision_alternate_search import (
 )
 from app.core.route_collision_resolver import resolve_route_collisions
 from app.services import engineering_plan_parser as _engineering_plan_parser
+from app.state import STATE, _SESSIONS, _SESSION_LOCK, _default_session_state, _resolve_session_id
 from starlette.middleware.base import BaseHTTPMiddleware
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -495,58 +496,6 @@ KML_NS = {
 
 MAX_BUG_REPORTS = 200
 
-STATE: Dict[str, Any] = {
-    "route_name": None,
-    "route_id": None,
-    "route_coords": [],
-    "route_length_ft": 0.0,
-    "route_catalog": [],
-    "map_points": [],
-    "committed_rows": [],
-    "station_points": [],
-    "redline_segments": [],
-    "loaded_field_data_files": 0,
-    "latest_structured_file": None,
-    "station_mapping_mode": None,
-    "station_mapping_min_ft": None,
-    "station_mapping_max_ft": None,
-    "station_mapping_range_ft": None,
-    "selected_route_match": None,
-    "route_match_candidates": [],
-    "verification_summary": {},
-    "kmz_reference": {
-        "folder_summary": [],
-        "line_role_summary": [],
-        "point_role_summary": [],
-        "line_layers": [],
-        "explicit_redline_layers": [],
-        "visual_reference": {},
-        "line_features": [],
-        "polygon_features": [],
-        "point_features": [],
-    },
-    # Phase 1O — topology lineage bridge. Upload-scoped, read-only, diagnostic.
-    # Never consumed by renderer, matching, scoring, redline, or billing.
-    "kmz_topology_sidecar": None,
-    # Phase 1P — redline continuity advisor. Post-redline, read-only, advisory.
-    # Never consumed by matcher, scorer, route activation, billing, or closeout.
-    "redline_topology_continuity": None,
-    # Phase 1Q — node-anchored redline continuity advisor. Post-redline, read-only, advisory.
-    # Groups redline segments whose endpoints coincide with KMZ point features (handholes/nodes).
-    # Never consumed by matcher, scorer, route activation, billing, or closeout.
-    "redline_node_continuity": None,
-    # Phase 1S — bore-log redline endpoint validator. Post-redline, read-only, advisory.
-    # Classifies each redline endpoint as anchored/near/orphan/no_anchors_in_kmz.
-    # Never consumed by matcher, scorer, route activation, geometry, billing, or closeout.
-    "redline_endpoint_validation": None,
-    # Phase 1T — deterministic endpoint snap recommendations. Post-validator, read-only, advisory.
-    # Metadata-only "what-the-snap-would-look-like" for near/orphan endpoints.
-    # Never consumed by matcher, scorer, route activation, geometry, billing, or closeout.
-    "endpoint_snap_recommendations": None,
-    "bug_reports": [],
-    "matching_debug": [],
-}
-
 
 def _clear_engineering_plan_storage_for_session(session_id: str) -> None:
     """Remove engineering plan files and index rows for this session only.
@@ -636,89 +585,6 @@ def _reset_workspace_state() -> None:
             "closeout_locked_at": None,
         }
     )
-
-
-def _default_session_state() -> Dict[str, Any]:
-    # ─── Private beta session metadata foundation ─────────────────────────────
-    # Lightweight metadata for session tracking. Preserves all existing behavior.
-    now = datetime.now(timezone.utc).isoformat()
-    return {
-        "route_name": None,
-        "route_id": None,
-        "route_coords": [],
-        "route_length_ft": 0.0,
-        "route_catalog": [],
-        "address_points": [],
-        "map_points": [],
-        "committed_rows": [],
-        "station_points": [],
-        "redline_segments": [],
-        "loaded_field_data_files": 0,
-        "latest_structured_file": None,
-        "station_mapping_mode": None,
-        "station_mapping_min_ft": None,
-        "station_mapping_max_ft": None,
-        "station_mapping_range_ft": None,
-        "selected_route_match": None,
-        "route_match_candidates": [],
-        "verification_summary": {},
-        "kmz_reference": {
-            "folder_summary": [],
-            "line_role_summary": [],
-            "point_role_summary": [],
-            "line_layers": [],
-            "explicit_redline_layers": [],
-            "visual_reference": {},
-            "line_features": [],
-            "polygon_features": [],
-            "point_features": [],
-        },
-        "kmz_topology_sidecar": None,
-        "redline_topology_continuity": None,
-        "redline_node_continuity": None,
-        "redline_endpoint_validation": None,
-        "endpoint_snap_recommendations": None,
-        "bug_reports": [],
-        "matching_debug": [],
-        "engineering_plans": [],
-        "engineering_plan_signals": [],
-        # KMZ Matching Trust Slice C1 — operator override map; record-only.
-        "match_overrides": {},
-        "walk_active": False,
-        "walk_meta": {},
-        "walk_breadcrumbs": [],
-        "walk_station_events": [],
-        "closeout_lock": {
-            "is_locked": False,
-            "locked_by": None,
-            "locked_at": None,
-        },
-        "closeout_locked": False,
-        "closeout_locked_by": None,
-        "closeout_locked_at": None,
-        # Private beta session metadata
-        "company_id": None,
-        "workspace_label": None,
-        "created_at": now,
-        "updated_at": now,
-        # Sprint J tenant ownership
-        "tenant_id": None,
-        "tenant_bound_at": None,
-        # KMZ Matching Trust Slice C1 — operator override map keyed by group_id.
-        # Default empty. Slice C1 records overrides only; Slice C2 will apply.
-        "match_overrides": {},
-    }
-
-
-_SESSIONS: Dict[str, Dict[str, Any]] = {}
-_SESSION_LOCK = threading.RLock()
-
-
-def _resolve_session_id(value: Any) -> str:
-    candidate = str(value or "").strip()
-    if candidate:
-        return candidate
-    return uuid.uuid4().hex
 
 
 def _resolve_engineering_plan_session_id(
