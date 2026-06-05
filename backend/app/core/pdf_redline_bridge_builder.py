@@ -35,17 +35,14 @@ def enabled() -> bool:
     return os.getenv(BUILDER_FLAG, "0").strip() == "1"
 
 
-def normalize_kmz_feature_key(structure_id: Any) -> Optional[str]:
-    """Normalize a PDF structure id to the KMZ identity key (D5: TYPE:number → number).
+def normalize_kmz_feature_key(structure_id: Any, *, kind_hint: Optional[str] = None) -> Optional[str]:
+    """Normalize a PDF structure id to the SHARED canonical identity key (e.g. ``AP-120``).
 
-    ``"AP-120"`` → ``"120"``; ``"120"`` → ``"120"``. Returns None when there is no id.
+    Delegates to ``pdf_redline_bridge.canonical_identity_key`` so the builder's lookup key matches
+    the identity-index adapter's key EXACTLY (D5). Returns None when no kind+number resolves.
     Pure string identity — no geometry.
     """
-    s = str(structure_id or "").strip()
-    if not s:
-        return None
-    tail = s.rsplit("-", 1)[-1].strip()
-    return tail or s
+    return _bridge.canonical_identity_key(structure_id, kind_hint=kind_hint)
 
 
 def _structure_ids(geo: Mapping[str, Any], card: Mapping[str, Any]) -> List[str]:
@@ -131,12 +128,16 @@ def build_candidate_from_card(
     structure_start = ids[0] if ids else None
     structure_end = ids[-1] if len(ids) > 1 else None
 
-    # IDENTITY JOIN (exact, never nearest): first structure id whose normalized key is in the index.
+    # IDENTITY JOIN (exact, never nearest): first structure id whose canonical key is in the index.
     kmz_feature: Optional[str] = None
+    ambiguous_hit = False
     for sid in ids:
         key = normalize_kmz_feature_key(sid)
         if key and key in kmz_identity_index:
             entry = kmz_identity_index.get(key)
+            if isinstance(entry, Mapping) and entry.get("ambiguous"):
+                ambiguous_hit = True
+                continue  # an ambiguous identity is NOT a clean join target -> never guess
             kmz_feature = (entry.get("feature_id") if isinstance(entry, Mapping) and entry.get("feature_id")
                            else key)
             break
@@ -159,8 +160,12 @@ def build_candidate_from_card(
         status = "candidate"
     else:
         status = "abstain"
-        abstain_reason = ("no_ap_structure_identity_in_evidence" if not ids
-                          else "kmz_identity_target_not_found")
+        if ambiguous_hit:
+            abstain_reason = "kmz_identity_ambiguous"
+        elif not ids:
+            abstain_reason = "no_ap_structure_identity_in_evidence"
+        else:
+            abstain_reason = "kmz_identity_target_not_found"
 
     return _bridge.make_bridge_candidate(
         session_id=session_id,

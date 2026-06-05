@@ -15,8 +15,8 @@ from app.core import pdf_redline_bridge_builder as BB
 
 # KMZ identity index (caller would build this from kmz_xref.ap_map / render payload).
 KMZ_INDEX = {
-    "120": {"feature_id": "TermPortHH_120"},  # explicit feature id
-    "121": {},                                  # falls back to the AP number "121"
+    "AP-120": {"feature_id": "TermPortHH_120"},  # explicit feature id (canonical key)
+    "AP-121": {},                                 # no feature_id -> builder falls back to key "AP-121"
 }
 
 
@@ -65,8 +65,11 @@ def test_builder_flag_default_off(monkeypatch):
 
 
 def test_normalize_kmz_feature_key():
-    assert BB.normalize_kmz_feature_key("AP-120") == "120"
-    assert BB.normalize_kmz_feature_key("120") == "120"
+    # Now returns the SHARED canonical KIND-NUMBER key (matches the identity-index adapter).
+    assert BB.normalize_kmz_feature_key("AP-120") == "AP-120"
+    assert BB.normalize_kmz_feature_key("AP 120") == "AP-120"
+    assert BB.normalize_kmz_feature_key("120", kind_hint="ap") == "AP-120"
+    assert BB.normalize_kmz_feature_key("120") is None   # bare number, no kind -> no key (safe)
     assert BB.normalize_kmz_feature_key("") is None
     assert BB.normalize_kmz_feature_key(None) is None
 
@@ -76,7 +79,7 @@ def test_identity_join_produces_candidate():
     by_log = {c["log_id"]: c for c in cands}
     c12 = by_log["bore_log12"]
     assert c12["status"] == "candidate"
-    assert c12["kmz_candidate_feature_id"] == "TermPortHH_120"   # exact identity hit (AP-120 → 120)
+    assert c12["kmz_candidate_feature_id"] == "TermPortHH_120"   # exact identity hit on canonical AP-120
     assert c12["structure_start"] == "AP-120" and c12["structure_end"] == "AP-121"
     assert c12["station_start"] == "5+50" and c12["station_end"] == "10+92"
     assert "bore_log12_pathtrace_s3.png" in c12["evidence_refs"]

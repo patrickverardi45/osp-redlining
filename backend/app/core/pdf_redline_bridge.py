@@ -21,6 +21,7 @@ contract and is unit-tested in isolation. Pure stdlib; no fitz / engine / networ
 """
 from __future__ import annotations
 
+import re
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 BRIDGE_SCHEMA_VERSION = "pdf-redline-bridge-candidate-1"
@@ -43,6 +44,46 @@ _FORBIDDEN_WORLD_KEYS: Tuple[str, ...] = (
     "lat", "lon", "latlng", "latlon", "lonlat", "coord", "coords", "geometry",
     "world_xy", "segments", "polyline",
 )
+
+# ── canonical identity (the ONE key format shared by the adapter + the builder) ────────────────
+# A bridge join is by IDENTITY, never coordinates. Identity normalizes to ``KIND-NUMBER`` (e.g.
+# ``AP-120``) so the PDF side ("AP-120", "AP 120") and the KMZ side (ap_map key "120" + kind hint,
+# "TermPortHH 120") resolve to the SAME key. Encoding the KIND avoids bare-number collisions
+# (an AP-120 and an HH-120 must NOT match).
+_KIND_CODES: Dict[str, str] = {"ap": "AP", "hh": "HH", "splice": "SPLICE"}
+
+
+def parse_identity(value: Any, *, kind_hint: Optional[str] = None) -> Tuple[Optional[str], Optional[str]]:
+    """Parse a structure label/id into ``(kind, number)`` from identity TOKENS only.
+
+    Recognizes AP / TermPortHH (-> ``ap``), HANDHOLE / ``HH`` (-> ``hh``), SPLICE (-> ``splice``);
+    a bare number adopts ``kind_hint`` (e.g. the ap_map context). Returns ``(kind, None)`` when no
+    number is present, ``(None, None)`` for empty input. NEVER inspects coordinates."""
+    s = str(value or "").strip().upper()
+    if not s:
+        return (None, None)
+    if "SPLICE" in s:
+        kind: Optional[str] = "splice"
+    elif "TERMPORT" in s or "TERMINAL PORT" in s or "TPHH" in s:
+        kind = "ap"
+    elif re.match(r"^AP[\s\-_]*\d", s):
+        kind = "ap"
+    elif "HANDHOLE" in s or re.search(r"\bHH\b", s):
+        kind = "hh"
+    else:
+        kind = kind_hint
+    m = re.search(r"(\d+)", s)
+    return (kind, (m.group(1) if m else None))
+
+
+def canonical_identity_key(value: Any, *, kind_hint: Optional[str] = None) -> Optional[str]:
+    """Canonical ``KIND-NUMBER`` identity key (e.g. ``AP-120``), or None when no kind+number
+    resolves. Pure string identity — no geometry, no coordinates."""
+    kind, number = parse_identity(value, kind_hint=kind_hint)
+    if not kind or not number:
+        return None
+    code = _KIND_CODES.get(kind)
+    return ("%s-%s" % (code, number)) if code else None
 
 
 def make_bridge_candidate(
