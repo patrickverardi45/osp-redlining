@@ -15006,6 +15006,13 @@ def match_review_queue_endpoint(session_id: Optional[str] = None) -> JSONRespons
     # snapshotted INSIDE the scope below; the heavy engine run is deferred to AFTER it.
     _pf_on = os.getenv("TRUELINE_PDF_FIRST_ENGINE", "0").strip() == "1"
     _pdf_first_rows: Optional[List[Dict[str, Any]]] = None
+    _pf_plan_pdf: Optional[str] = None
+    # PDF↔KMZ bridge candidates (default-OFF TRUELINE_PDF_KMZ_BRIDGE_BUILDER). Read-only / review-only
+    # block; flag read once, kmz_semantic snapshotted INSIDE the scope; assembly deferred to AFTER it.
+    from app.core import pdf_redline_bridge_builder as _bridge_builder
+    _bridge_on = _bridge_builder.enabled()
+    _bridge_kmz_semantic: Optional[Dict[str, Any]] = None
+    _bridge_kmz_xref: Optional[Dict[str, Any]] = None
     with _session_scope(sid):
         diag: List[Dict[str, Any]] = list(STATE.get("pipeline_diag") or [])
         # Brenham PSG precision evidence (default-OFF via
@@ -15053,6 +15060,11 @@ def match_review_queue_endpoint(session_id: Optional[str] = None) -> JSONRespons
         # scope when the flag is ON (read-only). The engine run happens AFTER the scope.
         if _pf_on:
             _pdf_first_rows = list(STATE.get("committed_rows") or [])
+        # Bridge inputs: snapshot kmz_semantic (+ optional kmz_xref) read-only INSIDE the scope;
+        # the render-payload build + candidate assembly happen AFTER the scope (deferred, no mutation).
+        if _bridge_on:
+            _bridge_kmz_semantic = STATE.get("kmz_semantic")
+            _bridge_kmz_xref = STATE.get("kmz_xref")
     if _psg_inputs:
         queue = _assemble_match_review_queue(diag, plan_sheet_graph_inputs=_psg_inputs)
     else:
@@ -15096,6 +15108,27 @@ def match_review_queue_endpoint(session_id: Optional[str] = None) -> JSONRespons
                     _body["pdf_first_evidence"] = _pf_ev
         except Exception:
             pass  # null-safe: omit the key, never break the queue response
+    # PDF↔KMZ bridge candidates (default-OFF TRUELINE_PDF_KMZ_BRIDGE_BUILDER). Additive, read-only,
+    # REVIEW/DEBUG ONLY: composes the inert bridge pipeline (route-index + feature resolver + identity
+    # adapter + builder) into `pdf_redline_bridge_candidates`. NO drawing, NO map geometry, NO coords
+    # (each candidate is re-validated to reject world keys). Requires pdf_first_evidence (so also
+    # TRUELINE_PDF_FIRST_ENGINE). Null-safe: any failure omits the key, never 500. Flag OFF -> absent.
+    if _bridge_on and _body.get("pdf_first_evidence"):
+        try:
+            from app.core import pdf_redline_bridge_assembler as _bridge_asm
+            _bridge_render_payload = _build_kmz_render_payload(
+                _bridge_kmz_semantic if isinstance(_bridge_kmz_semantic, dict) else None)
+            _body["pdf_redline_bridge_candidates"] = _bridge_asm.assemble_bridge_candidates(
+                pdf_first_evidence=_body["pdf_first_evidence"],
+                mrq_payload=_body,
+                kmz_render_payload=_bridge_render_payload,
+                kmz_xref=_bridge_kmz_xref,
+                session_id=sid,
+                pdf_plan_id=_pf_plan_pdf,
+                created_from_flags=["TRUELINE_PDF_FIRST_ENGINE", "TRUELINE_PDF_KMZ_BRIDGE_BUILDER"],
+            )
+        except Exception:
+            pass  # null-safe: omit the bridge key, never break the queue response
     return JSONResponse(content=_body)
 
 
