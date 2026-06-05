@@ -184,6 +184,179 @@ def _abstain_reason(entry: Dict[str, Any]) -> Optional[str]:
     return None
 
 
+# ─── PDF-first review-reason normalizer (Monday hardening — item 6) ───────────
+# Pure, ADDITIVE projection of an already-emitted PDF-first ``geo`` evidence block
+# into one operator-facing "why it drew / why it abstained" record. Reads ONLY
+# fields the engine + resolver-consult layers already computed (geometry_status,
+# frame chainage, matchline_resolution, physical_anchor, cross_sheet_seam_stitch
+# reasons/discriminators, pdf_path_trace status). It NEVER changes any draw,
+# abstain, placement, scoring, or geometry decision — it only explains them.
+# Null-safe: returns None when there is no geo to summarize (so the caller
+# attaches the key only when meaningful; flag-OFF => key absent => byte-identical).
+# Never raises; never mutates its input.
+
+REVIEW_REASON_SCHEMA_VERSION = "pdf-first-review-reason-1"
+
+
+def _dedup_str(items: Sequence[Any]) -> List[str]:
+    seen: set = set()
+    out: List[str] = []
+    for it in items:
+        s = _safe_str(it).strip()
+        if s and s not in seen:
+            seen.add(s)
+            out.append(s)
+    return out
+
+
+def _as_mapping(value: Any) -> Dict[str, Any]:
+    return dict(value) if isinstance(value, Mapping) else {}
+
+
+def _is_resolved_status(status: Optional[str]) -> bool:
+    s = (status or "").upper()
+    return s.endswith("_RESOLVED") or "RESOLVED" in s
+
+
+def build_review_reason(geo: Optional[Mapping[str, Any]]) -> Optional[Dict[str, Any]]:
+    """Normalize a PDF-first ``geo`` block into an operator review reason.
+
+    Pure, additive, read-only. Returns a ``{schema_version, code, message,
+    discriminators, missing, evidence}`` record, or ``None`` when there is no geo
+    evidence to explain. NEVER alters any draw/abstain/placement/geometry
+    decision and NEVER raises. The ``discriminators``/``missing`` fields make an
+    abstain explainable to a reviewer (missing matchline, unclear handhole,
+    ambiguous offset, station-direction problem, endpoint not bound, multiple
+    candidate paths, …); the ``evidence`` field echoes the proof the engine used
+    (station/chainage frame, matchline + sheets, BOC offset, physical anchor).
+    """
+    try:
+        if not isinstance(geo, Mapping):
+            return None
+        frame = _as_mapping(geo.get("frame"))
+        mlr = _as_mapping(geo.get("matchline_resolution"))
+        phys = _as_mapping(geo.get("physical_anchor"))
+        seam = _as_mapping(geo.get("cross_sheet_seam_stitch"))
+        trace = _as_mapping(geo.get("pdf_path_trace"))
+        redline = _as_mapping(geo.get("pdf_redline"))
+
+        geometry_status = _safe_str(geo.get("geometry_status")) or None
+        discriminators: List[Dict[str, Any]] = []
+        missing: List[str] = []
+
+        # Named matchline binding (item 2).
+        ml_status = _safe_str(mlr.get("status")) or None
+        ml_class = _safe_str(mlr.get("class")) or None
+        if ml_status:
+            discriminators.append({
+                "name": "named_matchline",
+                "ok": _is_resolved_status(ml_status),
+                "detail": ml_class or ml_status,
+            })
+
+        # Physical handhole identity (item 3): real structure symbol vs text label.
+        phys_resolved = phys.get("resolved")
+        if isinstance(phys_resolved, bool):
+            discriminators.append({
+                "name": "physical_handhole_anchor",
+                "ok": phys_resolved,
+                "detail": ("anchored to authored structure symbol" if phys_resolved
+                           else (_safe_str(phys.get("reason")) or "text-label fallback")),
+            })
+            if not phys_resolved:
+                missing.append(_safe_str(phys.get("reason")) or "physical_handhole_not_uniquely_bound")
+
+        # Cross-sheet seam discriminators (items 1/2/5) + per-segment abstain reasons.
+        for d in _safe_list(seam.get("discriminators")):
+            if isinstance(d, Mapping):
+                discriminators.append({
+                    "name": _safe_str(d.get("name")) or "discriminator",
+                    "ok": bool(d.get("ok")),
+                    "detail": _safe_str(d.get("detail")) or _safe_str(d.get("reason")) or None,
+                })
+            elif _safe_str(d):
+                discriminators.append({"name": _safe_str(d), "ok": True, "detail": None})
+        seam_reason = _safe_str(seam.get("reason")) or None
+        if seam_reason:
+            missing.append(seam_reason)
+        for seg in _safe_list(seam.get("segments")):
+            if not isinstance(seg, Mapping):
+                continue
+            st = _safe_str(seg.get("status"))
+            if "abstain" in st.lower():
+                sheet = seg.get("sheet")
+                rs = _safe_str(seg.get("reason")) or st
+                missing.append(f"sheet {sheet}: {rs}" if sheet is not None else rs)
+
+        # Station / chainage frame evidence (item 1).
+        cs = _safe_float(frame.get("chainage_start_ft"))
+        ce = _safe_float(frame.get("chainage_end_ft"))
+        axis = _safe_str(frame.get("axis")) or None
+        eqs = [_safe_str(e) for e in _safe_list(frame.get("eqs_used")) if _safe_str(e)]
+        station_frame = None
+        if cs is not None or ce is not None or axis or eqs:
+            station_frame = {
+                "chainage_start_ft": cs,
+                "chainage_end_ft": ce,
+                "axis": axis,
+                "eqs_used": eqs,
+                "multi_sheet": bool(frame.get("multi_sheet")),
+            }
+
+        # BOC / offset (item 4) + matchline sheets / HH-HH span.
+        boc_ft = _safe_float(mlr.get("boc_ft"))
+        if boc_ft is None:
+            boc_ft = _safe_float(geo.get("boc_ft"))
+        hh_hh_ft = _safe_float(mlr.get("hh_hh_ft"))
+        sheets = [int(s) for s in _safe_list(mlr.get("sheets"))
+                  if isinstance(s, (int, float)) and not isinstance(s, bool)]
+
+        # Did the engine draw an authored overlay?
+        drawn = bool(_safe_str(trace.get("artifact_name")) or _safe_str(redline.get("artifact_name")))
+        missing = _dedup_str(missing)
+
+        # Presentation only — code + human message.
+        if missing and not drawn:
+            code = "abstained"
+            head = "Abstained — authored PDF evidence did not prove the path."
+            message = f"{head} Missing: {'; '.join(missing[:3])}" if missing else head
+        elif geometry_status and _is_resolved_status(geometry_status):
+            code = geometry_status.lower()
+            kind = "matchline" if "MATCHLINE" in geometry_status.upper() else "station"
+            message = f"Drew authored {kind}-frame evidence — placement proven."
+        elif drawn:
+            code = "authored_trace"
+            message = "Drew an authored bore-path trace from the PDF's CAD layers."
+        else:
+            code = (geometry_status or "review").lower()
+            message = "Review-grade evidence; not promoted to a drawn placement."
+
+        evidence = {
+            "geometry_status": geometry_status,
+            "station_frame": station_frame,
+            "matchline": ({"status": ml_status, "class": ml_class, "sheets": sheets, "hh_hh_ft": hh_hh_ft}
+                          if (ml_status or sheets) else None),
+            "physical_anchor": ({"resolved": phys_resolved, "reason": _safe_str(phys.get("reason")) or None}
+                                if isinstance(phys_resolved, bool) else None),
+            "boc_ft": boc_ft,
+        }
+
+        if not (discriminators or missing or station_frame or ml_status
+                or isinstance(phys_resolved, bool) or geometry_status or drawn):
+            return None
+
+        return {
+            "schema_version": REVIEW_REASON_SCHEMA_VERSION,
+            "code": code,
+            "message": message,
+            "discriminators": discriminators,
+            "missing": missing,
+            "evidence": evidence,
+        }
+    except Exception:
+        return None
+
+
 def _evidence_summary(entry: Dict[str, Any]) -> Dict[str, Any]:
     """Project evidence-bearing fields from the entry into a compact summary.
     Includes Stage A `print_sheet_index_source` attribution when present.
