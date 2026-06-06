@@ -474,6 +474,38 @@ def _render_cross_sheet_seam_stitch(mr: Mapping[str, Any], res: Mapping[str, Any
         return None
 
 
+def compute_physical_anchor_evidence(start_bbox, end_bbox, paths) -> Dict[str, Any]:
+    """Item 3 (Slice A.2) — resolve the physical structure-anchor pair as READ-ONLY EVIDENCE.
+    Thin wrapper over ``physical_anchor_resolver.resolve_connector_anchors`` that tags the result
+    ``applied=False`` / ``evidence_only=True`` so nothing downstream can mistake it for a draw
+    anchor. The resolver itself is pure + uniqueness-gated; this adds no placement logic."""
+    from . import physical_anchor_resolver as _par
+    pa = _par.resolve_connector_anchors(list(start_bbox), list(end_bbox), paths)
+    pa["applied"] = False
+    pa["evidence_only"] = True
+    return pa
+
+
+def _attach_physical_anchor_evidence(mr: Dict[str, Any], doc: Any, sheet_offset: int) -> None:
+    """Stash READ-ONLY physical-anchor evidence on ``mr['physical_anchor']`` for a single-sheet
+    start->end resolver frame whose connector draw path did NOT compute it (e.g. log66 resolved via
+    the station-frame/matchline overlay). EVIDENCE ONLY: never draws, never sets ``struct_connector``,
+    never touches overlays or the rendered artifact. Single-sheet only. Never raises (failure -> no-op)."""
+    try:
+        overlays = mr.get("overlays") or []
+        start = next((o for o in overlays
+                      if o.get("role") in ("start", "reset_origin", "reset") and o.get("bbox")), None)
+        end = next((o for o in overlays if o.get("role") == "end" and o.get("bbox")), None)
+        if not (start and end) or start.get("sheet") != end.get("sheet"):
+            return
+        from redline_pdf_first.pdf import text_extract as _tx, vector_extract as _ve
+        page = _tx.get_page(doc, start["sheet"], sheet_offset)
+        mr["physical_anchor"] = compute_physical_anchor_evidence(
+            list(start["bbox"]), list(end["bbox"]), _ve.extract_paths(page))
+    except Exception:
+        return  # evidence-only: any failure leaves the card exactly as before
+
+
 def _resolver_card(log_id: str, mr: Mapping[str, Any], rec: Mapping[str, Any],
                    res: Mapping[str, Any]) -> Dict[str, Any]:
     """Translate a verified resolver result into a review-grade evidence card. The ``geo`` block
@@ -506,6 +538,12 @@ def _resolver_card(log_id: str, mr: Mapping[str, Any], rec: Mapping[str, Any],
             "verification_trail": mr.get("verification_trail"),
         },
     }
+    # Item 3 (Slice A.2) — surface the physical-anchor EVIDENCE (set by the connector draw path OR
+    # the read-only evidence pass) so build_review_reason can show physical_handhole_anchor. Read-only
+    # projection: the drawn overlay/artifact is decided below and is NOT affected by this.
+    _pa = mr.get("physical_anchor")
+    if isinstance(_pa, dict) and _pa:
+        geo["physical_anchor"] = _pa
     # Cross-sheet seam-stitch evidence (default-OFF). Surfaces the two per-sheet segments +
     # the 3-machine / 1-owner-verified anchor breakdown. Additive; absent when the flag is off.
     _css = mr.get("cross_sheet_seam_stitch")
@@ -610,6 +648,13 @@ def apply_resolver(log_id: str, env: Dict[str, Any], doc: Any, sheet_offset: int
             if not isinstance(mr, dict):
                 mr = dict(mr)
             _render_cross_sheet_seam_stitch(mr, res, doc, sheet_offset, out_dir)
+        # Item 3 (Slice A.2): READ-ONLY physical-anchor evidence when the connector draw path did
+        # not compute it (e.g. log66 single-sheet HH-HH resolved via the station-frame/matchline
+        # overlay). Additive evidence ONLY — never sets struct_connector, never changes the draw.
+        if not mr.get("seam") and not mr.get("physical_anchor"):
+            if not isinstance(mr, dict):
+                mr = dict(mr)
+            _attach_physical_anchor_evidence(mr, doc, sheet_offset)
         card = _resolver_card(log_id, mr, rec, res)
         if mr.get("override"):
             # clear the superseded geometry-only A placement(s) for this log
