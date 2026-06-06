@@ -15080,9 +15080,33 @@ def match_review_queue_endpoint(session_id: Optional[str] = None) -> JSONRespons
                 # PDF-first payload (keyed by committed_rows + plan-PDF identity + output flags)
                 # so repeated polls skip the heavy rebuild + PNG re-render. Flag OFF -> builds
                 # every call, byte-identical to prior behavior. Engine-truth payload unchanged.
+                # Item 7 — additive, env-gated cache telemetry: one perf-audit row per MRQ
+                # request describing pdf_first_evidence cache hit/miss + build timing. Self-gated
+                # by TRUELINE_PERF_AUDIT (no-op + no overhead when off); NEVER changes the response
+                # body or cache behavior. stage = "mrq_cache.<status>"; detail carries build_ms/key/size.
+                def _mrq_cache_observer(_info):
+                    if not _perf_audit_enabled():
+                        return
+                    try:
+                        _bm = _info.get("build_ms")
+                        _tm = _info.get("elapsed_ms")
+                        _emit_perf_audit_row(
+                            "mrq_cache." + str(_info.get("status") or "unknown"),
+                            float(_tm if _tm is not None else (_bm or 0.0)),
+                            phase="mrq_cache",
+                            stage_detail="build_ms=%s;key=%s;size=%s" % (
+                                ("n/a" if _bm is None else round(float(_bm), 3)),
+                                _info.get("cache_key") or "-",
+                                _info.get("cache_size"),
+                            ),
+                            session_id=sid,
+                        )
+                    except Exception:
+                        pass  # telemetry never breaks the queue response
                 _pf_ev = _mrq_cache.get_or_build(
                     sid, _pdf_first_rows, _pf_plan_pdf, _pf_card_dir,
                     pdf_first_adapter.build_session_evidence_from_committed_rows,
+                    observer=_mrq_cache_observer,
                 )
                 if _pf_ev:
                     _body["pdf_first_evidence"] = _pf_ev
