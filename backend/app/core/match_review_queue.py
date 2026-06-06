@@ -24,6 +24,7 @@ input list of diag dicts. It does not import from `main.py`.
 
 from __future__ import annotations
 
+import os
 from copy import deepcopy
 from typing import Any, Dict, List, Mapping, Optional, Sequence
 
@@ -196,6 +197,21 @@ def _abstain_reason(entry: Dict[str, Any]) -> Optional[str]:
 # Never raises; never mutates its input.
 
 REVIEW_REASON_SCHEMA_VERSION = "pdf-first-review-reason-1"
+
+# ─── Item 1 (Slice A) — additive station-role evidence (default-OFF) ──────────
+# Deterministic, EVIDENCE-ONLY classification of a PDF-first geo block's endpoint
+# station ROLES (equation-reset origin / local zero reset / authored endpoint /
+# terminal endpoint / interior-boundary candidate) plus a
+# ``local_reset_continuation_risk`` REVIEW flag for the D22/log58 class (a local
+# reset that may be an interior boundary of a longer continuous run). It NEVER
+# changes draw/abstain/placement/route/frame/matchline/BOC/cache — it only labels
+# already-emitted evidence for a reviewer. Gated default-OFF by
+# ``TRUELINE_STATION_ROLE_EVIDENCE``: flag OFF => key absent => byte-identical;
+# flag ON => only an additive ``evidence.station_roles`` block. Composes with D20
+# (assist review; deterministic engine + human verify) and D21/D22 (continuous-run
+# preservation). No runtime AI; pure rule-based.
+STATION_ROLE_SCHEMA_VERSION = "pdf-first-station-roles-1"
+STATION_ROLE_FLAG = "TRUELINE_STATION_ROLE_EVIDENCE"
 
 
 def _dedup_str(items: Sequence[Any]) -> List[str]:
@@ -385,6 +401,15 @@ def build_review_reason(geo: Optional[Mapping[str, Any]]) -> Optional[Dict[str, 
                                       "nearby_offsets": _offs[:5]}} if bocc_verdict else {}),
         }
 
+        # Item 1 (Slice A) — additive, default-OFF station-role evidence. Evidence-ONLY:
+        # classifies endpoint station roles + flags a possible local-reset/continuation
+        # (the D22/log58 class) for REVIEW. NEVER touches code/message/missing/discriminators
+        # or any draw/abstain/placement decision. Flag OFF => key absent => byte-identical.
+        if os.getenv(STATION_ROLE_FLAG, "0").strip() == "1":
+            _sr = station_role_evidence(geo)
+            if _sr is not None:
+                evidence["station_roles"] = _sr
+
         if not (discriminators or missing or station_frame or ml_status
                 or isinstance(phys_resolved, bool) or geometry_status or drawn):
             return None
@@ -396,6 +421,91 @@ def build_review_reason(geo: Optional[Mapping[str, Any]]) -> Optional[Dict[str, 
             "discriminators": discriminators,
             "missing": missing,
             "evidence": evidence,
+        }
+    except Exception:
+        return None
+
+
+def station_role_evidence(geo: Optional[Mapping[str, Any]]) -> Optional[Dict[str, Any]]:
+    """Classify the station ROLES of a PDF-first ``geo`` block's endpoints and flag a
+    possible local-reset / continuation (the D22 / log58 class) for operator REVIEW.
+
+    PURE, ADDITIVE, EVIDENCE-ONLY (Item 1, Slice A). Reads only fields the engine /
+    resolver already emit (frame chainage + ``eqs_used``, ``matchline_resolution`` class,
+    ``physical_anchor``, ``geometry_status``). It NEVER changes any draw / abstain /
+    placement / route / frame / matchline / BOC / cache decision — it only labels evidence
+    for a reviewer. Never raises; never mutates its input.
+
+    Roles
+      start: ``equation_reset_origin`` (``eqs_used`` present AND starts at local 0) |
+             ``local_zero_reset`` (starts at local 0, no equation) |
+             ``authored_endpoint_station`` (non-zero authored start).
+      end:   ``terminal_endpoint`` (bound to an authored terminal structure — physical
+             anchor resolved, connector end resolved, or a structure-connector geometry) |
+             ``interior_boundary_candidate`` (a station / HH-HH-distance endpoint with NO
+             proven terminal structure — it may be interior to a longer run).
+
+    ``local_reset_continuation_risk`` is True when the start is a local reset AND the far
+    end is only an interior-boundary candidate (not a proven terminal) — i.e. the bore may
+    be a SEGMENT of a longer continuous run (D21/D22). This is a REVIEW prompt only; it is
+    NOT a draw/abstain change and carries no geometry/coords/artifact. Returns ``None`` when
+    there is no station evidence to classify.
+    """
+    try:
+        if not isinstance(geo, Mapping):
+            return None
+        frame = _as_mapping(geo.get("frame"))
+        mlr = _as_mapping(geo.get("matchline_resolution"))
+        phys = _as_mapping(geo.get("physical_anchor"))
+        geometry_status = (_safe_str(geo.get("geometry_status")) or "").upper()
+
+        cs = _safe_float(frame.get("chainage_start_ft"))
+        ce = _safe_float(frame.get("chainage_end_ft"))
+        eqs = [_safe_str(e) for e in _safe_list(frame.get("eqs_used")) if _safe_str(e)]
+
+        start_is_zero = cs is not None and abs(cs) < 1e-6
+        has_equation_reset = bool(eqs)
+        if start_is_zero and has_equation_reset:
+            start_role = "equation_reset_origin"
+        elif start_is_zero:
+            start_role = "local_zero_reset"
+        elif cs is not None:
+            start_role = "authored_endpoint_station"
+        else:
+            start_role = "unknown"
+
+        # A confirmed terminal end == bound to an authored structure (single anchor resolved,
+        # connector end resolved, or a structure-connector geometry). A bare station / HH-HH
+        # distance endpoint is NOT proof of a terminal — it may be an interior boundary.
+        end_anchor = _as_mapping(phys.get("end"))
+        end_structure_bound = (phys.get("resolved") is True
+                               or end_anchor.get("resolved") is True
+                               or geometry_status == "STRUCTURE_CONNECTOR_RESOLVED")
+        if end_structure_bound:
+            end_role = "terminal_endpoint"
+        elif ce is not None:
+            end_role = "interior_boundary_candidate"
+        else:
+            end_role = "unknown"
+
+        if start_role == "unknown" and end_role == "unknown":
+            return None
+
+        start_is_reset = start_role in ("equation_reset_origin", "local_zero_reset")
+        continuation_risk = bool(start_is_reset and end_role == "interior_boundary_candidate")
+
+        return {
+            "schema_version": STATION_ROLE_SCHEMA_VERSION,
+            "start": {"role": start_role, "chainage_ft": cs},
+            "end": {"role": end_role, "chainage_ft": ce},
+            "equation_reset": has_equation_reset,
+            "hh_hh_ft": _safe_float(mlr.get("hh_hh_ft")),
+            "local_reset_continuation_risk": continuation_risk,
+            "note": ("REVIEW: start is a local reset and the far endpoint is not a proven "
+                     "terminal structure — this bore may be an interior segment of a longer "
+                     "continuous run (D21/D22). Evidence-only; does not change draw/abstain/placement."
+                     if continuation_risk else
+                     "Evidence-only station-role classification; does not change draw/abstain/placement."),
         }
     except Exception:
         return None
