@@ -77,6 +77,35 @@ def _cluster_layer_blobs(paths: List[Dict[str, Any]], layer: str) -> List[Dict[s
     return blobs
 
 
+def _rejected_nearby_candidates(paths: List[Dict[str, Any]], allowed: set, cpt: Tuple[float, float],
+                                radius: float, *, pad: float = 40.0, max_out: int = 5) -> List[Dict[str, Any]]:
+    """Evidence-ONLY (item 3): structure blobs on NON-allowed layers within ``radius`` of the
+    callout — the candidates the allow-list deliberately rejected (e.g. TEL-HH / FLOWER POT /
+    HOUSES). This is NEVER consulted by the resolution decision; it exists purely so WHY/EVIDENCE
+    can show *why* the physical anchor was preferred over nearby look-alikes. Pure; bounded."""
+    near_layers = set()
+    for p in paths:
+        lay = p.get("layer")
+        if lay is None or str(lay) in allowed:
+            continue
+        bb = p.get("bbox_display")
+        if not (isinstance(bb, (list, tuple)) and len(bb) == 4):
+            continue
+        reach = radius + pad
+        if (bb[0] - reach <= cpt[0] <= bb[2] + reach and bb[1] - reach <= cpt[1] <= bb[3] + reach):
+            near_layers.add(str(lay))
+    rejected: List[Dict[str, Any]] = []
+    for layer in near_layers:
+        for b in _cluster_layer_blobs(paths, layer):
+            d = math.hypot(b["centroid"][0] - cpt[0], b["centroid"][1] - cpt[1])
+            if d <= radius:
+                rejected.append({"layer": layer, "centroid": [round(x, 1) for x in b["centroid"]],
+                                 "dist_px": round(d, 2), "n_paths": b["n_paths"],
+                                 "reason": "layer_not_allowed"})
+    rejected.sort(key=lambda r: r["dist_px"])
+    return rejected[:max_out]
+
+
 def resolve_physical_anchor(callout_bbox: Sequence[float], paths: List[Dict[str, Any]], *,
                             structure_layers: Sequence[str] = DEFAULT_STRUCTURE_LAYERS,
                             radius: float = DEFAULT_RADIUS) -> Dict[str, Any]:
@@ -84,7 +113,9 @@ def resolve_physical_anchor(callout_bbox: Sequence[float], paths: List[Dict[str,
 
     ``callout_bbox`` — the PROVEN callout's display-space bbox (proof, NOT the anchor).
     ``paths``        — ``vector_extract.extract_paths(page)`` for the SAME sheet.
-    Returns ``{resolved, anchor:[x,y]|None, bbox|None, reason, evidence:[...]}``.
+    Returns ``{resolved, anchor:[x,y]|None, bbox|None, reason, evidence:[...],
+    rejected_candidates:[...]}``. ``rejected_candidates`` is evidence-ONLY (item 3): nearby blobs
+    on non-allowed layers; it NEVER affects the resolved/anchor decision.
     Never raises (any failure -> resolved False, caller falls back)."""
     try:
         cpt = _centroid(callout_bbox)
@@ -99,12 +130,19 @@ def resolve_physical_anchor(callout_bbox: Sequence[float], paths: List[Dict[str,
         hits.sort(key=lambda b: b["dist"])
         evidence = [{"layer": b["layer"], "centroid": [round(x, 1) for x in b["centroid"]],
                      "dist_px": b["dist"], "n_paths": b["n_paths"]} for b in hits[:5]]
+        # Evidence-only enrichment, computed in its OWN guard so it can never affect resolution.
+        try:
+            rejected = _rejected_nearby_candidates(paths, set(structure_layers), cpt, radius)
+        except Exception:
+            rejected = []
         if not hits:
             return {"resolved": False, "anchor": None, "bbox": None, "evidence": evidence,
+                    "rejected_candidates": rejected,
                     "reason": "no_structure_blob_on_allowed_layer_within_radius",
                     "structure_layers": list(structure_layers)}
         if len(hits) > 1:
             return {"resolved": False, "anchor": None, "bbox": None, "evidence": evidence,
+                    "rejected_candidates": rejected,
                     "reason": "ambiguous_multiple_structure_blobs",
                     "structure_layers": list(structure_layers)}
         b = hits[0]
@@ -112,9 +150,11 @@ def resolve_physical_anchor(callout_bbox: Sequence[float], paths: List[Dict[str,
                 "anchor": [round(b["centroid"][0], 2), round(b["centroid"][1], 2)],
                 "bbox": [round(x, 2) for x in b["bbox"]],
                 "reason": "unique_structure_blob", "evidence": evidence,
+                "rejected_candidates": rejected,
                 "structure_layers": list(structure_layers)}
     except Exception as exc:  # pure: never raise into the connector path
         return {"resolved": False, "anchor": None, "bbox": None, "evidence": [],
+                "rejected_candidates": [],
                 "reason": "resolver_error:%s" % type(exc).__name__}
 
 
