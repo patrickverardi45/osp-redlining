@@ -418,6 +418,7 @@ def _render_cross_sheet_seam_stitch(mr: Mapping[str, Any], res: Mapping[str, Any
         sel17 = _aps.select_authored_s17_path(
             segments=_ve.extract_segments(page17), matchline_paths=s17_ml,
             start_xy=start_hh["anchor"], home_sta=_seam.get("home_sta"), neighbor_sta=_seam.get("neighbor_sta"),
+            expected_neighbor_sheet=_seam.get("neighbor_sheet"),
             station_callouts=_aps.parse_station_callouts(_words17),
             matchline_callouts=_aps.parse_matchline_callouts(_tx.extract_blocks(page17)),
             offset_callouts=_aps.parse_offset_callouts(_words17), boc_ft=res.get("boc_ft"))
