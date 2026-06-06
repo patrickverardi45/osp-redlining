@@ -506,6 +506,58 @@ def _attach_physical_anchor_evidence(mr: Dict[str, Any], doc: Any, sheet_offset:
         return  # evidence-only: any failure leaves the card exactly as before
 
 
+_BOC_VERDICT_LABELS = {
+    "BOC_CONTEXT_CORROBORATED": "corroborated",
+    "DOWNGRADE_BOC_OFFSET_MISMATCH": "mismatch",
+    "DOWNGRADE_STRUCTURE_ONLY_NO_BOC_CALLOUT": "structure_only",
+    "BLOCKED_NO_AUTHORED_ENDPOINT_STRUCTURE": "blocked",
+}
+
+
+def _boc_verdict_label(raw_verdict) -> str:
+    """Map a ``boc_offset.prove_candidate`` raw verdict to a short reviewable label
+    (corroborated | mismatch | structure_only | blocked | unknown)."""
+    return _BOC_VERDICT_LABELS.get(str(raw_verdict), "unknown")
+
+
+def _attach_boc_corroboration(mr: Dict[str, Any], res: Mapping[str, Any], doc: Any,
+                              sheet_offset: int) -> None:
+    """Item 4 (Slice A) — READ-ONLY BOC/offset corroboration at the resolved endpoint. Runs the
+    EXISTING deterministic ``boc_offset.prove_candidate`` (authored endpoint STA + structure + a
+    co-located ``<boc>'`` offset callout) and stashes the verdict on ``mr['boc_corroboration']`` for
+    WHY/EVIDENCE. EVIDENCE ONLY: never gates draw/abstain/placement/route/station-frame, never
+    changes the overlay/artifact, never mutates ``res``. Single endpoint sheet. Never raises."""
+    try:
+        anchors = res.get("anchors") or []
+        end = next((a for a in anchors if a.get("role") == "end"), None)
+        boc_ft = res.get("boc_ft")
+        if not end or end.get("sheet") is None or boc_ft is None:
+            return
+        # Authored endpoint LOCAL station (strip any '=0+00' reset/equation suffix) — the form the
+        # endpoint sheet's authored callout carries (mirrors the proven false-A override usage).
+        end_sta = str(end.get("station") or "").split("=")[0].strip()
+        if not end_sta:
+            return
+        structure_kw = res.get("endpoint_structure") or "INSTALLER HH"
+        from . import boc_offset as _boc
+        page = _boc.tx.get_page(doc, end["sheet"], sheet_offset)
+        pv = _boc.prove_candidate(page, end_sta, boc_ft, structure_kw)
+        mr["boc_corroboration"] = {
+            "verdict": _boc_verdict_label(pv.get("verdict")),
+            "raw_verdict": pv.get("verdict"),
+            "corroborated": bool(pv.get("corroborated")),
+            "boc_ft": boc_ft,
+            "boc_token": pv.get("boc_token"),
+            "endpoint_sheet": end.get("sheet"),
+            "endpoint_station": end_sta,
+            "structure": structure_kw,
+            "nearby_offsets": pv.get("nearby_offsets") or [],
+            "evidence_only": True,
+        }
+    except Exception:
+        return  # evidence-only: any failure leaves the card exactly as before
+
+
 def _resolver_card(log_id: str, mr: Mapping[str, Any], rec: Mapping[str, Any],
                    res: Mapping[str, Any]) -> Dict[str, Any]:
     """Translate a verified resolver result into a review-grade evidence card. The ``geo`` block
@@ -544,6 +596,11 @@ def _resolver_card(log_id: str, mr: Mapping[str, Any], rec: Mapping[str, Any],
     _pa = mr.get("physical_anchor")
     if isinstance(_pa, dict) and _pa:
         geo["physical_anchor"] = _pa
+    # Item 4 (Slice A) — surface the READ-ONLY BOC/offset corroboration so build_review_reason can
+    # show a boc_corroboration discriminator. Projection only; never affects the drawn artifact.
+    _bocc = mr.get("boc_corroboration")
+    if isinstance(_bocc, dict) and _bocc:
+        geo["boc_corroboration"] = _bocc
     # Cross-sheet seam-stitch evidence (default-OFF). Surfaces the two per-sheet segments +
     # the 3-machine / 1-owner-verified anchor breakdown. Additive; absent when the flag is off.
     _css = mr.get("cross_sheet_seam_stitch")
@@ -655,6 +712,12 @@ def apply_resolver(log_id: str, env: Dict[str, Any], doc: Any, sheet_offset: int
             if not isinstance(mr, dict):
                 mr = dict(mr)
             _attach_physical_anchor_evidence(mr, doc, sheet_offset)
+        # Item 4 (Slice A): READ-ONLY BOC/offset corroboration at the resolved endpoint. Additive
+        # evidence ONLY — never changes draw/abstain/placement/route/station-frame behavior.
+        if not mr.get("boc_corroboration"):
+            if not isinstance(mr, dict):
+                mr = dict(mr)
+            _attach_boc_corroboration(mr, res, doc, sheet_offset)
         card = _resolver_card(log_id, mr, rec, res)
         if mr.get("override"):
             # clear the superseded geometry-only A placement(s) for this log

@@ -283,6 +283,29 @@ def build_review_reason(geo: Optional[Mapping[str, Any]]) -> Optional[Dict[str, 
             if not phys_resolved:
                 missing.append(_safe_str(phys.get("reason")) or "physical_handhole_not_uniquely_bound")
 
+        # BOC/offset corroboration (item 4): read-only verdict — does the authored endpoint carry a
+        # co-located offset callout matching the bore-log BOC? Display-only discriminator; it NEVER
+        # touches `missing`/`code`/`drawn`, so it cannot change any abstain/placement decision.
+        bocc = _as_mapping(geo.get("boc_corroboration"))
+        bocc_verdict = _safe_str(bocc.get("verdict")) or None
+        if bocc_verdict:
+            _boc_tok = (_safe_str(bocc.get("boc_token"))
+                        or (("%s'" % bocc.get("boc_ft")) if bocc.get("boc_ft") is not None else "BOC"))
+            _offs = [o for o in _safe_list(bocc.get("nearby_offsets")) if isinstance(o, Mapping)]
+            _off_str = ", ".join("%s'" % _safe_str(o.get("ft") if o.get("ft") is not None else o.get("text"))
+                                 for o in _offs[:4]) or "none"
+            _boc_detail = {
+                "corroborated": "authored offset callout matches %s at the endpoint structure" % _boc_tok,
+                "mismatch": "nearby authored offset(s) %s do NOT match %s" % (_off_str, _boc_tok),
+                "structure_only": "endpoint structure found, but no offset callout to corroborate %s" % _boc_tok,
+                "blocked": "no authored endpoint structure to corroborate %s" % _boc_tok,
+            }.get(bocc_verdict, "%s (%s)" % (bocc_verdict, _boc_tok))
+            discriminators.append({
+                "name": "boc_corroboration",
+                "ok": bocc_verdict == "corroborated",
+                "detail": _boc_detail,
+            })
+
         # Cross-sheet seam discriminators (items 1/2/5) + per-segment abstain reasons.
         for d in _safe_list(seam.get("discriminators")):
             if isinstance(d, Mapping):
@@ -357,6 +380,9 @@ def build_review_reason(geo: Optional[Mapping[str, Any]]) -> Optional[Dict[str, 
                                  **({"rejected": _rej[:5]} if _rej else {})}
                                 if isinstance(phys_resolved, bool) else None),
             "boc_ft": boc_ft,
+            **({"boc_corroboration": {"verdict": bocc_verdict, "boc_token": _boc_tok,
+                                      "endpoint_sheet": bocc.get("endpoint_sheet"),
+                                      "nearby_offsets": _offs[:5]}} if bocc_verdict else {}),
         }
 
         if not (discriminators or missing or station_frame or ml_status
