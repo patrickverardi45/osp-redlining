@@ -256,12 +256,29 @@ def build_review_reason(geo: Optional[Mapping[str, Any]]) -> Optional[Dict[str, 
 
         # Physical handhole identity (item 3): real structure symbol vs text label.
         phys_resolved = phys.get("resolved")
+        # Item 3 enrichment (evidence-ONLY): nearby NON-allowed structures the layer allow-list
+        # rejected (TEL-HH / FLOWER POT / HOUSES), aggregated from the connector start/end (or a
+        # single-anchor result). NEVER affects any draw/abstain decision — display only.
+        _rej: List[Dict[str, Any]] = []
+        for _src in (phys, _as_mapping(phys.get("start")), _as_mapping(phys.get("end"))):
+            for _r in _safe_list(_src.get("rejected_candidates")):
+                if isinstance(_r, Mapping):
+                    _lay = _safe_str(_r.get("layer"))
+                    if _lay:
+                        _rej.append({"layer": _lay, "reason": _safe_str(_r.get("reason")) or "layer_not_allowed"})
+        _rej_layers: List[str] = []
+        for _r in _rej:
+            if _r["layer"] not in _rej_layers:
+                _rej_layers.append(_r["layer"])
         if isinstance(phys_resolved, bool):
+            _detail = ("anchored to authored structure symbol" if phys_resolved
+                       else (_safe_str(phys.get("reason")) or "text-label fallback"))
+            if phys_resolved and _rej_layers:
+                _detail = _detail + " (preferred over nearby " + ", ".join(_rej_layers[:3]) + ")"
             discriminators.append({
                 "name": "physical_handhole_anchor",
                 "ok": phys_resolved,
-                "detail": ("anchored to authored structure symbol" if phys_resolved
-                           else (_safe_str(phys.get("reason")) or "text-label fallback")),
+                "detail": _detail,
             })
             if not phys_resolved:
                 missing.append(_safe_str(phys.get("reason")) or "physical_handhole_not_uniquely_bound")
@@ -336,7 +353,8 @@ def build_review_reason(geo: Optional[Mapping[str, Any]]) -> Optional[Dict[str, 
             "station_frame": station_frame,
             "matchline": ({"status": ml_status, "class": ml_class, "sheets": sheets, "hh_hh_ft": hh_hh_ft}
                           if (ml_status or sheets) else None),
-            "physical_anchor": ({"resolved": phys_resolved, "reason": _safe_str(phys.get("reason")) or None}
+            "physical_anchor": ({"resolved": phys_resolved, "reason": _safe_str(phys.get("reason")) or None,
+                                 **({"rejected": _rej[:5]} if _rej else {})}
                                 if isinstance(phys_resolved, bool) else None),
             "boc_ft": boc_ft,
         }

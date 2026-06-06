@@ -134,3 +134,34 @@ def test_legacy_assemble_unchanged_and_no_review_reason_on_rows():
     assert row["abstain_reason"] == "abstained_x"
     # review_reason is a pdf_first card field, NOT a matcher queue-row field.
     assert "review_reason" not in row
+
+
+def test_physical_anchor_rejected_candidates_surface_in_review_reason():
+    # Connector-shaped physical_anchor (log66): resolved, with nearby rejected look-alikes on the
+    # start/end sub-results. The review reason must SURFACE the preference (item 3 enrichment).
+    geo = {
+        "geometry_status": "STRUCTURE_CONNECTOR_RESOLVED",
+        "physical_anchor": {
+            "resolved": True,
+            "start": {"resolved": True, "reason": "unique_structure_blob",
+                      "rejected_candidates": [{"layer": "FLOWER POT", "reason": "layer_not_allowed"},
+                                              {"layer": "TEL-HH", "reason": "layer_not_allowed"}]},
+            "end": {"resolved": True, "reason": "unique_structure_blob",
+                    "rejected_candidates": [{"layer": "HOUSES", "reason": "layer_not_allowed"}]},
+        },
+    }
+    rr = build_review_reason(geo)
+    assert rr is not None
+    disc = next(d for d in rr["discriminators"] if d["name"] == "physical_handhole_anchor")
+    assert disc["ok"] is True
+    assert "preferred over nearby" in disc["detail"] and "FLOWER POT" in disc["detail"]
+    rej = rr["evidence"]["physical_anchor"]["rejected"]
+    assert {r["layer"] for r in rej} >= {"FLOWER POT", "TEL-HH", "HOUSES"}
+    assert all(r["reason"] == "layer_not_allowed" for r in rej)
+
+
+def test_physical_anchor_evidence_unchanged_when_no_rejected():
+    # No rejected_candidates -> evidence.physical_anchor carries NO 'rejected' key (item 6 intact).
+    geo = {"geometry_status": "STATION_FRAME_RESOLVED", "physical_anchor": {"resolved": True}}
+    rr = build_review_reason(geo)
+    assert rr["evidence"]["physical_anchor"] == {"resolved": True, "reason": None}
