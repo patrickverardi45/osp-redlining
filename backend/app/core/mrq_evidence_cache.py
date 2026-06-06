@@ -24,6 +24,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import time
 from collections import OrderedDict
 from typing import Any, Callable, Dict, Mapping, Optional, Sequence, Tuple
 
@@ -78,24 +79,57 @@ def get_or_build(session_id: str,
                  committed_rows: Sequence[Mapping[str, Any]],
                  plan_pdf: str,
                  card_out_dir: Optional[str],
-                 builder: Callable[..., Optional[Dict[str, Any]]]) -> Optional[Dict[str, Any]]:
+                 builder: Callable[..., Optional[Dict[str, Any]]],
+                 observer: Optional[Callable[[Dict[str, Any]], None]] = None,
+                 ) -> Optional[Dict[str, Any]]:
     """Return the cached evidence on a key match, else call
     ``builder(plan_pdf, committed_rows, card_out_dir=card_out_dir)`` and memoize the result.
 
     Default-OFF: when the flag is off, ALWAYS builds (current behavior) and never touches the
     cache. A falsy payload (None/empty) is never cached, so it is rebuilt next time.
+
+    Observability (additive, behavior-NEUTRAL): if ``observer`` is given it is invoked exactly
+    once per call with ``{status, session_id, build_ms, elapsed_ms, cache_key, cache_size}`` where
+    ``status`` is ``"disabled" | "miss" | "hit"`` (``build_ms`` is build-only time; ``cache_key``
+    is a SHORT 12-char prefix or None when disabled). The observer is wrapped so it can NEVER raise
+    into the caller or affect caching. Passing no observer (the default) is byte-identical to the
+    pre-observability path — cache decisions, returns, and key semantics are unchanged.
     """
+    _t0 = time.perf_counter()
+
+    def _notify(status: str, build_ms: Optional[float], key: Optional[str]) -> None:
+        if observer is None:
+            return
+        try:
+            observer({
+                "status": status,
+                "session_id": session_id,
+                "build_ms": build_ms,
+                "elapsed_ms": (time.perf_counter() - _t0) * 1000.0,
+                "cache_key": (key[:12] if key else None),
+                "cache_size": len(_CACHE),
+            })
+        except Exception:
+            pass  # observability is never allowed to affect cache behavior
+
     if not enabled():
-        return builder(plan_pdf, committed_rows, card_out_dir=card_out_dir)
+        _b0 = time.perf_counter()
+        payload = builder(plan_pdf, committed_rows, card_out_dir=card_out_dir)
+        _notify("disabled", (time.perf_counter() - _b0) * 1000.0, None)
+        return payload
     key = cache_key(committed_rows, plan_pdf)
     cached = _CACHE.get(session_id)
     if cached is not None and cached[0] == key:
         _CACHE.move_to_end(session_id)
+        _notify("hit", 0.0, key)
         return cached[1]
+    _b0 = time.perf_counter()
     payload = builder(plan_pdf, committed_rows, card_out_dir=card_out_dir)
+    _build_ms = (time.perf_counter() - _b0) * 1000.0
     if payload:
         _CACHE[session_id] = (key, payload)
         _CACHE.move_to_end(session_id)
         while len(_CACHE) > _MAX_SESSIONS:
             _CACHE.popitem(last=False)
+    _notify("miss", _build_ms, key)
     return payload

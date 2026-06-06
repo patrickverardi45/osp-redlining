@@ -112,3 +112,57 @@ def test_falsy_payload_not_cached(tmp_path, monkeypatch):
     calls, builder = _counting_builder()
     C.get_or_build("s1", ROWS_A, pdf, None, builder)        # rebuilds (nothing cached)
     assert calls["n"] == 1
+
+
+# ── Item 7 observability: behavior-neutral hit/miss + timing telemetry ──────────────
+
+def test_observer_reports_disabled_when_flag_off(tmp_path, monkeypatch):
+    monkeypatch.delenv(C.CACHE_FLAG, raising=False)
+    pdf = _pdf(tmp_path)
+    _, builder = _counting_builder()
+    seen = []
+    C.get_or_build("s1", ROWS_A, pdf, None, builder, observer=seen.append)
+    assert [e["status"] for e in seen] == ["disabled"]
+    assert seen[0]["build_ms"] is not None and seen[0]["elapsed_ms"] is not None
+    assert seen[0]["cache_key"] is None  # no key computed in the disabled path
+
+
+def test_observer_reports_miss_then_hit(tmp_path, monkeypatch):
+    monkeypatch.setenv(C.CACHE_FLAG, "1")
+    pdf = _pdf(tmp_path)
+    _, builder = _counting_builder()
+    seen = []
+    C.get_or_build("s1", ROWS_A, pdf, None, builder, observer=seen.append)   # miss
+    C.get_or_build("s1", ROWS_A, pdf, None, builder, observer=seen.append)   # hit
+    assert [e["status"] for e in seen] == ["miss", "hit"]
+    assert seen[0]["build_ms"] >= 0.0    # miss timed the real build
+    assert seen[1]["build_ms"] == 0.0    # hit skipped the build
+    assert all(len(e["cache_key"]) <= 12 for e in seen)  # short prefix only
+
+
+def test_observer_optional_and_never_breaks(tmp_path, monkeypatch):
+    monkeypatch.setenv(C.CACHE_FLAG, "1")
+    pdf = _pdf(tmp_path)
+    calls, builder = _counting_builder()
+    C.get_or_build("s1", ROWS_A, pdf, None, builder)            # no observer -> no error
+    def _boom(_info):
+        raise RuntimeError("observer blew up")
+    p = C.get_or_build("s1", ROWS_A, pdf, None, builder, observer=_boom)  # raising observer swallowed
+    assert p is not None and calls["n"] == 1   # still a hit; observer never affected caching
+
+
+def test_cached_payload_equals_fresh_build(tmp_path, monkeypatch):
+    pdf = _pdf(tmp_path)
+
+    def _det_builder(plan_pdf, committed_rows, card_out_dir=None):
+        rows = list(committed_rows)
+        return {"schema_version": "test", "rows": len(rows),
+                "first_station": (rows[0]["station"] if rows else None)}
+
+    monkeypatch.setenv(C.CACHE_FLAG, "1")
+    cached = C.get_or_build("s1", ROWS_A, pdf, None, _det_builder)
+    cached2 = C.get_or_build("s1", ROWS_A, pdf, None, _det_builder)
+    assert cached2 is cached  # served from cache, not rebuilt
+    monkeypatch.setenv(C.CACHE_FLAG, "0")
+    fresh = C.get_or_build("s1", ROWS_A, pdf, None, _det_builder)  # flag off -> fresh build
+    assert cached == fresh  # cached payload is NOT stale: equals an independent fresh build
