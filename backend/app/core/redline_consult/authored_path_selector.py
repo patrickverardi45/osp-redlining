@@ -47,6 +47,7 @@ OFFSET_NEAR_TOL = 130.0  # max dist from a '<boc>'' offset callout to the path c
 _STA_RE = re.compile(r"\bSTA\.?\s*(\d+)\+(\d+)\b", re.I)
 _OFF_RE = re.compile(r"^(\d{1,2})'$")
 _FT_RE = re.compile(r"(\d+)\+(\d+)")
+_SEE_SHEET_RE = re.compile(r"SEE\s+SHEET\s+(\d+)", re.I)
 
 
 def _abstain(reason: str, disc: Dict[str, Any]) -> Dict[str, Any]:
@@ -128,20 +129,44 @@ def _on_edge(n, e, edge_tol: float) -> bool:
     return abs(n[1] - e["y"]) <= edge_tol and e["bbox"][0] - edge_tol <= n[0] <= e["bbox"][2] + edge_tol
 
 
-def bind_named_matchline(matchline_paths, matchline_callouts, home_sta, neighbor_sta=None
+def _parse_see_sheet(text: Any) -> Optional[int]:
+    """Parse the 'SEE SHEET N' target sheet from a matchline callout, or None if absent/unparseable."""
+    m = _SEE_SHEET_RE.search(str(text or ""))
+    return int(m.group(1)) if m else None
+
+
+def bind_named_matchline(matchline_paths, matchline_callouts, home_sta, neighbor_sta=None,
+                         expected_neighbor_sheet=None
                          ) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
     """Bind the seam to the authored matchline named by its callout (home or neighbor STA), then
-    pick the seam EDGE nearest that callout. Abstains if no named callout or no seam edge."""
+    pick the seam EDGE nearest that callout. Abstains if no named callout or no seam edge.
+
+    SEE-SHEET target validation (item 2, FAIL-OPEN): when ``expected_neighbor_sheet`` is given, a
+    STA-matching callout that carries a PARSEABLE 'SEE SHEET N' target which CONTRADICTS the
+    expected sheet is rejected (it names a matchline to the WRONG sheet). If every STA-matching
+    callout is rejected for that reason, abstain ``named_matchline_wrong_target_sheet``. Fail-open:
+    ``expected_neighbor_sheet`` None, OR a callout with no parseable SEE-SHEET, leaves behavior
+    EXACTLY as before — never broadens matching, never creates a new draw."""
     edges = seam_edges(matchline_paths)
     if not edges:
         return None, "named_matchline_not_bound"
     target = None
+    rejected_wrong_sheet = False
     for c in matchline_callouts or []:
         u = str(c.get("text") or "").upper()
-        if (home_sta and str(home_sta) in u) or (neighbor_sta and str(neighbor_sta) in u):
-            target = c
-            break
+        if not ((home_sta and str(home_sta) in u) or (neighbor_sta and str(neighbor_sta) in u)):
+            continue
+        # SEE-SHEET target check (fail-open): reject ONLY on a PROVEN wrong target sheet.
+        if expected_neighbor_sheet is not None:
+            see_sheet = _parse_see_sheet(c.get("text"))
+            if see_sheet is not None and see_sheet != int(expected_neighbor_sheet):
+                rejected_wrong_sheet = True
+                continue
+        target = c
+        break
     if target is None:
+        if rejected_wrong_sheet:
+            return None, "named_matchline_wrong_target_sheet"
         return None, "named_matchline_not_bound"
     cx, cy = target["xy"]
     edge = min(edges, key=lambda e: math.hypot(e["x"] - cx, e["y"] - cy))
@@ -261,6 +286,7 @@ def boc_corridor_ok(path_xy, offset_callouts, boc_ft, *, near_tol: float = OFFSE
 # ── orchestrator (pure: takes extracted geometry + parsed callouts) ──────────────────────────
 def select_authored_s17_path(*, segments, matchline_paths, start_xy, home_sta, neighbor_sta,
                              station_callouts, matchline_callouts, offset_callouts, boc_ft,
+                             expected_neighbor_sheet=None,
                              gap_tol: float = GAP_TOL, start_tol: float = START_TOL,
                              edge_tol: float = EDGE_TOL) -> Dict[str, Any]:
     """Fuse the authored discriminators and return ``{resolved, path_xy, reason, discriminators,
@@ -269,7 +295,8 @@ def select_authored_s17_path(*, segments, matchline_paths, start_xy, home_sta, n
     disc: Dict[str, Any] = {}
     try:
         # 1. NAMED MATCHLINE — bind the seam to the authored callout, not any MATCHLINE line.
-        named_edge, why = bind_named_matchline(matchline_paths, matchline_callouts, home_sta, neighbor_sta)
+        named_edge, why = bind_named_matchline(matchline_paths, matchline_callouts, home_sta, neighbor_sta,
+                                               expected_neighbor_sheet=expected_neighbor_sheet)
         if named_edge is None:
             return _abstain(why, disc)
         disc["named_matchline_bound"] = True
