@@ -49,15 +49,14 @@ def _geo_log66():
 
 
 def _geo_log58():
-    """Cross-sheet HH_HH_DISTANCE: a leg distance, NO proven terminal end structure.
-    D22: STA 2+36 is an INTERIOR boundary of bore_log24's 413' run -> continuation risk."""
+    """log58 LIVE shape (D22): FRAME_ONLY / evidence-card — review-grade, NOT a drawn placement.
+    matchline=null, physical_anchor=null, NO pdf_path_trace/pdf_redline draw, NO drop_terminal ->
+    end stays an interior-boundary candidate -> continuation risk PRESERVED. (render_artifact_ref is
+    only an evidence-card crop, which the classifier must NOT treat as a draw.)"""
     return {
-        "geometry_status": "STATION_FRAME_RESOLVED",
+        "geometry_status": "FRAME_ONLY",
         "frame": {"chainage_start_ft": 0.0, "chainage_end_ft": 236.0, "axis": "x",
                   "eqs_used": [], "multi_sheet": True},
-        "matchline_resolution": {"status": "STATION_FRAME_RESOLVED", "class": "HH_HH_DISTANCE",
-                                 "sheets": [10, 13], "boc_ft": 7.0, "hh_hh_ft": 236.0},
-        # NOTE: no physical_anchor terminal binding -> end is an interior-boundary candidate.
     }
 
 
@@ -165,3 +164,69 @@ def test_no_artifact_or_drawn_change(monkeypatch):
     for k in ("artifact_name", "drawn", "coords", "coordinates", "geometry",
               "segments", "polyline", "path_xy", "lat", "lon"):
         assert k not in sr
+
+
+# ── Slice A.1 — determinate-endpoint tuning (log56 false-positive fix) ────────
+def _geo_log56_ap_anchored():
+    """log56 LIVE shape (the false-positive case): AP_ANCHORED, physical_anchor=null,
+    matchline=null, but the engine DREW an authored trace (pdf_path_trace artifact) ->
+    determinate terminus. render_artifact_ref/code=authored_trace observed in prod."""
+    return {
+        "geometry_status": "AP_ANCHORED",
+        "frame": {"chainage_start_ft": 0.0, "chainage_end_ft": 270.0, "axis": "x",
+                  "eqs_used": ["STA 4+57=0+00"], "multi_sheet": False},
+        "geo_anchors": [{"kind": "AP", "id": "AP-XXX", "sta": "2+70", "chainage_ft": 270.0}],
+        "pdf_path_trace": {"artifact_name": "log56_s2_0p00-2p70.png"},  # DREW an authored trace
+        # physical_anchor / matchline_resolution / boc all absent (null in prod)
+    }
+
+
+def test_log56_ap_anchored_authored_trace_risk_false():
+    # Regression-lock for the live false positive: AP-anchored + DRAWN authored trace =>
+    # determinate terminal end, NOT continuation risk.
+    sr = station_role_evidence(_geo_log56_ap_anchored())
+    assert sr["start"]["role"] == "equation_reset_origin"
+    assert sr["end"]["role"] == "terminal_endpoint"
+    assert sr["local_reset_continuation_risk"] is False
+
+
+def test_log58_frame_only_evidence_card_risk_true():
+    # log58 is FRAME_ONLY / evidence-card (no draw) => interior-boundary candidate, risk preserved.
+    sr = station_role_evidence(_geo_log58())
+    assert sr["start"]["role"] == "local_zero_reset"
+    assert sr["end"]["role"] == "interior_boundary_candidate"
+    assert sr["local_reset_continuation_risk"] is True
+
+
+def test_bare_geo_anchor_at_end_does_not_clear_risk():
+    # D22 INVARIANT: an authored structure (geo_anchor) AT the end is NOT terminal when nothing
+    # was drawn -- that structure may be interior (log58's STA 2+36 HH). Risk must stay TRUE.
+    geo = {
+        "geometry_status": "FRAME_ONLY",
+        "frame": {"chainage_start_ft": 0.0, "chainage_end_ft": 236.0, "eqs_used": []},
+        "geo_anchors": [{"kind": "HH", "id": "INSTALLER HH", "sta": "2+36", "chainage_ft": 236.0}],
+        # NO pdf_path_trace / pdf_redline / drop_terminal / physical_anchor
+    }
+    sr = station_role_evidence(geo)
+    assert sr["end"]["role"] == "interior_boundary_candidate"
+    assert sr["local_reset_continuation_risk"] is True
+
+
+def test_drawn_trace_or_redline_makes_end_determinate():
+    g_trace = {"geometry_status": "AP_ANCHORED",
+               "frame": {"chainage_start_ft": 0.0, "chainage_end_ft": 99.0, "eqs_used": ["STA 1+00=0+00"]},
+               "pdf_path_trace": {"artifact_name": "x.png"}}
+    assert station_role_evidence(g_trace)["end"]["role"] == "terminal_endpoint"
+    assert station_role_evidence(g_trace)["local_reset_continuation_risk"] is False
+    g_redline = {"frame": {"chainage_start_ft": 0.0, "chainage_end_ft": 99.0, "eqs_used": ["STA 1+00=0+00"]},
+                 "pdf_redline": {"artifact_name": "y.png"}}
+    assert station_role_evidence(g_redline)["local_reset_continuation_risk"] is False
+
+
+def test_drop_terminal_makes_end_determinate():
+    geo = {"geometry_status": "FRAME_WITH_DROP_TERMINAL_CANDIDATE",
+           "frame": {"chainage_start_ft": 0.0, "chainage_end_ft": 99.0, "eqs_used": []},
+           "drop_terminal": {"sta": "0+99"}}
+    sr = station_role_evidence(geo)
+    assert sr["end"]["role"] == "terminal_endpoint"
+    assert sr["local_reset_continuation_risk"] is False

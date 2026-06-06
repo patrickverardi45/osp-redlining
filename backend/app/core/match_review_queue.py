@@ -474,14 +474,29 @@ def station_role_evidence(geo: Optional[Mapping[str, Any]]) -> Optional[Dict[str
         else:
             start_role = "unknown"
 
-        # A confirmed terminal end == bound to an authored structure (single anchor resolved,
-        # connector end resolved, or a structure-connector geometry). A bare station / HH-HH
-        # distance endpoint is NOT proof of a terminal — it may be an interior boundary.
+        # A DETERMINATE end == the engine resolved a definite terminus, by ANY of:
+        #   - a bound authored structure (physical anchor / connector end resolved, or a
+        #     structure-connector geometry), OR
+        #   - a COMPLETED authored draw (pdf_path_trace / pdf_redline artifact present) — a
+        #     drawn authored path has a definite end, not an open interior boundary
+        #     (Slice A.1: this is what log56's AP_ANCHORED authored_trace produces), OR
+        #   - an explicit ``drop_terminal`` (a service-drop terminus).
+        # Slice A.1 invariant: bare ``geo_anchors`` are NOT terminal — an authored structure
+        # AT the end may be INTERIOR (D22 / log58's STA 2+36 HH), so anchor-presence alone
+        # never clears the continuation risk. A FRAME_ONLY / evidence-card log that drew
+        # nothing (log58) stays an interior-boundary candidate.
         end_anchor = _as_mapping(phys.get("end"))
-        end_structure_bound = (phys.get("resolved") is True
-                               or end_anchor.get("resolved") is True
-                               or geometry_status == "STRUCTURE_CONNECTOR_RESOLVED")
-        if end_structure_bound:
+        _trace = _as_mapping(geo.get("pdf_path_trace"))
+        _redline = _as_mapping(geo.get("pdf_redline"))
+        drew_authored_path = bool(_safe_str(_trace.get("artifact_name"))
+                                  or _safe_str(_redline.get("artifact_name")))
+        has_drop_terminal = bool(geo.get("drop_terminal"))
+        end_determinate = (phys.get("resolved") is True
+                           or end_anchor.get("resolved") is True
+                           or geometry_status == "STRUCTURE_CONNECTOR_RESOLVED"
+                           or drew_authored_path
+                           or has_drop_terminal)
+        if end_determinate:
             end_role = "terminal_endpoint"
         elif ce is not None:
             end_role = "interior_boundary_candidate"
