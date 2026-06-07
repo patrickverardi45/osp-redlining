@@ -68,6 +68,22 @@ function neutralBadge(card: PdfFirstCard): string | null {
   return null;
 }
 
+// Item 5 / D22–D25 follow-up: a review/segment evidence card that did NOT draw a standalone
+// bore-path redline (e.g. the contained segment children log58 / log66). Presentation-only:
+// drives a muted clarity line so an absent redline is not misread as a regression. Pure; reads
+// only existing payload fields, changes no rendering/draw behavior.
+function isEvidenceOnlySegment(card: PdfFirstCard, seamSegsLen: number): boolean {
+  const geo = card.geo;
+  if (!geo || card.tier === "AUTO_SELECT") return false;
+  const ts = geo.pdf_path_trace?.trace_status ?? "";
+  const drewBorePath =
+    seamSegsLen > 0 ||                                    // cross-sheet drawn (e.g. log56)
+    Boolean(geo.matchline_resolution?.redline_path) ||   // single-sheet struct-connector drawn
+    ts === "STRUCTURE_TO_STRUCTURE" ||                    // single-sheet connector trace
+    ts.startsWith("PDF_PATH_TRACE_READY");                // engine drawn path trace
+  return !drewBorePath;
+}
+
 // Prefer the bore-path trace overlay; fall back to the redline overlay (e.g. a drop-
 // terminal candidate whose path trace is blocked). Returns a BASENAME or null.
 function overlayName(card: PdfFirstCard): string | null {
@@ -247,6 +263,7 @@ function SegmentCard({ card, sessionId }: { card: PdfFirstCard; sessionId: strin
   // Absent / abstained (resolved !== true) -> empty -> nothing extra renders (no regression).
   const seam = geo?.cross_sheet_seam_stitch;
   const seamSegs = seam?.resolved ? (seam.segments ?? []).filter((s) => !!s.artifact_name) : [];
+  const evidenceOnly = isEvidenceOnlySegment(card, seamSegs.length);
   return (
     <li
       style={{
@@ -261,6 +278,11 @@ function SegmentCard({ card, sessionId }: { card: PdfFirstCard; sessionId: strin
         <span style={{ fontFamily: "monospace", fontSize: 13, fontWeight: 600 }}>{logLabel(card)}</span>
         <span style={chip}>{badge ?? card.tier ?? "—"}</span>
       </div>
+      {evidenceOnly && (
+        <div style={{ marginTop: 6, fontSize: 12, fontStyle: "italic", color: "var(--tl-text-muted)" }}>
+          Segment evidence only · no standalone closeout redline drawn (review-grade)
+        </div>
+      )}
       <div style={{ display: "flex", gap: 14, flexWrap: "wrap", marginTop: 6 }}>
         <Meta label="Station" value={station} />
         <Meta label="Footage" value={card.footage != null ? `${card.footage}'` : null} />
