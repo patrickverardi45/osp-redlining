@@ -42,6 +42,7 @@ _OUTPUT_FLAGS: Tuple[str, ...] = (
     "TRUELINE_REDLINE_STRUCT_CONNECTOR",
     "TRUELINE_PHYSICAL_ANCHOR_RESOLVER",
     "TRUELINE_CROSS_SHEET_SEAM_STITCH",
+    "TRUELINE_PATH_SELECTION_EVIDENCE",
 )
 
 # session_id -> (key, payload). OrderedDict for LRU eviction.

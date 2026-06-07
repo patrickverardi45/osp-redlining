@@ -213,6 +213,17 @@ REVIEW_REASON_SCHEMA_VERSION = "pdf-first-review-reason-1"
 STATION_ROLE_SCHEMA_VERSION = "pdf-first-station-roles-1"
 STATION_ROLE_FLAG = "TRUELINE_STATION_ROLE_EVIDENCE"
 
+# ─── Item 5 (Slice A.1) — additive authored-path SELECTION evidence (default-OFF) ──
+# Surfaces the path-selection rationale ALREADY present in a PDF-first geo block (winner/span
+# identity + the fusion selector's discriminators run_color / station_monotonic / named_matchline
+# / boc_corridor + decision/abstain reason) so a reviewer can see WHY one authored path was
+# selected. SPAN-LEVEL only — never asserts standalone run completeness; composes with
+# station_roles / D22 / D25 and never changes any draw/abstain/placement/cache decision. Flag OFF
+# => key absent => byte-identical. The chain selector's runners-up / n_acceptable / tiebreaker are
+# DROPPED before MRQ and are deferred to Slice A.2; A.1 surfaces only what already exists in geo.
+PATH_SELECTION_SCHEMA_VERSION = "pdf-first-path-selection-1"
+PATH_SELECTION_FLAG = "TRUELINE_PATH_SELECTION_EVIDENCE"
+
 
 def _dedup_str(items: Sequence[Any]) -> List[str]:
     seen: set = set()
@@ -410,6 +421,13 @@ def build_review_reason(geo: Optional[Mapping[str, Any]]) -> Optional[Dict[str, 
             if _sr is not None:
                 evidence["station_roles"] = _sr
 
+        # Item 5 (Slice A.1) — additive authored-path SELECTION rationale (default-OFF).
+        # Span-level WHY-this-path; composes with station_roles, never changes any decision.
+        if os.getenv(PATH_SELECTION_FLAG, "0").strip() == "1":
+            _ps = path_selection_evidence(geo)
+            if _ps is not None:
+                evidence["path_selection"] = _ps
+
         if not (discriminators or missing or station_frame or ml_status
                 or isinstance(phys_resolved, bool) or geometry_status or drawn):
             return None
@@ -521,6 +539,92 @@ def station_role_evidence(geo: Optional[Mapping[str, Any]]) -> Optional[Dict[str
                      "continuous run (D21/D22). Evidence-only; does not change draw/abstain/placement."
                      if continuation_risk else
                      "Evidence-only station-role classification; does not change draw/abstain/placement."),
+        }
+    except Exception:
+        return None
+
+
+def path_selection_evidence(geo: Optional[Mapping[str, Any]]) -> Optional[Dict[str, Any]]:
+    """Surface the AUTHORED-PATH SELECTION rationale already present in a PDF-first ``geo``
+    block (Item 5, Slice A.1). PURE, ADDITIVE, EVIDENCE-ONLY: reads only fields the engine /
+    resolver already emit (``matchline_resolution`` + the fusion selector's
+    ``cross_sheet_seam_stitch`` segment ``discriminators``) and explains WHY the selected
+    authored path was chosen — winner/span identity + the fusion discriminators (run color,
+    station monotonicity, named-matchline binding, BOC corridor) + the decision/abstain reason.
+
+    SPAN-LEVEL ONLY: explains the path chosen for THIS log's recorded span; it does NOT assert
+    the log is a complete standalone run. Composes with ``station_roles`` / D22 / D25 — it never
+    contradicts the run-scope risk, and never changes any draw / abstain / placement / route /
+    frame / matchline / BOC / cache decision. It does NOT surface the chain selector's runners-up
+    / ``n_acceptable`` / ``tiebreaker`` (dropped before MRQ — deferred to Slice A.2). Returns
+    ``None`` when there is no selection evidence to explain. Never raises; never mutates input.
+    """
+    try:
+        if not isinstance(geo, Mapping):
+            return None
+        mlr = _as_mapping(geo.get("matchline_resolution"))
+        seam = _as_mapping(geo.get("cross_sheet_seam_stitch"))
+        seam_obj = _as_mapping(mlr.get("seam"))
+
+        # Fusion-selector discriminators live on the seam SEGMENT that carries them (consult
+        # stashes authored_path_selector's `discriminators` there); collect per-segment abstains.
+        fusion_disc: Dict[str, Any] = {}
+        seg_abstains: List[str] = []
+        for seg in _safe_list(seam.get("segments")):
+            seg = _as_mapping(seg)
+            d = _as_mapping(seg.get("discriminators"))
+            if d and not fusion_disc:
+                fusion_disc = d
+            st = _safe_str(seg.get("status"))
+            if "abstain" in st.lower():
+                sh = seg.get("sheet")
+                rs = _safe_str(seg.get("reason")) or st
+                seg_abstains.append("sheet %s: %s" % (sh, rs) if sh is not None else rs)
+
+        # winner / span identity (geo-sourced; no new computation)
+        station_signature = (
+            _safe_str(mlr.get("canonical_span"))
+            or (("%s/%s" % (_safe_str(seam_obj.get("home_sta")), _safe_str(seam_obj.get("neighbor_sta"))))
+                if (seam_obj.get("home_sta") or seam_obj.get("neighbor_sta")) else "")
+        ) or None
+        sheets = _safe_list(mlr.get("sheets")) or None
+
+        # discriminators present in geo (fusion path); None when this log was not fusion-selected
+        ml_status = _safe_str(mlr.get("status")) or None
+        if "named_matchline_bound" in fusion_disc:
+            named_matchline = bool(fusion_disc.get("named_matchline_bound"))
+        elif ml_status:
+            named_matchline = _is_resolved_status(ml_status)
+        else:
+            named_matchline = None
+        run_color = fusion_disc.get("run_color") if "run_color" in fusion_disc else None
+        station_monotonic = (fusion_disc.get("station_monotonic")
+                             if "station_monotonic" in fusion_disc else None)
+        boc_corridor_ft = (fusion_disc.get("boc_corridor_ft")
+                           if "boc_corridor_ft" in fusion_disc else None)
+
+        decision_reason = _safe_str(seam.get("reason")) or ml_status
+        abstain_reason = "; ".join(seg_abstains) if seg_abstains else None
+
+        if not (station_signature or sheets or named_matchline is not None
+                or run_color is not None or station_monotonic is not None
+                or boc_corridor_ft is not None or decision_reason):
+            return None
+
+        return {
+            "schema_version": PATH_SELECTION_SCHEMA_VERSION,
+            "winner": {"station_signature": station_signature, "sheets": sheets, "selected": True},
+            "discriminators": {
+                "named_matchline": named_matchline,
+                "run_color": run_color,
+                "station_monotonic": station_monotonic,
+                "boc_corridor_ft": boc_corridor_ft,
+            },
+            "decision_reason": decision_reason or None,
+            "abstain_reason": abstain_reason,
+            "scope_note": ("span-level authored-path selection evidence only; does not prove "
+                           "standalone run completeness — compose with station_roles / D22 / D25, "
+                           "never override the run-scope risk."),
         }
     except Exception:
         return None
