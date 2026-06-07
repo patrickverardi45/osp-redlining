@@ -418,7 +418,7 @@ def _envelope_from_result(result: Any) -> Dict[str, Any]:
         counts_by_tier[tier] = counts_by_tier.get(tier, 0) + 1
         fail_safe.append(_strip_geometry(build_failsafe_card(fs)))
 
-    return {
+    envelope: Dict[str, Any] = {
         "schema_version": SCHEMA_VERSION,
         "engine_version": getattr(result, "engine_version", None),
         "contract_version": getattr(result, "contract_version", None),
@@ -438,6 +438,15 @@ def _envelope_from_result(result: Any) -> Dict[str, Any]:
         "groups": [],
         "warnings": list(getattr(result, "warnings", []) or []),
     }
+    # Slice 1a.1 — additive, default-OFF source-lineage evidence per card. EVIDENCE-ONLY:
+    # no draw / tier / status / render_target / geo change. Flag OFF => no key => byte-identical.
+    if os.getenv("TRUELINE_SOURCE_LINEAGE_EVIDENCE", "0").strip() == "1":
+        try:
+            from app.core import source_lineage as _source_lineage
+            _source_lineage.attach_card_lineage(envelope, _source_lineage.index())
+        except Exception:
+            pass  # never break envelope assembly
+    return envelope
 
 
 # ─────────────────────────────────────────────────────────────────────────────
