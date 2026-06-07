@@ -179,6 +179,24 @@ export interface ReviewReason {
   } & Record<string, unknown>;
 }
 
+// Source-lineage evidence (Slice 1a.1) — present on a card ONLY when the backend
+// runs with TRUELINE_SOURCE_LINEAGE_EVIDENCE=1. Additive + read-only: labels which
+// source/original bore log a split child came from; NEVER affects draw/overlay.
+export interface PdfFirstSourceLineage {
+  schema_version?: string;
+  source_log_id?: string | null;
+  parent_kind?: "daily_bundle" | "continuous_run" | "uncertain" | string;
+  review_status?: "locked" | "manual_review_pending" | string;
+  parent_view?: string | null;
+  child_segment_id?: string | null;
+  safe_standalone?: "true" | "false" | "uncertain" | string;
+  closeout_scope?: "child" | "parent_run" | "hold" | string;
+  parent_ownership_label?: string | null;
+  segment_draw_scope?: { drawable?: boolean; scope_note?: string | null } | null;
+  owner_questions?: string[];
+  scope_note?: string | null;
+}
+
 export interface PdfFirstCard {
   log_ids?: string[];
   segment_id?: string | null;
@@ -198,6 +216,7 @@ export interface PdfFirstCard {
   // card's geo evidence. Absent otherwise. Read-only; never affects rendering of
   // the overlay/placement.
   review_reason?: ReviewReason | null;
+  source_lineage?: PdfFirstSourceLineage;
 }
 
 export interface PdfFirstFailSafeCard {
@@ -206,6 +225,7 @@ export interface PdfFirstFailSafeCard {
   reason?: string;
   candidates?: unknown[];
   render_artifact_ref?: string[] | string | null;
+  source_lineage?: PdfFirstSourceLineage;
 }
 
 export interface PdfFirstGroup {
