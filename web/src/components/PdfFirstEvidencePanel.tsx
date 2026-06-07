@@ -17,6 +17,7 @@ import type {
   PdfFirstCard,
   PdfFirstEvidence,
   PdfFirstFailSafeCard,
+  PdfFirstSourceLineage,
   ReviewReason,
 } from "@/lib/types/matchReviewQueue";
 
@@ -252,6 +253,48 @@ function WhyEvidence({ rr }: { rr?: ReviewReason | null }) {
   );
 }
 
+// Source-lineage label (Slice 1b) — additive, read-only projection of card.source_lineage
+// (present only when TRUELINE_SOURCE_LINEAGE_EVIDENCE=1). Renders a muted line; an absent
+// field => null label => nothing rendered => flag-OFF UI byte-identical. Text-only: never
+// touches draw/overlay/render_artifact_ref.
+function shortLog(id?: string | null): string {
+  const s = (id ?? "").trim();
+  return s.startsWith("bore_") ? s.slice("bore_".length) : s;
+}
+
+function lineageLabel(sl?: PdfFirstSourceLineage | null): string | null {
+  if (!sl) return null;
+  if (sl.parent_kind === "daily_bundle") {
+    const owned = (sl.parent_ownership_label ?? "").trim();
+    if (owned) return owned;
+    const src = shortLog(sl.source_log_id);
+    return src ? `Child segment of source ${src}` : null;
+  }
+  if (sl.parent_kind === "continuous_run") {
+    const src = shortLog(sl.source_log_id);
+    return src
+      ? `Child leg of parent run ${src} · closeout deferred to parent`
+      : "Child leg of a parent run · closeout deferred to parent";
+  }
+  if (sl.parent_kind === "uncertain" || sl.review_status === "manual_review_pending") {
+    return "Source lineage pending owner review";
+  }
+  return null;
+}
+
+function LineageLine({ sl }: { sl?: PdfFirstSourceLineage | null }) {
+  const label = lineageLabel(sl);
+  if (!label) return null;
+  return (
+    <div
+      style={{ marginTop: 6, fontSize: 12, color: "var(--tl-text-muted)" }}
+      title={sl?.scope_note ?? undefined}
+    >
+      <span style={{ opacity: 0.7 }}>Lineage:</span> {label}
+    </div>
+  );
+}
+
 function SegmentCard({ card, sessionId }: { card: PdfFirstCard; sessionId: string | null }) {
   const sr = card.station_range;
   const station = sr && (sr.start || sr.end) ? `${sr.start ?? "?"} → ${sr.end ?? "?"}` : null;
@@ -283,6 +326,7 @@ function SegmentCard({ card, sessionId }: { card: PdfFirstCard; sessionId: strin
           Segment evidence only · no standalone closeout redline drawn (review-grade)
         </div>
       )}
+      <LineageLine sl={card.source_lineage} />
       <div style={{ display: "flex", gap: 14, flexWrap: "wrap", marginTop: 6 }}>
         <Meta label="Station" value={station} />
         <Meta label="Footage" value={card.footage != null ? `${card.footage}'` : null} />
@@ -400,6 +444,7 @@ function FailSafeCard({ card }: { card: PdfFirstFailSafeCard }) {
       <div style={{ marginTop: 4, fontSize: 11, color: "var(--tl-text-muted)" }}>
         {n} candidate{n === 1 ? "" : "s"} shown for review only
       </div>
+      <LineageLine sl={card.source_lineage} />
     </li>
   );
 }
