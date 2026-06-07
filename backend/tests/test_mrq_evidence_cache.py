@@ -90,6 +90,33 @@ def test_output_flag_flip_invalidates(tmp_path, monkeypatch):
     assert calls["n"] == 2
 
 
+def test_station_role_evidence_flag_flip_invalidates(tmp_path, monkeypatch):
+    # Item-1 cache-flag gap fix: TRUELINE_STATION_ROLE_EVIDENCE changes the MRQ evidence
+    # OUTPUT (adds evidence.station_roles), so flipping it must invalidate the cache.
+    monkeypatch.setenv(C.CACHE_FLAG, "1")
+    pdf = _pdf(tmp_path)
+    calls, builder = _counting_builder()
+    monkeypatch.setenv("TRUELINE_STATION_ROLE_EVIDENCE", "0")
+    C.get_or_build("s1", ROWS_A, pdf, None, builder)
+    monkeypatch.setenv("TRUELINE_STATION_ROLE_EVIDENCE", "1")   # output flag flip -> rebuild
+    C.get_or_build("s1", ROWS_A, pdf, None, builder)
+    assert calls["n"] == 2
+
+
+def test_evidence_output_flags_membership_and_key(tmp_path, monkeypatch):
+    # Both additive MRQ evidence flags are output-affecting -> in _OUTPUT_FLAGS, and each
+    # flip changes the cache key (so a stale payload is never served after a flip).
+    assert "TRUELINE_STATION_ROLE_EVIDENCE" in C._OUTPUT_FLAGS
+    assert "TRUELINE_PATH_SELECTION_EVIDENCE" in C._OUTPUT_FLAGS   # regression: A.1 still covered
+    pdf = _pdf(tmp_path)
+    for flag in ("TRUELINE_STATION_ROLE_EVIDENCE", "TRUELINE_PATH_SELECTION_EVIDENCE"):
+        monkeypatch.setenv(flag, "0")
+        k_off = C.cache_key(ROWS_A, pdf)
+        monkeypatch.setenv(flag, "1")
+        k_on = C.cache_key(ROWS_A, pdf)
+        assert k_off != k_on, flag
+
+
 def test_distinct_sessions_isolated(tmp_path, monkeypatch):
     monkeypatch.setenv(C.CACHE_FLAG, "1")
     pdf = _pdf(tmp_path)
