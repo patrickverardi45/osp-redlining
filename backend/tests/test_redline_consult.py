@@ -171,3 +171,84 @@ def test_struct_connector_excludes_cross_sheet_and_incomplete(tmp_path):
         {"seam": None, "overlays": [{"role": "start", "sheet": 10, "bbox": [0, 0, 1, 1]},
                                     {"role": "end", "sheet": 11, "bbox": [0, 0, 1, 1]}]},
         {"bore_id": "x"}, None, 13, out) is None
+
+
+# ── D25: bore_log66 paused from the standalone struct-connector draw (run-wrong child of log33) ──
+def test_struct_connector_pauses_log66_run_wrong(tmp_path):
+    """D25: log66 is a run-wrong segment child of bore_log33's 650' run; even with an OTHERWISE
+    drawable single-sheet start->end frame it must NOT draw a structure-to-structure connector.
+    The guard fires BEFORE any PDF access (returns None with doc=None), so log66 falls through to
+    evidence-card behavior like log58. (The positive draw for a non-paused single-sheet frame is
+    covered by the live end-to-end run — this file is PDF-free by design.)"""
+    valid_single_sheet = {
+        "seam": None,
+        "overlays": [{"role": "start", "sheet": 10, "bbox": [100.0, 95.0, 110.0, 105.0]},
+                     {"role": "end", "sheet": 10, "bbox": [300.0, 95.0, 310.0, 105.0]}],
+    }
+    assert consult._render_struct_connector(
+        valid_single_sheet, {"bore_id": "bore_log66"}, None, 13, str(tmp_path)) is None
+
+
+def test_struct_connector_pause_scope_is_narrow():
+    """The D25 pause is bore_log66 ONLY — it cannot affect the proven cross-sheet wins (log56/58,
+    contained via the seam path) or any other log, so no other draw can change."""
+    assert "bore_log66" in consult._STRUCT_CONNECTOR_PAUSED
+    for other in ("bore_log56", "bore_log58", "bore_log54", "bore_logZZ", "x"):
+        assert other not in consult._STRUCT_CONNECTOR_PAUSED
+
+
+# ── D25: with the draw paused, log66's evidence-card still carries ALL the evidence ──────────────
+_LOG66_RES = {"class": "single_sheet_hh", "hh_hh_ft": 55.0, "boc_ft": 10.0,
+              "anchors": [{"role": "reset_origin", "label": "NEXTLINK HH", "station": "45+33"},
+                          {"role": "end", "sheet": 10, "station": "0+55=0+00"}]}
+
+
+def _contained_log66_mr():
+    """The mr apply_resolver yields for log66 once the D25 guard suppresses the connector draw:
+    NO struct_connector, but the read-only physical-anchor + BOC evidence still attach (they run
+    independently of the draw), plus the station-frame proof overlays."""
+    return {
+        "geometry_status": "STATION_FRAME_RESOLVED", "status": "blocked", "group": "g66",
+        "sheets": [10], "seam": None, "struct_connector": None,
+        "overlays": [
+            {"role": "reset_origin", "sheet": 10, "bbox": [100.0, 95.0, 110.0, 105.0],
+             "image": "bore_log66_s10_reset.png", "label": "NEXTLINK HH", "station": "45+33"},
+            {"role": "end", "sheet": 10, "bbox": [300.0, 95.0, 310.0, 105.0],
+             "image": "bore_log66_s10_evidence_overlay.png", "label": "INSTALLER HH", "station": "0+55"},
+        ],
+        "physical_anchor": {"resolved": True, "applied": False, "evidence_only": True,
+                            "start": {"resolved": True, "reason": "unique_structure_blob"},
+                            "end": {"resolved": True, "reason": "unique_structure_blob"}},
+        "boc_corroboration": {"verdict": "corroborated", "corroborated": True, "boc_ft": 10,
+                              "boc_token": "10'", "endpoint_sheet": 10, "endpoint_station": "0+55",
+                              "structure": "INSTALLER HH", "evidence_only": True},
+    }
+
+
+def test_log66_contained_card_is_evidence_only_but_keeps_all_evidence():
+    card = consult._resolver_card("bore_log66", _contained_log66_mr(), {"print": "print10"}, _LOG66_RES)
+    # evidence-card, NOT a standalone drawn redline (no structure_to_structure artifact)
+    assert card["render_target"] == "evidence_card"
+    assert card["render_artifact_ref"] == "bore_log66_s10_evidence_overlay.png"
+    assert not str(card["render_artifact_ref"]).endswith("_structure_to_structure.png")
+    assert "pdf_redline" in card["geo"] and "pdf_path_trace" not in card["geo"]
+    assert card["geo"]["matchline_resolution"].get("redline_path") is None
+    # evidence preserved: BOC 10', physical anchor (evidence-only), station-frame proof overlays
+    assert card["geo"]["boc_corroboration"]["boc_ft"] == 10
+    assert card["geo"]["boc_corroboration"]["verdict"] == "corroborated"
+    assert card["geo"]["physical_anchor"]["applied"] is False
+    assert card["geo"]["physical_anchor"]["evidence_only"] is True
+    assert [o["artifact_name"] for o in card["geo"]["matchline_resolution"]["overlays"]] == \
+        ["bore_log66_s10_reset.png", "bore_log66_s10_evidence_overlay.png"]
+
+
+def test_log66_contained_card_review_reason_keeps_discriminators():
+    """review_reason/evidence is preserved after containment: the BOC + physical-handhole
+    discriminators still surface from the paused card's geo."""
+    from app.core.match_review_queue import build_review_reason
+    card = consult._resolver_card("bore_log66", _contained_log66_mr(), {"print": "print10"}, _LOG66_RES)
+    rr = build_review_reason(card["geo"])
+    assert rr is not None
+    names = {d["name"] for d in rr["discriminators"]}
+    assert "boc_corroboration" in names and "physical_handhole_anchor" in names
+    assert rr["evidence"]["boc_ft"] == 10

@@ -270,6 +270,15 @@ def _cross_sheet_seam_stitch_enabled() -> bool:
         "1", "true", "yes", "on"}
 
 
+# D25: run-wrong segment children of a continuous parent run must NOT draw a standalone
+# structure-to-structure connector — their far endpoint is an INTERIOR local reset, not a true
+# terminus, so a standalone draw is leg-true but RUN-WRONG. They fall through to evidence-card
+# behavior, exactly like log58 (which is contained via the seam path). bore_log66 = the first 55'
+# stub of bore_log33's continuous 650' run (sheets 10->9; sibling log65 carries 4+51->6+50).
+# Re-enable ONLY after the run-33 re-join. See decisions D25 / D22.
+_STRUCT_CONNECTOR_PAUSED = frozenset({"bore_log66"})
+
+
 def _render_struct_connector(mr: Mapping[str, Any], res: Mapping[str, Any], doc: Any,
                              sheet_offset: int, out_dir: str) -> Optional[str]:
     """Draw a RED structure-to-structure connector between the two PROVEN anchor centroids of a
@@ -281,6 +290,8 @@ def _render_struct_connector(mr: Mapping[str, Any], res: Mapping[str, Any], doc:
     traced duct vector, never a curved guess. Never raises."""
     try:
         if mr.get("seam"):  # cross-sheet -> NOT a single straight crossing (leave 56/58 alone)
+            return None
+        if str(res.get("bore_id")) in _STRUCT_CONNECTOR_PAUSED:  # D25: run-wrong child -> evidence only
             return None
         overlays = mr.get("overlays") or []
         start = next((o for o in overlays
