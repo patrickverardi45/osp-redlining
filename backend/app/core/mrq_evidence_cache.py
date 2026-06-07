@@ -44,6 +44,7 @@ _OUTPUT_FLAGS: Tuple[str, ...] = (
     "TRUELINE_CROSS_SHEET_SEAM_STITCH",
     "TRUELINE_PATH_SELECTION_EVIDENCE",
     "TRUELINE_STATION_ROLE_EVIDENCE",
+    "TRUELINE_SOURCE_LINEAGE_EVIDENCE",
 )
 
 # session_id -> (key, payload). OrderedDict for LRU eviction.
@@ -74,6 +75,16 @@ def cache_key(committed_rows: Sequence[Mapping[str, Any]], plan_pdf: str) -> str
         h.update(("|pdf=%s" % plan_pdf).encode("utf-8"))
     h.update(("|flags=" + ";".join("%s=%s" % (f, os.getenv(f, "0").strip())
                                    for f in _OUTPUT_FLAGS)).encode("utf-8"))
+    # When source-lineage evidence is ON, fold the vendored ledger's identity into
+    # the key so an owner edit to the ledger invalidates cached payloads. Gated by
+    # the flag => OFF cache keys are unchanged.
+    if os.getenv("TRUELINE_SOURCE_LINEAGE_EVIDENCE", "0").strip() == "1":
+        try:
+            from app.core import source_lineage as _sl
+            _lst = os.stat(_sl._DEFAULT_LINEAGE_PATH)
+            h.update(("|lineage=%d|%d" % (_lst.st_size, int(_lst.st_mtime))).encode("utf-8"))
+        except Exception:
+            h.update(b"|lineage=missing")
     return h.hexdigest()
 
 

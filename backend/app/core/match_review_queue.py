@@ -29,6 +29,7 @@ from copy import deepcopy
 from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 from app.core import brenham_plan_sheet_graph as _psg
+from app.core import source_lineage as _source_lineage
 
 
 SCHEMA_VERSION = "match-review-queue-1"
@@ -727,11 +728,38 @@ def _safety_net_log(entry: Dict[str, Any]) -> List[Dict[str, Any]]:
     return out
 
 
+_SOURCE_LINEAGE_INDEX: Optional[Dict[str, Dict[str, Any]]] = None
+
+
+def _lineage_index() -> Dict[str, Dict[str, Any]]:
+    """Lazy-load and cache the owner-reviewed source-lineage index (child_id -> record)."""
+    global _SOURCE_LINEAGE_INDEX
+    if _SOURCE_LINEAGE_INDEX is None:
+        _SOURCE_LINEAGE_INDEX = _source_lineage.load_lineage()
+    return _SOURCE_LINEAGE_INDEX
+
+
+def _attach_source_lineage(row: Dict[str, Any]) -> None:
+    """Additive, default-OFF: attach owner-reviewed source-lineage evidence to a
+    ``source_file``-keyed row. Flag OFF => no-op (key absent => byte-identical).
+    EVIDENCE-ONLY: never changes any draw / abstain / placement / tiering /
+    closeout decision. Never raises.
+    """
+    try:
+        if os.getenv(_source_lineage.SOURCE_LINEAGE_FLAG, "0").strip() != "1":
+            return
+        sl = _source_lineage.source_lineage_evidence(row.get("source_file"), _lineage_index())
+        if sl is not None:
+            row["source_lineage"] = sl
+    except Exception:
+        return
+
+
 def _build_row(entry: Dict[str, Any], status: str) -> Dict[str, Any]:
     """Assemble a single queue row from a pipeline_diag entry + classified
     status. Pure projection. Never mutates the entry.
     """
-    return {
+    row = {
         "source_file": _safe_str(entry.get("source_file")) or None,
         "group_id": _safe_str(entry.get("group_id")) or None,
         "status": status,
@@ -751,6 +779,8 @@ def _build_row(entry: Dict[str, Any], status: str) -> Dict[str, Any]:
             entry.get("ambiguity_resolution_status")
         ) or None,
     }
+    _attach_source_lineage(row)
+    return row
 
 
 def assemble_match_review_queue(
@@ -1063,6 +1093,7 @@ def assemble_placement_proof(
             _tl = _terminus_lane_record(terminus_lane_by_source.get(sf))
             if _tl is not None:
                 rec["terminus_lane"] = _tl
+        _attach_source_lineage(rec)
         rows.append(rec)
 
     rows.sort(key=lambda r: _safe_str(r.get("source_file")))
