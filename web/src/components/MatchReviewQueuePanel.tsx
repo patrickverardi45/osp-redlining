@@ -196,15 +196,33 @@ export default function MatchReviewQueuePanel({
   }, [load]);
 
   // A+B+C gate: while the backend reports { preparing: true } (background preseed still
-  // building this session), re-poll every 4s until it clears — then the real queue
-  // renders. Prevents the user-facing 504 and shows a "preparing" notice meanwhile.
+  // building this session), KEEP re-polling every 4s until it clears, then the real queue
+  // renders automatically (no manual Refresh). Depend on `data` (the object) — NOT on
+  // `data.preparing` (the boolean): the boolean stays `true` across consecutive polls, so
+  // the effect would never re-fire and only ONE poll would happen (the auto-transition bug).
+  // Each poll calls setData(new object) -> `data` identity changes -> effect re-runs ->
+  // reschedules. When the poll returns a ready (non-preparing) payload, the effect re-runs,
+  // the early-return fires, polling stops, and the queue renders.
   useEffect(() => {
     if (!data?.preparing) return;
     const t = setTimeout(() => void load({ force: true }), 4000);
     return () => clearTimeout(t);
-  }, [data?.preparing, load]);
+  }, [data, load]);
 
   const preparing = Boolean(data?.preparing);
+
+  // Visible elapsed timer while preparing, so a multi-minute cold build does not look
+  // frozen. setInterval keeps ticking while preparing stays true; resets when it clears.
+  const [preparingSecs, setPreparingSecs] = useState(0);
+  useEffect(() => {
+    if (!preparing) {
+      setPreparingSecs(0);
+      return;
+    }
+    const id = setInterval(() => setPreparingSecs((s) => s + 1), 1000);
+    return () => clearInterval(id);
+  }, [preparing]);
+
   const rows: MatchReviewRow[] = data?.rows ?? [];
   const withEvidence = rows.filter((r) => r.plan_sheet_graph_evidence).length;
   const rowCount = data?.row_count ?? rows.length;
@@ -262,6 +280,8 @@ export default function MatchReviewQueuePanel({
 
       {sid && !error && preparing && (
         <div
+          role="status"
+          aria-live="polite"
           style={{
             padding: "12px 14px",
             borderRadius: 8,
@@ -271,10 +291,14 @@ export default function MatchReviewQueuePanel({
             fontSize: 13,
           }}
         >
-          <strong>Match Review preparing — building PDF evidence</strong>
+          <strong>
+            Match Review preparing — building PDF evidence
+            {preparingSecs > 0 ? ` (${preparingSecs}s)` : ""}
+          </strong>
           <p className="tl-subtle" style={{ margin: "6px 0 0", fontSize: 12 }}>
             The first load builds the PDF evidence in the background; this can take a few
-            minutes. This view refreshes automatically and shows the queue when ready.
+            minutes. This view checks every few seconds and loads the queue automatically
+            when it&apos;s ready — no need to refresh.
           </p>
         </div>
       )}
