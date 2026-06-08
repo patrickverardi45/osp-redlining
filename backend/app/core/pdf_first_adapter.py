@@ -361,10 +361,12 @@ def _render_crops(result: Any, plan_pdf_path: str,
     ``render_artifact_ref``. Best-effort: a crop failure must never sink the
     envelope, so we fall back to metadata-only cards (render_artifact_ref None)."""
     out_dir = card_out_dir or _cards_root()
+    from app.core import mrq_perf_probe as _perf  # lazy import-isolated; timed() no-op when inactive
     try:
         from redline_pdf_first.render import crop_renderer
-        crop_renderer.render_and_attach(result, plan_pdf_path, out_dir=out_dir,
-                                        sheet_offset=sheet_offset)
+        with _perf.timed("crop_render"):
+            crop_renderer.render_and_attach(result, plan_pdf_path, out_dir=out_dir,
+                                            sheet_offset=sheet_offset)
     except Exception:
         try:
             from redline_pdf_first.render.evidence_card import attach_render_artifacts
@@ -376,8 +378,9 @@ def _render_crops(result: Any, plan_pdf_path: str,
     if _pdf_redline_enabled():
         try:
             from redline_pdf_first.render import redline_overlay
-            redline_overlay.render_and_attach_redline(result, plan_pdf_path,
-                                                      out_dir=out_dir, sheet_offset=sheet_offset)
+            with _perf.timed("redline_overlay"):
+                redline_overlay.render_and_attach_redline(result, plan_pdf_path,
+                                                          out_dir=out_dir, sheet_offset=sheet_offset)
         except Exception:
             pass
     # PDF bore-path trace — ONLY under the (stacked) path-trace flag. Flag OFF ->
@@ -387,9 +390,10 @@ def _render_crops(result: Any, plan_pdf_path: str,
     if _pdf_path_trace_enabled():
         try:
             from redline_pdf_first.render import redline_overlay
-            redline_overlay.render_and_attach_path_trace(
-                result, plan_pdf_path, out_dir=out_dir, sheet_offset=sheet_offset,
-                dash_chain=_pdf_path_trace_dash_chain_enabled())
+            with _perf.timed("path_trace_overlay"):
+                redline_overlay.render_and_attach_path_trace(
+                    result, plan_pdf_path, out_dir=out_dir, sheet_offset=sheet_offset,
+                    dash_chain=_pdf_path_trace_dash_chain_enabled())
         except Exception:
             pass
 
@@ -671,6 +675,7 @@ def build_session_evidence_from_rows(plan_pdf_path: str,
     # Behavior-neutral telemetry (optional perf_observer): per-log + summary timings.
     # _po stays None for all existing callers/tests -> ZERO timing work, byte-identical.
     _po = perf_observer if callable(perf_observer) else None
+    from app.core import mrq_perf_probe as _perf  # lazy import-isolated; timed/record no-op when inactive
     _total_select_ms = 0.0
     _total_render_ms = 0.0
 
@@ -694,6 +699,7 @@ def build_session_evidence_from_rows(plan_pdf_path: str,
 
     try:
         for log_id, rows, source_file in logs:
+            _log_t0 = time.perf_counter() if _po else 0.0  # per-log wall (#8); _po None -> no-op
             # Owner-reviewed source-station OCR corrections -> corrected COPY fed to the engine
             # (STATE rows untouched). A stale/typo'd correction records an error + falls back to RAW.
             if _consult is not None:
@@ -730,15 +736,19 @@ def build_session_evidence_from_rows(plan_pdf_path: str,
             # Post-engine resolver consult: LIFT a blocked/fail-safe FRAME_ONLY bore into matchline
             # (C) / station-frame (B) review evidence, or OVERRIDE a geometry-only false-A placement.
             if _consult is not None and _consult_doc is not None:
-                env = _consult.apply_resolver(
-                    log_id, env, _consult_doc, sheet_offset,
-                    card_out_dir or _cards_root(), _consult_data_dir)
+                with _perf.timed("resolver_consult"):
+                    env = _consult.apply_resolver(
+                        log_id, env, _consult_doc, sheet_offset,
+                        card_out_dir or _cards_root(), _consult_data_dir)
             placements.extend(env["placements"])
             review_items.extend(env["review_items"])
             fail_safe.extend(env["fail_safe"])
             warnings.extend(env.get("warnings", []))
             for tier, n in env["counts_by_tier"].items():
                 counts_by_tier[tier] = counts_by_tier.get(tier, 0) + n
+            if _po:
+                _perf_notify(_po, "mrq_pf.log_wall",
+                             (time.perf_counter() - _log_t0) * 1000.0, detail="log=" + str(log_id))
 
         _asm_t0 = time.perf_counter() if _po else 0.0
         group_blocks: List[Dict[str, Any]] = []
@@ -830,6 +840,11 @@ def build_session_evidence_from_committed_rows(plan_pdf_path: str,
     logs = group_committed_rows(committed_rows)
     if not logs:
         return None
-    return build_session_evidence_from_rows(
-        plan_pdf_path, logs, sheet_offset=sheet_offset, card_out_dir=card_out_dir,
-        perf_observer=perf_observer)
+    # Granular render telemetry (default-OFF, behavior-neutral): wrap the whole build so the
+    # probe can count/time fitz.open + get_pixmap rasterizations (+ duplicates) and sample RSS.
+    # No observer (PERF_AUDIT off) -> zero-overhead no-op -> byte-identical build.
+    from app.core import mrq_perf_probe as _perf  # lazy import-isolated
+    with _perf.perf_build_probe(perf_observer):
+        return build_session_evidence_from_rows(
+            plan_pdf_path, logs, sheet_offset=sheet_offset, card_out_dir=card_out_dir,
+            perf_observer=perf_observer)
