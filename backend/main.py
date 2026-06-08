@@ -14849,13 +14849,58 @@ def _preseed_mrq_evidence(session_id: str) -> None:
                 logging.info("mrq_preseed.cache session=%s status=%s build_ms=%s",
                              session_id, _info.get("status"),
                              None if _bm is None else round(float(_bm), 1))
+                # Telemetry-only (default-OFF behind TRUELINE_PERF_AUDIT): mirror the foreground
+                # MRQ cache observer so a COLD preseed build also lands an mrq_cache.<status> row
+                # in performance_audit.jsonl. Flag OFF -> no row (the stdout log above is unchanged)
+                # -> byte-identical to the prior preseed behavior.
+                if _perf_audit_enabled():
+                    _emit_perf_audit_row(
+                        "mrq_cache." + str(_info.get("status") or "unknown"),
+                        float(_info.get("elapsed_ms")
+                              if _info.get("elapsed_ms") is not None else (_bm or 0.0)),
+                        phase="mrq_cache",
+                        stage_detail="build_ms=%s;key=%s;size=%s" % (
+                            ("n/a" if _bm is None else round(float(_bm), 3)),
+                            _info.get("cache_key") or "-",
+                            _info.get("cache_size"),
+                        ),
+                        session_id=session_id,
+                    )
+            except Exception:
+                pass
+
+        # Telemetry-only (default-OFF behind TRUELINE_PERF_AUDIT): thread the SAME behavior-neutral
+        # perf observer the foreground MRQ path uses so the COLD preseed build emits the granular
+        # mrq_pf.* rows (fitz_open / rasterize / crop_render / resolver_consult / log_wall / memory).
+        # Once preseed wins the race the foreground only ever sees a warm cache HIT, so without this
+        # the real cold build is never probed. Flag OFF -> the raw builder is passed UNCHANGED (same
+        # callable) -> perf_build_probe is a no-op -> byte-identical build.
+        def _pf_perf_observer(_evt):
+            try:
+                _emit_perf_audit_row(
+                    str(_evt.get("stage") or "mrq_pf.unknown"),
+                    float(_evt.get("elapsed_ms") or 0.0),
+                    phase="mrq_pdf_first",
+                    stage_detail=_evt.get("detail"),
+                    input_count=_evt.get("input_count"),
+                    output_count=_evt.get("output_count"),
+                    session_id=session_id,
+                )
             except Exception:
                 pass
 
         from app.core import pdf_first_adapter
+        _pf_builder = pdf_first_adapter.build_session_evidence_from_committed_rows
+        if _perf_audit_enabled():
+            def _instrumented_pf_builder(_plan_pdf, _rows_for_build, card_out_dir=None):
+                return pdf_first_adapter.build_session_evidence_from_committed_rows(
+                    _plan_pdf, _rows_for_build, card_out_dir=card_out_dir,
+                    perf_observer=_pf_perf_observer,
+                )
+            _pf_builder = _instrumented_pf_builder
         _payload = _mrq_cache.get_or_build(
             session_id, _rows, _plan_pdf, _card_dir,
-            pdf_first_adapter.build_session_evidence_from_committed_rows,
+            _pf_builder,
             observer=_obs,
         )
         _logs = (_payload or {}).get("source", {}).get("logs", []) if isinstance(_payload, dict) else []
