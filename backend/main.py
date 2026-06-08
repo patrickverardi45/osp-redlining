@@ -15103,13 +15103,57 @@ def match_review_queue_endpoint(session_id: Optional[str] = None) -> JSONRespons
                         )
                     except Exception:
                         pass  # telemetry never breaks the queue response
+                # Per-log + assembly timing: hand the adapter a behavior-NEUTRAL observer
+                # that emits one perf-audit row per timing event. Self-gated by
+                # TRUELINE_PERF_AUDIT (None when off => the adapter does ZERO timing work and
+                # the payload is byte-identical). Carries only stage/timing/counts/log-id —
+                # never committed-row values, file paths, or PDF content.
+                def _pf_perf_observer(_evt):
+                    try:
+                        _emit_perf_audit_row(
+                            str(_evt.get("stage") or "mrq_pf.unknown"),
+                            float(_evt.get("elapsed_ms") or 0.0),
+                            phase="mrq_pdf_first",
+                            stage_detail=_evt.get("detail"),
+                            input_count=_evt.get("input_count"),
+                            output_count=_evt.get("output_count"),
+                            session_id=sid,
+                        )
+                    except Exception:
+                        pass  # telemetry never breaks the queue response
+
+                def _instrumented_pf_builder(_plan_pdf, _rows, card_out_dir=None):
+                    return pdf_first_adapter.build_session_evidence_from_committed_rows(
+                        _plan_pdf, _rows, card_out_dir=card_out_dir,
+                        perf_observer=(_pf_perf_observer if _perf_audit_enabled() else None),
+                    )
                 _pf_ev = _mrq_cache.get_or_build(
                     sid, _pdf_first_rows, _pf_plan_pdf, _pf_card_dir,
-                    pdf_first_adapter.build_session_evidence_from_committed_rows,
+                    _instrumented_pf_builder,
                     observer=_mrq_cache_observer,
                 )
                 if _pf_ev:
                     _body["pdf_first_evidence"] = _pf_ev
+                # mrq_pf.summary — committed_rows / bore-log / artifact COUNTS only (no content).
+                # Emitted hit OR miss so warm loads still correlate. Self-gated.
+                if _perf_audit_enabled() and isinstance(_pf_ev, dict):
+                    try:
+                        _pf_logs = (_pf_ev.get("source") or {}).get("logs") or []
+                        _pf_arts = 0
+                        for _surf in ("placements", "review_items", "fail_safe"):
+                            for _c in (_pf_ev.get(_surf) or []):
+                                if isinstance(_c, dict) and _c.get("render_artifact_ref"):
+                                    _pf_arts += 1
+                        _emit_perf_audit_row(
+                            "mrq_pf.summary", 0.0,
+                            phase="mrq_pdf_first",
+                            input_count=len(_pdf_first_rows),
+                            output_count=len(_pf_logs),
+                            stage_detail="artifacts=%d" % _pf_arts,
+                            session_id=sid,
+                        )
+                    except Exception:
+                        pass  # telemetry never breaks the queue response
         except Exception:
             pass  # null-safe: omit the key, never break the queue response
     return JSONResponse(content=_body)
