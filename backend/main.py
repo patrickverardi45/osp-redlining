@@ -14792,6 +14792,23 @@ def _mrq_preseed_enabled() -> bool:
     return os.getenv("TRUELINE_MRQ_EVIDENCE_PRESEED", "0").strip() == "1"
 
 
+def _set_preseed_status(session_id: str, status: str, **extra: Any) -> None:
+    """Best-effort write of the session-level MRQ preseed status into PERSISTED STATE.
+
+    Worker-independent (STATE persists per session), so the Match Review gate + the
+    ``/api/current-state`` poll can read it from any worker. Never raises. Only ever
+    called on the preseed path, so a session that never preseeded has NO ``mrq_preseed``
+    key (=> ``/api/current-state`` byte-identical, FE gate inert). Status vocabulary:
+    ``scheduled`` | ``building`` | ``ready`` | ``skipped:<reason>`` | ``failed:<type>``."""
+    try:
+        with _session_scope(session_id):
+            _blk: Dict[str, Any] = {"status": status}
+            _blk.update(extra)
+            STATE["mrq_preseed"] = _blk
+    except Exception:
+        pass
+
+
 def _preseed_mrq_evidence(session_id: str) -> None:
     """Best-effort BACKGROUND warm of the MRQ pdf_first_evidence cache for a ready session.
 
@@ -14806,10 +14823,12 @@ def _preseed_mrq_evidence(session_id: str) -> None:
             return
         if os.getenv("TRUELINE_PDF_FIRST_ENGINE", "0").strip() != "1":
             logging.info("mrq_preseed.skipped session=%s status=pdf_first_off", session_id)
+            _set_preseed_status(session_id, "skipped:pdf_first_off")
             return
         from app.core import mrq_evidence_cache as _mrq_cache
         if not _mrq_cache.enabled():
             logging.info("mrq_preseed.skipped session=%s status=cache_off", session_id)
+            _set_preseed_status(session_id, "skipped:cache_off")
             return
         _plans = _resolve_engineering_plan_pdf_paths(session_id)
         _plan_pdf = str(_plans[0]) if _plans else None
@@ -14818,9 +14837,11 @@ def _preseed_mrq_evidence(session_id: str) -> None:
         if not _plan_pdf or not _rows:
             logging.info("mrq_preseed.skipped session=%s status=not_ready plan=%s rows=%d",
                          session_id, bool(_plan_pdf), len(_rows))
+            _set_preseed_status(session_id, "skipped:not_ready")
             return
         _card_dir = str(UPLOADS_DIR / "pdf_first_cards" / _safe_filename(session_id))
         logging.info("mrq_preseed.started session=%s rows=%d", session_id, len(_rows))
+        _set_preseed_status(session_id, "building", rows=len(_rows))
 
         def _obs(_info):
             try:
@@ -14840,9 +14861,11 @@ def _preseed_mrq_evidence(session_id: str) -> None:
         _logs = (_payload or {}).get("source", {}).get("logs", []) if isinstance(_payload, dict) else []
         logging.info("mrq_preseed.completed session=%s ok=%s logs=%d",
                      session_id, bool(_payload), len(_logs))
+        _set_preseed_status(session_id, "ready" if _payload else "failed:empty", logs=len(_logs))
     except Exception as exc:
         try:
             logging.info("mrq_preseed.failed session=%s status=%s", session_id, type(exc).__name__)
+            _set_preseed_status(session_id, "failed:" + type(exc).__name__)
         except Exception:
             pass
 
@@ -14934,6 +14957,10 @@ async def upload_structured_bore_files(
                 # Non-blocking: warm the MRQ pdf_first_evidence cache AFTER this response
                 # (FastAPI runs the sync task in a threadpool). Default-OFF; safe no-op when
                 # not ready / cache off (the preseed re-checks). Never affects this response.
+                # Early gate signal (persisted in STATE, inside this scope): the FE disables
+                # Match Review until the BG task transitions this to "ready" (read via
+                # /api/current-state). The BG preseed overwrites it building/ready/skipped/failed.
+                STATE["mrq_preseed"] = {"status": "scheduled"}
                 background_tasks.add_task(_preseed_mrq_evidence, resolved_session_id)
                 logging.info("mrq_preseed.scheduled session=%s trigger=bore_upload", resolved_session_id)
             return _ok(session_id=resolved_session_id, message="Bore logs uploaded successfully", **_payload)
@@ -14975,7 +15002,12 @@ def current_state(session_id: Optional[str] = None) -> JSONResponse:
             f"matches_resolved={str(STATE.get('_session_id_hint')) == str(resolved_session_id)}",
             flush=True,
         )
-        return _ok(session_id=resolved_session_id, **_summary_payload(include_debug=False))
+        # A+B+C gate: surface the session-level preseed status (ONLY when present, so a
+        # never-preseeded session stays byte-identical). FE polls this to gate Match Review.
+        _preseed_blk = STATE.get("mrq_preseed")
+        _preseed_extra = {"mrq_preseed": _preseed_blk} if _preseed_blk else {}
+        return _ok(session_id=resolved_session_id, **_preseed_extra,
+                   **_summary_payload(include_debug=False))
 
 
 @localhost_router.get("/api/debug-state")
@@ -15073,6 +15105,7 @@ def match_review_queue_endpoint(session_id: Optional[str] = None) -> JSONRespons
     # snapshotted INSIDE the scope below; the heavy engine run is deferred to AFTER it.
     _pf_on = os.getenv("TRUELINE_PDF_FIRST_ENGINE", "0").strip() == "1"
     _pdf_first_rows: Optional[List[Dict[str, Any]]] = None
+    _preseed_status: Optional[Dict[str, Any]] = None
     with _session_scope(sid):
         diag: List[Dict[str, Any]] = list(STATE.get("pipeline_diag") or [])
         # Brenham PSG precision evidence (default-OFF via
@@ -15120,6 +15153,8 @@ def match_review_queue_endpoint(session_id: Optional[str] = None) -> JSONRespons
         # scope when the flag is ON (read-only). The engine run happens AFTER the scope.
         if _pf_on:
             _pdf_first_rows = list(STATE.get("committed_rows") or [])
+        # A+B+C gate: snapshot the persisted preseed status while in-scope (read-only).
+        _preseed_status = STATE.get("mrq_preseed")
     if _psg_inputs:
         queue = _assemble_match_review_queue(diag, plan_sheet_graph_inputs=_psg_inputs)
     else:
@@ -15143,6 +15178,18 @@ def match_review_queue_endpoint(session_id: Optional[str] = None) -> JSONRespons
                 from app.core import pdf_first_adapter
                 from app.core import mrq_evidence_cache as _mrq_cache
                 _pf_card_dir = str(UPLOADS_DIR / "pdf_first_cards" / _safe_filename(sid))
+                # A+B+C gate (C): if the background preseed is actively warming THIS session
+                # and the cache is still COLD, return a fast "preparing" response instead of
+                # paying the heavy foreground cold build (which can exceed the proxy ceiling
+                # -> user-facing 504). Cache warm OR preseed not actively building -> fall
+                # through to the normal path (byte-identical). Default-OFF safe: a session
+                # that never preseeded has no status, so this guard never fires.
+                _ps = _preseed_status.get("status") if isinstance(_preseed_status, dict) else None
+                if _ps in ("scheduled", "building") and not _mrq_cache.is_cached(
+                        sid, _pdf_first_rows, _pf_plan_pdf):
+                    _body["preparing"] = True
+                    _body["mrq_preseed"] = _preseed_status
+                    return JSONResponse(content=_body)
                 # Default-OFF (TRUELINE_MRQ_EVIDENCE_CACHE): when ON, memoize the per-session
                 # PDF-first payload (keyed by committed_rows + plan-PDF identity + output flags)
                 # so repeated polls skip the heavy rebuild + PNG re-render. Flag OFF -> builds

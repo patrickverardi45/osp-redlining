@@ -251,6 +251,15 @@ export interface PdfFirstEvidence {
   warnings?: string[];
 }
 
+// A+B+C gate (session-level preseed status). Mirrors the backend STATE["mrq_preseed"]
+// block surfaced on /api/current-state and the /api/match-review-queue "preparing"
+// response. status vocabulary: scheduled | building | ready | skipped:<reason> | failed:<type>.
+export interface MrqPreseedStatus {
+  status: string;
+  logs?: number;
+  rows?: number;
+}
+
 export interface MatchReviewQueueResponse {
   success?: boolean;
   session_id?: string;
@@ -261,4 +270,8 @@ export interface MatchReviewQueueResponse {
   rows?: MatchReviewRow[];
   // Additive, present only when the PDF-first engine ran (flag ON + real inputs).
   pdf_first_evidence?: PdfFirstEvidence;
+  // A+B+C gate: true while the background preseed is still warming this session's cache —
+  // the backend returns this FAST instead of paying the cold build (prevents the 504).
+  preparing?: boolean;
+  mrq_preseed?: MrqPreseedStatus;
 }

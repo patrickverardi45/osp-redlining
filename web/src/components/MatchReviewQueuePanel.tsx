@@ -195,6 +195,16 @@ export default function MatchReviewQueuePanel({
     };
   }, [load]);
 
+  // A+B+C gate: while the backend reports { preparing: true } (background preseed still
+  // building this session), re-poll every 4s until it clears — then the real queue
+  // renders. Prevents the user-facing 504 and shows a "preparing" notice meanwhile.
+  useEffect(() => {
+    if (!data?.preparing) return;
+    const t = setTimeout(() => void load({ force: true }), 4000);
+    return () => clearTimeout(t);
+  }, [data?.preparing, load]);
+
+  const preparing = Boolean(data?.preparing);
   const rows: MatchReviewRow[] = data?.rows ?? [];
   const withEvidence = rows.filter((r) => r.plan_sheet_graph_evidence).length;
   const rowCount = data?.row_count ?? rows.length;
@@ -250,7 +260,26 @@ export default function MatchReviewQueuePanel({
         </div>
       )}
 
-      {sid && !error && (
+      {sid && !error && preparing && (
+        <div
+          style={{
+            padding: "12px 14px",
+            borderRadius: 8,
+            background: "var(--tl-bg-raised, rgba(255,255,255,0.04))",
+            border: "1px solid var(--tl-border)",
+            color: "var(--tl-text)",
+            fontSize: 13,
+          }}
+        >
+          <strong>Match Review preparing — building PDF evidence</strong>
+          <p className="tl-subtle" style={{ margin: "6px 0 0", fontSize: 12 }}>
+            The first load builds the PDF evidence in the background; this can take a few
+            minutes. This view refreshes automatically and shows the queue when ready.
+          </p>
+        </div>
+      )}
+
+      {sid && !error && !preparing && (
         <>
           {data?.pdf_first_evidence && (
             <PdfFirstEvidencePanel

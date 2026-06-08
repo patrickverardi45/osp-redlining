@@ -3,6 +3,7 @@
 import { use, useCallback, useState } from "react";
 import Link from "next/link";
 import LogoutButton from "@/components/LogoutButton";
+import MatchReviewLink from "@/components/MatchReviewLink";
 import RedlineMap, { type BridgedGpsPhoto } from "@/components/RedlineMap";
 import ModernHeroMap from "@/components/ModernHeroMap";
 import KmzSemanticDiagnosticsPanel from "@/components/KmzSemanticDiagnosticsPanel";
@@ -257,13 +258,14 @@ export default function ProjectPage({ params, searchParams }: ProjectPageProps) 
               >
                 ← Back to Trust Ledger
               </Link>
-              <Link
+              <MatchReviewLink
                 href={matchReviewHref}
+                projectId={projectId}
                 className="tl-btn tl-btn-ghost"
                 style={{ fontSize: 12, padding: "2px 10px", whiteSpace: "nowrap" }}
               >
                 ← Back to Match Review
-              </Link>
+              </MatchReviewLink>
               <Link
                 href={clearFocusHref}
                 className="tl-link"
