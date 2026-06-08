@@ -26,7 +26,7 @@ from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
 import boto3
 import pandas as pd
-from fastapi import APIRouter, Body, Depends, FastAPI, File, Form, HTTPException, Query, Request, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Body, Depends, FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
 from app.auth import current_tenant, get_current_tenant
@@ -14787,9 +14787,70 @@ async def select_active_route(
         return _err(str(exc), session_id=resolved_session_id)
 
 
+def _mrq_preseed_enabled() -> bool:
+    """Default-OFF gate for the background MRQ evidence preseed (TRUELINE_MRQ_EVIDENCE_PRESEED)."""
+    return os.getenv("TRUELINE_MRQ_EVIDENCE_PRESEED", "0").strip() == "1"
+
+
+def _preseed_mrq_evidence(session_id: str) -> None:
+    """Best-effort BACKGROUND warm of the MRQ pdf_first_evidence cache for a ready session.
+
+    Runs AFTER the upload response (FastAPI BackgroundTasks -> sync fn -> threadpool, never the
+    event loop). Reuses ``mrq_evidence_cache.get_or_build`` (the SAME key/path Match Review uses),
+    so it no-ops when the cache is already warm. NEVER raises (a background task must not crash the
+    worker). Logs scheduled/started/skipped/completed/failed with session/status/counts ONLY -- no
+    row/file/path content. Default-OFF; if unavailable, Match Review's own cold build remains the
+    fallback (this changes nothing about the MRQ request path)."""
+    try:
+        if not _mrq_preseed_enabled():
+            return
+        if os.getenv("TRUELINE_PDF_FIRST_ENGINE", "0").strip() != "1":
+            logging.info("mrq_preseed.skipped session=%s status=pdf_first_off", session_id)
+            return
+        from app.core import mrq_evidence_cache as _mrq_cache
+        if not _mrq_cache.enabled():
+            logging.info("mrq_preseed.skipped session=%s status=cache_off", session_id)
+            return
+        _plans = _resolve_engineering_plan_pdf_paths(session_id)
+        _plan_pdf = str(_plans[0]) if _plans else None
+        with _session_scope(session_id):
+            _rows = list(STATE.get("committed_rows") or [])
+        if not _plan_pdf or not _rows:
+            logging.info("mrq_preseed.skipped session=%s status=not_ready plan=%s rows=%d",
+                         session_id, bool(_plan_pdf), len(_rows))
+            return
+        _card_dir = str(UPLOADS_DIR / "pdf_first_cards" / _safe_filename(session_id))
+        logging.info("mrq_preseed.started session=%s rows=%d", session_id, len(_rows))
+
+        def _obs(_info):
+            try:
+                _bm = _info.get("build_ms")
+                logging.info("mrq_preseed.cache session=%s status=%s build_ms=%s",
+                             session_id, _info.get("status"),
+                             None if _bm is None else round(float(_bm), 1))
+            except Exception:
+                pass
+
+        from app.core import pdf_first_adapter
+        _payload = _mrq_cache.get_or_build(
+            session_id, _rows, _plan_pdf, _card_dir,
+            pdf_first_adapter.build_session_evidence_from_committed_rows,
+            observer=_obs,
+        )
+        _logs = (_payload or {}).get("source", {}).get("logs", []) if isinstance(_payload, dict) else []
+        logging.info("mrq_preseed.completed session=%s ok=%s logs=%d",
+                     session_id, bool(_payload), len(_logs))
+    except Exception as exc:
+        try:
+            logging.info("mrq_preseed.failed session=%s status=%s", session_id, type(exc).__name__)
+        except Exception:
+            pass
+
+
 @protected_router.post("/api/upload-structured-bore-files")
 async def upload_structured_bore_files(
     request: Request,
+    background_tasks: BackgroundTasks = None,
     files: List[UploadFile] = File(...),
     session_id: Optional[str] = Form(None),
 ) -> JSONResponse:
@@ -14869,6 +14930,12 @@ async def upload_structured_bore_files(
                     phase="bore_log_upload",
                     bytes_out=len(json.dumps(_payload, default=str)),
                 )
+            if _mrq_preseed_enabled():
+                # Non-blocking: warm the MRQ pdf_first_evidence cache AFTER this response
+                # (FastAPI runs the sync task in a threadpool). Default-OFF; safe no-op when
+                # not ready / cache off (the preseed re-checks). Never affects this response.
+                background_tasks.add_task(_preseed_mrq_evidence, resolved_session_id)
+                logging.info("mrq_preseed.scheduled session=%s trigger=bore_upload", resolved_session_id)
             return _ok(session_id=resolved_session_id, message="Bore logs uploaded successfully", **_payload)
     except Exception as exc:
         return _err(str(exc), session_id=resolved_session_id)
@@ -20219,6 +20286,7 @@ def _load_engineering_plan_index_for_session(session_id: str) -> List[Dict[str, 
 @protected_router.post("/api/upload-engineering-plans")
 async def upload_engineering_plans(
     request: Request,
+    background_tasks: BackgroundTasks = None,
     files: List[UploadFile] = File(...),
     session_id: Optional[str] = Form(None),
     plan_date: Optional[str] = Form(None),
@@ -20326,6 +20394,12 @@ async def upload_engineering_plans(
 
     all_session_plans = _load_engineering_plan_index_for_session(resolved_session_id)
 
+    if _mrq_preseed_enabled():
+        # Symmetric to the bore-upload trigger: warm the MRQ evidence cache AFTER this
+        # response. The preseed re-checks readiness (plan + committed_rows), so firing here
+        # before bore logs exist is a safe no-op. Default-OFF; never affects this response.
+        background_tasks.add_task(_preseed_mrq_evidence, resolved_session_id)
+        logging.info("mrq_preseed.scheduled session=%s trigger=plan_upload", resolved_session_id)
     return _ok(
         session_id=resolved_session_id,
         message=f"Uploaded {len(created)} engineering plan file{'s' if len(created) != 1 else ''}.",
