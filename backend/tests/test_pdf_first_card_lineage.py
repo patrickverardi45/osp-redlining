@@ -58,7 +58,7 @@ def _envelope():
             {"log_ids": ["log66"], "tier": "SHARED_SEGMENT_REVIEW"},
         ],
         "fail_safe": [
-            {"log_ids": ["log67"], "tier": "FAIL_SAFE"},
+            {"log_ids": ["log59"], "tier": "FAIL_SAFE"},
         ],
     }
 
@@ -88,10 +88,13 @@ def test_attach_log58_log66_continuous_run_drawable():
         assert by[lid]["segment_draw_scope"]["drawable"] is True  # geometry never hidden
 
 
-def test_attach_log67_uncertain_manual_review():
+def test_attach_log59_uncertain_manual_review():
+    # Uncertain/manual-review coverage moved off log67 (now ratified daily_bundle)
+    # to Family 26's log59, which remains genuinely manual_review_pending.
     env = _envelope()
     attach_card_lineage(env, _IDX)
     sl = env["fail_safe"][0]["source_lineage"]
+    assert sl["source_log_id"] == "bore_log26"
     assert sl["parent_kind"] == "uncertain"
     assert sl["review_status"] == "manual_review_pending"
     assert sl["closeout_scope"] == "hold"
