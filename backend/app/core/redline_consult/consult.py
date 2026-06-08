@@ -705,7 +705,9 @@ def apply_resolver(log_id: str, env: Dict[str, Any], doc: Any, sheet_offset: int
         # frame (e.g. log66's straight HH-HH crossing) draw a red structure-to-structure connector
         # between the two PROVEN anchor centroids. Failure-safe -> falls back to proof boxes.
         if _struct_connector_enabled():
-            _sc = _render_struct_connector(mr, res, doc, sheet_offset, out_dir)
+            from app.core import mrq_perf_probe as _perf  # lazy; timed() no-op when inactive
+            with _perf.timed("struct_connector"):
+                _sc = _render_struct_connector(mr, res, doc, sheet_offset, out_dir)
             if _sc:
                 mr = dict(mr)
                 mr["struct_connector"] = _sc
@@ -715,7 +717,9 @@ def apply_resolver(log_id: str, env: Dict[str, Any], doc: Any, sheet_offset: int
         if _cross_sheet_seam_stitch_enabled():
             if not isinstance(mr, dict):
                 mr = dict(mr)
-            _render_cross_sheet_seam_stitch(mr, res, doc, sheet_offset, out_dir)
+            from app.core import mrq_perf_probe as _perf  # lazy; timed() no-op when inactive
+            with _perf.timed("seam_stitch"):
+                _render_cross_sheet_seam_stitch(mr, res, doc, sheet_offset, out_dir)
         # Item 3 (Slice A.2): READ-ONLY physical-anchor evidence when the connector draw path did
         # not compute it (e.g. log66 single-sheet HH-HH resolved via the station-frame/matchline
         # overlay). Additive evidence ONLY — never sets struct_connector, never changes the draw.
