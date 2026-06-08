@@ -38,8 +38,9 @@ from __future__ import annotations
 import os
 import sys
 import tempfile
+import time
 import traceback
-from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 
 SCHEMA_VERSION = "pdf-first-evidence-1"
 RENDER_TARGET_EVIDENCE_CARD = "evidence_card"
@@ -620,11 +621,35 @@ def group_committed_rows(committed_rows: Sequence[Mapping[str, Any]]
     return [(os.path.splitext(sf)[0], groups[sf], sf) for sf in order]
 
 
+def _perf_notify(observer: Optional[Callable[[Mapping[str, Any]], None]],
+                 stage: str, elapsed_ms: float, *,
+                 detail: Optional[str] = None,
+                 input_count: Optional[int] = None,
+                 output_count: Optional[int] = None) -> None:
+    """Behavior-NEUTRAL telemetry: hand ONE timing dict to the optional observer.
+    Never raises into the build. Carries only stage/timing/count/log-id — never row
+    values, file paths, or PDF content."""
+    if observer is None:
+        return
+    try:
+        evt: Dict[str, Any] = {"stage": str(stage), "elapsed_ms": float(elapsed_ms)}
+        if detail is not None:
+            evt["detail"] = str(detail)
+        if input_count is not None:
+            evt["input_count"] = int(input_count)
+        if output_count is not None:
+            evt["output_count"] = int(output_count)
+        observer(evt)
+    except Exception:
+        pass
+
+
 def build_session_evidence_from_rows(plan_pdf_path: str,
                                      logs: Sequence[Tuple[str, Sequence[Mapping[str, Any]], Optional[str]]], *,
                                      groups: Optional[Mapping[str, Sequence[str]]] = None,
                                      sheet_offset: int = 13,
-                                     card_out_dir: Optional[str] = None) -> Dict[str, Any]:
+                                     card_out_dir: Optional[str] = None,
+                                     perf_observer: Optional[Callable[[Mapping[str, Any]], None]] = None) -> Dict[str, Any]:
     """Row-fed sibling of :func:`build_session_evidence`. ``logs`` is a sequence of
     ``(log_id, rows, source_file)`` where ``rows`` is TrueLine ``committed_rows`` for
     one bore log. Runs the engine via ``select_redline_from_rows`` per log and reuses
@@ -642,6 +667,12 @@ def build_session_evidence_from_rows(plan_pdf_path: str,
     warnings: List[str] = []
     counts_by_tier: Dict[str, int] = {}
     results_by_log: Dict[str, Any] = {}
+
+    # Behavior-neutral telemetry (optional perf_observer): per-log + summary timings.
+    # _po stays None for all existing callers/tests -> ZERO timing work, byte-identical.
+    _po = perf_observer if callable(perf_observer) else None
+    _total_select_ms = 0.0
+    _total_render_ms = 0.0
 
     # Default-OFF consult (TRUELINE_MATCHLINE_FRAME_RESOLVER): owner-reviewed source-station
     # corrections applied to a COPY of each log's rows BEFORE the engine, plus a post-engine
@@ -677,10 +708,20 @@ def build_session_evidence_from_rows(plan_pdf_path: str,
                 except Exception:
                     pass  # a correction failure must never block the engine run
             try:
+                _sel_t0 = time.perf_counter() if _po else 0.0
                 result = eng.select_redline_from_rows(
                     plan_pdf_path, rows, source_file=source_file, sheet_offset=sheet_offset,
                     anchor_tables=_anchor_tables())
+                if _po:
+                    _sel_ms = (time.perf_counter() - _sel_t0) * 1000.0
+                    _total_select_ms += _sel_ms
+                _ren_t0 = time.perf_counter() if _po else 0.0
                 _render_crops(result, plan_pdf_path, card_out_dir, sheet_offset)
+                if _po:
+                    _ren_ms = (time.perf_counter() - _ren_t0) * 1000.0
+                    _total_render_ms += _ren_ms
+                    _perf_notify(_po, "mrq_pf.select", _sel_ms, detail="log=" + str(log_id))
+                    _perf_notify(_po, "mrq_pf.render", _ren_ms, detail="log=" + str(log_id))
             except Exception as exc:
                 warnings.append(f"[{log_id}] {type(exc).__name__}: {exc}")
                 continue
@@ -699,6 +740,7 @@ def build_session_evidence_from_rows(plan_pdf_path: str,
             for tier, n in env["counts_by_tier"].items():
                 counts_by_tier[tier] = counts_by_tier.get(tier, 0) + n
 
+        _asm_t0 = time.perf_counter() if _po else 0.0
         group_blocks: List[Dict[str, Any]] = []
         if groups:
             for gid, lids in groups.items():
@@ -756,6 +798,11 @@ def build_session_evidence_from_rows(plan_pdf_path: str,
                 "resolved_count": counts_by_tier.get("MATCHLINE_FRAME_RESOLVER", 0),
                 "corrections_applied": _corrections_applied,
             }
+        if _po:
+            _asm_ms = (time.perf_counter() - _asm_t0) * 1000.0
+            _perf_notify(_po, "mrq_pf.select_total", _total_select_ms, output_count=len(logs))
+            _perf_notify(_po, "mrq_pf.render_total", _total_render_ms, output_count=len(logs))
+            _perf_notify(_po, "mrq_pf.envelope_assembly", _asm_ms)
         return out
     except Exception as exc:
         detail = "".join(traceback.format_exception_only(type(exc), exc)).strip()
@@ -771,12 +818,18 @@ def build_session_evidence_from_rows(plan_pdf_path: str,
 def build_session_evidence_from_committed_rows(plan_pdf_path: str,
                                                committed_rows: Sequence[Mapping[str, Any]], *,
                                                sheet_offset: int = 13,
-                                               card_out_dir: Optional[str] = None) -> Optional[Dict[str, Any]]:
+                                               card_out_dir: Optional[str] = None,
+                                               perf_observer: Optional[Callable[[Mapping[str, Any]], None]] = None) -> Optional[Dict[str, Any]]:
     """main.py-facing entry: group REAL ``committed_rows`` by ``source_file`` then run
     the row-fed engine. Returns the evidence envelope, or ``None`` when no committed
-    row carries a ``source_file`` (degenerate -> caller omits the key). Never raises."""
+    row carries a ``source_file`` (degenerate -> caller omits the key). Never raises.
+
+    ``perf_observer`` (default None) is an optional, behavior-NEUTRAL telemetry sink —
+    when provided it receives per-log + summary timing dicts (see
+    :func:`build_session_evidence_from_rows`); None => byte-identical (no timing work)."""
     logs = group_committed_rows(committed_rows)
     if not logs:
         return None
     return build_session_evidence_from_rows(
-        plan_pdf_path, logs, sheet_offset=sheet_offset, card_out_dir=card_out_dir)
+        plan_pdf_path, logs, sheet_offset=sheet_offset, card_out_dir=card_out_dir,
+        perf_observer=perf_observer)
