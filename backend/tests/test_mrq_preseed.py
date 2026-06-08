@@ -82,13 +82,49 @@ def test_preseed_warms_cache_when_ready(monkeypatch):
         return {"source": {"logs": ["log7"]}}
 
     monkeypatch.setenv("TRUELINE_MRQ_EVIDENCE_PRESEED", "1")
+    monkeypatch.delenv("TRUELINE_PERF_AUDIT", raising=False)  # OFF -> raw builder (byte-identical)
     _ready(monkeypatch, rows=[{"source_file": "bore_log7.xlsx"}], plan="p.pdf")
     monkeypatch.setattr(cache, "get_or_build", _gob)
     main._preseed_mrq_evidence("sid-1")
     assert seen["sid"] == "sid-1"
     assert seen["plan"] == "p.pdf"
-    # reuses the SAME builder Match Review uses
+    # PERF_AUDIT off -> preseed passes the SAME builder Match Review uses, unwrapped
     assert seen["builder"] is pdf_first_adapter.build_session_evidence_from_committed_rows
+
+
+def test_preseed_emits_granular_perf_when_audit_on(monkeypatch):
+    """PERF_AUDIT on -> the COLD preseed build wraps the builder so a behavior-neutral
+    perf_observer is threaded into the adapter (granular mrq_pf.* rows) AND the cache
+    observer emits an mrq_cache.<status> row to performance_audit.jsonl. OFF stays
+    byte-identical (covered by test_preseed_warms_cache_when_ready: raw builder, no rows)."""
+    emitted = []
+    captured = {}
+    monkeypatch.setattr(main, "_emit_perf_audit_row",
+                        lambda stage, ms, **k: emitted.append(stage))
+
+    def _fake_build(plan_pdf, rows, *, card_out_dir=None, perf_observer=None):
+        captured["perf_observer"] = perf_observer
+        if callable(perf_observer):
+            perf_observer({"stage": "mrq_pf.fitz_open", "elapsed_ms": 1.0, "output_count": 1})
+        return {"source": {"logs": ["log7"]}}
+
+    def _gob(sid, rows, plan, card_dir, builder, observer=None):
+        payload = builder(plan, rows, card_out_dir=card_dir)   # cold MISS -> runs the build
+        if observer:
+            observer({"status": "miss", "build_ms": 80000.0, "elapsed_ms": 80010.0,
+                      "cache_key": "abcdef123456", "cache_size": 1})
+        return payload
+
+    monkeypatch.setenv("TRUELINE_MRQ_EVIDENCE_PRESEED", "1")
+    monkeypatch.setenv("TRUELINE_PERF_AUDIT", "1")
+    _ready(monkeypatch, rows=[{"source_file": "bore_log7.xlsx"}], plan="p.pdf")
+    monkeypatch.setattr(pdf_first_adapter, "build_session_evidence_from_committed_rows", _fake_build)
+    monkeypatch.setattr(cache, "get_or_build", _gob)
+    main._preseed_mrq_evidence("sid-1")
+
+    assert callable(captured.get("perf_observer"))   # observer threaded into the cold build
+    assert "mrq_pf.fitz_open" in emitted             # granular probe row reached the audit sink
+    assert "mrq_cache.miss" in emitted               # cache-miss row emitted from the preseed path
 
 
 def test_preseed_builder_failure_is_swallowed(monkeypatch):
