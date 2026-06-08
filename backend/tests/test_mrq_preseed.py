@@ -176,3 +176,76 @@ def test_upload_endpoint_schedules_one_task_when_flag_on(monkeypatch):
     fn, args, _ = bt.tasks[0]
     assert fn is main._preseed_mrq_evidence
     assert args == ("sid-1",)
+
+
+# ── A+B+C gate: session-level preseed status (persisted, worker-independent) ──
+def test_set_preseed_status_writes_block(monkeypatch):
+    monkeypatch.setattr(main, "_session_scope", _noop_scope)
+    st = {}
+    monkeypatch.setattr(main, "STATE", st)
+    main._set_preseed_status("sid-1", "building", rows=50)
+    assert st["mrq_preseed"] == {"status": "building", "rows": 50}
+
+
+def test_set_preseed_status_never_raises(monkeypatch):
+    @contextlib.contextmanager
+    def _boom_scope(_sid):
+        raise RuntimeError("scope down")
+        yield  # pragma: no cover
+    monkeypatch.setattr(main, "_session_scope", _boom_scope)
+    main._set_preseed_status("sid-1", "building")  # must NOT raise (best-effort)
+
+
+def test_preseed_status_ready_on_build(monkeypatch):
+    monkeypatch.setenv("TRUELINE_MRQ_EVIDENCE_PRESEED", "1")
+    _ready(monkeypatch, rows=[{"source_file": "bore_log7.xlsx"}], plan="p.pdf")
+    monkeypatch.setattr(cache, "get_or_build", lambda *a, **k: {"source": {"logs": ["log7"]}})
+    main._preseed_mrq_evidence("sid-1")
+    assert main.STATE.get("mrq_preseed", {}).get("status") == "ready"
+
+
+def test_preseed_status_skipped_not_ready(monkeypatch):
+    monkeypatch.setenv("TRUELINE_MRQ_EVIDENCE_PRESEED", "1")
+    _ready(monkeypatch, rows=[], plan="p.pdf")  # no rows -> not_ready
+    main._preseed_mrq_evidence("sid-1")
+    assert main.STATE.get("mrq_preseed", {}).get("status") == "skipped:not_ready"
+
+
+def test_preseed_status_failed_on_builder_error(monkeypatch):
+    monkeypatch.setenv("TRUELINE_MRQ_EVIDENCE_PRESEED", "1")
+    _ready(monkeypatch, rows=[{"source_file": "bore_log7.xlsx"}], plan="p.pdf")
+
+    def _boom(*a, **k):
+        raise RuntimeError("build blew up")
+
+    monkeypatch.setattr(cache, "get_or_build", _boom)
+    main._preseed_mrq_evidence("sid-1")  # must NOT raise
+    assert str(main.STATE.get("mrq_preseed", {}).get("status", "")).startswith("failed:")
+
+
+def test_upload_sets_scheduled_status_when_on(monkeypatch):
+    bt = _run_bore_upload(monkeypatch, preseed_on=True)
+    assert len(bt.tasks) == 1
+    assert main.STATE.get("mrq_preseed") == {"status": "scheduled"}
+
+
+def test_upload_no_status_key_when_flag_off(monkeypatch):
+    bt = _run_bore_upload(monkeypatch, preseed_on=False)
+    assert bt.tasks == []
+    assert "mrq_preseed" not in main.STATE  # OFF -> no key -> FE gate inert / byte-identical
+
+
+# ── is_cached read-only peek (drives the MRQ endpoint "preparing" guard) ─────
+def test_is_cached_cold_warm_flag_off(monkeypatch, tmp_path):
+    plan = tmp_path / "plan.pdf"
+    plan.write_bytes(b"%PDF-1.4 test")
+    rows = [{"source_file": "bore_log7.xlsx"}]
+    cache.clear()
+    monkeypatch.setenv("TRUELINE_MRQ_EVIDENCE_CACHE", "1")
+    assert cache.is_cached("sid-c", rows, str(plan)) is False          # cold
+    cache.get_or_build("sid-c", rows, str(plan), None, lambda *a, **k: {"x": 1})
+    assert cache.is_cached("sid-c", rows, str(plan)) is True           # warm (same key)
+    assert cache.is_cached("sid-other", rows, str(plan)) is False      # different session
+    monkeypatch.setenv("TRUELINE_MRQ_EVIDENCE_CACHE", "0")
+    assert cache.is_cached("sid-c", rows, str(plan)) is False          # flag off -> always cold
+    cache.clear()

@@ -88,6 +88,21 @@ def cache_key(committed_rows: Sequence[Mapping[str, Any]], plan_pdf: str) -> str
     return h.hexdigest()
 
 
+def is_cached(session_id: str,
+              committed_rows: Sequence[Mapping[str, Any]],
+              plan_pdf: str) -> bool:
+    """Read-only peek: True iff a warm entry for ``session_id`` matches the CURRENT key.
+
+    No build, no eviction, no mutation. Used by the Match Review endpoint to decide
+    whether the background preseed has already warmed THIS worker's cache. Default-OFF
+    (flag off => no cache => always False). NOTE: the cache is per-process, so this
+    reflects the calling worker only (single-worker deployments — see preseed notes)."""
+    if not enabled():
+        return False
+    cached = _CACHE.get(session_id)
+    return cached is not None and cached[0] == cache_key(committed_rows, plan_pdf)
+
+
 def get_or_build(session_id: str,
                  committed_rows: Sequence[Mapping[str, Any]],
                  plan_pdf: str,
