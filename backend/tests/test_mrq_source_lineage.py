@@ -12,6 +12,7 @@ draw / tiering / placement / closeout change — there is none. Imports via
 from __future__ import annotations
 
 import copy
+import json
 
 from app.core import match_review_queue as mrq
 from app.core import mrq_evidence_cache as cache
@@ -60,12 +61,48 @@ def test_log58_and_log66_continuous_run_legs_drawable():
         assert sl["segment_draw_scope"]["drawable"] is True  # geometry never hidden
 
 
-def test_uncertain_family_log67_manual_review():
-    sl = source_lineage_evidence("bore_log67.xlsx", _INDEX)
+def test_uncertain_family_log59_manual_review():
+    # Uncertain/manual-review coverage moved off log67 (ratified daily_bundle, Family 34)
+    # to Family 26's log59, which remains genuinely manual_review_pending.
+    sl = source_lineage_evidence("bore_log59.xlsx", _INDEX)
+    assert sl["source_log_id"] == "bore_log26"
     assert sl["parent_kind"] == "uncertain"
     assert sl["review_status"] == "manual_review_pending"
     assert sl["safe_standalone"] == "uncertain"
     assert sl["closeout_scope"] == "hold"
+
+
+def test_log67_log68_daily_bundle_standalone():
+    # Family 34 ratified daily_bundle 2026-06-07: Ellen St / Eledra St standalone child bores.
+    for cid in ("bore_log67", "bore_log68"):
+        sl = source_lineage_evidence(cid + ".xlsx", _INDEX)
+        assert sl["source_log_id"] == "bore_log34"
+        assert sl["parent_kind"] == "daily_bundle"
+        assert sl["review_status"] == "locked"
+        assert sl["safe_standalone"] == "true"
+        assert sl["closeout_scope"] == "child"
+        assert sl["parent_ownership_label"] == "child segment of source log34"
+        assert sl["segment_draw_scope"]["drawable"] is True
+
+
+def test_log71_log72_continuous_run_legs_with_run_order():
+    # Family 40 ratified continuous_run 2026-06-07: one Lawndale run, legs 71 then 72.
+    for cid in ("bore_log71", "bore_log72"):
+        sl = source_lineage_evidence(cid + ".xlsx", _INDEX)
+        assert sl["source_log_id"] == "bore_log40"
+        assert sl["parent_kind"] == "continuous_run"
+        assert sl["review_status"] == "locked"
+        assert sl["safe_standalone"] == "false"
+        assert sl["closeout_scope"] == "parent_run"
+        assert sl["segment_draw_scope"]["drawable"] is True  # geometry never hidden
+    # run_order is ledger-only (not projected); lock the owner-ratified order + preserved 55' gap.
+    with open(slmod._DEFAULT_LINEAGE_PATH, encoding="utf-8") as fh:
+        kids = {c["child_segment_id"]: c
+                for c in json.load(fh)["source_logs"]["bore_log40"]["children"]}
+    assert kids["bore_log71"]["run_order"] == 1
+    assert kids["bore_log72"]["run_order"] == 2
+    assert kids["bore_log71"]["corrected_station_span"] is None
+    assert kids["bore_log72"]["corrected_station_span"] is None
 
 
 def test_unknown_and_invalid_ledger_returns_none():

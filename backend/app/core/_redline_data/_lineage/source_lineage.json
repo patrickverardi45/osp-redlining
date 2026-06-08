@@ -452,13 +452,13 @@
     },
     "bore_log34": {
       "source_log_id": "bore_log34",
-      "parent_kind": "uncertain",
-      "confidence": "low",
-      "review_status": "manual_review_pending",
+      "parent_kind": "daily_bundle",
+      "confidence": "owner_directed",
+      "review_status": "locked",
       "combined_original_ref": "files/excel bore logs/combined_originals_DO_NOT_IMPORT/bore_log34.xlsx",
       "source_photo": "2026-01-08_184854_3 - Jimenez",
-      "parent_view": "manual_review",
-      "owner_questions": ["Decisive do-not-auto-promote case: stations near-contiguous (4+14 -> 4+54, 40' gap) but BOC jumps 9-10 -> 4-5 and author wrote 'suggests different bore'. Continuous_run or two separate bores?"],
+      "parent_view": "grouping_only",
+      "owner_questions": ["Owner-ratified daily_bundle 2026-06-07: plan Sheet 20 shows log67 = Ellen St terminating at STA 4+14 flower pot and log68 = Eledra St (separate parallel street) terminating at STA 7+21 flower pot; both child end-stations match the field log exactly. Two distinct streets + two flower-pot termini + no crossing conduit = two separate bores. Continuous field stationing (4+14 -> 4+54, no 0+00 reset) is cumulative day-logging, and BOC 9-10 -> 4-5 marks the bore boundary, NOT continuous_run."],
       "children": [
         {
           "child_segment_id": "bore_log67",
@@ -466,10 +466,11 @@
           "run_order": null,
           "authored_station_span": "0+00->4+14",
           "corrected_station_span": null,
-          "safe_standalone": "uncertain",
-          "segment_draw_scope": { "drawable": true, "scope_note": "own segment; sheets 19/20" },
-          "closeout_scope": "hold",
-          "evidence_summary": "BOC 9-10 pattern; col1.",
+          "safe_standalone": "true",
+          "segment_draw_scope": { "drawable": true, "scope_note": "own Ellen St bore; terminates STA 4+14 flower pot (corridor Sheet 20 + Sheet 17 below matchline)" },
+          "closeout_scope": "child",
+          "parent_ownership_label": "child segment of source log34",
+          "evidence_summary": "Ellen St standalone bore 0+00->4+14 (BOC 9-10); ends at STA 4+14 flower pot (plan Sheet 20 exact end-station match). Field print 19,20 inherited/uncertain; true corridor Sheet 20 plus Sheet 17.",
           "owner_questions": []
         },
         {
@@ -478,46 +479,47 @@
           "run_order": null,
           "authored_station_span": "4+54->7+21",
           "corrected_station_span": null,
-          "safe_standalone": "uncertain",
-          "segment_draw_scope": { "drawable": true, "scope_note": "own segment; sheets 19/20" },
-          "closeout_scope": "hold",
-          "evidence_summary": "Starts 4+54 (40' gap from 67); BOC 4-5 differs sharply -> may be a different bore.",
-          "owner_questions": ["If different bore: both safe_standalone true (daily_bundle). If one run: both false."]
+          "safe_standalone": "true",
+          "segment_draw_scope": { "drawable": true, "scope_note": "own Eledra St bore; terminates STA 7+21 flower pot (corridor Sheet 20 + Sheet 17 below matchline)" },
+          "closeout_scope": "child",
+          "parent_ownership_label": "child segment of source log34",
+          "evidence_summary": "Eledra St standalone bore 4+54->7+21 (BOC 4-5) on a separate parallel street from log67 Ellen St; ends at STA 7+21 flower pot (plan Sheet 20 exact end-station match). 40' offset from log67 = two-bore cumulative stationing, not a run gap.",
+          "owner_questions": []
         }
       ]
     },
     "bore_log40": {
       "source_log_id": "bore_log40",
-      "parent_kind": "uncertain",
-      "confidence": "med",
-      "review_status": "manual_review_pending",
+      "parent_kind": "continuous_run",
+      "confidence": "owner_directed",
+      "review_status": "locked",
       "combined_original_ref": "files/excel bore logs/combined_originals_DO_NOT_IMPORT/bore_log40.xlsx",
       "source_photo": "GAC 12.3.25 MATSEL WP23,24 - Lunar Infrastructure (PDF)",
-      "parent_view": "manual_review",
-      "owner_questions": ["Lean continuous_run: same street (Lawndale), sequential, 'continues log71' - but 55' gap + 'different street segment'. One run (71/72 legs) or two distinct boxes?"],
+      "parent_view": "assembled_parent_run_view",
+      "owner_questions": ["Owner-ratified continuous_run 2026-06-07: GAC 12.3.25 PDF shows one Lawndale run, continuous ascending stationing 0+00->6+95 (col1, BOC 10->5) then 7+50->10+00 (col2, BOC 8) with no 0+00 reset, same street, terminating AP-117 @ 10+00. run_order [71,72] confirmed (corroborated by ascending stationing, not assumed from column order). 55' gap 6+95->7+50 PRESERVED as a real interval unless later evidence proves missing rows; 'different street segment' tag = the Huisache cross-street label at the start, not a separate bore."],
       "children": [
         {
           "child_segment_id": "bore_log71",
           "segment_order_authored": "col1",
-          "run_order": null,
+          "run_order": 1,
           "authored_station_span": "0+00->6+95",
           "corrected_station_span": null,
-          "safe_standalone": "uncertain",
-          "segment_draw_scope": { "drawable": true, "scope_note": "own Lawndale segment (sheets 23/24)" },
-          "closeout_scope": "hold",
-          "evidence_summary": "Lower Lawndale mainline.",
+          "safe_standalone": "false",
+          "segment_draw_scope": { "drawable": true, "scope_note": "own Lawndale leg (sheets 23/24); first leg of run-40 (0+00->6+95); drawable, closeout deferred to parent run" },
+          "closeout_scope": "parent_run",
+          "evidence_summary": "Lawndale @ Huisache start; first run-40 leg 0+00->6+95 (BOC 10->5); continuous ascending stationing into log72 (no 0+00 reset). Real 55' gap to log72 (6+95->7+50) preserved.",
           "owner_questions": []
         },
         {
           "child_segment_id": "bore_log72",
           "segment_order_authored": "col2",
-          "run_order": null,
+          "run_order": 2,
           "authored_station_span": "7+50->10+00",
           "corrected_station_span": null,
-          "safe_standalone": "uncertain",
-          "segment_draw_scope": { "drawable": true, "scope_note": "own segment; to AP-117" },
-          "closeout_scope": "hold",
-          "evidence_summary": "Continues log71 but tagged 'different street segment'.",
+          "safe_standalone": "false",
+          "segment_draw_scope": { "drawable": true, "scope_note": "own Lawndale leg (sheets 23/24); second leg of run-40 (7+50->10+00) to AP-117; drawable, closeout deferred to parent run" },
+          "closeout_scope": "parent_run",
+          "evidence_summary": "Second run-40 leg 7+50->10+00 (BOC 8) to AP-117 @ 10+00; same Lawndale run as log71 (continuous ascending stationing, no reset). 'different street segment' tag = Huisache-vs-plain-Lawndale label, not a separate bore.",
           "owner_questions": []
         }
       ]
