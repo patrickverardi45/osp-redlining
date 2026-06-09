@@ -256,6 +256,14 @@ export interface PdfFirstEvidence {
    * the background continuation overwrites the cache) and absent entirely when the flag is OFF.
    */
   heavy_evidence_pending?: boolean;
+  /**
+   * Large-batch safety: "on_demand" ONLY when distinct logs exceed
+   * TRUELINE_MRQ_LAZY_MAX_CONTINUATION_LOGS (N). The full heavy continuation is skipped (it OOMs
+   * the worker on big batches); the metadata-first queue stays visible and each log's overlays
+   * generate when its card is opened (POST .../heavy). Distinct from heavy_evidence_pending
+   * (continuation running -> auto-poll). Absent => Phase-1 continuation path.
+   */
+  heavy_evidence_mode?: "on_demand" | string;
 }
 
 // A+B+C gate (session-level preseed status). Mirrors the backend STATE["mrq_preseed"]

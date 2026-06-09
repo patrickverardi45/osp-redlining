@@ -224,6 +224,24 @@ export default function MatchReviewQueuePanel({
     return () => clearTimeout(t);
   }, [data, load]);
 
+  // Large-batch on-demand (>N logs): heavy_evidence_mode==="on_demand" -> the panel shows a
+  // per-card "Generate detailed evidence" button instead of auto-polling. This POSTs the single-
+  // log heavy endpoint, then force-reloads the queue so the merged overlay renders. No auto-poll
+  // loop (heavy_evidence_pending is absent for on_demand, so the effect above never fires).
+  const generateHeavy = useCallback(
+    async (logId: string) => {
+      if (!sid) return;
+      const res = await apiFetch(
+        `/api/pdf-first-evidence/${encodeURIComponent(sid)}/heavy?log_id=${encodeURIComponent(logId)}`,
+        { method: "POST" },
+        "pdf_first_heavy",
+      );
+      if (!res.ok) throw new Error(`Heavy generation failed (${res.status}).`);
+      await load({ force: true });
+    },
+    [sid, load],
+  );
+
   const preparing = Boolean(data?.preparing);
 
   // Visible elapsed timer while preparing, so a multi-minute cold build does not look
@@ -324,6 +342,7 @@ export default function MatchReviewQueuePanel({
             <PdfFirstEvidencePanel
               evidence={data.pdf_first_evidence}
               sessionId={data.session_id ?? sid}
+              onGenerateHeavy={generateHeavy}
             />
           )}
           {withEvidence > 0 ? (

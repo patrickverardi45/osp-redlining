@@ -183,3 +183,20 @@ def set_cached(session_id: str,
         return True
     except Exception:
         return False
+
+
+def get_cached(session_id: str,
+               committed_rows: Sequence[Mapping[str, Any]],
+               plan_pdf: str) -> Optional[Dict[str, Any]]:
+    """Read-only peek: return the cached payload for ``session_id`` IFF the key matches, else None.
+    Used by on-demand heavy generation to merge one log's freshly-rendered refs into the live
+    envelope. No-op (None) when the cache is disabled or the key differs. Never raises."""
+    try:
+        if not enabled():
+            return None
+        cached = _CACHE.get(session_id)
+        if cached is None:
+            return None
+        return cached[1] if cached[0] == cache_key(committed_rows, plan_pdf) else None
+    except Exception:
+        return None
