@@ -1,6 +1,6 @@
 # TrueLine v2 — M3 Checkpoint
 
-**Date:** 2026-06-09
+**Date:** 2026-06-09 (M3) · **Updated:** 2026-06-09 (M4 finding banked, commit `8891197`)
 **Scope:** clean-room PDF-first product in `truelinev2/` only. Old `backend/` monolith and `web/` frontend are out of scope and unaffected.
 
 ---
@@ -22,6 +22,7 @@ v2 product lineage (each commit is `truelinev2/`-only, zero old-app files):
 | M1 | `46c1ded` | `feat(truelinev2): add standalone Brenham PDF-first vertical` — convention-agnostic core + Brenham dialect; reproduces the old-engine Brenham answer with v2's own code. |
 | M2 | `c2cdbfa` | `feat(truelinev2): add ODOT plan dialect (M2), legend-safe alignment-gated placement` — ODOT station-axis + point-note dialect; places a bore the old engine got 0 callouts on. |
 | M3 | `c70f982` | `feat(truelinev2): ODOT CAD-layer drawn-extent placement (M3) + drift guards` — drawn directional-bore run isolated from the `E-PROPOSED-DB` CAD layer; extent match; 3 drift guards added. Supersedes the M2 point-note approach. |
+| M4 | `8891197` | `docs(truelinev2): bank M4 drawn-extent finding` — ODOT AUTO-extent probed and **banked as a negative result** (REVIEW remains the ceiling); core REVIEW reason tightened + finding doc. No placement moved. See the M4 section below. |
 
 Separate, **not a v2 change** (documented here only to avoid confusion):
 
@@ -145,6 +146,21 @@ Also deferred (not M4-blocking): real JWT, persistence/perf hardening, additiona
 - **If no →** M4 = **ODOT drawn-bore vector-extent tracing** (Option 1) on the Tulsa-31 data already in hand, to attempt the first ODOT AUTO without widening — each placement artifact **visually graded vs the redline** before it counts.
 
 Do not start either branch until the data question is answered; the answer selects the branch.
+
+> **UPDATE (2026-06-09, commit `8891197`):** the "ODOT AUTO extent" branch was chosen and probed — see the M4 section below. Outcome: banked as a negative result; ODOT stays REVIEW-grade.
+
+---
+
+## M4 — ODOT AUTO extent: probed → banked (REVIEW ceiling) (2026-06-09, commit `8891197`)
+
+- ODOT **AUTO extent** was probed (read-only, on the Tulsa-31 data already in hand).
+- The M3 CAD-layer (`E-PROPOSED-DB`) geometry placed **all 3 bores as REVIEW** — correct, 0 false.
+- **AUTO-grade per-bore extents are blocked:** the drawn directional-bore run is **continuous** (a dashed alignment line) and does **not** provide per-bore endpoint delimiting — each VeroFy log is a sub-span of one continuous run, and rect bbox == true path geometry, so tracing the polyline buys nothing.
+- **Do NOT widen tolerances** to force AUTO — that would tune to a rendering artifact and risk a false placement (violating 0-false).
+- **Keep ODOT as REVIEW-grade** until future data provides per-bore extent evidence (a packet whose bore log spans a whole drawn run, or a distinct per-bore anchor).
+- Finding doc: `truelinev2/docs/findings/m4-drawn-extent-not-per-bore.md`.
+- Tests remained **green: 43 passed**; all 3 drift guards green.
+- **No production / old-engine files touched;** nothing pushed.
 
 ---
 
