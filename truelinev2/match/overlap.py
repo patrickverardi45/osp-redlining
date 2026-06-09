@@ -78,7 +78,16 @@ def decide_by_extent(callouts: List[Callout], bore_start_ft: float, bore_end_ft:
                 "reason": "DRAWN_BORE_EXTENT_MATCHES_SPAN", "winner": [winner],
                 "score": {"sheets": [winner.sheet]}, "caveats": ["DRAWN_VECTOR_EXTENT"],
                 "ambiguous": []}
+    # Covers the span, but the covering geometry's endpoints are NOT a tight,
+    # unique match to this bore's start/end. When a plan draws one continuous run
+    # that is not segmented per bore, the drawn extent cannot delimit THIS bore:
+    # location is confirmed (REVIEW) but the run is never tight enough to AUTO.
+    # This is the correct ceiling, not a gap. See
+    # truelinev2/docs/findings/m4-drawn-extent-not-per-bore.md.
+    review_caveats = ["DRAWN_VECTOR_EXTENT", "LOCATION_ONLY"]
+    if umin < lo - auto_tol or umax > hi + auto_tol:
+        review_caveats.append("DRAWN_EXTENT_EXCEEDS_BORE_SPAN")
     return {"status": "REVIEW", "tier": "AUTO_PLACED_REQUIRES_APPROVAL",
-            "reason": "DRAWN_BORE_COVERS_SPAN", "winner": [winner],
+            "reason": "DRAWN_EXTENT_COVERS_SPAN_NOT_TIGHT", "winner": [winner],
             "score": {"sheets": [winner.sheet]},
-            "caveats": ["DRAWN_VECTOR_EXTENT", "LOCATION_ONLY"], "ambiguous": []}
+            "caveats": review_caveats, "ambiguous": []}

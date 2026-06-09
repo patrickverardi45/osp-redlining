@@ -21,10 +21,13 @@ def test_is_bore_layer_pattern():
 
 
 def test_continuous_run_covers_span_reviews():
-    # one long drawn run across the corridor contains the bore span ->
-    # REVIEW (covers span) but NOT auto (endpoints not tight)
+    # M4 finding: one continuous drawn run (not segmented per bore) contains the
+    # bore span -> REVIEW (location confirmed) but NEVER auto (endpoints not a
+    # tight per-bore match); the run also exceeds the span -> surfaced as a caveat.
     d = decide_by_extent([_seg(1500, 2350)], 1976, 2047, 71)
-    assert d["status"] == "REVIEW" and d["reason"] == "DRAWN_BORE_COVERS_SPAN"
+    assert d["status"] == "REVIEW"
+    assert d["reason"] == "DRAWN_EXTENT_COVERS_SPAN_NOT_TIGHT"
+    assert "DRAWN_EXTENT_EXCEEDS_BORE_SPAN" in d["caveats"]
 
 
 def test_tight_unique_extent_autos():

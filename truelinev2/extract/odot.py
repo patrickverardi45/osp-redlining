@@ -13,6 +13,13 @@ bore RUN sits on a layer whose name indicates a proposed directional bore
   4. project endpoints onto the station axis -> per-segment drawn extents.
 Emitted as extent Callouts; match_mode="extent" (span coverage, AUTO only when
 the drawn extent tightly and uniquely matches the bore-log span).
+
+M4 finding (2026-06-09): on the Tulsa-31 packet this E-PROPOSED-DB run is drawn as
+a CONTINUOUS DASHED alignment line (~40 ft dashes / ~9 ft gaps), not per-bore
+segments, and a single VeroFy log is a sub-span of it. So the drawn geometry has
+no per-bore extent to match tightly+uniquely -> extent mode correctly stays REVIEW
+(never AUTO) on this packet. Switching rect bbox -> true path geometry changes
+nothing (they are identical here). See docs/findings/m4-drawn-extent-not-per-bore.md.
 """
 from __future__ import annotations
 
