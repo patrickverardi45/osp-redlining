@@ -297,6 +297,15 @@ function shortFile(path: string): string {
   return path.split(/[/\\]/).pop() || path;
 }
 
+// Security: HTML-entity-escape every untrusted value interpolated into the
+// print HTML below — it is emitted verbatim via popupWindow.document.write,
+// so unescaped operator/filename/QA text is a stored-XSS sink. Mirrors esc()
+// in lib/office/sessionPacketHtml.ts. Escapes & < > and " so values are safe
+// in both text and double-quoted attribute (alt/src) contexts.
+function esc(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
 // ── Print HTML builder ────────────────────────────────────────────────────────
 
 function buildPrintHtml(
@@ -353,10 +362,10 @@ function buildPrintHtml(
     const dec = decisionColumnStyle(ov);
     return `<tr>
       <td style="padding:5px 8px;border:1px solid #e2e8f0;font-size:11px"><span style="color:${sevColor};font-weight:700">${sevLabel}</span></td>
-      <td style="padding:5px 8px;border:1px solid #e2e8f0;font-size:11px;word-break:break-all">${shortFile(item.sourceFile)}</td>
-      <td style="padding:5px 8px;border:1px solid #e2e8f0;font-size:11px"><strong>${item.issue}</strong><br/><span style="color:#475569">${item.meaning}</span></td>
-      <td style="padding:5px 8px;border:1px solid #e2e8f0;font-size:11px">${item.resolution}</td>
-      <td style="padding:5px 8px;border:1px solid #e2e8f0;font-size:11px"><span style="color:${dec.color};font-weight:700">${dec.label}</span></td>
+      <td style="padding:5px 8px;border:1px solid #e2e8f0;font-size:11px;word-break:break-all">${esc(shortFile(item.sourceFile))}</td>
+      <td style="padding:5px 8px;border:1px solid #e2e8f0;font-size:11px"><strong>${esc(item.issue)}</strong><br/><span style="color:#475569">${esc(item.meaning)}</span></td>
+      <td style="padding:5px 8px;border:1px solid #e2e8f0;font-size:11px">${esc(item.resolution)}</td>
+      <td style="padding:5px 8px;border:1px solid #e2e8f0;font-size:11px"><span style="color:${dec.color};font-weight:700">${esc(dec.label)}</span></td>
     </tr>`;
   })
     .join("");
@@ -365,29 +374,29 @@ function buildPrintHtml(
     const clientDecision = translateDecision(ov.decision);
     const decColor = ov.decision === "Reviewed" ? "#7c3aed" : ov.decision === "Accepted Override" ? "#16a34a" : "#dc2626";
     return `<tr>
-      <td style="padding:5px 8px;border:1px solid #e2e8f0;font-size:11px;word-break:break-all">${shortFile(ov.source_file)}</td>
+      <td style="padding:5px 8px;border:1px solid #e2e8f0;font-size:11px;word-break:break-all">${esc(shortFile(ov.source_file))}</td>
       <td style="padding:5px 8px;border:1px solid #e2e8f0;font-size:11px">${ov.group_idx ?? "—"}</td>
-      <td style="padding:5px 8px;border:1px solid #e2e8f0;font-size:11px"><span style="color:${decColor};font-weight:700">${clientDecision}</span></td>
-      <td style="padding:5px 8px;border:1px solid #e2e8f0;font-size:11px">${ov.reason || "—"}</td>
-      <td style="padding:5px 8px;border:1px solid #e2e8f0;font-size:11px">${ov.created_by} (${ov.role})</td>
+      <td style="padding:5px 8px;border:1px solid #e2e8f0;font-size:11px"><span style="color:${decColor};font-weight:700">${esc(clientDecision)}</span></td>
+      <td style="padding:5px 8px;border:1px solid #e2e8f0;font-size:11px">${esc(ov.reason || "—")}</td>
+      <td style="padding:5px 8px;border:1px solid #e2e8f0;font-size:11px">${esc(ov.created_by)} (${esc(ov.role)})</td>
       <td style="padding:5px 8px;border:1px solid #e2e8f0;font-size:11px">${ov.created_at ? new Date(ov.created_at).toLocaleString() : "—"}</td>
     </tr>`;
   }).join("");
 
   const exceptionRows = exceptions.filter((e) => e.label || e.amount).map((e) =>
     `<tr>
-      <td style="padding:5px 8px;border:1px solid #e2e8f0;font-size:11px">${e.label || "—"}</td>
+      <td style="padding:5px 8px;border:1px solid #e2e8f0;font-size:11px">${esc(e.label || "—")}</td>
       <td style="padding:5px 8px;border:1px solid #e2e8f0;font-size:11px">${toMoney(Number.parseFloat(e.amount) || 0)}</td>
-      <td style="padding:5px 8px;border:1px solid #e2e8f0;font-size:11px">${e.note || "—"}</td>
+      <td style="padding:5px 8px;border:1px solid #e2e8f0;font-size:11px">${esc(e.note || "—")}</td>
     </tr>`
   ).join("");
 
   const drillRows = drillPathRows.map((r) =>
     `<tr>
-      <td style="padding:5px 8px;border:1px solid #e2e8f0;font-size:11px">${r.routeName}</td>
-      <td style="padding:5px 8px;border:1px solid #e2e8f0;font-size:11px">${r.print}</td>
-      <td style="padding:5px 8px;border:1px solid #e2e8f0;font-size:11px">${r.startStation}</td>
-      <td style="padding:5px 8px;border:1px solid #e2e8f0;font-size:11px">${r.endStation}</td>
+      <td style="padding:5px 8px;border:1px solid #e2e8f0;font-size:11px">${esc(r.routeName)}</td>
+      <td style="padding:5px 8px;border:1px solid #e2e8f0;font-size:11px">${esc(r.print)}</td>
+      <td style="padding:5px 8px;border:1px solid #e2e8f0;font-size:11px">${esc(r.startStation)}</td>
+      <td style="padding:5px 8px;border:1px solid #e2e8f0;font-size:11px">${esc(r.endStation)}</td>
       <td style="padding:5px 8px;border:1px solid #e2e8f0;font-size:11px">${formatNumber(r.lengthFt)} ft</td>
       <td style="padding:5px 8px;border:1px solid #e2e8f0;font-size:11px">${toMoney(r.cost)}</td>
     </tr>`
@@ -395,10 +404,10 @@ function buildPrintHtml(
 
   const planSignalRows = engineeringPlanSignals.map((sig) =>
     `<tr>
-      <td style="padding:5px 8px;border:1px solid #e2e8f0;font-size:11px;word-break:break-all">${shortFile(sig.source_file ?? "—")}</td>
-      <td style="padding:5px 8px;border:1px solid #e2e8f0;font-size:11px">${(sig.print_tokens ?? []).join(", ") || "—"}</td>
-      <td style="padding:5px 8px;border:1px solid #e2e8f0;font-size:11px">${(sig.route_hints ?? []).join(", ") || "—"}</td>
-      <td style="padding:5px 8px;border:1px solid #e2e8f0;font-size:11px">${sig.date || "—"}</td>
+      <td style="padding:5px 8px;border:1px solid #e2e8f0;font-size:11px;word-break:break-all">${esc(shortFile(sig.source_file ?? "—"))}</td>
+      <td style="padding:5px 8px;border:1px solid #e2e8f0;font-size:11px">${esc((sig.print_tokens ?? []).join(", ") || "—")}</td>
+      <td style="padding:5px 8px;border:1px solid #e2e8f0;font-size:11px">${esc((sig.route_hints ?? []).join(", ") || "—")}</td>
+      <td style="padding:5px 8px;border:1px solid #e2e8f0;font-size:11px">${esc(sig.date || "—")}</td>
     </tr>`
   ).join("");
 
@@ -412,9 +421,9 @@ function buildPrintHtml(
   // Station photos — backend-persisted; embed via absolute same-origin URL.
   const stationPhotoRows = stationPhotos.map((p) => {
     const imgSrc = `${sameOrigin}${p.relative_url}`;
-    const thumb = `<img src="${imgSrc}" alt="${p.original_filename}" style="width:56px;height:56px;object-fit:cover;border-radius:4px;border:1px solid #e2e8f0" onerror="this.style.display='none'"/>`;
+    const thumb = `<img src="${esc(imgSrc)}" alt="${esc(p.original_filename)}" style="width:56px;height:56px;object-fit:cover;border-radius:4px;border:1px solid #e2e8f0" onerror="this.style.display='none'"/>`;
     return `<tr>
-      <td style="padding:6px 8px;border:1px solid #e2e8f0;font-size:11px">${p.station_identity || "—"}</td>
+      <td style="padding:6px 8px;border:1px solid #e2e8f0;font-size:11px">${esc(p.station_identity || "—")}</td>
       <td style="padding:6px 8px;border:1px solid #e2e8f0;font-size:11px">${p.uploaded_at ? new Date(p.uploaded_at).toLocaleString() : "—"}</td>
       <td style="padding:6px 8px;border:1px solid #e2e8f0">${thumb}</td>
     </tr>`;
@@ -431,7 +440,7 @@ function buildPrintHtml(
     const statusLabel2 = p.reason === "mapped" ? "Located" : p.reason === "no_gps" ? "No GPS data" : "Unreadable";
     const dataUrl = geoPhotoDataUrls.get(p.id);
     const previewCell = dataUrl
-      ? `<img src="${dataUrl}" alt="${p.filename}" style="width:56px;height:56px;object-fit:cover;border-radius:4px;border:1px solid #e2e8f0"/>`
+      ? `<img src="${esc(dataUrl)}" alt="${esc(p.filename)}" style="width:56px;height:56px;object-fit:cover;border-radius:4px;border:1px solid #e2e8f0"/>`
       : `<span style="font-size:10px;color:#94a3b8">Preview unavailable</span>`;
     return `<tr>
       <td style="padding:6px 8px;border:1px solid #e2e8f0;font-size:11px">${latLon}</td>
@@ -444,7 +453,7 @@ function buildPrintHtml(
   const checkItem = (ok: boolean, label: string) =>
     `<div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid #f1f5f9">
       <span style="font-size:14px;color:${ok ? "#16a34a" : "#94a3b8"}">${ok ? "✓" : "○"}</span>
-      <span style="font-size:13px;color:#0f172a">${label}</span>
+      <span style="font-size:13px;color:#0f172a">${esc(label)}</span>
     </div>`;
 
   const hasEngineeringPlans = plans.length > 0;
@@ -490,7 +499,7 @@ function buildPrintHtml(
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>Closeout Packet — ${activeJob}</title>
+<title>Closeout Packet — ${esc(activeJob)}</title>
 <style>
   @page { size: auto; margin: 0.5in; }
   * { box-sizing: border-box; }
@@ -511,10 +520,10 @@ function buildPrintHtml(
 <body>
 <h1>OSP Redlining — Closeout Packet</h1>
 <div class="meta">
-  <strong>Job:</strong> ${activeJob}&nbsp;&nbsp;
-  <strong>Route:</strong> ${routeName}&nbsp;&nbsp;
+  <strong>Job:</strong> ${esc(activeJob)}&nbsp;&nbsp;
+  <strong>Route:</strong> ${esc(routeName)}&nbsp;&nbsp;
   <strong>Generated:</strong> ${dateStr}&nbsp;&nbsp;
-  <span class="status-pill">${statusLabel}</span>
+  <span class="status-pill">${esc(statusLabel)}</span>
 </div>
 <div class="disc">
   <strong>Review document only.</strong>
@@ -526,16 +535,16 @@ function buildPrintHtml(
 
 ${h2("Job Summary", "1")}
 <table><tbody>
-  ${row("Job / Route", activeJob)}
-  ${row("Selected Route", routeName)}
+  ${row("Job / Route", esc(activeJob))}
+  ${row("Selected Route", esc(routeName))}
   ${row("Design File", hasDesign ? "Loaded" : "Not loaded")}
   ${row("Field Data Files", hasBoreFiles ? `${state?.loaded_field_data_files ?? 0} file(s) loaded` : "Not loaded")}
   ${row("Engineering Plans", plans.length > 0 ? `${plans.length} plan(s)` : "None attached")}
   ${row("Date Generated", dateStr)}
-  ${row("Closeout Review Status", `<span style="color:${statusColor};font-weight:700">${statusLabel}</span>`)}
+  ${row("Closeout Review Status", `<span style="color:${statusColor};font-weight:700">${esc(statusLabel)}</span>`)}
 </tbody></table>
 ${novaSummary.billingReadiness.reasons.length > 0
-  ? `<div class="disc"><strong>Review notes:</strong> ${novaSummary.billingReadiness.reasons.join("; ")}</div>`
+  ? `<div class="disc"><strong>Review notes:</strong> ${esc(novaSummary.billingReadiness.reasons.join("; "))}</div>`
   : ""}
 
 ${h2("Route / Production Summary", "2")}
@@ -565,7 +574,7 @@ ${plans.length === 0 && engineeringPlanSignals.length === 0
   ? `<p style="font-size:13px;color:#64748b">No engineering plans attached.</p>`
   : `<table><tbody>
   ${row("Plans Attached", String(plans.length))}
-  ${novaSummary.planIntelligence.planSupportedBoreLogs.length > 0 ? row("Plan-Referenced Field Data", novaSummary.planIntelligence.planSupportedBoreLogs.map(shortFile).join(", ")) : ""}
+  ${novaSummary.planIntelligence.planSupportedBoreLogs.length > 0 ? row("Plan-Referenced Field Data", esc(novaSummary.planIntelligence.planSupportedBoreLogs.map(shortFile).join(", "))) : ""}
 </tbody></table>
 ${engineeringPlanSignals.length > 0 ? `<table style="margin-top:8px">
   <thead><tr><th>Plan File</th><th>Sheet / Print Tokens</th><th>Route References</th><th>Date</th></tr></thead>
@@ -611,7 +620,7 @@ ${h2("Billing Summary", "6")}
 
 ${h2("Operator Notes", "7")}
 ${notes.trim()
-  ? `<div style="background:#fafbfc;border:1px solid #e2e8f0;border-radius:8px;padding:12px 16px;font-size:13px;line-height:1.6;white-space:pre-wrap;color:#334155">${notes.trim()}</div>`
+  ? `<div style="background:#fafbfc;border:1px solid #e2e8f0;border-radius:8px;padding:12px 16px;font-size:13px;line-height:1.6;white-space:pre-wrap;color:#334155">${esc(notes.trim())}</div>`
   : operatorNotesNotRequired
     ? `<p style="font-size:13px;color:#64748b;font-style:italic">No operator notes required.</p>`
     : `<p style="font-size:13px;color:#64748b;font-style:italic">No operator notes provided.</p>`}
