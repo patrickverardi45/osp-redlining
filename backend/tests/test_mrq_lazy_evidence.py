@@ -289,3 +289,175 @@ def test_preseed_no_continuation_when_lazy_off(monkeypatch, tmp_path):
 
     assert calls == [True]      # one eager build, no continuation
     assert set_calls == []      # cache never overwritten
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# Large-batch safety (TRUELINE_MRQ_LAZY_MAX_CONTINUATION_LOGS): above N distinct
+# logs the full heavy continuation is SKIPPED and evidence becomes on-demand per
+# log. <=N is byte-identical to Phase-1 (continuation runs).
+# ════════════════════════════════════════════════════════════════════════════
+def test_lb_threshold_helper_default_and_env(monkeypatch):
+    monkeypatch.delenv("TRUELINE_MRQ_LAZY_MAX_CONTINUATION_LOGS", raising=False)
+    assert main._mrq_lazy_max_continuation_logs() == 12            # default
+    monkeypatch.setenv("TRUELINE_MRQ_LAZY_MAX_CONTINUATION_LOGS", "20")
+    assert main._mrq_lazy_max_continuation_logs() == 20
+    monkeypatch.setenv("TRUELINE_MRQ_LAZY_MAX_CONTINUATION_LOGS", "0")
+    assert main._mrq_lazy_max_continuation_logs() == 12            # invalid -> default
+    monkeypatch.setenv("TRUELINE_MRQ_LAZY_MAX_CONTINUATION_LOGS", "junk")
+    assert main._mrq_lazy_max_continuation_logs() == 12            # non-int -> default
+
+
+def _lb_preseed(monkeypatch, tmp_path, *, n, distinct, calls, set_calls):
+    """Run _preseed_mrq_evidence (lazy ON) with `distinct` distinct logs + threshold N=`n`.
+    Records render_heavy per build into `calls`; set_cached payloads into `set_calls`."""
+    plan = tmp_path / "plan.pdf"
+    plan.write_bytes(b"%PDF-1.4 test")
+    rows = [{"source_file": "bore_log%d.xlsx" % i} for i in range(distinct)]
+
+    def _fake_build(plan_pdf, r, *, card_out_dir=None, perf_observer=None, render_heavy=True):
+        calls.append(render_heavy)
+        if render_heavy:  # the heavy continuation result (<=N path)
+            return {"source": {"logs": ["x"]},
+                    "placements": [{"log_ids": ["x"], "geo": {"pdf_path_trace": {"artifact_name": "x.png"}}}]}
+        # metadata-first: one placement per distinct log + the pending marker
+        return {"source": {"logs": [str(i) for i in range(distinct)]},
+                "heavy_evidence_pending": True,
+                "placements": [{"log_ids": ["bore_log%d" % i]} for i in range(distinct)]}
+
+    monkeypatch.setenv("TRUELINE_MRQ_EVIDENCE_PRESEED", "1")
+    monkeypatch.setenv("TRUELINE_MRQ_LAZY_EVIDENCE", "1")
+    monkeypatch.setenv("TRUELINE_PDF_FIRST_ENGINE", "1")
+    monkeypatch.setenv("TRUELINE_MRQ_LAZY_MAX_CONTINUATION_LOGS", str(n))
+    monkeypatch.delenv("TRUELINE_PERF_AUDIT", raising=False)
+    monkeypatch.setattr(main, "_session_scope", _noop_scope)
+    monkeypatch.setattr(main, "STATE", {"committed_rows": rows})
+    monkeypatch.setattr(main, "_resolve_engineering_plan_pdf_paths", lambda sid: [plan])
+    monkeypatch.setattr(cache, "enabled", lambda: True)
+    monkeypatch.setattr(cache, "get_or_build",
+                        lambda sid, r, p, cd, builder, observer=None: builder(p, r, card_out_dir=cd))
+    monkeypatch.setattr(cache, "set_cached", lambda sid, r, p, payload: set_calls.append(payload) or True)
+    monkeypatch.setattr(A, "build_session_evidence_from_committed_rows", _fake_build)
+    main._preseed_mrq_evidence("sid-lb")
+
+
+def test_preseed_at_or_under_threshold_runs_continuation(monkeypatch, tmp_path):
+    # Test 1: <=N -> full render_heavy=True continuation runs (Phase-1); cache overwritten w/ heavy.
+    calls, set_calls = [], []
+    _lb_preseed(monkeypatch, tmp_path, n=12, distinct=2, calls=calls, set_calls=set_calls)
+    assert calls == [False, True]                          # metadata-first THEN heavy continuation
+    assert len(set_calls) == 1 and "pdf_path_trace" in str(set_calls[0])
+    assert set_calls[0].get("heavy_evidence_mode") != "on_demand"   # not on-demand at/under N
+
+
+def test_preseed_above_threshold_skips_and_marks_on_demand(monkeypatch, tmp_path):
+    # Tests 2 + 3 + 4: >N -> NO full continuation; envelope on_demand; ALL cards kept (no truncation).
+    calls, set_calls = [], []
+    _lb_preseed(monkeypatch, tmp_path, n=1, distinct=5, calls=calls, set_calls=set_calls)
+    assert calls == [False]                                # metadata-first ONLY; continuation skipped (test 2)
+    assert len(set_calls) == 1
+    env = set_calls[0]
+    assert env.get("heavy_evidence_mode") == "on_demand"   # test 4
+    assert "heavy_evidence_pending" not in env             # no infinite auto-poll
+    assert len(env.get("placements") or []) == 5           # test 3: all 5 logs present, none dropped
+
+
+# ── on-demand single-log generate endpoint (tests 5-9 + gate-off) ─────────────
+def _gen_setup(monkeypatch, *, cached=None, build_recorder=None, owns=True):
+    """Wire main.generate_pdf_first_evidence_heavy deps; capture _ok/_err + set_cached."""
+    sink = {}
+    monkeypatch.setenv("TRUELINE_PDF_FIRST_ENGINE", "1")
+    monkeypatch.setattr(main, "_ok", lambda **k: ("OK", k))
+    monkeypatch.setattr(main, "_err", lambda msg, **k: ("ERR", msg, k))
+    monkeypatch.setattr(main, "_resolve_session_id", lambda s: s)
+
+    def _own(sid, req):
+        sink["owns_checked"] = True
+        if not owns:
+            raise RuntimeError("not owner")
+
+    monkeypatch.setattr(main, "_require_tenant_owns_session", _own)
+    monkeypatch.setattr(main, "_session_scope", _noop_scope)
+    monkeypatch.setattr(main, "STATE", {"committed_rows": [{"source_file": "bore_log7.xlsx"},
+                                                           {"source_file": "bore_log8.xlsx"}]})
+    monkeypatch.setattr(main, "_resolve_engineering_plan_pdf_paths", lambda sid: ["plan.pdf"])
+    monkeypatch.setattr(A, "group_committed_rows",
+                        lambda rows: [("bore_log7", [rows[0]], "bore_log7.xlsx"),
+                                      ("bore_log8", [rows[1]], "bore_log8.xlsx")])
+    monkeypatch.setattr(cache, "enabled", lambda: True)
+    monkeypatch.setattr(cache, "get_cached", lambda sid, r, p: cached)
+    monkeypatch.setattr(cache, "set_cached", lambda sid, r, p, payload: sink.__setitem__("set", payload) or True)
+
+    def _build(plan, rows, *, card_out_dir=None, render_heavy=True):
+        if build_recorder is not None:
+            build_recorder.append({"render_heavy": render_heavy, "rows": rows})
+        return {"placements": [{"log_ids": ["bore_log7"],
+                                "geo": {"pdf_path_trace": {"artifact_name": "bore_log7_trace.png"}}}],
+                "review_items": [], "fail_safe": []}
+
+    monkeypatch.setattr(A, "build_session_evidence_from_committed_rows", _build)
+    return sink
+
+
+def test_generate_heavy_renders_only_that_log(monkeypatch):
+    # Test 5: build called render_heavy=True with ONLY the requested log's rows.
+    rec = []
+    _gen_setup(monkeypatch,
+               cached={"placements": [{"log_ids": ["bore_log7"]}, {"log_ids": ["bore_log8"]}],
+                       "review_items": [], "fail_safe": [], "heavy_evidence_mode": "on_demand"},
+               build_recorder=rec)
+    res = main.generate_pdf_first_evidence_heavy("sid", "bore_log7", request=None)
+    assert res[0] == "OK" and res[1]["regenerated"] is True
+    assert len(rec) == 1 and rec[0]["render_heavy"] is True
+    assert rec[0]["rows"] == [{"source_file": "bore_log7.xlsx"}]   # ONLY that log's rows
+
+
+def test_generate_heavy_merges_only_that_log(monkeypatch):
+    # Test 6: cache merge updates ONLY bore_log7's card; bore_log8 preserved untouched.
+    cached = {"placements": [{"log_ids": ["bore_log7"]}, {"log_ids": ["bore_log8"]}],
+              "review_items": [], "fail_safe": [], "heavy_evidence_mode": "on_demand"}
+    sink = _gen_setup(monkeypatch, cached=cached)
+    main.generate_pdf_first_evidence_heavy("sid", "bore_log7", request=None)
+    merged = sink["set"]
+    log7 = [c for c in merged["placements"] if c["log_ids"] == ["bore_log7"]]
+    log8 = [c for c in merged["placements"] if c["log_ids"] == ["bore_log8"]]
+    assert len(log7) == 1 and log7[0].get("geo", {}).get("pdf_path_trace", {}).get("artifact_name")
+    assert len(log8) == 1 and "geo" not in log8[0]              # bore_log8 untouched
+    assert merged.get("heavy_evidence_mode") == "on_demand"    # mode preserved for the rest
+
+
+def test_generate_heavy_idempotent(monkeypatch):
+    # Test 7: cached card already has heavy refs -> NOT re-rendered; regenerated False.
+    rec = []
+    _gen_setup(monkeypatch,
+               cached={"placements": [{"log_ids": ["bore_log7"],
+                                       "geo": {"pdf_path_trace": {"artifact_name": "bore_log7_trace.png"}}}],
+                       "review_items": [], "fail_safe": []},
+               build_recorder=rec)
+    res = main.generate_pdf_first_evidence_heavy("sid", "bore_log7", request=None)
+    assert res[0] == "OK" and res[1]["regenerated"] is False
+    assert rec == []                                            # build NOT called
+
+
+def test_generate_heavy_bad_log_id_404(monkeypatch):
+    # Test 8: unknown log_id -> safe 404.
+    _gen_setup(monkeypatch, cached=None)
+    res = main.generate_pdf_first_evidence_heavy("sid", "bore_log999", request=None)
+    assert res[0] == "ERR" and res[2].get("status_code") == 404
+
+
+def test_generate_heavy_requires_ownership(monkeypatch):
+    # Test 9: tenant ownership enforced -> non-owner raises (propagates; build never reached).
+    import pytest
+    rec = []
+    _gen_setup(monkeypatch, cached=None, build_recorder=rec, owns=False)
+    with pytest.raises(RuntimeError):
+        main.generate_pdf_first_evidence_heavy("sid", "bore_log7", request=None)
+    assert rec == []
+
+
+def test_generate_heavy_gate_off_404(monkeypatch):
+    # PDF-first engine OFF -> 404 before any work.
+    monkeypatch.setenv("TRUELINE_PDF_FIRST_ENGINE", "0")
+    monkeypatch.setattr(main, "_err", lambda msg, **k: ("ERR", msg, k))
+    res = main.generate_pdf_first_evidence_heavy("sid", "bore_log7", request=None)
+    assert res[0] == "ERR" and res[2].get("status_code") == 404

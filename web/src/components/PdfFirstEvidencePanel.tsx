@@ -308,11 +308,16 @@ function SegmentCard({
   card,
   sessionId,
   heavyPending = false,
+  heavyMode,
+  onGenerateHeavy,
 }: {
   card: PdfFirstCard;
   sessionId: string | null;
   heavyPending?: boolean;
+  heavyMode?: string;
+  onGenerateHeavy?: (logId: string) => Promise<void>;
 }) {
+  const [genState, setGenState] = useState<"idle" | "generating" | "failed">("idle");
   const sr = card.station_range;
   const station = sr && (sr.start || sr.end) ? `${sr.start ?? "?"} → ${sr.end ?? "?"}` : null;
   const badge = neutralBadge(card);
@@ -327,7 +332,20 @@ function SegmentCard({
   // (and an absent seam) is PENDING, not a final "evidence only" abstain — suppress that label so
   // it is not misread; the background continuation fills the real overlays shortly.
   const overlayDisplay = overlayDisplayState(card, heavyPending);
-  const evidenceOnly = !heavyPending && isEvidenceOnlySegment(card, seamSegs.length);
+  // Large-batch on-demand: this card's heavy overlay generates when opened (not pending/failed).
+  const logId = card.log_ids?.[0] ?? null;
+  const onDemand = heavyMode === "on_demand" && overlayDisplay === "absent";
+  const evidenceOnly = !heavyPending && !onDemand && isEvidenceOnlySegment(card, seamSegs.length);
+  const handleGenerate = async () => {
+    if (!logId || !onGenerateHeavy) return;
+    setGenState("generating");
+    try {
+      await onGenerateHeavy(logId);
+      setGenState("idle");
+    } catch {
+      setGenState("failed");
+    }
+  };
   return (
     <li
       style={{
@@ -371,6 +389,28 @@ function SegmentCard({
       ) : overlayDisplay === "pending" ? (
         <div style={{ marginTop: 6, fontSize: 11, fontStyle: "italic", color: "var(--tl-text-muted)" }}>
           Detailed bore-path overlay generating…
+        </div>
+      ) : onDemand ? (
+        <div style={{ marginTop: 6, fontSize: 11, color: "var(--tl-text-muted)" }}>
+          {genState === "generating" ? (
+            <span style={{ fontStyle: "italic" }}>Generating detailed evidence…</span>
+          ) : (
+            <button
+              type="button"
+              onClick={handleGenerate}
+              style={{
+                cursor: "pointer",
+                fontSize: 11,
+                padding: "4px 8px",
+                borderRadius: 6,
+                border: "1px solid var(--tl-border)",
+                color: "var(--tl-text)",
+                background: "var(--tl-bg-raised, rgba(255,255,255,0.05))",
+              }}
+            >
+              {genState === "failed" ? "Evidence generation failed — retry" : "Generate detailed evidence"}
+            </button>
+          )}
         </div>
       ) : (
         <div style={{ marginTop: 6, fontSize: 11, color: "var(--tl-text-muted)" }}>
@@ -499,9 +539,11 @@ function segmentGroup(card: PdfFirstCard): CovGroup {
 export default function PdfFirstEvidencePanel({
   evidence,
   sessionId,
+  onGenerateHeavy,
 }: {
   evidence: PdfFirstEvidence;
   sessionId?: string | null;
+  onGenerateHeavy?: (logId: string) => Promise<void>;
 }) {
   const placements = evidence.placements ?? [];
   const reviews = evidence.review_items ?? [];
@@ -512,6 +554,7 @@ export default function PdfFirstEvidencePanel({
   // Group every card A-E. Nothing hidden — empty groups are omitted, counts are shown.
   const grouped: Record<CovGroup, React.ReactNode[]> = { A: [], B: [], C: [], D: [], E: [] };
   const heavyPending = !!evidence.heavy_evidence_pending;
+  const heavyMode = evidence.heavy_evidence_mode;
   [...placements, ...reviews].forEach((card, i) => {
     grouped[segmentGroup(card)].push(
       <SegmentCard
@@ -519,6 +562,8 @@ export default function PdfFirstEvidencePanel({
         card={card}
         sessionId={sid}
         heavyPending={heavyPending}
+        heavyMode={heavyMode}
+        onGenerateHeavy={onGenerateHeavy}
       />,
     );
   });
@@ -577,6 +622,24 @@ export default function PdfFirstEvidencePanel({
           Detailed bore-path evidence (path traces + cross-sheet seams) is still generating. Cards
           below show their metadata now; overlay images appear shortly. An absent image here means
           generating, not abstained.
+        </div>
+      )}
+
+      {evidence.heavy_evidence_mode === "on_demand" && (
+        <div
+          style={{
+            margin: "0 0 12px",
+            padding: "8px 10px",
+            borderRadius: 6,
+            border: "1px solid var(--tl-border)",
+            borderLeft: "3px solid #b8860b",
+            background: "var(--tl-bg-raised, rgba(255,255,255,0.03))",
+            fontSize: 12,
+            color: "var(--tl-text-muted)",
+          }}
+        >
+          Large batch: detailed evidence (path traces + cross-sheet seams) generates per log when
+          you open a card. Metadata for all logs is shown below; nothing is dropped.
         </div>
       )}
 

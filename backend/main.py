@@ -14802,6 +14802,20 @@ def _mrq_lazy_evidence_enabled() -> bool:
     return os.getenv("TRUELINE_MRQ_LAZY_EVIDENCE", "0").strip() == "1"
 
 
+def _mrq_lazy_max_continuation_logs() -> int:
+    """Large-batch safety threshold N (TRUELINE_MRQ_LAZY_MAX_CONTINUATION_LOGS, default 12).
+
+    Consulted ONLY on the lazy heavy-evidence continuation path. At/under N distinct bore logs the
+    full render_heavy=True continuation runs (Phase-1, verified). ABOVE N it is skipped -- it OOMs
+    the 2 GB worker on big batches -- and heavy evidence becomes on-demand per log (the metadata-
+    first queue stays visible; overlays render when a log is opened). Invalid/<=0 -> default 12."""
+    try:
+        _v = int(os.getenv("TRUELINE_MRQ_LAZY_MAX_CONTINUATION_LOGS", "12").strip())
+        return _v if _v > 0 else 12
+    except Exception:
+        return 12
+
+
 def _set_preseed_status(session_id: str, status: str, **extra: Any) -> None:
     """Best-effort write of the session-level MRQ preseed status into PERSISTED STATE.
 
@@ -14930,21 +14944,41 @@ def _preseed_mrq_evidence(session_id: str) -> None:
         # render_heavy=True and OVERWRITING the cache with the full envelope. Best-effort: any
         # failure leaves the fast metadata-first queue intact. Runs only when lazy + cache are on.
         if _lazy_evidence and _payload and _mrq_cache.enabled():
-            try:
-                logging.info("mrq_preseed.heavy_continuation.started session=%s rows=%d",
-                             session_id, len(_rows))
-                _heavy = pdf_first_adapter.build_session_evidence_from_committed_rows(
-                    _plan_pdf, _rows, card_out_dir=_card_dir,
-                    perf_observer=(_pf_perf_observer if _perf_audit_enabled() else None),
-                    render_heavy=True)
-                if _heavy:
-                    _mrq_cache.set_cached(session_id, _rows, _plan_pdf, _heavy)
-                    _set_preseed_status(session_id, "ready", logs=len(_logs), heavy="ready")
-                logging.info("mrq_preseed.heavy_continuation.completed session=%s ok=%s",
-                             session_id, bool(_heavy))
-            except Exception as _hexc:
-                logging.info("mrq_preseed.heavy_continuation.failed session=%s status=%s",
-                             session_id, type(_hexc).__name__)
+            # Large-batch safety: count distinct bore logs. AT/UNDER N -> run the full
+            # render_heavy=True continuation (Phase-1, verified). ABOVE N -> SKIP it (it OOMs the
+            # 2 GB worker on big batches) and mark the envelope on-demand so the metadata-first
+            # queue stays visible and each log's overlays render on open (POST .../heavy). The
+            # <=N branch below is byte-identical to Phase-1.
+            _distinct_logs = len({str(r.get("source_file") or "").strip()
+                                  for r in _rows if r.get("source_file")})
+            _lb_n = _mrq_lazy_max_continuation_logs()
+            if _distinct_logs > _lb_n:
+                try:
+                    _payload["heavy_evidence_mode"] = "on_demand"
+                    _payload.pop("heavy_evidence_pending", None)
+                    _mrq_cache.set_cached(session_id, _rows, _plan_pdf, _payload)
+                    _set_preseed_status(session_id, "ready", logs=len(_logs), heavy="on_demand")
+                    logging.info("mrq_preseed.heavy_on_demand session=%s logs=%d threshold=%d",
+                                 session_id, _distinct_logs, _lb_n)
+                except Exception as _odexc:
+                    logging.info("mrq_preseed.heavy_on_demand.failed session=%s status=%s",
+                                 session_id, type(_odexc).__name__)
+            else:
+                try:
+                    logging.info("mrq_preseed.heavy_continuation.started session=%s rows=%d",
+                                 session_id, len(_rows))
+                    _heavy = pdf_first_adapter.build_session_evidence_from_committed_rows(
+                        _plan_pdf, _rows, card_out_dir=_card_dir,
+                        perf_observer=(_pf_perf_observer if _perf_audit_enabled() else None),
+                        render_heavy=True)
+                    if _heavy:
+                        _mrq_cache.set_cached(session_id, _rows, _plan_pdf, _heavy)
+                        _set_preseed_status(session_id, "ready", logs=len(_logs), heavy="ready")
+                    logging.info("mrq_preseed.heavy_continuation.completed session=%s ok=%s",
+                                 session_id, bool(_heavy))
+                except Exception as _hexc:
+                    logging.info("mrq_preseed.heavy_continuation.failed session=%s status=%s",
+                                 session_id, type(_hexc).__name__)
     except Exception as exc:
         try:
             logging.info("mrq_preseed.failed session=%s status=%s", session_id, type(exc).__name__)
@@ -15396,6 +15430,89 @@ def get_pdf_first_evidence_artifact(
         return _err("Artifact not found.", status_code=404, session_id=sid)
 
     return FileResponse(resolved, media_type="image/png", filename=os.path.basename(resolved))
+
+
+def _pf_card_has_heavy_refs(env: Dict[str, Any], log_id: str) -> bool:
+    """True if the cached envelope's card for ``log_id`` already carries heavy overlay refs
+    (a path_trace artifact or a resolved cross_sheet_seam_stitch). Drives idempotent on-demand
+    generation. Pure: reads existing fields only."""
+    try:
+        for _surf in ("placements", "review_items"):
+            for c in (env.get(_surf) or []):
+                if isinstance(c, dict) and log_id in (c.get("log_ids") or []):
+                    geo = c.get("geo") or {}
+                    pt = geo.get("pdf_path_trace") or {}
+                    seam = geo.get("cross_sheet_seam_stitch") or {}
+                    if pt.get("artifact_name") or seam.get("resolved"):
+                        return True
+    except Exception:
+        pass
+    return False
+
+
+def _pf_merge_log_cards(cached: Dict[str, Any], one_env: Dict[str, Any], log_id: str) -> None:
+    """Replace ``log_id``'s card(s) in ``cached`` with the heavy-rendered versions from ``one_env``
+    (the single-log render_heavy=True build) across placements/review_items/fail_safe, then recount
+    surfaces. Other logs' cards untouched. Pure dict surgery -- no selector/draw logic."""
+    for _surf in ("placements", "review_items", "fail_safe"):
+        kept = [c for c in (cached.get(_surf) or [])
+                if not (isinstance(c, dict) and log_id in (c.get("log_ids") or []))]
+        add = [c for c in (one_env.get(_surf) or [])
+               if isinstance(c, dict) and log_id in (c.get("log_ids") or [])]
+        cached[_surf] = kept + add
+    cached["counts_by_surface"] = {
+        "placements": len(cached.get("placements") or []),
+        "review_items": len(cached.get("review_items") or []),
+        "fail_safe": len(cached.get("fail_safe") or []),
+    }
+
+
+@localhost_router.post("/api/pdf-first-evidence/{session_id}/heavy")
+def generate_pdf_first_evidence_heavy(
+    session_id: str,
+    log_id: str,
+    request: Request = None,
+) -> Response:
+    """On-demand heavy-evidence generation for ONE bore log (large-batch lazy path). Renders that
+    log's deferred overlays (path_trace + seam) via the SAME per-log build (render_heavy=True; NO
+    selector/tracer/resolver internals touched), writes the PNGs to the session cards dir, and
+    merges that log's heavy refs into the cached MRQ envelope. Idempotent: if the log's heavy refs
+    already exist, returns without re-rendering. Gate-OFF (PDF-first engine off) -> 404. Tenant
+    ownership enforced. Never alters tiers/stations (render_heavy-invariant)."""
+    if os.getenv("TRUELINE_PDF_FIRST_ENGINE", "0").strip() != "1":
+        return _err("PDF-first evidence is disabled.", status_code=404)
+    sid = _resolve_session_id(session_id)
+    _require_tenant_owns_session(sid, request)  # outside the try -> 403 propagates for non-owner
+    try:
+        from app.core import pdf_first_adapter
+        from app.core import mrq_evidence_cache as _mrq_cache
+        with _session_scope(sid):
+            _rows = list(STATE.get("committed_rows") or [])
+        _plans = _resolve_engineering_plan_pdf_paths(sid)
+        _plan_pdf = str(_plans[0]) if _plans else None
+        if not _plan_pdf or not _rows:
+            return _err("No plan PDF or committed rows for this session.",
+                        status_code=404, session_id=sid)
+        _groups = pdf_first_adapter.group_committed_rows(_rows)
+        _match = next((g for g in _groups if g[0] == log_id), None)
+        if _match is None:
+            return _err("Unknown log_id for this session.", status_code=404, session_id=sid)
+        _card_dir = str(UPLOADS_DIR / "pdf_first_cards" / _safe_filename(sid))
+        _cached = _mrq_cache.get_cached(sid, _rows, _plan_pdf) if _mrq_cache.enabled() else None
+        # Idempotent: heavy refs already present -> serve without re-rendering.
+        if _cached is not None and _pf_card_has_heavy_refs(_cached, log_id):
+            return _ok(session_id=sid, message="Heavy evidence already generated",
+                       log_id=log_id, regenerated=False)
+        # Render ONLY this log's rows, heavy (the same per-log build path).
+        _one_env = pdf_first_adapter.build_session_evidence_from_committed_rows(
+            _plan_pdf, list(_match[1]), card_out_dir=_card_dir, render_heavy=True)
+        if _one_env and _cached is not None and _mrq_cache.enabled():
+            _pf_merge_log_cards(_cached, _one_env, log_id)
+            _mrq_cache.set_cached(sid, _rows, _plan_pdf, _cached)
+        return _ok(session_id=sid, message="Heavy evidence generated",
+                   log_id=log_id, regenerated=bool(_one_env))
+    except Exception as exc:
+        return _err(str(exc), status_code=500, session_id=sid)
 
 
 @localhost_router.get("/api/trust-ledger")
