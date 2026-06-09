@@ -1,12 +1,13 @@
 """RedlineService — the v2 application service.
 
-Orchestrates the full vertical: ingest bore log -> open plan -> select dialect ->
-match (honest abstain) -> render evidence crop -> ingest into the tenant-scoped
-artifact store -> persist + return a Match-Review payload. No old-app code.
+Orchestrates: ingest bore log -> open plan -> select dialect -> calibrate offset
+-> match (honest abstain) -> render evidence crop -> tenant-scoped artifact store
+-> persist + return a Match-Review payload. No old-app code.
 """
 from __future__ import annotations
 
 from truelinev2.config import Settings
+from truelinev2.context import RequestContext
 from truelinev2.extract.registry import select_dialect
 from truelinev2.ingest.normalize import load_borelog
 from truelinev2.ingest.pdf import PlanPdf
@@ -16,7 +17,6 @@ from truelinev2.review.payload import build_review_payload
 from truelinev2.schema.models import Placement, PlacementStatus, ReviewPayload
 from truelinev2.store.artifacts import ArtifactStore
 from truelinev2.store.db import ReviewStore
-from truelinev2.context import RequestContext
 
 
 class RedlineService:
@@ -28,15 +28,15 @@ class RedlineService:
     def run(self, ctx: RequestContext, bore_log_path: str, plan_pdf_path: str) -> ReviewPayload:
         bore = load_borelog(bore_log_path)
         plan = PlanPdf(plan_pdf_path)
-        offset = self._settings.sheet_offset
         try:
-            dialect = select_dialect(plan, bore.sheet_refs, offset)
+            dialect = select_dialect(plan)
             if dialect is None:
                 placement = Placement(
                     bore_id=bore.bore_id, status=PlacementStatus.ABSTAIN, tier="FAIL_SAFE",
                     reason="NO_DIALECT_MATCH",
                     abstain_reason="no registered plan dialect recognized this plan")
             else:
+                offset = dialect.calibrate(plan, self._settings.sheet_offset)
                 placement = run_match(bore, plan, dialect, offset)
                 for c in placement.matched_callouts:
                     crop_path = render_evidence_crop(

@@ -1,14 +1,10 @@
-"""Bore-log format detection -> canonical Bore.
-
-M1 supports the Brenham flat-table format. The ODOT VeroFy "Construction Log"
-(2-sheet key/value form) is detected and explicitly deferred to M2 so the seam
-is honest rather than silently mis-parsing.
-"""
+"""Bore-log format detection -> canonical Bore. Brenham flat-table + ODOT VeroFy."""
 from __future__ import annotations
 
 import openpyxl
 
 from truelinev2.ingest.borelog_brenham import read_brenham_borelog
+from truelinev2.ingest.borelog_odot import read_odot_borelog
 from truelinev2.schema.models import Bore
 
 
@@ -29,6 +25,5 @@ def load_borelog(path: str) -> Bore:
     if fmt == "brenham_flat":
         return read_brenham_borelog(path)
     if fmt == "odot_construction_log":
-        raise NotImplementedError(
-            "ODOT VeroFy Construction Log ingestion is deferred to M2 (ODOT dialect).")
+        return read_odot_borelog(path)
     raise ValueError(f"unrecognized bore-log format: {path}")

@@ -2,7 +2,7 @@
 
 Grammar: an authored ``STA A TO STA B`` label paired with a ``DIR. BORE (NNN')``
 footage by the exact-footage check (NNN == B - A). ``pair_from_lines`` is pure
-(testable without a PDF); ``BrenhamDialect`` adds page bbox via text search.
+(testable without a PDF). match_mode="footage"; offset is a fixed plan constant.
 """
 from __future__ import annotations
 
@@ -56,29 +56,30 @@ def pair_from_lines(lines: List[str]) -> List[Dict[str, Any]]:
         if conduit:
             text = (f"STA {lab['from_sta']} TO STA {lab['to_sta']} "
                     f"DIR. BORE ({int(round(lab['delta']))}') {conduit}")
-        out.append({
-            "from_sta": lab["from_sta"], "to_sta": lab["to_sta"],
-            "from_ft": lab["from_ft"], "to_ft": lab["to_ft"], "footage": lab["delta"],
-            "conduit": conduit, "vacant": vacant, "footage_verified": mi is not None,
-            "text": text,
-        })
+        out.append({"from_sta": lab["from_sta"], "to_sta": lab["to_sta"],
+                    "from_ft": lab["from_ft"], "to_ft": lab["to_ft"], "footage": lab["delta"],
+                    "conduit": conduit, "vacant": vacant, "footage_verified": mi is not None,
+                    "text": text})
     return out
 
 
 class BrenhamDialect:
     name = "brenham"
+    match_mode = "footage"
 
-    def detect(self, plan: PlanPdf, sheets: List[int], offset: int) -> bool:
-        for s in sheets:
-            for ln in plan.lines(s, offset):
+    def detect(self, plan: PlanPdf) -> bool:
+        for idx in range(plan.page_count):
+            for ln in plan.text_by_index(idx).splitlines():
                 if _DIRBORE.search(ln) or _STA2STA.search(ln):
                     return True
         return False
 
+    def calibrate(self, plan: PlanPdf, default_offset: int) -> int:
+        return default_offset
+
     def extract_callouts(self, plan: PlanPdf, sheet: int, offset: int) -> List[Callout]:
-        paired = pair_from_lines(plan.lines(sheet, offset))
         callouts: List[Callout] = []
-        for p in paired:
+        for p in pair_from_lines(plan.lines(sheet, offset)):
             bbox = None
             hits = plan.search(sheet, offset, f"STA {p['from_sta']} TO STA {p['to_sta']}")
             if hits:
