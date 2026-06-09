@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 820 480" font-family="ui-sans-serif,system-ui,Arial" font-size="13">
+  <rect width="820" height="480" fill="#ffffff"/>
+  <rect x="0" y="0" width="820" height="42" fill="#0f172a"/>
+  <text x="16" y="27" fill="#f1f5f9" font-size="15" font-weight="700">v2 Evidence Review — bore_log51</text>
+  <rect x="636" y="10" width="170" height="22" rx="11" fill="#16a34a"/>
+  <text x="721" y="25" fill="#ffffff" font-size="11" font-weight="700" text-anchor="middle">CURRENTLY PROVEN</text>
+
+  <!-- bore log -->
+  <rect x="16" y="58" width="250" height="150" rx="8" fill="#f8fafc" stroke="#cbd5e1"/>
+  <text x="28" y="80" font-weight="700">Bore log (input)</text>
+  <text x="28" y="106" fill="#475569">id      bore_log51</text>
+  <text x="28" y="128" fill="#475569">start   0+00</text>
+  <text x="28" y="150" fill="#475569">end     2+99</text>
+  <text x="28" y="172" fill="#475569">span    299 ft</text>
+
+  <!-- matched evidence -->
+  <rect x="286" y="58" width="518" height="150" rx="8" fill="#f8fafc" stroke="#cbd5e1"/>
+  <text x="298" y="80" font-weight="700">Matched plan evidence</text>
+  <text x="298" y="106" fill="#475569">sheet 8   ·   derived offset 13</text>
+  <text x="298" y="128" fill="#475569">callout  STA 0+00 TO 2+99  ·  DIR. BORE (299')</text>
+  <text x="298" y="150" fill="#475569">Δfootage 0   Δstart 0   Δend 0</text>
+  <text x="298" y="178" fill="#16a34a" font-weight="700">match: footage chain — exact</text>
+
+  <!-- crop -->
+  <rect x="16" y="224" width="788" height="170" rx="8" fill="#f1f5f9" stroke="#cbd5e1"/>
+  <text x="28" y="246" font-weight="700">Highlighted location crop — served PNG (tenant-scoped)</text>
+  <rect x="28" y="258" width="760" height="100" fill="#ffffff" stroke="#94a3b8" stroke-dasharray="4 3"/>
+  <text x="408" y="300" fill="#94a3b8" text-anchor="middle">[ plan sheet 8 raster — bore-run region ]</text>
+  <rect x="300" y="282" width="220" height="44" fill="none" stroke="#dc2626" stroke-width="2"/>
+  <text x="408" y="346" fill="#475569" text-anchor="middle" font-size="11">/v2/artifact/log51_s8_0p00-2p99.png</text>
+
+  <!-- disposition -->
+  <rect x="16" y="410" width="788" height="50" rx="8" fill="#ecfdf5" stroke="#16a34a"/>
+  <circle cx="36" cy="435" r="7" fill="#16a34a"/>
+  <text x="52" y="440" font-weight="700" fill="#065f46">AUTO_SELECT</text>
+  <text x="200" y="440" fill="#475569">reason EXACT_BOX_FOOTAGE_AND_ENDPOINTS   ·   caveats: none</text>
+</svg>

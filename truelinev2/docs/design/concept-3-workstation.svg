@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 820 480" font-family="ui-sans-serif,system-ui,Arial" font-size="13">
+  <rect width="820" height="480" fill="#ffffff"/>
+  <rect x="0" y="0" width="820" height="42" fill="#0f172a"/>
+  <text x="16" y="27" fill="#f1f5f9" font-size="15" font-weight="700">v2 Review Workstation — concept</text>
+  <rect x="648" y="10" width="158" height="22" rx="11" fill="#dc2626"/>
+  <text x="727" y="25" fill="#ffffff" font-size="11" font-weight="700" text-anchor="middle">NOT YET BUILT</text>
+
+  <!-- queue -->
+  <rect x="16" y="58" width="210" height="386" rx="8" fill="#f8fafc" stroke="#cbd5e1"/>
+  <text x="28" y="80" font-weight="700">Queue (58)</text>
+  <g font-size="12">
+    <rect x="28" y="92" width="186" height="26" rx="4" fill="#ecfdf5" stroke="#16a34a"/><text x="38" y="110">▸ log51   AUTO_SELECT</text>
+    <rect x="28" y="122" width="186" height="26" rx="4" fill="#fffbeb" stroke="#d97706"/><text x="38" y="140">  log43   REVIEW</text>
+    <rect x="28" y="152" width="186" height="26" rx="4" fill="#fffbeb" stroke="#d97706"/><text x="38" y="170">  log7    REVIEW</text>
+    <rect x="28" y="182" width="186" height="26" rx="4" fill="#f1f5f9" stroke="#94a3b8"/><text x="38" y="200">  log39   ABSTAIN</text>
+    <text x="38" y="228" fill="#94a3b8">… 54 more</text>
+  </g>
+  <text x="28" y="262" fill="#d97706" font-size="11" font-weight="700">data 🟡 partial · list = M5</text>
+  <text x="28" y="280" fill="#991b1b" font-size="11" font-weight="700">queue UI 🔴 not built</text>
+
+  <!-- evidence -->
+  <rect x="236" y="58" width="330" height="386" rx="8" fill="#f1f5f9" stroke="#cbd5e1"/>
+  <text x="248" y="80" font-weight="700">Evidence</text>
+  <rect x="248" y="92" width="306" height="210" fill="#ffffff" stroke="#94a3b8" stroke-dasharray="4 3"/>
+  <text x="401" y="200" fill="#94a3b8" text-anchor="middle">[ crop / overlay ]</text>
+  <text x="248" y="330" fill="#475569">bore_log43</text>
+  <text x="248" y="352" fill="#475569">sheet 8 · 0+00 → 2+99</text>
+  <text x="248" y="378" fill="#16a34a" font-size="11" font-weight="700">evidence crop — PROVEN</text>
+
+  <!-- placement -->
+  <rect x="576" y="58" width="228" height="386" rx="8" fill="#f8fafc" stroke="#cbd5e1"/>
+  <text x="588" y="80" font-weight="700">Placement</text>
+  <text x="588" y="108" fill="#475569">confidence (tier)</text>
+  <rect x="588" y="116" width="160" height="14" rx="7" fill="#e2e8f0"/>
+  <rect x="588" y="116" width="120" height="14" rx="7" fill="#d97706"/>
+  <text x="588" y="156" fill="#475569">Δ f0 · s0 · e0</text>
+  <text x="588" y="180" fill="#475569">reason UNIQUE_BUT_CAV.</text>
+  <text x="588" y="204" fill="#475569">caveats INTERIOR_EP</text>
+  <text x="588" y="230" fill="#d97706" font-size="11" font-weight="700">signals 🟡 partial</text>
+  <!-- approve/reject NOT BUILT -->
+  <rect x="588" y="250" width="100" height="34" rx="6" fill="#ffffff" stroke="#dc2626" stroke-dasharray="4 3"/>
+  <text x="638" y="272" fill="#991b1b" text-anchor="middle" font-size="12">Approve</text>
+  <rect x="696" y="250" width="100" height="34" rx="6" fill="#ffffff" stroke="#dc2626" stroke-dasharray="4 3"/>
+  <text x="746" y="272" fill="#991b1b" text-anchor="middle" font-size="12">Reject</text>
+  <text x="588" y="306" fill="#991b1b" font-size="11" font-weight="700">approve/reject 🔴 not built</text>
+</svg>
