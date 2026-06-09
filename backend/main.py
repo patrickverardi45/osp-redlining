@@ -14792,6 +14792,16 @@ def _mrq_preseed_enabled() -> bool:
     return os.getenv("TRUELINE_MRQ_EVIDENCE_PRESEED", "0").strip() == "1"
 
 
+def _mrq_lazy_evidence_enabled() -> bool:
+    """Default-OFF gate for Phase-1 lazy heavy-evidence (TRUELINE_MRQ_LAZY_EVIDENCE).
+
+    When ON (paired with preseed), the INITIAL MRQ/preseed build runs metadata-first: it DEFERS
+    the two heavy evidence renders (path_trace_overlay + seam_stitch) so the queue is visible in
+    ~12-15s. A background continuation then rebuilds with render_heavy=True and overwrites the
+    cache with the full envelope. OFF -> render_heavy stays True everywhere -> byte-identical."""
+    return os.getenv("TRUELINE_MRQ_LAZY_EVIDENCE", "0").strip() == "1"
+
+
 def _set_preseed_status(session_id: str, status: str, **extra: Any) -> None:
     """Best-effort write of the session-level MRQ preseed status into PERSISTED STATE.
 
@@ -14890,12 +14900,19 @@ def _preseed_mrq_evidence(session_id: str) -> None:
                 pass
 
         from app.core import pdf_first_adapter
+        # Phase-1 lazy heavy-evidence: when ON, the INITIAL preseed build defers the heavy renders
+        # (render_heavy=False) so the cache warms / MRQ flips "ready" in ~12-15s; the heavy
+        # continuation below then rebuilds full and overwrites the cache. Wrap the builder only when
+        # perf OR lazy is active so the perf-off+lazy-off path keeps passing the RAW builder object
+        # (byte-identical; preserves test_preseed_warms_cache_when_ready).
+        _lazy_evidence = _mrq_lazy_evidence_enabled()
         _pf_builder = pdf_first_adapter.build_session_evidence_from_committed_rows
-        if _perf_audit_enabled():
+        if _perf_audit_enabled() or _lazy_evidence:
             def _instrumented_pf_builder(_plan_pdf, _rows_for_build, card_out_dir=None):
                 return pdf_first_adapter.build_session_evidence_from_committed_rows(
                     _plan_pdf, _rows_for_build, card_out_dir=card_out_dir,
-                    perf_observer=_pf_perf_observer,
+                    perf_observer=(_pf_perf_observer if _perf_audit_enabled() else None),
+                    render_heavy=(not _lazy_evidence),
                 )
             _pf_builder = _instrumented_pf_builder
         _payload = _mrq_cache.get_or_build(
@@ -14907,6 +14924,27 @@ def _preseed_mrq_evidence(session_id: str) -> None:
         logging.info("mrq_preseed.completed session=%s ok=%s logs=%d",
                      session_id, bool(_payload), len(_logs))
         _set_preseed_status(session_id, "ready" if _payload else "failed:empty", logs=len(_logs))
+        # Phase-1 lazy heavy-evidence continuation: the build above was metadata-first
+        # (render_heavy=False) so "ready" flips fast. Now fill the deferred heavy artifacts
+        # (path_trace_overlay + seam_stitch) in this SAME background task by rebuilding with
+        # render_heavy=True and OVERWRITING the cache with the full envelope. Best-effort: any
+        # failure leaves the fast metadata-first queue intact. Runs only when lazy + cache are on.
+        if _lazy_evidence and _payload and _mrq_cache.enabled():
+            try:
+                logging.info("mrq_preseed.heavy_continuation.started session=%s rows=%d",
+                             session_id, len(_rows))
+                _heavy = pdf_first_adapter.build_session_evidence_from_committed_rows(
+                    _plan_pdf, _rows, card_out_dir=_card_dir,
+                    perf_observer=(_pf_perf_observer if _perf_audit_enabled() else None),
+                    render_heavy=True)
+                if _heavy:
+                    _mrq_cache.set_cached(session_id, _rows, _plan_pdf, _heavy)
+                    _set_preseed_status(session_id, "ready", logs=len(_logs), heavy="ready")
+                logging.info("mrq_preseed.heavy_continuation.completed session=%s ok=%s",
+                             session_id, bool(_heavy))
+            except Exception as _hexc:
+                logging.info("mrq_preseed.heavy_continuation.failed session=%s status=%s",
+                             session_id, type(_hexc).__name__)
     except Exception as exc:
         try:
             logging.info("mrq_preseed.failed session=%s status=%s", session_id, type(exc).__name__)
@@ -15281,10 +15319,16 @@ def match_review_queue_endpoint(session_id: Optional[str] = None) -> JSONRespons
                     except Exception:
                         pass  # telemetry never breaks the queue response
 
+                # Phase-1 lazy heavy-evidence: build metadata-first ONLY when lazy AND preseed are
+                # both on (preseed owns the heavy continuation). Lazy without preseed -> stay eager
+                # so cards never get stuck "pending" with nothing to fill them. OFF -> render_heavy
+                # True -> byte-identical.
+                _fg_render_heavy = not (_mrq_lazy_evidence_enabled() and _mrq_preseed_enabled())
                 def _instrumented_pf_builder(_plan_pdf, _rows, card_out_dir=None):
                     return pdf_first_adapter.build_session_evidence_from_committed_rows(
                         _plan_pdf, _rows, card_out_dir=card_out_dir,
                         perf_observer=(_pf_perf_observer if _perf_audit_enabled() else None),
+                        render_heavy=_fg_render_heavy,
                     )
                 _pf_ev = _mrq_cache.get_or_build(
                     sid, _pdf_first_rows, _pf_plan_pdf, _pf_card_dir,

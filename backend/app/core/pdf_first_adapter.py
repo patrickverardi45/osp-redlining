@@ -356,7 +356,8 @@ def _segment_card(seg: Any, artifacts: Mapping[str, Any]) -> Dict[str, Any]:
 
 
 def _render_crops(result: Any, plan_pdf_path: str,
-                  card_out_dir: Optional[str], sheet_offset: int) -> None:
+                  card_out_dir: Optional[str], sheet_offset: int,
+                  render_heavy: bool = True) -> None:
     """Ask the engine to render its OWN highlighted evidence crops and wire
     ``render_artifact_ref``. Best-effort: a crop failure must never sink the
     envelope, so we fall back to metadata-only cards (render_artifact_ref None)."""
@@ -387,7 +388,9 @@ def _render_crops(result: Any, plan_pdf_path: str,
     # not called -> placement.pdf_path_trace stays None -> envelope byte-identical.
     # The 4th flag (dash-chain) only changes the BLOCKED fallback; unset vs '0' is
     # byte-identical because dash_chain=False then yields the same base trace.
-    if _pdf_path_trace_enabled():
+    # Phase-1 lazy heavy-evidence (call-site gating only): render_heavy=False defers this heavy
+    # bore-path trace render to the background continuation; param default True -> unchanged.
+    if _pdf_path_trace_enabled() and render_heavy:
         try:
             from redline_pdf_first.render import redline_overlay
             with _perf.timed("path_trace_overlay"):
@@ -653,7 +656,8 @@ def build_session_evidence_from_rows(plan_pdf_path: str,
                                      groups: Optional[Mapping[str, Sequence[str]]] = None,
                                      sheet_offset: int = 13,
                                      card_out_dir: Optional[str] = None,
-                                     perf_observer: Optional[Callable[[Mapping[str, Any]], None]] = None) -> Dict[str, Any]:
+                                     perf_observer: Optional[Callable[[Mapping[str, Any]], None]] = None,
+                                     render_heavy: bool = True) -> Dict[str, Any]:
     """Row-fed sibling of :func:`build_session_evidence`. ``logs`` is a sequence of
     ``(log_id, rows, source_file)`` where ``rows`` is TrueLine ``committed_rows`` for
     one bore log. Runs the engine via ``select_redline_from_rows`` per log and reuses
@@ -722,7 +726,8 @@ def build_session_evidence_from_rows(plan_pdf_path: str,
                     _sel_ms = (time.perf_counter() - _sel_t0) * 1000.0
                     _total_select_ms += _sel_ms
                 _ren_t0 = time.perf_counter() if _po else 0.0
-                _render_crops(result, plan_pdf_path, card_out_dir, sheet_offset)
+                _render_crops(result, plan_pdf_path, card_out_dir, sheet_offset,
+                              render_heavy=render_heavy)
                 if _po:
                     _ren_ms = (time.perf_counter() - _ren_t0) * 1000.0
                     _total_render_ms += _ren_ms
@@ -739,7 +744,8 @@ def build_session_evidence_from_rows(plan_pdf_path: str,
                 with _perf.timed("resolver_consult"):
                     env = _consult.apply_resolver(
                         log_id, env, _consult_doc, sheet_offset,
-                        card_out_dir or _cards_root(), _consult_data_dir)
+                        card_out_dir or _cards_root(), _consult_data_dir,
+                        render_heavy=render_heavy)
             placements.extend(env["placements"])
             review_items.extend(env["review_items"])
             fail_safe.extend(env["fail_safe"])
@@ -799,6 +805,13 @@ def build_session_evidence_from_rows(plan_pdf_path: str,
             "groups": group_blocks,
             "warnings": warnings,
         }
+        # Phase-1 lazy heavy-evidence: flag the envelope when the heavy renders were deferred
+        # (render_heavy=False) so the FE shows a "generating" state instead of misreading the
+        # absent path_trace/seam as abstain/failure. The background continuation rebuilds with
+        # render_heavy=True (no flag) and overwrites the cache. Default True -> key absent ->
+        # byte-identical.
+        if not render_heavy:
+            out["heavy_evidence_pending"] = True
         # Resolver consult summary — present ONLY when the flag is on (off => key absent =>
         # envelope byte-identical). Customer-safe: counts + owner-reviewed correction provenance.
         if _matchline_frame_resolver_enabled():
@@ -829,7 +842,8 @@ def build_session_evidence_from_committed_rows(plan_pdf_path: str,
                                                committed_rows: Sequence[Mapping[str, Any]], *,
                                                sheet_offset: int = 13,
                                                card_out_dir: Optional[str] = None,
-                                               perf_observer: Optional[Callable[[Mapping[str, Any]], None]] = None) -> Optional[Dict[str, Any]]:
+                                               perf_observer: Optional[Callable[[Mapping[str, Any]], None]] = None,
+                                               render_heavy: bool = True) -> Optional[Dict[str, Any]]:
     """main.py-facing entry: group REAL ``committed_rows`` by ``source_file`` then run
     the row-fed engine. Returns the evidence envelope, or ``None`` when no committed
     row carries a ``source_file`` (degenerate -> caller omits the key). Never raises.
@@ -847,4 +861,4 @@ def build_session_evidence_from_committed_rows(plan_pdf_path: str,
     with _perf.perf_build_probe(perf_observer):
         return build_session_evidence_from_rows(
             plan_pdf_path, logs, sheet_offset=sheet_offset, card_out_dir=card_out_dir,
-            perf_observer=perf_observer)
+            perf_observer=perf_observer, render_heavy=render_heavy)
