@@ -42,7 +42,7 @@ class Callout(BaseModel):
     footage_verified: bool = False
     text: str = ""
     bbox: Optional[List[float]] = None  # page-space [x0,y0,x1,y1]
-    dialect: str = "brenham"
+    dialect: str = "unknown"
 
 
 class Artifact(BaseModel):

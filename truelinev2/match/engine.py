@@ -1,7 +1,11 @@
 """Match orchestration: Bore + PlanPdf + dialect -> Placement (honest abstain).
 
-Routes by the dialect's match_mode: "footage" (Brenham span+endpoint) or
-"containment" (ODOT point-in-span). Both deciders are convention-agnostic.
+Routes by the dialect's ``match_mode`` (a string the dialect declares):
+  * "footage"     — span + endpoint match over authored footage chains
+  * "containment" — point-in-span (plan locates a bore; log carries the footage)
+  * "extent"      — drawn-segment extent coverage of the span (AUTO only on a
+                    tight unique match; else REVIEW)
+All deciders are convention-agnostic; the engine names no convention.
 """
 from __future__ import annotations
 
@@ -9,7 +13,7 @@ from truelinev2.extract.base import PlanDialect
 from truelinev2.ingest.pdf import PlanPdf
 from truelinev2.match.chains import build_chains
 from truelinev2.match.decide import decide
-from truelinev2.match.overlap import decide_by_containment
+from truelinev2.match.overlap import decide_by_containment, decide_by_extent
 from truelinev2.match.score import score_chain
 from truelinev2.schema.models import Bore, Placement, PlacementStatus
 
@@ -28,19 +32,22 @@ def run_match(bore: Bore, plan: PlanPdf, dialect: PlanDialect, offset: int) -> P
 
     mode = getattr(dialect, "match_mode", "footage")
 
-    if mode == "containment":
-        d = decide_by_containment(callouts, bore.station_start_ft, bore.station_end_ft, bore.span_ft)
+    if mode in ("containment", "extent"):
+        if mode == "containment":
+            d = decide_by_containment(callouts, bore.station_start_ft, bore.station_end_ft, bore.span_ft)
+        else:
+            d = decide_by_extent(callouts, bore.station_start_ft, bore.station_end_ft, bore.span_ft)
         if d["winner"] is None:
             return _abstain(bore, d["tier"], d["reason"])
         c = d["winner"][0]
-        # location-only REVIEW: footage/span come from the bore log (the authority),
-        # the plan DB confirms WHERE. No fabricated plan extent.
-        return Placement(bore_id=bore.bore_id, status=PlacementStatus.REVIEW, tier=d["tier"],
-                         reason=d["reason"], sheets=[c.sheet],
-                         station_span=f"{bore.station_start}->{bore.station_end}",
+        # footage/span come from the bore log (authority); the plan confirms WHERE.
+        status = (PlacementStatus.AUTO_SELECT if d["status"] == "AUTO_SELECT"
+                  else PlacementStatus.REVIEW)
+        return Placement(bore_id=bore.bore_id, status=status, tier=d["tier"], reason=d["reason"],
+                         sheets=[c.sheet], station_span=f"{bore.station_start}->{bore.station_end}",
                          footage=bore.span_ft, caveats=d["caveats"], matched_callouts=[c])
 
-    # footage mode (Brenham)
+    # footage mode (span + endpoint match)
     chains = build_chains(callouts, bore.station_start_ft, bore.station_end_ft)
     scored = [(ch, score_chain(ch, bore.station_start_ft, bore.station_end_ft, bore.span_ft))
               for ch in chains]

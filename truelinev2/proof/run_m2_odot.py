@@ -1,4 +1,4 @@
-"""M2 proof: v2 places an ODOT Tulsa-31 bore the OLD engine returns 0 callouts for.
+r"""M2 proof: v2 places an ODOT Tulsa-31 bore the OLD engine returns 0 callouts for.
 
 Pipeline: VeroFy Construction Log XLSX -> canonical Bore -> ODOT dialect (station
 axis + DIRECTIONAL BORE phrase, with legend exclusion + alignment gating) ->
@@ -92,12 +92,13 @@ def main() -> int:
     print(f"[m2] dialect={getattr(dialect, 'name', None)} derived_offset={offset}")
     for fn in BORES:
         b = load_borelog(os.path.join(INPUTS, fn))
-        anchors = []
+        segs = []
         for s in b.sheet_refs:
-            anchors += [(a.sheet, a.from_sta, round(a.from_ft)) for a in dialect.extract_callouts(dplan, s, offset)]
-        in_span = [a for a in anchors if b.station_start_ft - 10 <= a[2] <= b.station_end_ft + 10]
-        print(f"[m2] {b.bore_id}: span[{b.station_start_ft:.0f},{b.station_end_ft:.0f}] sheets{b.sheet_refs} "
-              f"real_anchors={anchors[:12]} in_span={in_span}")
+            segs += [(a.sheet, round(a.from_ft), round(a.to_ft)) for a in dialect.extract_callouts(dplan, s, offset)]
+        lo, hi = b.station_start_ft, b.station_end_ft
+        over = [s for s in segs if s[2] >= lo and s[1] <= hi]
+        print(f"[m2] {b.bore_id}: span[{lo:.0f},{hi:.0f}] sheets{b.sheet_refs} "
+              f"drawn_bore_segs={len(segs)} over_span={len(over)} sample={over[:6] or segs[:6]}")
     dplan.close()
 
     redline_pdf = PlanPdf(redline_path)
@@ -163,7 +164,7 @@ def main() -> int:
     passed = all(checks.values())
 
     REPORT_DIR.mkdir(parents=True, exist_ok=True)
-    report = {"milestone": "truelinev2 M2 — ODOT Tulsa-31 dialect (legend-excluded)",
+    report = {"milestone": "truelinev2 M3 — ODOT CAD-layer drawn-extent (supersedes M2 point-note)",
               "passed_automated": passed, "offset": offset, "rows": rows,
               "counts": {"placed": len(placed), "abstained": len(abstained), "errored": len(errored)},
               "served": served, "checks": checks,

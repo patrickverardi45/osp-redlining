@@ -1,5 +1,5 @@
 """PDF reader — v2's own thin wrapper over PyMuPDF (fitz). The only module that
-imports fitz. Rotation-safe: text coords are mapped raw->display via
+imports fitz. Rotation-safe: text + vector coords are mapped raw->display via
 ``page.rotation_matrix`` so they line up with what ``get_pixmap`` renders.
 """
 from __future__ import annotations
@@ -20,7 +20,6 @@ class PlanPdf:
         return self._doc.page_count
 
     def page_index(self, sheet: int, offset: int) -> int:
-        """0-based page index for a 1-based plan sheet: page = sheet + offset - 1."""
         return int(sheet) + int(offset) - 1
 
     def _page(self, sheet: int, offset: int):
@@ -34,8 +33,6 @@ class PlanPdf:
         return int(page.rotation or 0) if page is not None else 0
 
     def text_by_index(self, idx: int) -> str:
-        """Full page text by 0-based index (used for offset calibration, which runs
-        before any sheet<->page offset is known)."""
         if not (0 <= idx < self.page_count):
             return ""
         return self._doc[idx].get_text("text")
@@ -47,8 +44,6 @@ class PlanPdf:
         return [ln for ln in page.get_text("text").splitlines() if ln.strip()]
 
     def words(self, sheet: int, offset: int) -> List[Dict[str, Any]]:
-        """Every word with a DISPLAY-space box (rotation applied). Used by
-        positional dialects (e.g. ODOT) for station-axis + label geometry."""
         page = self._page(sheet, offset)
         if page is None:
             return []
@@ -62,8 +57,30 @@ class PlanPdf:
                         "xc": float((d.x0 + d.x1) / 2.0), "yc": float((d.y0 + d.y1) / 2.0)})
         return out
 
+    def vector_segments(self, sheet: int, offset: int) -> List[Dict[str, Any]]:
+        """Every vector drawing path as a DISPLAY-space bbox + its CAD layer name.
+        Used by positional dialects to isolate geometry by layer (e.g. a proposed
+        directional-bore layer) instead of guessing by style."""
+        page = self._page(sheet, offset)
+        if page is None:
+            return []
+        rot = page.rotation_matrix
+        out: List[Dict[str, Any]] = []
+        for d in page.get_drawings():
+            r = d.get("rect")
+            if r is None:
+                continue
+            corners = [fitz.Point(r.x0, r.y0) * rot, fitz.Point(r.x1, r.y0) * rot,
+                       fitz.Point(r.x1, r.y1) * rot, fitz.Point(r.x0, r.y1) * rot]
+            xs = [p.x for p in corners]
+            ys = [p.y for p in corners]
+            out.append({"layer": d.get("layer"), "x0": min(xs), "y0": min(ys),
+                        "x1": max(xs), "y1": max(ys),
+                        "xc": (min(xs) + max(xs)) / 2.0, "yc": (min(ys) + max(ys)) / 2.0,
+                        "width": float(d.get("width") or 0.0)})
+        return out
+
     def search(self, sheet: int, offset: int, text: str) -> List[List[float]]:
-        """Locate authored text; return DISPLAY-space [x0,y0,x1,y1] rects."""
         page = self._page(sheet, offset)
         if page is None:
             return []
@@ -78,8 +95,6 @@ class PlanPdf:
     def render_clip(self, sheet: int, offset: int, bbox_display: List[float],
                     zoom: float = 3.5, pad: float = 160.0
                     ) -> Optional[Tuple[Image.Image, float, float]]:
-        """Rasterize the padded region around a DISPLAY-space bbox. Returns
-        (PIL image, clip_x0, clip_y0)."""
         page = self._page(sheet, offset)
         if page is None or not bbox_display:
             return None

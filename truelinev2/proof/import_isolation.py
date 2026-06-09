@@ -2,13 +2,14 @@
 imports of old-app code (``app`` / ``main`` / ``redline_pdf_first`` / ``tl_core``
 / ``backend``). Relative imports are intra-package and allowed.
 
-Run: python -m truelinev2.proof.import_isolation
+``scan_violations`` is reused by the pytest guard (tests/test_import_isolation.py).
+Run standalone: python -m truelinev2.proof.import_isolation
 """
 from __future__ import annotations
 
 import ast
 import os
-from typing import Set
+from typing import List, Set, Tuple
 
 FORBIDDEN = {"app", "main", "redline_pdf_first", "tl_core", "backend"}
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # truelinev2/
@@ -27,34 +28,37 @@ def _import_roots(node: ast.AST) -> Set[str]:
     return out
 
 
-def main() -> int:
+def scan_violations(root: str = ROOT) -> List[Tuple[str, str]]:
+    """Return [(relpath, reason)] for any forbidden import or syntax error."""
     files = []
-    for dp, _dn, fns in os.walk(ROOT):
+    for dp, _dn, fns in os.walk(root):
         for fn in fns:
             if fn.endswith(".py"):
                 files.append(os.path.join(dp, fn))
-
-    violations = []
+    violations: List[Tuple[str, str]] = []
     for f in files:
         try:
             with open(f, encoding="utf-8") as fh:
                 tree = ast.parse(fh.read(), filename=f)
         except SyntaxError as exc:
-            violations.append((os.path.relpath(f, ROOT), f"SYNTAX: {exc}"))
+            violations.append((os.path.relpath(f, root), f"SYNTAX: {exc}"))
             continue
         for node in ast.walk(tree):
-            for root in _import_roots(node):
-                if root in FORBIDDEN:
-                    violations.append((os.path.relpath(f, ROOT), f"imports {root!r}"))
+            for r in _import_roots(node):
+                if r in FORBIDDEN:
+                    violations.append((os.path.relpath(f, root), f"imports {r!r}"))
+    return violations
 
-    print(f"[import-isolation] scanned {len(files)} files under truelinev2/")
+
+def main() -> int:
+    violations = scan_violations(ROOT)
     print(f"[import-isolation] forbidden roots: {sorted(FORBIDDEN)}")
     if violations:
         for f, why in violations:
             print(f"  VIOLATION: {f}: {why}")
         print("[import-isolation] FAIL")
         return 1
-    print("[import-isolation] PASS — zero old-app imports")
+    print("[import-isolation] PASS - zero old-app imports")
     return 0
 
 

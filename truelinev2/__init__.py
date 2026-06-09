@@ -9,7 +9,7 @@ pydantic, FastAPI/uvicorn, sqlite, pytest).
 Architectural thesis: only plan-evidence *extraction* is convention-specific (a
 pluggable ``PlanDialect``); normalization, matching, scoring, tiering, rendering,
 abstention, storage, and serving are convention-agnostic. Adding a new plan
-convention (e.g. ODOT) is a new dialect, not an engine fork.
+convention (a different agency's plan format) is a new dialect, not an engine fork.
 """
 from __future__ import annotations
 

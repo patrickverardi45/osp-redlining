@@ -1,4 +1,4 @@
-"""M1 proof: v2's OWN pipeline reproduces the Brenham log51 placement
+r"""M1 proof: v2's OWN pipeline reproduces the Brenham log51 placement
 (AUTO_SELECT, sheet 8, 0+00->2+99, 299') and serves a real PNG over HTTP.
 
 Graded against the KNOWN old-engine answer (not by calling it). Run:
