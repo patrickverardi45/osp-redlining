@@ -14816,6 +14816,17 @@ def _mrq_lazy_max_continuation_logs() -> int:
         return 12
 
 
+def _bore_async_rebuild_enabled() -> bool:
+    """Default-OFF fast-return gate for bore-log upload (TRUELINE_BORE_ASYNC_REBUILD).
+
+    When ON, POST /api/upload-structured-bore-files parses + merges + persists committed_rows and
+    returns immediately (processing=true), DEFERRING the heavy _rebuild_field_data_outputs + MRQ
+    preseed to a background task. This keeps the durable commit of committed_rows OFF the path that
+    times out / OOMs the worker on large batches (the synchronous rebuild + inflated-blob serialize).
+    OFF -> the route is byte-identical to prod 1c9ee82 (synchronous rebuild before the response)."""
+    return os.getenv("TRUELINE_BORE_ASYNC_REBUILD", "0").strip() == "1"
+
+
 def _set_preseed_status(session_id: str, status: str, **extra: Any) -> None:
     """Best-effort write of the session-level MRQ preseed status into PERSISTED STATE.
 
@@ -14987,6 +14998,40 @@ def _preseed_mrq_evidence(session_id: str) -> None:
             pass
 
 
+def _bore_finalize_rebuild_and_preseed(session_id: str) -> None:
+    """Background finalizer for the fast-return bore-upload path (TRUELINE_BORE_ASYNC_REBUILD=1).
+
+    The request already persisted committed_rows in a minimal scope, so this runs AFTER the response
+    in the FastAPI threadpool. It (1) runs the deferred ROWS_ONLY rebuild inside its OWN session
+    scope, then (2) warms the MRQ preseed (which manages its own scopes). committed_rows is already
+    durable, so any failure / OOM here leaves the committed rows intact -- only the derived map
+    outputs / MRQ evidence are affected, and field_data_rebuild records the outcome. Never raises."""
+    try:
+        with _session_scope(session_id):
+            try:
+                _rebuild_field_data_outputs(scope=RebuildScope.ROWS_ONLY)
+                STATE["field_data_rebuild"] = {"status": "ready"}
+                logging.info("bore_upload.async_rebuild.completed session=%s", session_id)
+            except Exception as _rexc:
+                # Mirror the FULL-rebuild failure cleanup (drop partial derived outputs so the map
+                # never renders a half-built state). committed_rows is NOT touched here -> durable.
+                STATE["station_points"] = []
+                STATE["redline_segments"] = []
+                STATE["selected_route_match"] = None
+                STATE["route_match_candidates"] = []
+                STATE["matching_debug"] = []
+                STATE["field_data_rebuild"] = {"status": "failed", "error": type(_rexc).__name__}
+                logging.info("bore_upload.async_rebuild.failed session=%s status=%s",
+                             session_id, type(_rexc).__name__)
+        # Scope released above (RLock) before preseed, which acquires its own scopes. Preseed carries
+        # the D32 large-batch gate UNCHANGED (>N distinct logs -> heavy_evidence_mode=on_demand).
+        if _mrq_preseed_enabled():
+            _preseed_mrq_evidence(session_id)
+    except Exception as exc:
+        logging.info("bore_upload.async_rebuild.outer_failed session=%s status=%s",
+                     session_id, type(exc).__name__)
+
+
 @protected_router.post("/api/upload-structured-bore-files")
 async def upload_structured_bore_files(
     request: Request,
@@ -15056,6 +15101,24 @@ async def upload_structured_bore_files(
             STATE["committed_rows"] = merged_rows
             STATE["loaded_field_data_files"] = len(existing_by_file)
             STATE["latest_structured_file"] = latest_name
+
+            if _bore_async_rebuild_enabled():
+                # Fast-return safety (TRUELINE_BORE_ASYNC_REBUILD=1): committed_rows is set above and
+                # becomes DURABLE when THIS minimal scope exits (the blob holds rows but no heavy
+                # derived outputs yet). Defer the heavy _rebuild_field_data_outputs + MRQ preseed to a
+                # background task so the synchronous rebuild + inflated-blob serialize can no longer
+                # time out / OOM the worker before the rows are persisted. Return immediately with
+                # current counts; the FE keeps Match Review gated until preseed flips ready.
+                STATE["field_data_rebuild"] = {"status": "processing", "files": len(existing_by_file)}
+                if _mrq_preseed_enabled():
+                    STATE["mrq_preseed"] = {"status": "scheduled"}
+                _payload = _summary_payload()
+                if background_tasks is not None:
+                    background_tasks.add_task(_bore_finalize_rebuild_and_preseed, resolved_session_id)
+                logging.info("bore_upload.async_rebuild.scheduled session=%s files=%d",
+                             resolved_session_id, len(existing_by_file))
+                return _ok(session_id=resolved_session_id,
+                           message="Bore logs uploaded, processing", processing=True, **_payload)
 
             # RI.4: ROWS_ONLY scope structurally prevents bore-log uploads from
             # invoking the PDF parser. See wiki/sprints/rebuild-isolation/
