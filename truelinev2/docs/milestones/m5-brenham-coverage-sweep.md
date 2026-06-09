@@ -1,6 +1,6 @@
 # M5 scope packet — Brenham coverage sweep (v2 only)
 
-**Status:** SCOPE — awaiting approval. **No code written.** Do not implement until approved.
+**Status:** SCOPE — decisions approved (`663728a`); framing-corrected (Brenham = Adapter #1; measurement-first). **No code written.** Implementation gated on a separate go-ahead.
 **Date:** 2026-06-09
 **Branch:** `feat/truelinev2` (isolated; not merged to main)
 
@@ -10,6 +10,44 @@ Brenham bore-log corpus** — its AUTO_SELECT / REVIEW / ABSTAIN distribution an
 above all, **zero false placements** — using v2's shipped pipeline only. This
 quantifies "replacement-level coverage" on the reference convention and de-risks
 the later redline-geometry milestone.
+
+## Framing — Brenham is Adapter #1, not the product (core-purity rule)
+
+**Brenham is not the product.** Brenham is **Adapter #1** — a worked example of the
+kind of contractor project package TrueLine will receive. ODOT is **Adapter #2**.
+Future customers bring different conventions. The product is the **generic core +
+pluggable adapters**, not a Brenham engine.
+
+So M5 is **measurement, not hardcoding**. It measures four things:
+- how well the **generic core** performs when driven by the **Brenham adapter**;
+- where the **Brenham adapter** is incomplete;
+- which failures are **adapter-specific**;
+- which failures expose **missing generic-engine capabilities**.
+
+**Hard rule — no Brenham assumptions in the shared core.** Brenham-specific logic may
+live ONLY in `ingest/borelog_brenham.py`, `extract/brenham.py`, and Brenham
+proof/tests/docs. It may **not** appear in `match/`, `schema/`, `render/`, `store/`,
+`api/`, or shared `service.py`. This is already **structurally enforced** by the shipped
+drift guard `tests/test_no_convention_leakage.py` (it fails the build if
+`brenham`/`odot`/… appears in core); M5 keeping that guard green *is* the mechanical
+proof that v2 stays multi-convention.
+
+**Measurement-first.** Do **not** patch to raise the Brenham placed-count during M5. Any
+fix is a **separate, explicitly-approved implementation milestone** (M5 hands it a
+prioritized, classified gap list). M5's job is to produce that list, not to close it.
+
+### Required miss taxonomy (every non-correct outcome gets exactly ONE class)
+Classified by **where the gap lives** — which is what keeps v2 a multi-convention engine:
+
+1. **adapter_parser_gap** — the Brenham adapter (`borelog_brenham.py` / `extract/brenham.py`)
+   failed to extract/normalize something the source actually contains. Fix → the adapter.
+2. **generic_match_scoring_gap** — a correctly-extracted case the convention-agnostic
+   `match/` core couldn't resolve. Fix → core, and it MUST stay convention-agnostic.
+3. **missing_redline_geometry** — located fine, but the gap is v2's inability to draw/
+   represent the needed geometry. Fix → the M6 geometry milestone.
+4. **bad_or_ambiguous_source** — the bore log / plan genuinely lacks or contradicts the
+   info (e.g. a missing source packet). Not a v2 defect.
+5. **honest_abstain** — v2 correctly abstained given the evidence. A pass.
 
 ## Hard separation (carried from the session rules)
 Work only in `truelinev2/`. Do **not** touch `backend/`, `main.py`, `web/`,
@@ -70,12 +108,15 @@ Reuse the shipped service unchanged — for each of the 58 logs:
       "old_engine": {"status": "AUTO_SELECT", "sheets": [8], "span": "0+00->2+99", "source": "M1 known answer"},
       "agreement": "agree | v2_only_place | old_only_place | both_abstain | differ",
       "grade": "pending | correct | false | abstain_ok",   // filled during grading
+      "miss_class": "n/a | adapter_parser_gap | generic_match_scoring_gap | missing_redline_geometry | bad_or_ambiguous_source | honest_abstain",
       "grade_notes": ""
     }
   ],
   "summary": {
     "auto_select": N, "review": N, "abstain": N, "errored": 0,
     "placed": N, "false_placements": 0,
+    "miss_breakdown": {"adapter_parser_gap": N, "generic_match_scoring_gap": N,
+                       "missing_redline_geometry": N, "bad_or_ambiguous_source": N, "honest_abstain": N},
     "vs_baseline": {"old_placed_documented": "~34-36", "v2_placed": N,
                     "v2_only": [..], "old_only": [..], "both_abstain": [..], "differ": [..]}
   }
@@ -139,8 +180,14 @@ given v2's current evidence. An abstain on a log the **old engine placed** is a
 2. All **58** logs run to a terminal status, **0 errored**; every non-placed log has an honest abstain reason.
 3. Every AUTO/REVIEW has a rendered crop and is **graded** (no `pending` left).
 4. Coverage reported: counts + `vs_baseline` (v2_placed, v2_only, old_only, differ).
-5. **No engine drift:** existing **43 tests green**, all 3 drift guards green, statuses **deterministic** on re-run.
-6. Packet results recorded as a follow-up doc/checkpoint update (separate, gated commit).
+5. **No engine drift / core purity:** existing **43 tests green**, all 3 drift guards green —
+   in particular `test_no_convention_leakage.py` proves **zero Brenham logic leaked into the
+   core**; statuses **deterministic** on re-run.
+6. **Every non-correct outcome carries exactly one `miss_class`** (the required taxonomy); the
+   report ships a `miss_breakdown`.
+7. **Measurement-only:** no patch raised the Brenham count (no core/adapter edit during M5
+   beyond the proof harness). Any fix is deferred to a separate, approved milestone.
+8. Packet results recorded as a follow-up doc/checkpoint update (separate, gated commit).
 
 ## 13. Stop conditions
 - Any need to **import or modify** `backend/` / `main.py` / old-app modules → **stop, ask**.
@@ -148,6 +195,12 @@ given v2's current evidence. An abstain on a log the **old engine placed** is a
   Brenham dialect fails to detect → **stop, report, confirm** before running.
 - A **false placement** is found → stop the "success" path; document it as a finding
   (M4-style); **do not widen tolerances** to hide it.
+- A miss "wants" a Brenham special-case in `match/`/`schema/`/`render/`/`store/`/`api/`/
+  `service.py` → **stop** (core-purity breach). Record it as `generic_match_scoring_gap`
+  (fix stays convention-agnostic) or `adapter_parser_gap` (fix goes in the Brenham adapter)
+  — never a convention branch in the core.
+- Tempted to patch to raise the Brenham count → **stop**; M5 is measurement. Defer to a
+  separate, explicitly-approved implementation milestone.
 - A bore log fails to ingest/route → record as an ingest finding (not a false placement); do not force.
 - Render/Vercel/deploy/merge-to-main → never.
 
