@@ -102,8 +102,9 @@ def test_preseed_emits_granular_perf_when_audit_on(monkeypatch):
     monkeypatch.setattr(main, "_emit_perf_audit_row",
                         lambda stage, ms, **k: emitted.append(stage))
 
-    def _fake_build(plan_pdf, rows, *, card_out_dir=None, perf_observer=None):
+    def _fake_build(plan_pdf, rows, *, card_out_dir=None, perf_observer=None, render_heavy=True):
         captured["perf_observer"] = perf_observer
+        captured["render_heavy"] = render_heavy
         if callable(perf_observer):
             perf_observer({"stage": "mrq_pf.fitz_open", "elapsed_ms": 1.0, "output_count": 1})
         return {"source": {"logs": ["log7"]}}
@@ -123,6 +124,7 @@ def test_preseed_emits_granular_perf_when_audit_on(monkeypatch):
     main._preseed_mrq_evidence("sid-1")
 
     assert callable(captured.get("perf_observer"))   # observer threaded into the cold build
+    assert captured.get("render_heavy") is True       # PERF on + lazy off -> eager (Phase-1 invariant)
     assert "mrq_pf.fitz_open" in emitted             # granular probe row reached the audit sink
     assert "mrq_cache.miss" in emitted               # cache-miss row emitted from the preseed path
 

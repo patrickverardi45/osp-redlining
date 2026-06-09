@@ -93,6 +93,15 @@ function overlayName(card: PdfFirstCard): string | null {
   return geo.pdf_path_trace?.artifact_name ?? geo.pdf_redline?.artifact_name ?? null;
 }
 
+// Phase-1 lazy heavy-evidence: classify a card's primary overlay for display so the UI can tell
+// PENDING (heavy render deferred + still generating) apart from ABSENT (genuinely no drawable
+// overlay) and PRESENT. Pure + exported so the distinction is explicit and type-checked.
+export type OverlayDisplayState = "present" | "pending" | "absent";
+export function overlayDisplayState(card: PdfFirstCard, heavyPending: boolean): OverlayDisplayState {
+  if (overlayName(card)) return "present";
+  return heavyPending ? "pending" : "absent";
+}
+
 // Authenticated image: fetch the gated PNG via apiFetch (Bearer header), render it as
 // an object URL, and revoke on cleanup. Mirrors ModernHeroMap's plan-page-image flow
 // (a raw <img src> can't carry the Authorization header, so we blob it).
@@ -295,7 +304,15 @@ function LineageLine({ sl }: { sl?: PdfFirstSourceLineage | null }) {
   );
 }
 
-function SegmentCard({ card, sessionId }: { card: PdfFirstCard; sessionId: string | null }) {
+function SegmentCard({
+  card,
+  sessionId,
+  heavyPending = false,
+}: {
+  card: PdfFirstCard;
+  sessionId: string | null;
+  heavyPending?: boolean;
+}) {
   const sr = card.station_range;
   const station = sr && (sr.start || sr.end) ? `${sr.start ?? "?"} → ${sr.end ?? "?"}` : null;
   const badge = neutralBadge(card);
@@ -306,7 +323,11 @@ function SegmentCard({ card, sessionId }: { card: PdfFirstCard; sessionId: strin
   // Absent / abstained (resolved !== true) -> empty -> nothing extra renders (no regression).
   const seam = geo?.cross_sheet_seam_stitch;
   const seamSegs = seam?.resolved ? (seam.segments ?? []).filter((s) => !!s.artifact_name) : [];
-  const evidenceOnly = isEvidenceOnlySegment(card, seamSegs.length);
+  // Phase-1 lazy heavy-evidence: while the heavy renders are still generating, an absent overlay
+  // (and an absent seam) is PENDING, not a final "evidence only" abstain — suppress that label so
+  // it is not misread; the background continuation fills the real overlays shortly.
+  const overlayDisplay = overlayDisplayState(card, heavyPending);
+  const evidenceOnly = !heavyPending && isEvidenceOnlySegment(card, seamSegs.length);
   return (
     <li
       style={{
@@ -347,6 +368,10 @@ function SegmentCard({ card, sessionId }: { card: PdfFirstCard; sessionId: strin
           name={overlay}
           alt={`${logLabel(card)} bore-path overlay`}
         />
+      ) : overlayDisplay === "pending" ? (
+        <div style={{ marginTop: 6, fontSize: 11, fontStyle: "italic", color: "var(--tl-text-muted)" }}>
+          Detailed bore-path overlay generating…
+        </div>
       ) : (
         <div style={{ marginTop: 6, fontSize: 11, color: "var(--tl-text-muted)" }}>
           No overlay image for this item.
@@ -486,9 +511,15 @@ export default function PdfFirstEvidencePanel({
 
   // Group every card A-E. Nothing hidden — empty groups are omitted, counts are shown.
   const grouped: Record<CovGroup, React.ReactNode[]> = { A: [], B: [], C: [], D: [], E: [] };
+  const heavyPending = !!evidence.heavy_evidence_pending;
   [...placements, ...reviews].forEach((card, i) => {
     grouped[segmentGroup(card)].push(
-      <SegmentCard key={`s-${i}-${card.segment_id ?? card.log_ids?.join(",") ?? i}`} card={card} sessionId={sid} />,
+      <SegmentCard
+        key={`s-${i}-${card.segment_id ?? card.log_ids?.join(",") ?? i}`}
+        card={card}
+        sessionId={sid}
+        heavyPending={heavyPending}
+      />,
     );
   });
   failSafe.forEach((card, i) => {
@@ -529,6 +560,25 @@ export default function PdfFirstEvidencePanel({
         review-grade · grouped by outcome — none hidden.
         {evidence.status && evidence.status !== "OK" ? ` · status: ${evidence.status}` : ""}
       </p>
+
+      {evidence.heavy_evidence_pending && (
+        <div
+          style={{
+            margin: "0 0 12px",
+            padding: "8px 10px",
+            borderRadius: 6,
+            border: "1px solid var(--tl-border)",
+            borderLeft: "3px solid #b8860b",
+            background: "var(--tl-bg-raised, rgba(255,255,255,0.03))",
+            fontSize: 12,
+            color: "var(--tl-text-muted)",
+          }}
+        >
+          Detailed bore-path evidence (path traces + cross-sheet seams) is still generating. Cards
+          below show their metadata now; overlay images appear shortly. An absent image here means
+          generating, not abstained.
+        </div>
+      )}
 
       {total === 0 ? (
         <p className="tl-subtle" style={{ margin: 0 }}>

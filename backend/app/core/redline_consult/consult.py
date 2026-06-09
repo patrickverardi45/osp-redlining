@@ -680,7 +680,7 @@ def _recount(env: Dict[str, Any]) -> None:
 
 
 def apply_resolver(log_id: str, env: Dict[str, Any], doc: Any, sheet_offset: int,
-                   out_dir: str, data_dir: str) -> Dict[str, Any]:
+                   out_dir: str, data_dir: str, render_heavy: bool = True) -> Dict[str, Any]:
     """Envelope-space resolver consult for ONE log (mirrors the proven offline coverage consult).
     LIFT a blocked / fail-safe FRAME_ONLY bore into a matchline (C) / station-frame (B) review
     card, OR let an owner-reviewed + BOC-corroborated resolver entry OVERRIDE a geometry-only A
@@ -714,7 +714,12 @@ def apply_resolver(log_id: str, env: Dict[str, Any], doc: Any, sheet_offset: int
         # Cross-sheet seam stitch (default-OFF TRUELINE_CROSS_SHEET_SEAM_STITCH; log56-only):
         # two per-sheet segments from 3 machine anchors + 1 owner-reviewed+verified s21 seam
         # anchor. Stashes onto mr (resolved or abstain); never draws unless all four resolve.
-        if _cross_sheet_seam_stitch_enabled():
+        # Phase-1 lazy heavy-evidence (call-site gating only): render_heavy=False defers this heavy
+        # cross-sheet seam render to the background continuation. The tier/surface lift below is
+        # built from `mr` (the matchline decision), NOT from the seam, so skipping the render leaves
+        # tiers/stations/decisions identical -- only the seam segments + PNG defer. Default True ->
+        # every existing caller unchanged. NO edits to the seam tracer / selector internals.
+        if _cross_sheet_seam_stitch_enabled() and render_heavy:
             if not isinstance(mr, dict):
                 mr = dict(mr)
             from app.core import mrq_perf_probe as _perf  # lazy; timed() no-op when inactive

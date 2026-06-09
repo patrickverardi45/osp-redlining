@@ -209,6 +209,21 @@ export default function MatchReviewQueuePanel({
     return () => clearTimeout(t);
   }, [data, load]);
 
+  // Phase-1 lazy heavy-evidence: the queue loads metadata-first with
+  // pdf_first_evidence.heavy_evidence_pending=true while the background continuation renders the
+  // deferred overlays (path_trace + seam) and OVERWRITES the cache. KEEP re-polling every 4s until
+  // the continuation clears the flag, then the full overlays render automatically (no manual
+  // Refresh — same trap we already fixed for `preparing`). Depend on `data` (the object), NOT the
+  // boolean: it stays true across polls, so a boolean dep would fire once and stall. Each poll
+  // setData(new object) -> `data` identity changes -> effect re-runs -> reschedules; the first
+  // poll whose payload has the flag cleared returns early -> polling stops. No new endpoint, no
+  // backend change: this re-fetches the SAME /api/match-review-queue (cache HIT after overwrite).
+  useEffect(() => {
+    if (!data?.pdf_first_evidence?.heavy_evidence_pending) return;
+    const t = setTimeout(() => void load({ force: true }), 4000);
+    return () => clearTimeout(t);
+  }, [data, load]);
+
   const preparing = Boolean(data?.preparing);
 
   // Visible elapsed timer while preparing, so a multi-minute cold build does not look

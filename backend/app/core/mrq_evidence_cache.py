@@ -161,3 +161,25 @@ def get_or_build(session_id: str,
             _CACHE.popitem(last=False)
     _notify("miss", _build_ms, key)
     return payload
+
+
+def set_cached(session_id: str,
+               committed_rows: Sequence[Mapping[str, Any]],
+               plan_pdf: str,
+               payload: Optional[Dict[str, Any]]) -> bool:
+    """Overwrite the cached evidence for ``session_id`` under the SAME key
+    :func:`get_or_build` uses. Used by the Phase-1 lazy heavy-evidence continuation to refresh the
+    metadata-first entry with the full heavy-rendered envelope once its PNGs exist on disk. No-op
+    (returns ``False``) when the cache is disabled or ``payload`` is falsy; never raises. Additive:
+    nothing calls this unless lazy evidence is active, so the default path is byte-identical."""
+    try:
+        if not enabled() or not payload:
+            return False
+        key = cache_key(committed_rows, plan_pdf)
+        _CACHE[session_id] = (key, payload)
+        _CACHE.move_to_end(session_id)
+        while len(_CACHE) > _MAX_SESSIONS:
+            _CACHE.popitem(last=False)
+        return True
+    except Exception:
+        return False

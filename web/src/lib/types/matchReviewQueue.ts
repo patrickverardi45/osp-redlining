@@ -249,6 +249,13 @@ export interface PdfFirstEvidence {
   fail_safe?: PdfFirstFailSafeCard[];
   groups?: PdfFirstGroup[];
   warnings?: string[];
+  /**
+   * Phase-1 lazy heavy-evidence: true ONLY when the initial metadata-first build deferred the
+   * heavy renders (path_trace_overlay + seam_stitch). The FE reads it to show a "generating" state
+   * instead of misreading an absent overlay as abstain/failure. Absent on the full envelope (after
+   * the background continuation overwrites the cache) and absent entirely when the flag is OFF.
+   */
+  heavy_evidence_pending?: boolean;
 }
 
 // A+B+C gate (session-level preseed status). Mirrors the backend STATE["mrq_preseed"]
