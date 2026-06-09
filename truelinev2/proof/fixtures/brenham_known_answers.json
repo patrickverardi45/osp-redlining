@@ -1,0 +1,21 @@
+{
+  "_about": "M5 static baseline — DOCUMENTED old-engine answers ONLY, transcribed from documented outputs/wiki. No old-app module is imported. Absent bore_ids => old answer not documented here => graded visually, recorded honestly. CAVEAT: v2 is PDF-FIRST (ingests no KMZ); the old Brenham engine placed redlines via KMZ route geometry + PDF station anchors, so 'placed' here is a rough yardstick, NOT strict equivalence.",
+  "_aggregate": {
+    "old_placed_documented": "34-36 of 58",
+    "source": "wiki: PDF-AP Sprint 2.5 baseline '36/58 placed (334 pts / 286 segs)'; trust_ledger_replay 34/30/0/0/5"
+  },
+  "answers": {
+    "bore_log51": {
+      "status": "AUTO_SELECT", "sheets": [8], "span": "0+00->2+99", "footage": 299.0,
+      "source": "truelinev2 M1 proof — KNOWN_OLD_ENGINE in run_m1_brenham.py (independently reproduced by v2)"
+    },
+    "bore_log71": {
+      "status": "placed_validated",
+      "source": "wiki: PDF-AP — only bore_log71/72 were ground-truth-validated (exact sheet/span not transcribed)"
+    },
+    "bore_log72": {
+      "status": "placed_validated",
+      "source": "wiki: PDF-AP — only bore_log71/72 were ground-truth-validated (exact sheet/span not transcribed)"
+    }
+  }
+}
