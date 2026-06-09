@@ -11,8 +11,9 @@ Honest abstain on no/insufficient evidence; REVIEW so a human approves.
 """
 from __future__ import annotations
 
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
+from truelinev2.match.decide import tolerances
 from truelinev2.schema.models import Callout
 
 
@@ -91,3 +92,28 @@ def decide_by_extent(callouts: List[Callout], bore_start_ft: float, bore_end_ft:
             "reason": "DRAWN_EXTENT_COVERS_SPAN_NOT_TIGHT", "winner": [winner],
             "score": {"sheets": [winner.sheet]},
             "caveats": review_caveats, "ambiguous": []}
+
+
+def decide_by_unique_footage(callouts: List[Callout], span_ft: float,
+                             tol_ft: Optional[float] = None) -> Dict[str, Any]:
+    """Translation-invariant fallback for footage-mode bores logged in a local station
+    frame (so no callout starts at the bore's ABSOLUTE start). Places ONLY when EXACTLY
+    ONE callout's authored footage matches the bore span within tolerance — frame is
+    unconfirmed, so REVIEW only (a human confirms WHERE), never AUTO. 0 or >=2 candidates
+    -> abstain. The uniqueness gate is the zero-false guarantee; tolerance is the existing
+    review band (not widened). Convention-agnostic: names no convention, reads only the
+    generic Callout.footage."""
+    tol = tol_ft if tol_ft is not None else tolerances(span_ft)["review_foot"]
+    cands = [c for c in callouts if abs(c.footage - span_ft) <= tol]
+    if len(cands) == 0:
+        return {"status": "ABSTAIN", "tier": "FAIL_SAFE", "reason": "NO_FOOTAGE_UNIQUE_CANDIDATE",
+                "winner": None, "score": None, "caveats": [], "ambiguous": []}
+    if len(cands) >= 2:
+        return {"status": "ABSTAIN", "tier": "FAIL_SAFE", "reason": "AMBIGUOUS_FOOTAGE_CANDIDATES",
+                "winner": None, "score": None, "caveats": [], "ambiguous": list(cands)}
+    c = cands[0]
+    return {"status": "REVIEW", "tier": "AUTO_PLACED_REQUIRES_APPROVAL",
+            "reason": "FOOTAGE_UNIQUE_FRAME_UNCONFIRMED", "winner": [c],
+            "score": {"sheets": [c.sheet]},
+            "caveats": ["FOOTAGE_ONLY_MATCH", "ABSOLUTE_FRAME_UNCONFIRMED", "LOCATION_ONLY"],
+            "ambiguous": []}

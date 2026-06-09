@@ -13,7 +13,7 @@ from truelinev2.extract.base import PlanDialect
 from truelinev2.ingest.pdf import PlanPdf
 from truelinev2.match.chains import build_chains
 from truelinev2.match.decide import decide
-from truelinev2.match.overlap import decide_by_containment, decide_by_extent
+from truelinev2.match.overlap import decide_by_containment, decide_by_extent, decide_by_unique_footage
 from truelinev2.match.score import score_chain
 from truelinev2.schema.models import Bore, Placement, PlacementStatus
 
@@ -53,6 +53,21 @@ def run_match(bore: Bore, plan: PlanPdf, dialect: PlanDialect, offset: int) -> P
               for ch in chains]
     d = decide(scored, bore.span_ft)
     if d["winner"] is None:
+        # Translation-invariant fallback (REVIEW only): fires ONLY when the primary found
+        # NO acceptable chain — never when it abstained on AMBIGUITY (d["ambiguous"]).
+        # Places iff exactly one callout's footage matches the span; the uniqueness gate in
+        # decide_by_unique_footage is the zero-false guarantee. Frame unconfirmed -> REVIEW.
+        if not d["ambiguous"]:
+            fb = decide_by_unique_footage(callouts, bore.span_ft)
+            if fb["winner"] is not None:
+                fc = fb["winner"][0]
+                return Placement(
+                    bore_id=bore.bore_id, status=PlacementStatus.REVIEW, tier=fb["tier"],
+                    reason=fb["reason"], sheets=[fc.sheet],
+                    station_span=f"{bore.station_start}->{bore.station_end}",
+                    footage=bore.span_ft,
+                    footage_delta=round(abs(fc.footage - bore.span_ft), 2),
+                    caveats=fb["caveats"], matched_callouts=[fc])
         return _abstain(bore, d["tier"], d["reason"])
     sc = d["score"]
     winner = d["winner"]
