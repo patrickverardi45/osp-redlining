@@ -20,6 +20,21 @@ def _safe(name: str) -> str:
     return name.replace("+", "p").replace(" ", "_").replace("/", "-")
 
 
+def render_sheet_context(plan: PlanPdf, sheet: int, offset: int, out_dir: str,
+                         zoom: float = 1.0) -> Optional[str]:
+    """Full-sheet CONTEXT render (no highlights) -- reuses ``render_clip`` with a
+    page-sized clip (``render_clip`` intersects the clip with ``page.rect``).
+    Review/demo context only; never placement evidence."""
+    rendered = plan.render_clip(sheet, offset, [0.0, 0.0, 1e7, 1e7], zoom=zoom, pad=0.0)
+    if rendered is None:
+        return None
+    img, _, _ = rendered
+    os.makedirs(out_dir, exist_ok=True)
+    path = os.path.join(out_dir, f"sheet_{int(sheet)}.png")
+    img.save(path)
+    return path
+
+
 def render_evidence_crop(plan: PlanPdf, bore_id: str, callout: Callout, out_dir: str,
                          offset: int, zoom: float = 3.5, pad: float = 160.0) -> Optional[str]:
     if not callout.bbox:

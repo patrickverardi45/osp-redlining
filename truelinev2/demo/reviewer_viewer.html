@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<!--
+  TrueLine v2 — M8.13.a static reviewer demo viewer (committed source).
+
+  Single-file vanilla JS. Opened from file:// next to a generated demo_data.js
+  (window.TL2_DEMO) — the proof runner copies this file into the output dir.
+  Read-only: no server, no API call, no build chain, no write-back.
+
+  Honesty rules enforced here:
+    * pick-card candidates render as SUGGESTION_NOT_PLACEMENT — never placements;
+    * evidence crops are labeled as callout highlights, NOT bore-path strokes;
+    * confidence is shown as a closed CLASS only — no numbers exist or render;
+    * all data lands via textContent (never innerHTML) — the B-XSS lesson.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>TrueLine v2 — Reviewer Lanes Demo</title>
+<style>
+  :root { --ink:#1c2330; --mut:#5b6577; --line:#d8dde6; --bg:#f4f6f9; --card:#fff;
+          --placed:#1c7c43; --pick:#9a6b00; --adj:#0b62a4; --ooc:#6d4fa1;
+          --src:#a3452b; --unsafe:#8a1f2b; }
+  body { margin:0; font:15px/1.45 "Segoe UI",system-ui,sans-serif; color:var(--ink);
+         background:var(--bg); }
+  header { background:var(--ink); color:#fff; padding:14px 22px; }
+  header h1 { margin:0; font-size:19px; font-weight:600; }
+  header .sub { color:#b8c2d4; font-size:13px; margin-top:3px; }
+  .banner { background:#fff7df; border-bottom:1px solid #e3d49a; color:#5d4d12;
+            padding:8px 22px; font-size:13px; }
+  main { max-width:1180px; margin:0 auto; padding:18px 22px 60px; }
+  .tabs { display:flex; gap:8px; margin:6px 0 14px; }
+  .tabs button { font:600 14px "Segoe UI",sans-serif; padding:8px 16px; cursor:pointer;
+                 border:1px solid var(--line); border-radius:7px; background:#fff; }
+  .tabs button.on { background:var(--ink); color:#fff; border-color:var(--ink); }
+  .modebox { background:var(--card); border:1px solid var(--line); border-radius:9px;
+             padding:12px 16px; margin-bottom:18px; font-size:13.5px; }
+  .modebox b { font-size:14.5px; }
+  .kv { display:inline-block; margin:2px 14px 2px 0; color:var(--mut); }
+  .kv b { color:var(--ink); }
+  .lane { margin:26px 0 10px; }
+  .lane h2 { font-size:16px; margin:0 0 2px; display:flex; align-items:center; gap:10px; }
+  .lane .desc { color:var(--mut); font-size:13px; margin:0 0 10px; }
+  .count { font:600 12px sans-serif; background:var(--ink); color:#fff;
+           border-radius:10px; padding:1px 9px; }
+  .cards { display:grid; grid-template-columns:repeat(auto-fill,minmax(340px,1fr));
+           gap:12px; }
+  .card { background:var(--card); border:1px solid var(--line); border-left:5px solid
+          var(--mut); border-radius:9px; padding:11px 13px; font-size:13.5px; }
+  .card h3 { margin:0 0 5px; font-size:15px; display:flex; gap:8px; align-items:center;
+             flex-wrap:wrap; }
+  .badge { font:600 11px sans-serif; border-radius:5px; padding:2px 7px; color:#fff; }
+  .row { margin:2px 0; color:var(--mut); }
+  .row b { color:var(--ink); font-weight:600; }
+  .ev { margin-top:8px; }
+  .ev .evlabel { font-size:11.5px; color:var(--mut); font-style:italic; margin:3px 0; }
+  .ev img { max-width:100%; border:1px solid var(--line); border-radius:5px;
+            display:block; margin:4px 0; }
+  details { margin-top:6px; }
+  details summary { cursor:pointer; color:var(--adj); font-size:12.5px; }
+  .cand { border:1px dashed #caa94e; background:#fffbef; border-radius:7px;
+          padding:7px 9px; margin:7px 0; }
+  .cand .sugg { font:700 10.5px sans-serif; letter-spacing:.4px; color:#7c5800;
+                background:#ffe9a8; border-radius:4px; padding:2px 7px;
+                display:inline-block; margin-bottom:4px; }
+  .mono { font-family:Consolas,monospace; font-size:12.5px; white-space:pre-wrap;
+          background:#f0f2f6; border-radius:5px; padding:5px 8px; margin-top:5px; }
+  .caveat { display:inline-block; background:#eef1f6; border:1px solid var(--line);
+            border-radius:4px; font-size:11px; padding:1px 6px; margin:2px 3px 0 0;
+            color:var(--mut); }
+  footer { color:var(--mut); font-size:12px; text-align:center; padding:18px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>TrueLine v2 — Reviewer Lanes Demo</h1>
+  <div class="sub">Bore logs + plan PDF &rarr; reviewer lanes &rarr; evidence &amp; suggestions. Read-only local demo.</div>
+</header>
+<div class="banner">
+  Evidence crops below are <b>callout highlights</b> — the plan text the engine anchored on.
+  They are <b>not</b> drawn bore-path strokes. Suggestions are never placements.
+  Confidence is a closed class; no numeric score exists.
+</div>
+<main id="main"></main>
+<footer>TrueLine v2 clean-room demo harness (M8.13.a) — no production data flow, no server, no write-back.</footer>
+<script src="demo_data.js"></script>
+<script>
+"use strict";
+(function () {
+  var DATA = window.TL2_DEMO;
+  var LANES = [
+    ["PLACED_REVIEW", "var(--placed)", "Engine-placed (AUTO or REVIEW). Human action: approve / reject / edit."],
+    ["PICK_CARD_ROUTE_SUGGESTION", "var(--pick)", "Two or more plausible routes. Candidates are SUGGESTIONS, never placements. Human picks one, rejects all, or draws."],
+    ["HUMAN_ADJUSTABLE_LENGTH_REDLINE", "var(--adj)", "Footage is certain; frame/path ownership is not unique. Human drags/snaps/confirms a length-true redline; the engine cleans up after confirmation."],
+    ["OUT_OF_CLASS", "var(--ooc)", "A different named solver owns this bore next. No placement shown."],
+    ["SOURCE_REVIEW_REQUIRED", "var(--src)", "The bore log's own source data needs fixing first."],
+    ["UNSAFE_ABSTAIN", "var(--unsafe)", "No safe lane; the named missing relationship stands."]
+  ];
+  var CONF = { AUTO_EXACT_MATCH: "auto exact match",
+               REVIEW_CAVEATED: "review (caveated)",
+               REVIEW_OPTIN_SOLVER: "review (opt-in solver)" };
+
+  function el(tag, cls, text) {
+    var e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text !== undefined && text !== null) e.textContent = String(text);
+    return e;
+  }
+  function row(parent, label, value) {
+    if (value === undefined || value === null || value === "" ||
+        (Array.isArray(value) && !value.length)) return;
+    var r = el("div", "row");
+    var b = el("b", null, label + ": ");
+    r.appendChild(b);
+    r.appendChild(document.createTextNode(
+      Array.isArray(value) ? value.join(", ") : String(value)));
+    parent.appendChild(r);
+  }
+
+  function card(p, laneColor) {
+    var c = el("div", "card");
+    c.style.borderLeftColor = laneColor;
+    var h = el("h3", null, p.bore_id);
+    if (p.confidence_class) {
+      var bd = el("span", "badge", CONF[p.confidence_class] || p.confidence_class);
+      bd.style.background = laneColor;
+      h.appendChild(bd);
+    }
+    c.appendChild(h);
+    row(c, "stations", (p.station_start_sta || "?") + " → " + (p.station_end_sta || "?"));
+    row(c, "footage", p.footage_ft != null ? p.footage_ft + " ft" : null);
+    row(c, "sheets", p.sheets);
+    row(c, "reason", p.reason_code);
+    if (p.evidence_summary) row(c, "evidence", p.evidence_summary);
+    if (p.caveats && p.caveats.length) {
+      var cv = el("div");
+      p.caveats.forEach(function (x) { cv.appendChild(el("span", "caveat", x)); });
+      c.appendChild(cv);
+    }
+    if (p.next_named_solver) row(c, "next named solver", p.next_named_solver);
+    if (p.named_missing_relationship) row(c, "missing relationship", p.named_missing_relationship);
+    if (p.suspect_values) {
+      c.appendChild(el("div", "mono", JSON.stringify(p.suspect_values, null, 1)));
+    }
+    (p.candidates || []).forEach(function (cd) {
+      var box = el("div", "cand");
+      box.appendChild(el("div", "sugg", cd.label));
+      row(box, "candidate", cd.candidate_id);
+      row(box, "sheets", cd.sheets);
+      row(box, "station math", cd.station_math);
+      row(box, "footage check", cd.footage_check);
+      row(box, "why not auto-placed", cd.why_not_auto_placed);
+      row(box, "evidence to promote", cd.missing_relationship_to_promote);
+      c.appendChild(box);
+    });
+    if (p.redline_spec) {
+      var rs = p.redline_spec;
+      var box2 = el("div", "cand");
+      box2.appendChild(el("div", "sugg", "HUMAN-ADJUSTABLE — NOT PLACED"));
+      row(box2, "length", rs.length_ft + " ft (length-true)");
+      row(box2, "initial sheet range", rs.initial_sheet_range);
+      row(box2, "reviewer actions", "drag / rotate / snap-to-path / multi-page / confirm");
+      row(box2, "after confirmation", "engine snaps, traces and cleans up");
+      c.appendChild(box2);
+    }
+    var vis = (DATA.visuals || {})[p.bore_id];
+    if (vis && vis.evidence_crops && vis.evidence_crops.length) {
+      var ev = el("div", "ev");
+      ev.appendChild(el("div", "evlabel",
+        "Evidence crops — callout highlights on the plan (not bore-path strokes):"));
+      vis.evidence_crops.forEach(function (src) {
+        var img = el("img");
+        img.src = src; img.loading = "lazy"; img.alt = "evidence crop " + p.bore_id;
+        ev.appendChild(img);
+      });
+      c.appendChild(ev);
+    }
+    var ctxSheets = (vis && vis.sheet_context && vis.sheet_context.length)
+      ? vis.sheet_context
+      : (p.sheets || []).map(function (s) { return (DATA.sheet_renders || {})[String(s)]; })
+                        .filter(Boolean);
+    if (ctxSheets.length) {
+      var det = el("details");
+      det.appendChild(el("summary", null, "sheet context (" + ctxSheets.length + ")"));
+      ctxSheets.forEach(function (src) {
+        var img = el("img");
+        img.src = src; img.loading = "lazy"; img.alt = "sheet context";
+        det.appendChild(img);
+      });
+      c.appendChild(det);
+    }
+    return c;
+  }
+
+  function renderMode(modeKey) {
+    var main = document.getElementById("main");
+    main.textContent = "";
+    var tabs = el("div", "tabs");
+    Object.keys(DATA.bundles).forEach(function (k) {
+      var b = el("button", k === modeKey ? "on" : "", k);
+      b.onclick = function () { renderMode(k); };
+      tabs.appendChild(b);
+    });
+    main.appendChild(tabs);
+
+    var bundle = DATA.bundles[modeKey];
+    var mb = el("div", "modebox");
+    mb.appendChild(el("b", null, "mode: " + bundle.run_mode));
+    mb.appendChild(el("div"));
+    var fs = bundle.flag_state || {};
+    Object.keys(fs).forEach(function (k) {
+      var s = el("span", "kv");
+      s.appendChild(el("b", null, k + "="));
+      s.appendChild(document.createTextNode(fs[k] ? "ON (by mode only)" : "off"));
+      mb.appendChild(s);
+    });
+    mb.appendChild(el("div"));
+    var sc = bundle.status_counts || {};
+    Object.keys(sc).forEach(function (k) {
+      var s = el("span", "kv");
+      s.appendChild(el("b", null, k + ": "));
+      s.appendChild(document.createTextNode(sc[k]));
+      mb.appendChild(s);
+    });
+    var meta = DATA.meta || {};
+    mb.appendChild(el("div", "row",
+      "project: " + (bundle.project_id || "?") + " · schemas: " +
+      bundle.bundle_schema_version + " / " + bundle.payload_schema_version));
+    if (meta.opt_in_composition) mb.appendChild(el("div", "row", meta.opt_in_composition));
+    main.appendChild(mb);
+
+    var byLane = {};
+    (bundle.payloads || []).forEach(function (p) {
+      (byLane[p.lane] = byLane[p.lane] || []).push(p);
+    });
+    LANES.forEach(function (spec) {
+      var laneName = spec[0], color = spec[1], desc = spec[2];
+      var items = byLane[laneName] || [];
+      if (!items.length) return;
+      var sec = el("section", "lane");
+      var h2 = el("h2", null, laneName.replace(/_/g, " "));
+      h2.appendChild(el("span", "count", items.length));
+      sec.appendChild(h2);
+      sec.appendChild(el("p", "desc", desc));
+      var grid = el("div", "cards");
+      items.sort(function (a, b) { return a.bore_id.localeCompare(b.bore_id, undefined, {numeric: true}); })
+           .forEach(function (p) { grid.appendChild(card(p, color)); });
+      sec.appendChild(grid);
+      main.appendChild(sec);
+    });
+  }
+
+  if (!DATA || !DATA.bundles) {
+    document.getElementById("main").appendChild(
+      el("p", null, "demo_data.js not found next to this file — run " +
+        "truelinev2.proof.run_reviewer_demo_artifact first."));
+  } else {
+    renderMode(DATA.bundles.fullest_safe_review ? "fullest_safe_review"
+                                                : Object.keys(DATA.bundles)[0]);
+  }
+})();
+</script>
+</body>
+</html>
