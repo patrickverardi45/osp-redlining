@@ -52,9 +52,13 @@ class PlanPdf:
         for w in page.get_text("words"):
             d = fitz.Rect(float(w[0]), float(w[1]), float(w[2]), float(w[3])) * rot
             d.normalize()
+            # "block" = PyMuPDF text-block id (M8.14: drawn route-tick LADDERS
+            # group into all-tick blocks; callout/note station tokens share
+            # blocks with alphabetic words -- the clean-tick classifier key)
             out.append({"text": w[4], "x0": float(d.x0), "y0": float(d.y0),
                         "x1": float(d.x1), "y1": float(d.y1),
-                        "xc": float((d.x0 + d.x1) / 2.0), "yc": float((d.y0 + d.y1) / 2.0)})
+                        "xc": float((d.x0 + d.x1) / 2.0), "yc": float((d.y0 + d.y1) / 2.0),
+                        "block": int(w[5])})
         return out
 
     def vector_segments(self, sheet: int, offset: int) -> List[Dict[str, Any]]:
