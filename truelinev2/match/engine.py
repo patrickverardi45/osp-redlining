@@ -13,11 +13,33 @@ from typing import TYPE_CHECKING, Optional
 
 from truelinev2.extract.base import PlanDialect
 from truelinev2.ingest.pdf import PlanPdf
-from truelinev2.match.chains import build_chains
-from truelinev2.match.decide import decide
+from truelinev2.match.chains import build_chains, chain_uses_translated_link
+from truelinev2.match.decide import decide, penalty, tolerances
 from truelinev2.match.overlap import decide_by_containment, decide_by_extent, decide_by_unique_footage
 from truelinev2.match.score import score_chain
 from truelinev2.schema.models import Bore, Placement, PlacementStatus
+
+
+def _sheet_distinct_rival(cscored, winner, winner_sc, span_ft: float) -> bool:
+    """SHEET-AWARE coequal re-check for the M8.4 retry ONLY. ``decide()`` keys rival
+    identity on station TEXT (chain_from/chain_to), which is correct for same-frame
+    extraction duplicates but blind to translated chains on DIFFERENT sheets that
+    reuse the same local station numbers (reset frames make that common). A retry
+    winner with ANY acceptable, penalty-coequal candidate whose (sheets, from, to)
+    identity differs is NOT unique -> the retry must abstain (never pick by order)."""
+    tol = tolerances(span_ft)
+    wsig = (tuple(winner_sc["sheets"]), winner_sc["chain_from"], winner_sc["chain_to"])
+    wpen = penalty(winner_sc)
+    for ch, sc in cscored:
+        if ch is winner:
+            continue
+        if (sc["start_delta"] > tol["review_end"] or sc["end_delta"] > tol["review_end"]
+                or sc["foot_delta"] > tol["review_foot"]):
+            continue  # not acceptable -> not a rival
+        sig = (tuple(sc["sheets"]), sc["chain_from"], sc["chain_to"])
+        if sig != wsig and abs(penalty(sc) - wpen) <= 5.0:
+            return True
+    return False
 
 if TYPE_CHECKING:  # M8.2c Step 1: type-only; no runtime import (import graph unchanged).
     from truelinev2.match.collision_gate import CollisionGate
@@ -31,7 +53,8 @@ def _abstain(bore: Bore, tier: str, reason: str) -> Placement:
 
 def run_match(bore: Bore, plan: PlanPdf, dialect: PlanDialect, offset: int, *,
               frame_graph: Optional["FrameGraph"] = None,
-              collision_gate: Optional["CollisionGate"] = None) -> Placement:
+              collision_gate: Optional["CollisionGate"] = None,
+              continuation_graph: Optional["FrameGraph"] = None) -> Placement:
     # M8.2c Step 1: ``frame_graph`` is inert plumbing -- threaded into build_chains /
     # score_chain (footage mode) but NEVER consulted yet. None/OFF -> byte-identical M7.
     callouts = []
@@ -80,6 +103,43 @@ def run_match(bore: Bore, plan: PlanPdf, dialect: PlanDialect, offset: int, *,
                     footage=bore.span_ft,
                     footage_delta=round(abs(fc.footage - bore.span_ft), 2),
                     caveats=fb["caveats"], matched_callouts=[fc])
+            # M8.4 frame-aware continuation retry (default-OFF; fires ONLY when the
+            # bore would otherwise ABSTAIN with no acceptable chain -- never on
+            # ambiguity, never before the existing fallback, never for placed logs).
+            # Linking is ADDITIVE (raw OR safe-HIGH-translated), so it can only ADD
+            # candidates the raw matcher could not see. decide() applies un-widened
+            # tolerances; because its rival signature is station-TEXT-keyed (sheet-
+            # blind), the retry adds its OWN sheet-aware coequal re-check -- a winner
+            # with a sheet-distinct coequal rival abstains. Any winner whose chain
+            # needed a translated link is REVIEW-capped -- NEVER AUTO -- and the
+            # placement passes through the collision gate (demote-only) when active.
+            if continuation_graph is not None:
+                cchains = build_chains(callouts, bore.station_start_ft, bore.station_end_ft,
+                                       frame_graph=continuation_graph, additive=True)
+                cscored = [(ch, score_chain(ch, bore.station_start_ft, bore.station_end_ft,
+                                            bore.span_ft, frame_graph=continuation_graph,
+                                            additive=True))
+                           for ch in cchains]
+                cd = decide(cscored, bore.span_ft)
+                if (cd["winner"] is not None
+                        and chain_uses_translated_link(cd["winner"])
+                        and not _sheet_distinct_rival(cscored, cd["winner"], cd["score"],
+                                                      bore.span_ft)):
+                    csc = cd["score"]
+                    cwinner = cd["winner"]
+                    placement = Placement(
+                        bore_id=bore.bore_id, status=PlacementStatus.REVIEW,
+                        tier="AUTO_PLACED_REQUIRES_APPROVAL",
+                        reason="FRAME_TRANSLATED_CONTINUATION",
+                        sheets=csc["sheets"],
+                        station_span=f"{bore.station_start}->{bore.station_end}",
+                        footage=csc["summed_ft"], footage_delta=csc["foot_delta"],
+                        start_delta=csc["start_delta"], end_delta=csc["end_delta"],
+                        caveats=list(cd["caveats"]) + ["FRAME_TRANSLATED_CONTINUATION"],
+                        matched_callouts=list(cwinner))
+                    if collision_gate is not None:
+                        placement = collision_gate.apply(placement, callouts)
+                    return placement
         return _abstain(bore, d["tier"], d["reason"])
     sc = d["score"]
     winner = d["winner"]

@@ -23,6 +23,9 @@ class Settings:
     # M8.2l: reset-vs-continuous collision gate. DEFAULT OFF -- the gate is consulted
     # only when this is explicitly True (opt-in test); OFF is byte-identical default.
     reset_collision_optin: bool = False
+    # M8.4: frame-aware continuation retry (safe HIGH edges, abstain-fill, REVIEW-cap).
+    # DEFAULT OFF -- OFF is byte-identical default behavior.
+    frame_continuation_optin: bool = False
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -35,6 +38,7 @@ class Settings:
             sheet_offset=int(os.getenv("TL2_SHEET_OFFSET", "13")),
             allowed_origins=origins,
             reset_collision_optin=os.getenv("TL2_RESET_COLLISION_OPTIN", "0") == "1",
+            frame_continuation_optin=os.getenv("TL2_FRAME_AWARE_CONTINUATION_OPTIN", "0") == "1",
         )
 
     @classmethod

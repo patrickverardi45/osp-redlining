@@ -13,6 +13,19 @@ from truelinev2.ingest.normalize import load_borelog
 from truelinev2.ingest.pdf import PlanPdf
 from truelinev2.match.collision_gate import CollisionGate, collect_equations, load_human_grades
 from truelinev2.match.engine import run_match
+from truelinev2.match.frames import build_frame_edges, build_frame_graph, frame_for_sheet, parse_frame_equations
+
+
+def _build_plan_frame_graph(plan: PlanPdf, offset: int):
+    """The SAFE frame graph from the plan's own text (HIGH/unique/conflict-free edges
+    only -- ``match.frames`` drops everything ambiguous). Built ONLY when the M8.4
+    continuation flag is ON; the default path never constructs or consults it."""
+    edges = []
+    for idx in range(plan.page_count):
+        text = " ".join(ln for ln in plan.text_by_index(idx).splitlines() if ln.strip())
+        edges.extend(build_frame_edges(parse_frame_equations(text),
+                                       frame_for_sheet(idx - offset + 1)))
+    return build_frame_graph(edges)
 from truelinev2.render.crop import render_evidence_crop
 from truelinev2.review.payload import build_review_payload
 from truelinev2.schema.models import Placement, PlacementStatus, ReviewPayload
@@ -46,7 +59,14 @@ class RedlineService:
                     gate = CollisionGate(
                         equations_by_sheet=collect_equations(plan, offset, bore.sheet_refs),
                         human_grades=load_human_grades())
-                placement = run_match(bore, plan, dialect, offset, collision_gate=gate)
+                # M8.4: DEFAULT OFF. The safe frame graph is built + injected ONLY
+                # when the continuation flag is explicitly True; OFF -> None ->
+                # byte-identical default behavior.
+                cont_graph = None
+                if self._settings.frame_continuation_optin:
+                    cont_graph = _build_plan_frame_graph(plan, offset)
+                placement = run_match(bore, plan, dialect, offset, collision_gate=gate,
+                                      continuation_graph=cont_graph)
                 for c in placement.matched_callouts:
                     crop_path = render_evidence_crop(
                         plan, bore.bore_id, c, str(self._settings.cards_dir), offset,
