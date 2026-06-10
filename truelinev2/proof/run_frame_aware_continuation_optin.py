@@ -5,7 +5,7 @@ HIGH/unique/conflict-free frame graph injected as ``continuation_graph``) and
 reports the EXACT changed set with full safety checks.
 
 PASS requires ALL of:
-  * OFF distribution == AUTO_SELECT=14 REVIEW=9 ABSTAIN=33 ERROR=2 PLACED=23
+  * OFF distribution == the corrected-source default baseline (see EXPECTED_OFF)
   * zero currently-PLACED logs change in any way (status/reason/sheets)
   * zero promotions toward AUTO anywhere
   * every ON-only placement (if any) is REVIEW with the FRAME_TRANSLATED_CONTINUATION caveat
@@ -34,7 +34,11 @@ from truelinev2.service import _build_plan_frame_graph
 OUT_JSON = _REPO_ROOT / "data" / "outputs" / "frame_aware_continuation_optin.json"
 OUT_MD = _REPO_ROOT / "data" / "outputs" / "frame_aware_continuation_optin.md"
 
-EXPECTED_OFF = {"AUTO_SELECT": 14, "REVIEW": 9, "ABSTAIN": 33, "ERROR": 2, "PLACED": 23}
+# Corrected-source baseline 2026-06-10: Patrick fixed OCR'd stations in
+# bore_log9/15/16 (log9 5+34->12+64 was really 04+94->11+69; log15 24+00 was
+# 24+07; log16 51+00->59+50 was 31+00->39+79). log9 now places REVIEW via the
+# SHIPPED M7 unique-footage fallback -- default placed 23 -> 24.
+EXPECTED_OFF = {"AUTO_SELECT": 14, "REVIEW": 10, "ABSTAIN": 32, "ERROR": 2, "PLACED": 24}
 PREDICTED_SET = ["log9", "log15", "log16"]  # the investigation's capability-#2 estimate
 PLACED = ("AUTO_SELECT", "REVIEW")
 _RANK = {"ABSTAIN": 0, "ERROR": 0, "REVIEW": 1, "AUTO_SELECT": 2}

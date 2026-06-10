@@ -6,8 +6,8 @@ Runs the REAL engine over the full 58-log corpus twice:
        parsed frame equations + the banked M8.2j human grades.
 
 PASS requires ALL of:
-  * OFF distribution == AUTO_SELECT=14 REVIEW=9 ABSTAIN=33 ERROR=2 PLACED=23 (default unchanged)
-  * ON  distribution == AUTO_SELECT=11 REVIEW=11 ABSTAIN=34 ERROR=2 PLACED=22
+  * OFF distribution == the corrected-source default baseline (EXPECTED_OFF)
+  * ON  distribution == EXPECTED_ON (the same 3 graded demotions over that baseline)
   * the changed set is EXACTLY log42 (AUTO->REVIEW), log57 (AUTO->REVIEW), log65 (AUTO->ABSTAIN)
   * zero promotions anywhere (no status may move toward AUTO)
   * the SERVICE flag path (Settings.reset_collision_optin=True) reproduces log42 -> REVIEW
@@ -38,8 +38,11 @@ from truelinev2.store.db import ReviewStore
 OUT_JSON = _REPO_ROOT / "data" / "outputs" / "reset_collision_optin_sweep.json"
 OUT_MD = _REPO_ROOT / "data" / "outputs" / "reset_collision_optin_sweep.md"
 
-EXPECTED_OFF = {"AUTO_SELECT": 14, "REVIEW": 9, "ABSTAIN": 33, "ERROR": 2, "PLACED": 23}
-EXPECTED_ON = {"AUTO_SELECT": 11, "REVIEW": 11, "ABSTAIN": 34, "ERROR": 2, "PLACED": 22}
+# Corrected-source baseline 2026-06-10 (bore_log9/15/16 station OCR fixed;
+# log9 places REVIEW via the M7 unique-footage fallback): default 23 -> 24
+# placed. The gate's 3 graded demotions (log42/57/65) are unchanged.
+EXPECTED_OFF = {"AUTO_SELECT": 14, "REVIEW": 10, "ABSTAIN": 32, "ERROR": 2, "PLACED": 24}
+EXPECTED_ON = {"AUTO_SELECT": 11, "REVIEW": 12, "ABSTAIN": 33, "ERROR": 2, "PLACED": 23}
 EXPECTED_CHANGES = {"log42": ("AUTO_SELECT", "REVIEW"),
                     "log57": ("AUTO_SELECT", "REVIEW"),
                     "log65": ("AUTO_SELECT", "ABSTAIN")}

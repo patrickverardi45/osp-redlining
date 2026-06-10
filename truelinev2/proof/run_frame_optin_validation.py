@@ -35,7 +35,9 @@ from truelinev2.match.frames import (
 )
 from truelinev2.proof.run_brenham_corpus import CORPUS_DIR, EXPECTED_COUNT, PDF, enumerate_corpus
 
-GOLDEN = {"AUTO_SELECT": 14, "REVIEW": 9, "ABSTAIN": 33, "ERROR": 2}  # default 23/58 distribution
+# Corrected-source baseline 2026-06-10 (bore_log9/15/16 station OCR fixed;
+# log9 places REVIEW via the M7 unique-footage fallback): default 24/58.
+GOLDEN = {"AUTO_SELECT": 14, "REVIEW": 10, "ABSTAIN": 32, "ERROR": 2}
 PLACED = ("AUTO_SELECT", "REVIEW")
 LOG11 = "bore_log11"
 

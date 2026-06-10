@@ -14,6 +14,8 @@ from truelinev2.ingest.pdf import PlanPdf
 from truelinev2.match.collision_gate import CollisionGate, collect_equations, load_human_grades
 from truelinev2.match.engine import run_match
 from truelinev2.match.frames import build_frame_edges, build_frame_graph, frame_for_sheet, parse_frame_equations
+from truelinev2.match.reverse_anchor import ReverseAnchorContext
+from truelinev2.match.transition_classifier import conflict_sheet_pairs
 
 
 def _build_plan_frame_graph(plan: PlanPdf, offset: int):
@@ -65,8 +67,25 @@ class RedlineService:
                 cont_graph = None
                 if self._settings.frame_continuation_optin:
                     cont_graph = _build_plan_frame_graph(plan, offset)
+                # M8.5: DEFAULT OFF. The reverse-anchor context is built + injected
+                # ONLY when the opt-in flag is explicitly True; OFF -> None ->
+                # byte-identical default behavior. The safe frame graph is shared
+                # with M8.4 when both flags are on (same builder, built once).
+                rev_ctx = None
+                if self._settings.reverse_endpoint_optin:
+                    rev_graph = (cont_graph if cont_graph is not None
+                                 else _build_plan_frame_graph(plan, offset))
+                    # equations for ALL sheets, not just sheet_refs: the matchline
+                    # mask must see equations authored on the FAR side of a pair
+                    # (linked-frame masking) -- the M8.5 adversarial mask lesson.
+                    all_sheets = range(1, plan.page_count - offset + 1)
+                    rev_ctx = ReverseAnchorContext(
+                        graph=rev_graph,
+                        conflicts=conflict_sheet_pairs(rev_graph),
+                        equations_by_sheet=collect_equations(plan, offset, all_sheets))
                 placement = run_match(bore, plan, dialect, offset, collision_gate=gate,
-                                      continuation_graph=cont_graph)
+                                      continuation_graph=cont_graph,
+                                      reverse_anchor=rev_ctx)
                 for c in placement.matched_callouts:
                     crop_path = render_evidence_crop(
                         plan, bore.bore_id, c, str(self._settings.cards_dir), offset,

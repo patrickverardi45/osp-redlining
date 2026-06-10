@@ -43,6 +43,7 @@ def _sheet_distinct_rival(cscored, winner, winner_sc, span_ft: float) -> bool:
 
 if TYPE_CHECKING:  # M8.2c Step 1: type-only; no runtime import (import graph unchanged).
     from truelinev2.match.collision_gate import CollisionGate
+    from truelinev2.match.reverse_anchor import ReverseAnchorContext
     from truelinev2.schema.frames import FrameGraph
 
 
@@ -54,7 +55,8 @@ def _abstain(bore: Bore, tier: str, reason: str) -> Placement:
 def run_match(bore: Bore, plan: PlanPdf, dialect: PlanDialect, offset: int, *,
               frame_graph: Optional["FrameGraph"] = None,
               collision_gate: Optional["CollisionGate"] = None,
-              continuation_graph: Optional["FrameGraph"] = None) -> Placement:
+              continuation_graph: Optional["FrameGraph"] = None,
+              reverse_anchor: Optional["ReverseAnchorContext"] = None) -> Placement:
     # M8.2c Step 1: ``frame_graph`` is inert plumbing -- threaded into build_chains /
     # score_chain (footage mode) but NEVER consulted yet. None/OFF -> byte-identical M7.
     callouts = []
@@ -137,6 +139,49 @@ def run_match(bore: Bore, plan: PlanPdf, dialect: PlanDialect, offset: int, *,
                         start_delta=csc["start_delta"], end_delta=csc["end_delta"],
                         caveats=list(cd["caveats"]) + ["FRAME_TRANSLATED_CONTINUATION"],
                         matched_callouts=list(cwinner))
+                    if collision_gate is not None:
+                        placement = collision_gate.apply(placement, callouts)
+                    return placement
+            # M8.5 reverse endpoint anchor retry (default-OFF; fires ONLY when the
+            # bore would otherwise ABSTAIN with no acceptable chain -- never on
+            # decide()-level ambiguity, and only after the fallback + M8.4 retry
+            # found nothing). The solver is uniqueness-mandatory end-to-end (one
+            # end anchor path, matchline/reset-masked, near-rival-guarded,
+            # frame-coherent, hop-proven by the M8.2f classifier, footage closed,
+            # start agreement within the EXISTING start tolerance); its single
+            # READY class is REVIEW-capped here -- NEVER AUTO -- and the placement
+            # passes through the collision gate (demote-only) when active.
+            # FOOTAGE-AMBIGUITY DISJOINTNESS: when the unique-footage fallback
+            # abstained on >=2 coequal footage candidates, the reverse winner may
+            # place ONLY if its chain is DISJOINT from those declared rivals --
+            # independent positional evidence is new information; picking one of
+            # the tied rivals themselves would be tiebreaking, which is forbidden.
+            # (The committed M8.4 retry shares this fallthrough without the
+            # disjointness gate -- a banked doctrine gap, not changed here.)
+            if reverse_anchor is not None:
+                from truelinev2.match.reverse_anchor import READY as _REVERSE_READY
+                from truelinev2.match.reverse_anchor import solve_reverse_anchor
+                rev, rpath = solve_reverse_anchor(
+                    bore_id=bore.bore_id, bore_start_ft=bore.station_start_ft,
+                    bore_end_ft=bore.station_end_ft, span_ft=bore.span_ft,
+                    callouts=callouts, graph=reverse_anchor.graph,
+                    conflicts=reverse_anchor.conflicts,
+                    equations_by_sheet=reverse_anchor.equations_by_sheet)
+                fb_rivals = fb["ambiguous"] if fb["reason"] == "AMBIGUOUS_FOOTAGE_CANDIDATES" else []
+                if (rev["result"] == _REVERSE_READY and rpath is not None
+                        and not any(any(c is r for r in fb_rivals)
+                                    for c in rpath.callouts)):
+                    placement = Placement(
+                        bore_id=bore.bore_id, status=PlacementStatus.REVIEW,
+                        tier="AUTO_PLACED_REQUIRES_APPROVAL",
+                        reason="REVERSE_ENDPOINT_ANCHOR",
+                        sheets=rpath.sheets,
+                        station_span=f"{bore.station_start}->{bore.station_end}",
+                        footage=bore.span_ft,
+                        start_delta=rev["start_delta_vs_borelog_ft"],
+                        end_delta=rev["winning_end_delta_ft"],
+                        caveats=list(rev["caveats"]),
+                        matched_callouts=list(rpath.callouts))
                     if collision_gate is not None:
                         placement = collision_gate.apply(placement, callouts)
                     return placement
