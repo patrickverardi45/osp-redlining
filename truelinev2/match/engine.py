@@ -9,6 +9,8 @@ All deciders are convention-agnostic; the engine names no convention.
 """
 from __future__ import annotations
 
+from typing import TYPE_CHECKING, Optional
+
 from truelinev2.extract.base import PlanDialect
 from truelinev2.ingest.pdf import PlanPdf
 from truelinev2.match.chains import build_chains
@@ -17,13 +19,19 @@ from truelinev2.match.overlap import decide_by_containment, decide_by_extent, de
 from truelinev2.match.score import score_chain
 from truelinev2.schema.models import Bore, Placement, PlacementStatus
 
+if TYPE_CHECKING:  # M8.2c Step 1: type-only; no runtime import (import graph unchanged).
+    from truelinev2.schema.frames import FrameGraph
+
 
 def _abstain(bore: Bore, tier: str, reason: str) -> Placement:
     return Placement(bore_id=bore.bore_id, status=PlacementStatus.ABSTAIN,
                      tier=tier, reason=reason, abstain_reason=reason)
 
 
-def run_match(bore: Bore, plan: PlanPdf, dialect: PlanDialect, offset: int) -> Placement:
+def run_match(bore: Bore, plan: PlanPdf, dialect: PlanDialect, offset: int, *,
+              frame_graph: Optional["FrameGraph"] = None) -> Placement:
+    # M8.2c Step 1: ``frame_graph`` is inert plumbing -- threaded into build_chains /
+    # score_chain (footage mode) but NEVER consulted yet. None/OFF -> byte-identical M7.
     callouts = []
     for s in bore.sheet_refs:
         callouts.extend(dialect.extract_callouts(plan, s, offset))
@@ -48,8 +56,10 @@ def run_match(bore: Bore, plan: PlanPdf, dialect: PlanDialect, offset: int) -> P
                          footage=bore.span_ft, caveats=d["caveats"], matched_callouts=[c])
 
     # footage mode (span + endpoint match)
-    chains = build_chains(callouts, bore.station_start_ft, bore.station_end_ft)
-    scored = [(ch, score_chain(ch, bore.station_start_ft, bore.station_end_ft, bore.span_ft))
+    chains = build_chains(callouts, bore.station_start_ft, bore.station_end_ft,
+                          frame_graph=frame_graph)
+    scored = [(ch, score_chain(ch, bore.station_start_ft, bore.station_end_ft, bore.span_ft,
+                               frame_graph=frame_graph))
               for ch in chains]
     d = decide(scored, bore.span_ft)
     if d["winner"] is None:
