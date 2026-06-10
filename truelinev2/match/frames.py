@@ -189,3 +189,15 @@ def translate_station_ft(graph: FrameGraph, from_frame: FrameId, to_frame: Frame
         if str(e.from_frame) == str(to_frame) and str(e.to_frame) == str(from_frame):
             return round(feet + e.offset_ft, 2)
     return None
+
+
+def translate_between_sheets(graph: FrameGraph, from_sheet: int, to_sheet: int,
+                             feet: float) -> Optional[float]:
+    """Translate a station (ft) from ``from_sheet``'s frame into ``to_sheet``'s frame
+    through a SAFE direct frame edge -- the sheet-keyed convenience over
+    ``translate_station_ft`` for the chain-assembly callers. Same sheet -> identity
+    (the raw value). Returns **None** when no safe direct edge connects the two sheets
+    (ambiguous / conflicting / missing edge): the caller must abstain and must NEVER
+    fall back to the raw value (a raw equal station across sheets is not proof)."""
+    return translate_station_ft(graph, frame_for_sheet(from_sheet),
+                                frame_for_sheet(to_sheet), feet)
