@@ -20,6 +20,9 @@ class Settings:
     sheet_offset: int = 13
     render_zoom: float = 3.5
     allowed_origins: Tuple[str, ...] = ()
+    # M8.2l: reset-vs-continuous collision gate. DEFAULT OFF -- the gate is consulted
+    # only when this is explicitly True (opt-in test); OFF is byte-identical default.
+    reset_collision_optin: bool = False
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -31,6 +34,7 @@ class Settings:
             db_path=Path(os.getenv("TL2_DB_PATH", str(_OUT / "truelinev2.db"))),
             sheet_offset=int(os.getenv("TL2_SHEET_OFFSET", "13")),
             allowed_origins=origins,
+            reset_collision_optin=os.getenv("TL2_RESET_COLLISION_OPTIN", "0") == "1",
         )
 
     @classmethod

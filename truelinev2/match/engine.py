@@ -20,6 +20,7 @@ from truelinev2.match.score import score_chain
 from truelinev2.schema.models import Bore, Placement, PlacementStatus
 
 if TYPE_CHECKING:  # M8.2c Step 1: type-only; no runtime import (import graph unchanged).
+    from truelinev2.match.collision_gate import CollisionGate
     from truelinev2.schema.frames import FrameGraph
 
 
@@ -29,7 +30,8 @@ def _abstain(bore: Bore, tier: str, reason: str) -> Placement:
 
 
 def run_match(bore: Bore, plan: PlanPdf, dialect: PlanDialect, offset: int, *,
-              frame_graph: Optional["FrameGraph"] = None) -> Placement:
+              frame_graph: Optional["FrameGraph"] = None,
+              collision_gate: Optional["CollisionGate"] = None) -> Placement:
     # M8.2c Step 1: ``frame_graph`` is inert plumbing -- threaded into build_chains /
     # score_chain (footage mode) but NEVER consulted yet. None/OFF -> byte-identical M7.
     callouts = []
@@ -83,9 +85,16 @@ def run_match(bore: Bore, plan: PlanPdf, dialect: PlanDialect, offset: int, *,
     winner = d["winner"]
     status = (PlacementStatus.AUTO_SELECT if d["status"] == "AUTO_SELECT"
               else PlacementStatus.REVIEW)
-    return Placement(
+    placement = Placement(
         bore_id=bore.bore_id, status=status, tier=d["tier"], reason=d["reason"],
         sheets=sc["sheets"], station_span=f"{winner[0].from_sta}->{winner[-1].to_sta}",
         footage=sc["summed_ft"], footage_delta=sc["foot_delta"],
         start_delta=sc["start_delta"], end_delta=sc["end_delta"],
         caveats=d["caveats"], matched_callouts=list(winner))
+    # M8.2l: optional, default-OFF reset-collision gate. None (the default) is the
+    # OFF state -> the placement above is returned byte-identical. When injected,
+    # the gate is DEMOTE-ONLY (R6): it can never promote or place anything, and it
+    # touches only chains with a runtime-detected on-crossing reset collision.
+    if collision_gate is not None:
+        placement = collision_gate.apply(placement, callouts)
+    return placement

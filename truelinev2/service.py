@@ -11,6 +11,7 @@ from truelinev2.context import RequestContext
 from truelinev2.extract.registry import select_dialect
 from truelinev2.ingest.normalize import load_borelog
 from truelinev2.ingest.pdf import PlanPdf
+from truelinev2.match.collision_gate import CollisionGate, collect_equations, load_human_grades
 from truelinev2.match.engine import run_match
 from truelinev2.render.crop import render_evidence_crop
 from truelinev2.review.payload import build_review_payload
@@ -37,7 +38,15 @@ class RedlineService:
                     abstain_reason="no registered plan dialect recognized this plan")
             else:
                 offset = dialect.calibrate(plan, self._settings.sheet_offset)
-                placement = run_match(bore, plan, dialect, offset)
+                # M8.2l: DEFAULT OFF. The gate is built + injected ONLY when the
+                # opt-in flag is explicitly True; OFF -> run_match is called exactly
+                # as before (collision_gate=None) and behavior is byte-identical.
+                gate = None
+                if self._settings.reset_collision_optin:
+                    gate = CollisionGate(
+                        equations_by_sheet=collect_equations(plan, offset, bore.sheet_refs),
+                        human_grades=load_human_grades())
+                placement = run_match(bore, plan, dialect, offset, collision_gate=gate)
                 for c in placement.matched_callouts:
                     crop_path = render_evidence_crop(
                         plan, bore.bore_id, c, str(self._settings.cards_dir), offset,
