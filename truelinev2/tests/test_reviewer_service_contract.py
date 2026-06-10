@@ -169,6 +169,38 @@ def test_source_count_must_match_files():
         _source(2, bore_log_files=["bore_log1.xlsx"])
 
 
+# --- M8.12: canonical reverse-anchor equation universe --------------------------------
+
+class _FakePlan:
+    """Just enough PlanPdf surface for collect_all_sheet_equations."""
+    page_count = 5
+
+    def page_index(self, sheet, offset):
+        return sheet + offset - 1
+
+    def text_by_index(self, idx):
+        return ""
+
+
+def test_canonical_equation_universe_covers_every_sheet():
+    from truelinev2.match.collision_gate import collect_all_sheet_equations
+    out = collect_all_sheet_equations(_FakePlan(), offset=2)
+    # EVERY sheet of the plan -- never a bore's sheet_refs subset (the banked
+    # log62 under-masking divergence)
+    assert sorted(out) == [1, 2, 3]
+
+
+def test_bundle_service_reverse_universe_is_canonical():
+    import inspect
+
+    from truelinev2.review.reviewer_service import ReviewerBundleService
+    src = inspect.getsource(ReviewerBundleService.generate)
+    assert "collect_all_sheet_equations" in src
+    # no raw per-bore equation collection may return to the reverse-anchor
+    # context (the M8.9 classifier's own construction lives in _route_abstain)
+    assert "collect_equations(" not in src.replace("collect_all_sheet_equations(", "")
+
+
 # --- doctrine + seam isolation --------------------------------------------------------
 
 def test_no_numeric_confidence_in_bundle_fields():

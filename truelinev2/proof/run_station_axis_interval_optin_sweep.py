@@ -27,7 +27,12 @@ from truelinev2.extract.registry import select_dialect
 from truelinev2.extract.station_axis import parse_tick
 from truelinev2.ingest.normalize import load_borelog
 from truelinev2.ingest.pdf import PlanPdf
-from truelinev2.match.collision_gate import CollisionGate, collect_equations, load_human_grades
+from truelinev2.match.collision_gate import (
+    CollisionGate,
+    collect_all_sheet_equations,
+    collect_equations,
+    load_human_grades,
+)
 from truelinev2.match.engine import run_match
 from truelinev2.match.reverse_anchor import ReverseAnchorContext
 from truelinev2.match.station_axis_interval import StationAxisContext
@@ -68,6 +73,10 @@ def main() -> int:
     offset = dialect.calibrate(plan, settings.sheet_offset)
     graph = _build_plan_frame_graph(plan, offset)
     conflicts = conflict_sheet_pairs(graph)
+    # M8.12: canonical ALL-SHEETS reverse-anchor equation universe (far-side
+    # matchline masking; the banked log62 divergence). Collision gate stays
+    # per-bore -- its banked construction, consistent everywhere.
+    eq_all = collect_all_sheet_equations(plan, offset)
 
     rows: List[Dict[str, Any]] = []
     for p in corpus:
@@ -86,8 +95,7 @@ def main() -> int:
             callouts=tuple(c for s in axis_sheets
                            for c in dialect.extract_callouts(plan, s, offset)))
         rev_ctx = ReverseAnchorContext(
-            graph=graph, conflicts=conflicts,
-            equations_by_sheet=collect_equations(plan, offset, bore.sheet_refs))
+            graph=graph, conflicts=conflicts, equations_by_sheet=eq_all)
         gate = CollisionGate(
             equations_by_sheet=collect_equations(plan, offset, bore.sheet_refs),
             human_grades=load_human_grades())

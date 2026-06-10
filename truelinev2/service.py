@@ -11,7 +11,12 @@ from truelinev2.context import RequestContext
 from truelinev2.extract.registry import select_dialect
 from truelinev2.ingest.normalize import load_borelog
 from truelinev2.ingest.pdf import PlanPdf
-from truelinev2.match.collision_gate import CollisionGate, collect_equations, load_human_grades
+from truelinev2.match.collision_gate import (
+    CollisionGate,
+    collect_all_sheet_equations,
+    collect_equations,
+    load_human_grades,
+)
 from truelinev2.match.engine import run_match
 from truelinev2.match.frames import build_frame_edges, build_frame_graph, frame_for_sheet, parse_frame_equations
 from truelinev2.extract.station_axis import parse_tick
@@ -79,12 +84,12 @@ class RedlineService:
                                  else _build_plan_frame_graph(plan, offset))
                     # equations for ALL sheets, not just sheet_refs: the matchline
                     # mask must see equations authored on the FAR side of a pair
-                    # (linked-frame masking) -- the M8.5 adversarial mask lesson.
-                    all_sheets = range(1, plan.page_count - offset + 1)
+                    # (linked-frame masking) -- the M8.5 adversarial mask lesson,
+                    # canonicalized as collect_all_sheet_equations by M8.12.
                     rev_ctx = ReverseAnchorContext(
                         graph=rev_graph,
                         conflicts=conflict_sheet_pairs(rev_graph),
-                        equations_by_sheet=collect_equations(plan, offset, all_sheets))
+                        equations_by_sheet=collect_all_sheet_equations(plan, offset))
                 # M8.8: DEFAULT OFF. The station-axis context is built + injected
                 # ONLY when the opt-in flag is explicitly True; OFF -> None ->
                 # byte-identical default behavior. Ticks + axis callouts span the

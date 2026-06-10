@@ -47,7 +47,7 @@ from truelinev2.extract.registry import select_dialect
 from truelinev2.extract.station_axis import parse_tick
 from truelinev2.ingest.normalize import load_borelog
 from truelinev2.ingest.pdf import PlanPdf
-from truelinev2.match.collision_gate import collect_equations
+from truelinev2.match.collision_gate import collect_all_sheet_equations, collect_equations
 from truelinev2.match.engine import run_match
 from truelinev2.match.reverse_anchor import ReverseAnchorContext
 from truelinev2.match.station_axis_interval import StationAxisContext, prove_interval_path
@@ -206,10 +206,16 @@ class ReviewerBundleService:
             if dialect is None:
                 raise ValueError("no registered plan dialect recognized this plan")
             offset = dialect.calibrate(plan, self._sheet_offset)
-            graph = conflicts = None
+            rev_ctx = None
             if flags.reverse_endpoint_optin:
                 graph = _build_plan_frame_graph(plan, offset)
-                conflicts = conflict_sheet_pairs(graph)
+                # M8.12: the canonical ALL-SHEETS equation universe -- the
+                # matchline mask must see far-side-authored matchlines (the
+                # banked log62 under-masking divergence). Loop-invariant:
+                # built once for the whole corpus.
+                rev_ctx = ReverseAnchorContext(
+                    graph=graph, conflicts=conflict_sheet_pairs(graph),
+                    equations_by_sheet=collect_all_sheet_equations(plan, offset))
             for p in self._bore_log_paths:
                 try:
                     bore = load_borelog(str(p))
@@ -237,14 +243,6 @@ class ReviewerBundleService:
                                   for c in dialect.extract_callouts(plan, sh, offset)))
                     return axis_data
 
-                rev_ctx = None
-                if flags.reverse_endpoint_optin:
-                    # per-bore sheet_refs equations: the construction the banked
-                    # M8.5/M8.8 sweeps and the M8.10 lane proof all used
-                    rev_ctx = ReverseAnchorContext(
-                        graph=graph, conflicts=conflicts,
-                        equations_by_sheet=collect_equations(plan, offset,
-                                                             bore.sheet_refs))
                 axis_ctx = None
                 if flags.station_axis_interval_optin:
                     ticks, cals = _axis()

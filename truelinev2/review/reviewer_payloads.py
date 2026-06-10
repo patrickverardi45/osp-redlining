@@ -229,6 +229,9 @@ def payload_out_of_class(bore, m87_verdict: str, next_solver: str,
         bore_id=bore.bore_id, lane=ReviewerLane.OUT_OF_CLASS,
         human_action=HumanAction.ROUTE_TO_NAMED_SOLVER,
         reason_code=f"M87_{m87_verdict}",
+        # M8.12.b: the bore's own referenced sheets ARE known here -- carry them
+        # so the routed solver / reviewer UI knows where to look (was []).
+        sheets=list(bore.sheet_refs),
         station_start_sta=bore.station_start, station_end_sta=bore.station_end,
         station_start_ft=bore.station_start_ft, station_end_ft=bore.station_end_ft,
         footage_ft=bore.span_ft, next_named_solver=next_solver,

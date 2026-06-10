@@ -203,6 +203,17 @@ def collect_equations(plan: "PlanPdf", offset: int,
     return out
 
 
+def collect_all_sheet_equations(plan: "PlanPdf",
+                                offset: int) -> Dict[int, Tuple["FrameEquation", ...]]:
+    """M8.12: the CANONICAL reverse-anchor equation universe -- EVERY sheet's
+    equations, so ``reverse_anchor.matchline_mask`` sees matchlines authored on
+    the FAR side of a pair (outside a bore's own ``sheet_refs``). A per-bore
+    universe UNDER-MASKS (the banked log62 divergence: a far-side-authored
+    matchline left a 9-ft vacant run unmasked as anchor evidence). All
+    ``ReverseAnchorContext`` constructions must use this builder."""
+    return collect_equations(plan, offset, range(1, plan.page_count - offset + 1))
+
+
 def _pair_equations(equations_by_sheet: Mapping[int, Sequence["FrameEquation"]],
                     a_sheet: int, b_sheet: int) -> List["FrameEquation"]:
     """Equations parsed on either sheet of the pair that LINK the other sheet."""

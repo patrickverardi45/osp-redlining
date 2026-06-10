@@ -20,7 +20,7 @@ from truelinev2.extract.registry import select_dialect
 from truelinev2.extract.station_axis import parse_tick
 from truelinev2.ingest.normalize import load_borelog
 from truelinev2.ingest.pdf import PlanPdf
-from truelinev2.match.collision_gate import collect_equations
+from truelinev2.match.collision_gate import collect_all_sheet_equations, collect_equations
 from truelinev2.match.engine import run_match
 from truelinev2.match.reverse_anchor import ReverseAnchorContext
 from truelinev2.match.station_axis_interval import StationAxisContext, prove_interval_path
@@ -70,6 +70,9 @@ def main() -> int:
     offset = dialect.calibrate(plan, settings.sheet_offset)
     graph = _build_plan_frame_graph(plan, offset)
     conflicts = conflict_sheet_pairs(graph)
+    # M8.12: canonical ALL-SHEETS reverse-anchor equation universe (far-side
+    # matchline masking; the banked log62 divergence).
+    eq_all = collect_all_sheet_equations(plan, offset)
 
     payloads: List[Any] = []
     off_statuses: List[str] = []
@@ -91,8 +94,7 @@ def main() -> int:
             callouts=tuple(c for s in axis_sheets
                            for c in dialect.extract_callouts(plan, s, offset)))
         rev_ctx = ReverseAnchorContext(
-            graph=graph, conflicts=conflicts,
-            equations_by_sheet=collect_equations(plan, offset, bore.sheet_refs))
+            graph=graph, conflicts=conflicts, equations_by_sheet=eq_all)
         off_statuses.append(run_match(bore, plan, dialect, offset).status.value)
         pl = run_match(bore, plan, dialect, offset, reverse_anchor=rev_ctx,
                        station_axis=axis_ctx)

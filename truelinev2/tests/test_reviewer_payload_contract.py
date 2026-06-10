@@ -157,6 +157,8 @@ def test_builder_out_of_class_and_source_error():
     p = payload_out_of_class(_bore(), "END_STATION_NOT_FOUND", "structure binding")
     assert p.lane is ReviewerLane.OUT_OF_CLASS
     assert p.next_named_solver == "structure binding"
+    # M8.12.b: the bore's known sheet_refs are carried (was sheets == [])
+    assert p.sheets == [10]
     e = payload_source_error("log37", "ValueError: no parseable stations")
     assert e.lane is ReviewerLane.SOURCE_REVIEW_REQUIRED
     assert e.suspect_values["error"].startswith("ValueError")
