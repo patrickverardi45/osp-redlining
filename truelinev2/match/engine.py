@@ -44,6 +44,7 @@ def _sheet_distinct_rival(cscored, winner, winner_sc, span_ft: float) -> bool:
 if TYPE_CHECKING:  # M8.2c Step 1: type-only; no runtime import (import graph unchanged).
     from truelinev2.match.collision_gate import CollisionGate
     from truelinev2.match.reverse_anchor import ReverseAnchorContext
+    from truelinev2.match.station_axis_interval import StationAxisContext
     from truelinev2.schema.frames import FrameGraph
 
 
@@ -56,7 +57,8 @@ def run_match(bore: Bore, plan: PlanPdf, dialect: PlanDialect, offset: int, *,
               frame_graph: Optional["FrameGraph"] = None,
               collision_gate: Optional["CollisionGate"] = None,
               continuation_graph: Optional["FrameGraph"] = None,
-              reverse_anchor: Optional["ReverseAnchorContext"] = None) -> Placement:
+              reverse_anchor: Optional["ReverseAnchorContext"] = None,
+              station_axis: Optional["StationAxisContext"] = None) -> Placement:
     # M8.2c Step 1: ``frame_graph`` is inert plumbing -- threaded into build_chains /
     # score_chain (footage mode) but NEVER consulted yet. None/OFF -> byte-identical M7.
     callouts = []
@@ -182,6 +184,41 @@ def run_match(bore: Bore, plan: PlanPdf, dialect: PlanDialect, offset: int, *,
                         end_delta=rev["winning_end_delta_ft"],
                         caveats=list(rev["caveats"]),
                         matched_callouts=list(rpath.callouts))
+                    if collision_gate is not None:
+                        placement = collision_gate.apply(placement, callouts)
+                    return placement
+            # M8.8 station-axis interval retry (default-OFF; fires ONLY when the
+            # bore would otherwise ABSTAIN with no acceptable chain -- never on
+            # decide()-level ambiguity, and only after the fallback + M8.4 + M8.5
+            # retries found nothing). The solver models station-axis evidence:
+            # the bore end as a drawn tick / interior interval point, sheet joins
+            # proven ONLY by shared NON-ROUND boundary ticks, rival frames and
+            # off-print claims abstain (print-scope guard). REVIEW-capped --
+            # NEVER AUTO -- with the same footage-ambiguity disjointness gate and
+            # collision-gate (demote-only) composition as the M8.5 retry.
+            if station_axis is not None:
+                from truelinev2.match.station_axis_interval import READY as _AXIS_READY
+                from truelinev2.match.station_axis_interval import solve_interval_path
+                axis, chain = solve_interval_path(
+                    bore_id=bore.bore_id, bore_start_ft=bore.station_start_ft,
+                    bore_end_ft=bore.station_end_ft, span_ft=bore.span_ft,
+                    ticks_by_sheet=dict(station_axis.ticks_by_sheet),
+                    callouts=list(station_axis.callouts),
+                    sheet_refs=list(bore.sheet_refs))
+                fb_rivals = fb["ambiguous"] if fb["reason"] == "AMBIGUOUS_FOOTAGE_CANDIDATES" else []
+                if (axis["result"] == _AXIS_READY and chain
+                        and not any(any(c is r for r in fb_rivals) for c in chain)):
+                    placement = Placement(
+                        bore_id=bore.bore_id, status=PlacementStatus.REVIEW,
+                        tier="AUTO_PLACED_REQUIRES_APPROVAL",
+                        reason="STATION_AXIS_INTERVAL_PATH",
+                        sheets=sorted({c.sheet for c in chain}),
+                        station_span=f"{bore.station_start}->{bore.station_end}",
+                        footage=bore.span_ft,
+                        start_delta=axis["start_delta_vs_borelog_ft"],
+                        end_delta=axis["end_tick_delta_ft"],
+                        caveats=list(axis["caveats"]),
+                        matched_callouts=list(chain))
                     if collision_gate is not None:
                         placement = collision_gate.apply(placement, callouts)
                     return placement

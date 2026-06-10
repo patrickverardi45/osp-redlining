@@ -29,6 +29,9 @@ class Settings:
     # M8.5: reverse endpoint anchor retry (end-station backsolve, abstain-fill,
     # REVIEW-cap, uniqueness-mandatory). DEFAULT OFF -- OFF is byte-identical.
     reverse_endpoint_optin: bool = False
+    # M8.8: station-axis interval containment retry (tick-ladder path-walk,
+    # abstain-fill, REVIEW-cap). DEFAULT OFF -- OFF is byte-identical.
+    station_axis_interval_optin: bool = False
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -43,6 +46,7 @@ class Settings:
             reset_collision_optin=os.getenv("TL2_RESET_COLLISION_OPTIN", "0") == "1",
             frame_continuation_optin=os.getenv("TL2_FRAME_AWARE_CONTINUATION_OPTIN", "0") == "1",
             reverse_endpoint_optin=os.getenv("TL2_REVERSE_ENDPOINT_ANCHOR_OPTIN", "0") == "1",
+            station_axis_interval_optin=os.getenv("TL2_STATION_AXIS_INTERVAL_OPTIN", "0") == "1",
         )
 
     @classmethod

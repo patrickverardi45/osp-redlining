@@ -14,7 +14,9 @@ from truelinev2.ingest.pdf import PlanPdf
 from truelinev2.match.collision_gate import CollisionGate, collect_equations, load_human_grades
 from truelinev2.match.engine import run_match
 from truelinev2.match.frames import build_frame_edges, build_frame_graph, frame_for_sheet, parse_frame_equations
+from truelinev2.extract.station_axis import parse_tick
 from truelinev2.match.reverse_anchor import ReverseAnchorContext
+from truelinev2.match.station_axis_interval import StationAxisContext
 from truelinev2.match.transition_classifier import conflict_sheet_pairs
 
 
@@ -83,9 +85,28 @@ class RedlineService:
                         graph=rev_graph,
                         conflicts=conflict_sheet_pairs(rev_graph),
                         equations_by_sheet=collect_equations(plan, offset, all_sheets))
+                # M8.8: DEFAULT OFF. The station-axis context is built + injected
+                # ONLY when the opt-in flag is explicitly True; OFF -> None ->
+                # byte-identical default behavior. Ticks + axis callouts span the
+                # bore's referenced sheets +-1 (a path may continue onto an
+                # adjacent sheet; the solver's print-scope guard still forbids
+                # claims living entirely off the referenced sheets).
+                axis_ctx = None
+                if self._settings.station_axis_interval_optin:
+                    axis_sheets = sorted({x for r in bore.sheet_refs
+                                          for x in (r - 1, r, r + 1) if x >= 1})
+                    axis_ctx = StationAxisContext(
+                        ticks_by_sheet={
+                            s: tuple(t for t in (parse_tick(w["text"])
+                                                 for w in plan.words(s, offset))
+                                     if t is not None)
+                            for s in axis_sheets},
+                        callouts=tuple(c for s in axis_sheets
+                                       for c in dialect.extract_callouts(plan, s, offset)))
                 placement = run_match(bore, plan, dialect, offset, collision_gate=gate,
                                       continuation_graph=cont_graph,
-                                      reverse_anchor=rev_ctx)
+                                      reverse_anchor=rev_ctx,
+                                      station_axis=axis_ctx)
                 for c in placement.matched_callouts:
                     crop_path = render_evidence_crop(
                         plan, bore.bore_id, c, str(self._settings.cards_dir), offset,
