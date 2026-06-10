@@ -35,12 +35,23 @@ def test_allowed_grades_are_exactly_the_five():
         "precision_conflict_manual_review", "still_unknown_manual_review", "abstain_required"}
 
 
-def test_bundled_committed_ledger_is_human_grading_required():
+def test_bundled_committed_ledger_is_all_graded_pending_zero_regression_proof():
+    # Pins the COMMITTED ledger state after Patrick's 2026-06-10 crop review (M8.2j grades
+    # recorded with full provenance). The LOAD-BEARING assertion is the safety lock: even
+    # with all three human grades recorded, the ledger never resolves placement and never
+    # feeds auto-placement — that stays gated behind a future M8.2d zero-regression proof.
     r = validate_ledger(load_ledger())
-    assert r["verdict"] == "HUMAN_GRADING_REQUIRED"
-    assert r["complete"] is False and r["resolved_for_placement"] is False
+    assert r["verdict"] == "ALL_GRADED_PENDING_ZERO_REGRESSION_PROOF"
+    assert r["counts"] == {"graded": 3, "ungraded": 0, "invalid": 0}
+    assert r["complete"] is True
+    assert r["resolved_for_placement"] is False  # load-bearing safety lock
     assert [p["id"] for p in r["per_target"]] == list(EXPECTED_IDS)
-    assert all(p["status"] == "ungraded" for p in r["per_target"])
+    assert all(p["status"] == "graded" for p in r["per_target"])
+    assert {p["id"]: p["grade"] for p in r["per_target"]} == {
+        "log42": "reset_equation_confirmed",
+        "log57": "precision_conflict_manual_review",
+        "log65": "abstain_required",
+    }
 
 
 def test_in_memory_all_ungraded():

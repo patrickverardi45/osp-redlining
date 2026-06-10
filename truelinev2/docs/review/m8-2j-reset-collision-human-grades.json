@@ -26,11 +26,11 @@
       ],
       "human_question": "On sheet 1 at STA 2+70, does the bore/conduit line run continuously across the matchline, or does the 2+70/5+16 equation apply to THIS bore (is its real continuation s2 5+16, not s2 2+70)?",
       "evidence_summary": "Exact continuous box match: s2 0+00->2+70 (270') + s1 2+70->2+87 (17') = 287', deltas 0. Competing HIGH matchline equation STA 2+70/5+16 (offset 246 ft) sits ~136 display-units from the s1 crossing box and references the crossing station 2+70.",
-      "grade": "ungraded",
-      "reviewer": "",
-      "date": "",
-      "rationale": "",
-      "confidence": ""
+      "grade": "reset_equation_confirmed",
+      "reviewer": "Patrick Verardi",
+      "date": "2026-06-10",
+      "rationale": "The crop shows the matchline equation STA 2+70/5+16 at the crossing, and the far-side continuation starts at 5+16, not continuous 2+70. The conduit/count also changes across the crossing, so this should be treated as a reset/equation case, not raw continuous station.",
+      "confidence": "high"
     },
     {
       "id": "log57",
@@ -44,11 +44,11 @@
       ],
       "human_question": "Are 3+98/3+08 vs 3+93/3+08 ONE matchline (which value is correct), and does that single reset apply to THIS bore, or does the bore run continuously across s13->s8?",
       "evidence_summary": "Exact continuous box match: s10 0+00->1+62 + s13 1+62->3+98 + s8 3+98->4+13 = 413', deltas 0. Two HIGH equations share the 3+08 side and disagree by only 5 ft (3+98 vs 3+93) -> one matchline read slightly apart (precision spread just over the 2 ft conflict tolerance), reset ~85-90 ft.",
-      "grade": "ungraded",
-      "reviewer": "",
-      "date": "",
-      "rationale": "",
-      "confidence": ""
+      "grade": "precision_conflict_manual_review",
+      "reviewer": "Patrick Verardi",
+      "date": "2026-06-10",
+      "rationale": "The 3+98/3+08 and 3+93/3+08 evidence appears to be one matchline with a 5 ft read/extraction precision conflict. Do not promote automatically until the exact matchline station is resolved.",
+      "confidence": "medium"
     },
     {
       "id": "log65",
@@ -62,11 +62,11 @@
       ],
       "human_question": "At STA 6+11, does this 199 ft VACANT segment continue straight onto s9, or does the 38+90/6+11 reset apply to it (its real continuation being s-other 38+90)? Confirm against the parent run (log65 is a run/segment child).",
       "evidence_summary": "Exact continuous box match: s10 4+51->6+11 (160') + s9 6+11->6+50 (39') = 199', deltas 0. Competing equation STA 38+90/6+11 (offset 3279 ft, HIGH on s9 / MEDIUM on s10) sits ~130 display-units from the s10 crossing box and references the crossing station 6+11; offset is geometrically possible (sheets reach 4533 ft) but extreme for a 199 ft segment.",
-      "grade": "ungraded",
-      "reviewer": "",
-      "date": "",
-      "rationale": "",
-      "confidence": ""
+      "grade": "abstain_required",
+      "reviewer": "Patrick Verardi",
+      "date": "2026-06-10",
+      "rationale": "The reciprocal STA 38+90/6+11 matchline is real and on-crossing, but the visible 6+11 TO 6+50 segment ends at a flower pot and log65 is a run/segment child. Do not choose reset or continuous automatically until parent-run context confirms the actual physical continuation.",
+      "confidence": "medium"
     }
   ]
 }
