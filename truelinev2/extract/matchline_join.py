@@ -28,6 +28,26 @@ PROVEN_LAW = ("bound structure per sheet + chain terminates at its drawn "
               "agreeing implied scales")
 
 _FOOTAGE = re.compile(r"\((\d+(?:,\d{3})?)'\)")
+# Any printed run callout -- the structural delimiter between note blocks
+# (a note never contains two run callouts; the next callout starts the next
+# note, so a footage printed past it belongs to THAT note, never this one).
+_CALLOUT_LINE = re.compile(r"STA\s*\d+\+\d+\s*TO\s*(?:STA\s*)?\d+\+\d+", re.I)
+
+
+def _note_footage(lines: Sequence[str], i: int) -> Optional[float]:
+    """First printed footage within callout line ``i``'s OWN note block:
+    scanned forward from the callout line, stopping at the next run-callout
+    line. Replaces the older fixed 3-line window, which both missed footages
+    printed deeper in the same note (descriptor lines between) and could
+    grab the NEXT note's footage when the blocks ran short -- the note
+    delimiter is structural, not a line count."""
+    for j in range(i, len(lines)):
+        if j > i and _CALLOUT_LINE.search(lines[j]):
+            return None
+        m = _FOOTAGE.search(lines[j])
+        if m:
+            return float(m.group(1).replace(",", ""))
+    return None
 
 
 def nearest_gap(points: Sequence[Tuple[float, float]],
@@ -59,17 +79,49 @@ def matchline_bboxes(drawings: Sequence[dict], layer: str,
 def find_run_callout_footage(lines: Sequence[str], start_sta: str,
                              end_sta: str) -> Optional[float]:
     """Printed footage of the run callout ``STA <a> TO [STA] <b> ... (NNN')``
-    -- footage searched on the callout line and the next two lines."""
+    -- footage searched within the callout's own note block."""
     pat = re.compile(rf"STA\s*{re.escape(start_sta)}\s*TO\s*(?:STA\s*)?"
                      rf"{re.escape(end_sta)}\b", re.I)
     for i, ln in enumerate(lines):
         if not pat.search(ln):
             continue
-        for cand in lines[i:i + 3]:
-            m = _FOOTAGE.search(cand)
-            if m:
-                return float(m.group(1).replace(",", ""))
+        f = _note_footage(lines, i)
+        if f is not None:
+            return f
     return None
+
+
+def _note_text(lines: Sequence[str], i: int) -> str:
+    """Callout line ``i``'s OWN note block text (same delimiter law as
+    ``_note_footage``): the callout line plus following lines up to the next
+    run-callout line."""
+    out = [lines[i]]
+    for j in range(i + 1, len(lines)):
+        if _CALLOUT_LINE.search(lines[j]):
+            break
+        out.append(lines[j])
+    return " ".join(out)
+
+
+def run_callouts_starting_at(lines: Sequence[str], start_sta: str
+                             ) -> List[Tuple[str, Optional[float], str]]:
+    """EVERY printed run callout STARTING at ``start_sta``, in print order,
+    as (end station raw, note footage or None, note text). The uniqueness-
+    mandatory callers decide; this only reports what is printed."""
+    pat = re.compile(rf"STA\s*{re.escape(start_sta)}\s*TO\s*(?:STA\s*)?"
+                     rf"(\d+\+\d+)\b", re.I)
+    return [(m.group(1), _note_footage(lines, i), _note_text(lines, i))
+            for i, ln in enumerate(lines) if (m := pat.search(ln))]
+
+
+def run_callouts_ending_at(lines: Sequence[str], end_sta: str
+                           ) -> List[Tuple[str, Optional[float], str]]:
+    """EVERY printed run callout ENDING at ``end_sta``, in print order, as
+    (start station raw, note footage or None, note text)."""
+    pat = re.compile(rf"STA\s*(\d+\+\d+)\s*TO\s*(?:STA\s*)?"
+                     rf"{re.escape(end_sta)}\b", re.I)
+    return [(m.group(1), _note_footage(lines, i), _note_text(lines, i))
+            for i, ln in enumerate(lines) if (m := pat.search(ln))]
 
 
 def find_run_callout_from(lines: Sequence[str], start_sta: str
@@ -77,16 +129,9 @@ def find_run_callout_from(lines: Sequence[str], start_sta: str
     """(end station raw, footage) of the printed run callout STARTING at
     ``start_sta`` -- the printed statement of where this sheet's segment of
     the run goes (its far side is the boundary candidate)."""
-    pat = re.compile(rf"STA\s*{re.escape(start_sta)}\s*TO\s*(?:STA\s*)?"
-                     rf"(\d+\+\d+)\b", re.I)
-    for i, ln in enumerate(lines):
-        m = pat.search(ln)
-        if not m:
-            continue
-        for cand in lines[i:i + 3]:
-            f = _FOOTAGE.search(cand)
-            if f:
-                return m.group(1), float(f.group(1).replace(",", ""))
+    for raw, f, _ in run_callouts_starting_at(lines, start_sta):
+        if f is not None:
+            return raw, f
     return None
 
 
@@ -94,16 +139,9 @@ def find_run_callout_to(lines: Sequence[str], end_sta: str
                         ) -> Optional[Tuple[str, float]]:
     """(start station raw, footage) of the printed run callout ENDING at
     ``end_sta`` -- its near side is the boundary candidate."""
-    pat = re.compile(rf"STA\s*(\d+\+\d+)\s*TO\s*(?:STA\s*)?"
-                     rf"{re.escape(end_sta)}\b", re.I)
-    for i, ln in enumerate(lines):
-        m = pat.search(ln)
-        if not m:
-            continue
-        for cand in lines[i:i + 3]:
-            f = _FOOTAGE.search(cand)
-            if f:
-                return m.group(1), float(f.group(1).replace(",", ""))
+    for raw, f, _ in run_callouts_ending_at(lines, end_sta):
+        if f is not None:
+            return raw, f
     return None
 
 

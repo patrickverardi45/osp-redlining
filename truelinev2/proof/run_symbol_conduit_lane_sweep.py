@@ -73,12 +73,20 @@ DESIGN_GRADED = {"log25", "log51", "log59", "log65"}
 # STROKE_ELIGIBLE -> DESIGN_PATH_NOT_TRACEABLE: its conduit environment
 # carries 4 physically distinct drawn strands and the lane never picks one
 # (the law's typed cost; named missing = a strand discriminator).
+# M8.16 (cross_sheet_origin discovery law): log42 moved CROSS_SHEET ->
+# STRUCTURE_IDENTITY_BINDING_REQUIRED -- discovery proved its printed
+# boundary + equation + reciprocal callouts + closure, then found rival
+# far-sheet structures the banked corroboration band cannot separate (the
+# rivals' printed labels belong to OTHER runs' frames). ZERO of the 16
+# cross-sheet bores convert to strokes under current printed evidence;
+# every blocker is named per bore in run_cross_sheet_continuation_probe.
 EXPECT_CENSUS = {
     S_UNPRINTED: 25,
-    S_CROSS_SHEET: 16,
+    S_CROSS_SHEET: 15,
     S_PICK: 5,
     S_END_POSITION: 5,
     S_ELIGIBLE: 4,
+    S_STRUCTURE_REQUIRED: 1,
     S_DESIGN: 1,
     S_SOURCE_ERR: 2,
 }
@@ -133,9 +141,16 @@ def _markdown(census: Dict[str, int], rows: List[dict]) -> str:
         "", "## Common blockers",
         f"- `{S_UNPRINTED}` ({census.get(S_UNPRINTED, 0)}): end-structure note "
         f"not printed on any referenced sheet (no end anchor can exist)",
-        f"- `{S_CROSS_SHEET}` ({census.get(S_CROSS_SHEET, 0)}): conduit run "
-        f"exits the sheet or the matchline join is unproven -- needs the b.9 "
-        f"cross-sheet join evidence",
+        f"- `{S_CROSS_SHEET}` ({census.get(S_CROSS_SHEET, 0)}): the M8.16 "
+        f"cross_sheet_origin discovery law ran and REFUSED with the exact "
+        f"printed artifact named per bore (no equation at the boundary / no "
+        f"end-segment callout / full-span callout contradiction / far-sheet "
+        f"callout-chain / no reciprocal) -- see "
+        f"run_cross_sheet_continuation_probe",
+        f"- `{S_STRUCTURE_REQUIRED}` ({census.get(S_STRUCTURE_REQUIRED, 0)}): "
+        f"discovery proved the printed boundary evidence but rival far-sheet "
+        f"structures cannot be uniquely separated (log42; corroboration "
+        f"refuses, never selects)",
         f"- `{S_END_POSITION}` ({census.get(S_END_POSITION, 0)}): end note "
         f"printed but its symbol could not be uniquely leader-traced",
         f"- `{S_DESIGN}` ({census.get(S_DESIGN, 0)}): drawn conduit present "
@@ -148,9 +163,13 @@ def _markdown(census: Dict[str, int], rows: List[dict]) -> str:
         "- Design-path grading debt is zero: all 4 eligible strokes are "
         "accepted. Reviewer-card payload integration remains outside this "
         "grade-banking change.",
-        "- Targeted resolver expansions, by yield: cross-sheet continuation "
-        "(16) via the b.9/b.10 matchline graph; the log7-class strand "
-        "discriminator (re-unlocks its design-path stroke).",
+        "- Targeted resolver expansions, by yield: far-sheet callout-CHAIN "
+        "assembly (log8 + log32, the only cross-sheet bores whose printed "
+        "evidence is complete-but-segmented); the log7-class strand "
+        "discriminator (re-unlocks its design-path stroke). Seven cross-"
+        "sheet bores sit on sheets that print NO matchline equations -- "
+        "unprovable from plan text alone; their lane is geo/KMZ or "
+        "reviewer pick-cards.",
     ]
     return "\n".join(lines)
 

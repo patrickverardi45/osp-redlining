@@ -83,13 +83,23 @@ def chain_continuity(segments: Sequence[dict],
             "continuous": all(g <= max_gap for g in gaps)}
 
 
+def ladder_band_scales(ticks, y_lo: float, y_hi: float) -> List[float]:
+    """Consecutive-station pts/ft hop scales among clean ladder ticks in a
+    y-band. The RAW evidence behind ``ladder_scale_for_band`` -- exposed
+    (M8.16) because a band holding ticks from MORE THAN ONE drawn ladder
+    yields multi-modal hop scales whose median is a cross-ladder artifact:
+    callers needing a corroboration BASIS must see the spread, not just the
+    median."""
+    band = sorted({(t.station_ft, t.x, t.y) for t in ticks if y_lo < t.y < y_hi})
+    return [math.hypot(b[1] - a[1], b[2] - a[2]) / (b[0] - a[0])
+            for a, b in zip(band, band[1:]) if b[0] > a[0]]
+
+
 def ladder_scale_for_band(ticks, y_lo: float, y_hi: float) -> Optional[float]:
     """Median consecutive-station pts/ft among clean ladder ticks in a y-band;
     None when fewer than two distinct stations exist (no corroboration basis).
     Re-homed from the b.8 sweep for the M8.14.c lane (general law)."""
-    band = sorted({(t.station_ft, t.x, t.y) for t in ticks if y_lo < t.y < y_hi})
-    scales = [math.hypot(b[1] - a[1], b[2] - a[2]) / (b[0] - a[0])
-              for a, b in zip(band, band[1:]) if b[0] > a[0]]
+    scales = ladder_band_scales(ticks, y_lo, y_hi)
     return sorted(scales)[len(scales) // 2] if scales else None
 
 

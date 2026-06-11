@@ -63,7 +63,8 @@ def test_distinct_abstain_statuses_exist():
 
 def test_every_component_reports_law_and_configuration():
     assert set(COMPONENTS) == {"end_identity", "structure_position",
-                               "start_identity", "conduit_origin", "tick_path",
+                               "start_identity", "conduit_origin",
+                               "cross_sheet_origin", "tick_path",
                                "design_path", "matchline_join",
                                "stroke_output", "abstain"}
     for name, meta in COMPONENTS.items():

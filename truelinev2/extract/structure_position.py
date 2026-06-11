@@ -58,7 +58,15 @@ BRENHAM_STRUCTURE_LAYERS: Dict[str, Tuple[str, str, Tuple[float, float, float]]]
 # Brenham dialect table (M8.14.b.8, re-homed from the b.6 proof): bore-callout
 # conduit text -> CAD conduit layer. Another plan set configures BOTH tables;
 # the topology laws in extract/conduit_topology.py never name a layer.
-BRENHAM_CONDUIT_LAYERS: Dict[str, str] = {"VACANT HDPE": "BORE - VACANT PIPE"}
+# M8.16 (log42 evidence): "TERMINAL TAIL" -> "BORE - PORT". The log42 notes
+# print E/W PORT TERMINAL TAIL and its drawn run terminates at BOTH of its
+# matchlines on BORE - PORT (probe-verified), not on BORE - VACANT PIPE.
+# BORE - PORT was ALREADY a path_layers member (the design-path law traced
+# it); this row only lets chain SEEDING name it from printed callout text.
+BRENHAM_CONDUIT_LAYERS: Dict[str, str] = {
+    "VACANT HDPE": "BORE - VACANT PIPE",
+    "TERMINAL TAIL": "BORE - PORT",
+}
 
 
 @dataclass(frozen=True)
@@ -333,9 +341,16 @@ def resolve_structure_position(*, label_text: str, structure_class: str,
                 "fills_found": [list(f) for f in sym.fills]})
 
 
+# The banked b.6/b.8 pair-scale corroboration band. M8.16 names it so the
+# discovery law's ladder-band CONSISTENCY check shares the same value instead
+# of restating the literal (value unchanged).
+PAIR_SCALE_REL_TOL = 0.25
+
+
 def corroborate_pair_scale(start_xy: Tuple[float, float],
                            end_xy: Tuple[float, float], span_ft: float,
-                           ladder_scale: float, rel_tol: float = 0.25) -> dict:
+                           ladder_scale: float,
+                           rel_tol: float = PAIR_SCALE_REL_TOL) -> dict:
     """Belt-and-braces gate: the resolved symbol-pair distance over the bore
     span must agree with the sheet's clean-ladder pts/ft scale. Evidence is
     reported exactly; the tolerance is consulted only for the boolean."""

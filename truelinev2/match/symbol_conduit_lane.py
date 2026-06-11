@@ -39,6 +39,7 @@ from truelinev2.extract.conduit_topology import (
     connected_chain,
     dash_endpoints,
     discriminate_origin,
+    ladder_band_scales,
     ladder_scale_for_band,
     symbol_footprint,
 )
@@ -62,6 +63,8 @@ from truelinev2.extract.matchline_join import (
     joined_segments_verdict,
     matchline_bboxes,
     nearest_gap,
+    run_callouts_ending_at,
+    run_callouts_starting_at,
 )
 from truelinev2.extract.stroke_anchor import (
     label_offset_safety,
@@ -73,6 +76,7 @@ from truelinev2.extract.structure_anchor import (
     bind_origin_by_parent_station,
 )
 from truelinev2.extract.structure_position import (
+    PAIR_SCALE_REL_TOL,
     POSITION_BOUND,
     LaneDialect,
     cluster_symbols,
@@ -92,8 +96,9 @@ S_END_ONLY = "POSITION_BOUND_END_ONLY"
 S_UNPRINTED = "END_IDENTITY_UNPRINTED"
 S_END_POSITION = "END_POSITION_UNRESOLVED"
 # Distinct abstains so the census names the REAL blocker (not one catch-all):
-#   - structure-identity: the start structure is ON this sheet but >= 2 rival
-#     symbols sit at the conduit origin (the banked b.5 trap) -> needs the
+#   - structure-identity: >= 2 rival symbols claim the start -- at the on-sheet
+#     conduit origin (the banked b.5 trap) OR among far-sheet structures the
+#     M8.16 corroboration band cannot separate (the log42 class) -> needs the
 #     identity discriminator, never a metric guess
 #   - cross-sheet: the conduit run exits the sheet (0 on-sheet candidates) or a
 #     cross-sheet matchline join cannot be proven -> needs the b.9 join evidence
@@ -169,6 +174,24 @@ COMPONENTS: Dict[str, Dict[str, str]] = {
                "= terminal dash extended along its own direction, dash-gap "
                "capped",
         "configured": "matchline layer name; equation format (frame grammar)",
+    },
+    "cross_sheet_origin": {
+        "law": "when the end-sheet corridor chain finds no on-sheet origin, "
+               "the far sheet is DISCOVERED only from printed artifacts: a "
+               "run callout ENDING at the bore end on the end sheet names the "
+               "boundary station; EXACTLY ONE frame-graph equation edge "
+               "carries that boundary raw on the end sheet; the bore log's "
+               "own sheet references must name the far sheet; the far sheet "
+               "prints the reciprocal callout STARTING at the bore start "
+               "with the SAME boundary raw and closing footage; the run's "
+               "conduit class comes from the printed notes via the dialect "
+               "table; EXACTLY ONE far-sheet structure's conduit chain "
+               "terminates at the shared matchline (rivals adjudicated only "
+               "by the banked corroboration band against a CONSISTENT -- "
+               "unimodal -- ladder band; corroboration refuses, never "
+               "selects); the b.9 join law then re-proves the continuation",
+        "configured": "nothing new (matchline layer, equation format, conduit/"
+                      "structure layers already arrive via the lane dialect)",
     },
     "stroke_output": {
         "law": "segments only for fully-proven chains; REVIEW-only; the "
@@ -257,6 +280,240 @@ def corridor_filter(segments: Sequence[dict],
         if perp <= halfwidth:
             out.append(s)
     return out
+
+
+CS_BOUND = "CROSS_SHEET_START_BOUND"
+CS_REFUSED = "CROSS_SHEET_START_REFUSED"
+CS_AMBIGUOUS = "CROSS_SHEET_START_AMBIGUOUS"
+
+
+def _sheet_no(frame_id: str) -> Optional[int]:
+    head, _, tail = str(frame_id).partition(":")
+    return int(tail) if head == "sheet" and tail.isdigit() else None
+
+
+def discover_cross_sheet_start(plan, bore, offset: int, dialect: LaneDialect,
+                               frame_graph, *, end_sheet: int) -> dict:
+    """The cross_sheet_origin DISCOVERY law (see COMPONENTS): printed-only
+    far-sheet + start-structure binding for a bore whose corridor chain found
+    no on-sheet origin. PURE READ; every missing clause is a typed refusal
+    with the exact named artifact. The returned binding is a CANDIDATE only --
+    the caller must re-prove the continuation through the full matchline-join
+    law before any geometry exists."""
+    end_raw = feet_to_station(bore.station_end_ft)
+    start_raw = feet_to_station(bore.station_start_ft)
+    span_ft = bore.station_end_ft - bore.station_start_ft
+
+    def refuse(named: str, result: str = CS_REFUSED, **detail) -> dict:
+        return {"result": result, "named_missing": named, "detail": detail}
+
+    # 1. printed boundary: run callouts ENDING at the bore end on E ---------
+    #    (uniqueness-mandatory: 0 or >= 2 distinct boundary statements refuse)
+    ending = [(raw, f, note) for raw, f, note
+              in run_callouts_ending_at(plan.lines(end_sheet, offset), end_raw)
+              if f is not None]
+    boundary_cands = sorted({(raw, f) for raw, f, _ in ending
+                             if raw != start_raw})
+    if not boundary_cands:
+        if ending:
+            return refuse(f"sheet {end_sheet}'s run callout ending at "
+                          f"{end_raw} starts at the bore's own start station "
+                          f"{start_raw} (a full-span callout) -- it names no "
+                          f"crossing boundary, yet the drawn chain exits the "
+                          f"sheet; the printed segment callouts are the "
+                          f"named missing artifact")
+        return refuse(f"a printed run callout ENDING at {end_raw} on sheet "
+                      f"{end_sheet} (with its note footage) -- without the "
+                      f"end sheet's printed segment statement no shared "
+                      f"boundary station exists")
+    if len(boundary_cands) > 1:
+        return refuse(f"{len(boundary_cands)} distinct printed run callouts "
+                      f"end at {end_raw} on sheet {end_sheet} "
+                      f"({boundary_cands}) -- the boundary station is not "
+                      f"uniquely printed")
+    boundary_raw, seg_end_ft = boundary_cands[0]
+    end_note = " | ".join(n for raw, f, n in ending
+                          if (raw, f) == boundary_cands[0])
+
+    # 2. EXACTLY ONE printed frame equation carries that boundary on E ------
+    #    (either side of the equation -- the equation NAMES one physical
+    #    boundary in two sheet frames; callouts print bore-local stationing,
+    #    which may be either side: the log65 + log32 evidence)
+    edges = []
+    for e in (frame_graph.edges if frame_graph is not None else ()):
+        a_sheet, b_sheet = _sheet_no(e.from_frame), _sheet_no(e.to_frame)
+        if end_sheet == a_sheet and boundary_raw in (e.a_raw, e.b_raw):
+            edges.append((e, b_sheet))
+        elif end_sheet == b_sheet and boundary_raw in (e.a_raw, e.b_raw):
+            edges.append((e, a_sheet))
+    if not edges:
+        return refuse(f"a printed matchline frame equation carrying boundary "
+                      f"{boundary_raw} on one of sheet {end_sheet}'s drawn "
+                      f"matchlines -- the sheet prints no equation at this "
+                      f"boundary (the log50-class missing artifact); a join "
+                      f"is never synthesized")
+    if len(edges) > 1:
+        return refuse(f"{len(edges)} printed frame equations claim boundary "
+                      f"{boundary_raw} on sheet {end_sheet} -- the far sheet "
+                      f"is not uniquely printed",
+                      sources=[e.source for e, _ in edges])
+    edge, far_sheet = edges[0]
+    if far_sheet is None or far_sheet == end_sheet:
+        return refuse(f"the frame equation {edge.source!r} does not name a "
+                      f"distinct far sheet")
+    refs = sorted(set(bore.sheet_refs))
+    if far_sheet not in refs:
+        # Every proven cross-sheet specimen (log65; log8/32/42 evidence)
+        # references BOTH sheets in its own bore log. A discovered far sheet
+        # the bore log never cites is uncorroborated by the bore's own
+        # printed references -- refuse, never guess (the log12 class).
+        return refuse(f"the bore log's own sheet references {refs} do not "
+                      f"name the discovered far sheet {far_sheet} -- the "
+                      f"printed continuation is uncorroborated by the bore's "
+                      f"print references", far_sheet=far_sheet,
+                      edge_source=edge.source)
+
+    # 3. reciprocal printed callout on the far sheet + footage closure ------
+    starting = [(raw, f, note) for raw, f, note
+                in run_callouts_starting_at(plan.lines(far_sheet, offset),
+                                            start_raw)
+                if f is not None]
+    recip = sorted({(raw, f) for raw, f, _ in starting
+                    if raw == boundary_raw})
+    if not recip:
+        return refuse(f"a printed run callout on sheet {far_sheet} from "
+                      f"{start_raw} to the shared boundary {boundary_raw} "
+                      f"(the far sheet prints "
+                      f"{[r for r, _, _ in starting] or 'none'} from "
+                      f"{start_raw}) -- without the reciprocal segment "
+                      f"statement the continuation is unproven",
+                      far_sheet=far_sheet, edge_source=edge.source)
+    if len(recip) > 1:
+        return refuse(f"{len(recip)} distinct printed footages for the far "
+                      f"segment {start_raw}->{boundary_raw} on sheet "
+                      f"{far_sheet} ({recip})", far_sheet=far_sheet)
+    seg_far_ft = recip[0][1]
+    far_note = " | ".join(n for raw, f, n in starting
+                          if (raw, f) == recip[0])
+    if abs((seg_end_ft + seg_far_ft) - span_ft) > 0.5:
+        return refuse(f"footage closure (printed {seg_far_ft}+{seg_end_ft} "
+                      f"!= bore span {span_ft})", far_sheet=far_sheet)
+
+    # 3b. the run's conduit CLASS, from the printed notes themselves --------
+    #     (the dialect's promised seam: bore-callout conduit text -> conduit
+    #     layer; BOTH reciprocal notes must name the SAME single mapped class)
+    common_keys = sorted(k for k in dialect.conduit_layers
+                         if k in end_note.upper() and k in far_note.upper())
+    if not common_keys:
+        return refuse(f"a mapped conduit class in the printed reciprocal "
+                      f"callout notes (notes: {end_note[:90]!r} / "
+                      f"{far_note[:90]!r}; mapped classes: "
+                      f"{sorted(dialect.conduit_layers)}) -- extend the "
+                      f"dialect conduit table, never guess a layer",
+                      far_sheet=far_sheet)
+    if len(common_keys) > 1:
+        return refuse(f"the printed reciprocal notes name {len(common_keys)} "
+                      f"mapped conduit classes ({common_keys}) -- the run's "
+                      f"drawn layer is not uniquely printed",
+                      far_sheet=far_sheet)
+    conduit_layer = dialect.conduit_layers[common_keys[0]]
+
+    # 4. EXACTLY ONE far-sheet structure chain terminates at the matchline --
+    drawings = plan.line_items(far_sheet, offset)
+    mls = matchline_bboxes(drawings, dialect.matchline_layer)
+    eq_text = edge.source.split(None, 1)[-1]
+    eq_xy = next(((w["xc"], w["yc"]) for w in plan.words(far_sheet, offset)
+                  if w["text"] == eq_text), None)
+    if eq_xy is None or not mls:
+        return refuse(f"the equation text {eq_text!r} typeset at sheet "
+                      f"{far_sheet}'s drawn matchline", far_sheet=far_sheet)
+    ml = min(mls, key=lambda bb: nearest_gap([eq_xy], bb))
+    conduit = [d for d in drawings if d["layer"] == conduit_layer]
+    sym_layers = sorted({v[1] for v in dialect.structure_layers.values()})
+    reaching: Dict[str, dict] = {}
+    for lay in sym_layers:
+        for c in cluster_symbols(drawings, lay):
+            bb = symbol_footprint(drawings, lay, (c.x, c.y))
+            if not bb:
+                continue
+            chain = connected_chain(conduit, bb)
+            bnd = extend_dash_to_boundary(chain, ml) if chain else None
+            if bnd is None:
+                continue
+            reaching[f"{lay}@{c.x:.0f},{c.y:.0f}"] = {
+                "layer": lay,
+                "xy": ((bb[0] + bb[2]) / 2.0, (bb[1] + bb[3]) / 2.0),
+                "chain_segments": len(chain), "boundary_xy": bnd}
+    if not reaching:
+        return refuse(f"a sheet-{far_sheet} structure whose drawn conduit "
+                      f"chain terminates at the shared matchline -- none "
+                      f"found; the continuation may span further sheets "
+                      f"(multi-hop continuation is a separate named "
+                      f"capability)", far_sheet=far_sheet)
+    if len(reaching) > 1:
+        # A drawn conduit NETWORK blobs every on-network structure into
+        # "reaching". The banked b.6 corroboration band (the SAME refusal
+        # gate that holds log50 at pick-card) refuses every candidate whose
+        # distance to its own chain's drawn boundary crossing does not
+        # account for the PRINTED far-segment footage at the sheet's ladder
+        # scale. The band itself must be a CONSISTENT corroboration basis:
+        # a y-band holding ticks from MORE THAN ONE drawn ladder yields
+        # multi-modal hop scales whose median is a cross-ladder artifact
+        # (the log42 adversarial finding) -- such a band corroborates
+        # NOTHING. Refusal-shaped throughout: survivors of 0 or >= 2 still
+        # abstain -- corroboration never selects, it only refuses.
+        ticks_f, _ = route_ladder_ticks(plan, far_sheet, offset)
+        survivors = {}
+        band_notes = []
+        for label, cand in reaching.items():
+            bxy = cand["boundary_xy"]
+            scales = ladder_band_scales(
+                ticks_f, bxy[1] - BAND_HALFWIDTH, bxy[1] + BAND_HALFWIDTH)
+            med = sorted(scales)[len(scales) // 2] if scales else None
+            unimodal = (med is not None and med > 0 and all(
+                abs(s - med) / med <= PAIR_SCALE_REL_TOL for s in scales))
+            if not unimodal:
+                band_notes.append(
+                    f"{label}: ladder band is "
+                    + ("empty" if not scales else
+                       f"multi-modal ({[round(s, 3) for s in scales]} pt/ft "
+                       f"-- ticks from more than one drawn ladder)")
+                    + "; no corroboration basis")
+                continue
+            corr = corroborate_pair_scale(cand["xy"], bxy, seg_far_ft, med)
+            if corr["consistent"]:
+                survivors[label] = {**cand, "corroboration": corr}
+        if len(survivors) != 1:
+            return {"result": CS_AMBIGUOUS,
+                    "named_missing": (
+                        f"{len(reaching)} sheet-{far_sheet} structures sit on "
+                        f"the conduit network reaching the shared matchline "
+                        f"and {len(survivors)} corroborate the printed far-"
+                        f"segment footage ({seg_far_ft}') against a "
+                        f"consistent ladder band "
+                        f"(survivors: {sorted(survivors) or 'none'}"
+                        + (f"; {'; '.join(sorted(set(band_notes)))}"
+                           if band_notes else "")
+                        + ") -- the start structure identity cannot be "
+                        f"uniquely bound; guessing is forbidden"),
+                    "detail": {"far_sheet": far_sheet,
+                               "rivals": sorted(reaching),
+                               "survivors": sorted(survivors),
+                               "band_notes": sorted(set(band_notes))}}
+        reaching = survivors
+    label, cand = next(iter(reaching.items()))
+    return {"result": CS_BOUND, "far_sheet": far_sheet,
+            "start_xy": cand["xy"], "start_layer": cand["layer"],
+            "conduit_layer": conduit_layer,
+            "boundary_raw": boundary_raw, "seg_end_ft": seg_end_ft,
+            "seg_far_ft": seg_far_ft, "edge_source": edge.source,
+            "detail": (f"callouts {start_raw}->{boundary_raw} "
+                       f"({seg_far_ft}') on sheet {far_sheet} + "
+                       f"{boundary_raw}->{end_raw} ({seg_end_ft}') on sheet "
+                       f"{end_sheet}; equation {edge.source!r}; printed "
+                       f"conduit class {common_keys[0]!r} -> layer "
+                       f"{conduit_layer!r}; unique reaching structure "
+                       f"{label} ({cand['chain_segments']} chain segs)")}
 
 
 def _classify_label(label: Optional[str],
@@ -428,8 +685,9 @@ def resolve_bore(plan, bore, offset: int, dialect: LaneDialect,
                               f"sheet {end_sheet}"))
 
     # 3. START identity (printed: equation, then note; any referenced sheet) --
-    start_sheet = start_xy = start_klass = None
+    start_sheet = start_xy = start_klass = start_layer = None
     start_word_xy = None
+    cs_conduit_layer = None   # set only by cross-sheet origin discovery
     for sheet in sheets:
         lines = plan.lines(sheet, offset)
         ob = bind_origin_by_parent_station(
@@ -441,6 +699,7 @@ def resolve_bore(plan, bore, offset: int, dialect: LaneDialect,
             if not err and pos.result == POSITION_BOUND:
                 start_sheet, start_xy = sheet, tuple(pos.symbol_xy)
                 start_klass = ob.origin.structure_type
+                start_layer = dialect.structure_layers[start_klass][1]
                 start_word_xy = pos.word_xy
                 ev.append(ComponentReport(
                     "start_identity", "BOUND",
@@ -456,6 +715,7 @@ def resolve_bore(plan, bore, offset: int, dialect: LaneDialect,
                 if not err and pos.result == POSITION_BOUND:
                     start_sheet, start_xy = sheet, tuple(pos.symbol_xy)
                     start_klass = klass
+                    start_layer = dialect.structure_layers[start_klass][1]
                     start_word_xy = pos.word_xy
                     ev.append(ComponentReport(
                         "start_identity", "BOUND",
@@ -533,17 +793,41 @@ def resolve_bore(plan, bore, offset: int, dialect: LaneDialect,
                                        "origin_hits": disc["hit_counts"]})
         else:
             # 0 on-sheet candidates -- the conduit run exits this sheet; the
-            # start lives across a matchline (the log65 class).
-            named = (f"no printed start identity on sheets {sheets} and the "
-                     f"corridor conduit chain finds NO start-side structure on "
-                     f"the end sheet ({disc['result']}) -- the run exits this "
-                     f"sheet; cross-sheet continuation evidence (printed "
-                     f"matchline equation + chains reaching both matchlines) "
-                     f"is the named missing artifact")
-            ev.append(ComponentReport("conduit_origin", "REFUSED", named))
-            return LaneOutcome(bore_id=bid, status=S_CROSS_SHEET,
-                               evidence=tuple(ev), named_missing=named,
-                               detail={"end_anchor": list(end_pos.symbol_xy)})
+            # start lives across a matchline (the log65 class). The
+            # cross_sheet_origin DISCOVERY law now runs: printed-only far-
+            # sheet + start binding, then the full b.9 join re-proof below.
+            ev.append(ComponentReport(
+                "conduit_origin", "REFUSED",
+                f"no printed start identity on sheets {sheets}; the corridor "
+                f"conduit chain finds NO start-side structure on the end "
+                f"sheet ({disc['result']}) -- the run exits this sheet; "
+                f"attempting printed cross-sheet origin discovery"))
+            cs = discover_cross_sheet_start(plan, bore, offset, dialect,
+                                            frame_graph, end_sheet=end_sheet)
+            if cs["result"] == CS_BOUND:
+                start_sheet = cs["far_sheet"]
+                start_xy = tuple(cs["start_xy"])
+                start_layer = cs["start_layer"]
+                cs_conduit_layer = cs["conduit_layer"]
+                ev.append(ComponentReport("cross_sheet_origin", "BOUND",
+                                          cs["detail"]))
+            elif cs["result"] == CS_AMBIGUOUS:
+                ev.append(ComponentReport("cross_sheet_origin", "REFUSED",
+                                          cs["named_missing"]))
+                return LaneOutcome(
+                    bore_id=bid, status=S_STRUCTURE_REQUIRED,
+                    evidence=tuple(ev), named_missing=cs["named_missing"],
+                    detail={"end_anchor": list(end_pos.symbol_xy),
+                            **cs.get("detail", {})})
+            else:
+                named = (f"cross-sheet continuation evidence incomplete: "
+                         f"{cs['named_missing']}")
+                ev.append(ComponentReport("cross_sheet_origin", "REFUSED",
+                                          named))
+                return LaneOutcome(bore_id=bid, status=S_CROSS_SHEET,
+                                   evidence=tuple(ev), named_missing=named,
+                                   detail={"end_anchor": list(end_pos.symbol_xy),
+                                           **cs.get("detail", {})})
 
     # 5/6/7. strokes: single-sheet or matchline-joined cross-sheet -----------
     if start_sheet == end_sheet:
@@ -564,9 +848,10 @@ def resolve_bore(plan, bore, offset: int, dialect: LaneDialect,
         joined = _cross_sheet_segments(
             plan, offset, dialect, frame_graph, bid=bid, bore=bore,
             start_sheet=start_sheet, start_xy=start_xy,
-            start_layer=dialect.structure_layers[start_klass][1],
+            start_layer=start_layer,
             end_sheet=end_sheet, end_xy=tuple(end_pos.symbol_xy),
-            end_layer=dialect.structure_layers[end_klass][1], ev=ev)
+            end_layer=dialect.structure_layers[end_klass][1], ev=ev,
+            conduit_layer=cs_conduit_layer)
         if isinstance(joined, LaneOutcome):
             return joined
         segs = joined
@@ -590,10 +875,14 @@ def _cross_sheet_segments(plan, offset, dialect: LaneDialect, frame_graph, *,
                           bid: str, bore, start_sheet: int,
                           start_xy: Tuple[float, float], start_layer: str,
                           end_sheet: int, end_xy: Tuple[float, float],
-                          end_layer: str, ev: List[ComponentReport]):
+                          end_layer: str, ev: List[ComponentReport],
+                          conduit_layer: Optional[str] = None):
     """Components 6+5 for the cross-sheet case; returns segments or a typed
     LaneOutcome refusal (cross-sheet by default -- the whole function is the
-    matchline join; an unprovable join IS a cross-sheet-continuation gap)."""
+    matchline join; an unprovable join IS a cross-sheet-continuation gap).
+    ``conduit_layer`` arrives ONLY from cross-sheet origin discovery (the
+    printed callout notes' mapped class); the printed-identity path keeps the
+    dialect's drop-bore default unchanged."""
     def refuse(named: str, status: str = S_CROSS_SHEET) -> LaneOutcome:
         ev.append(ComponentReport("matchline_join", "REFUSED", named))
         return LaneOutcome(bore_id=bid, status=status, evidence=tuple(ev),
@@ -626,7 +915,7 @@ def _cross_sheet_segments(plan, offset, dialect: LaneDialect, frame_graph, *,
                       f"{boundary_raw} (frame-graph edge)")
     eq_text = edge.source.split(None, 1)[-1]  # equation token sans keyword
 
-    layer = dialect.conduit_layers[dialect.conduit_key]
+    layer = conduit_layer or dialect.conduit_layers[dialect.conduit_key]
     sides = {}
     for sheet, anchor_xy, anchor_layer in (
             (start_sheet, start_xy, start_layer),
