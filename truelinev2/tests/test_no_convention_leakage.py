@@ -9,7 +9,7 @@ import os
 import re
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # truelinev2/
-CORE_DIRS = ["match", "render", "store", "api", "schema", "security"]
+CORE_DIRS = ["match", "render", "store", "api", "schema", "security", "review"]
 CORE_FILES = ["service.py", "config.py", "context.py", "stations.py", "__init__.py"]
 FORBIDDEN = re.compile(r"(?i)\b(brenham|odot|tulsa|creek|nextlink|verofy)\b")
 
