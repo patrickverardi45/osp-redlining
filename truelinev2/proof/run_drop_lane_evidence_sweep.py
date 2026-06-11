@@ -57,6 +57,7 @@ from truelinev2.extract.conduit_topology import (
     connected_chain,
     dash_endpoints,
     discriminate_origin,
+    ladder_scale_for_band,
     symbol_footprint,
 )
 from truelinev2.extract.registry import select_dialect
@@ -104,15 +105,6 @@ def classify_drop_bore(*, end_bound: bool, origin_result: Optional[str],
     if origin_result == ORIGIN_BOUND:
         return C_BOUND if span_consistent else C_PICK
     return C_END_ONLY
-
-
-def ladder_scale_for_band(ticks, y_lo: float, y_hi: float) -> Optional[float]:
-    """Median consecutive-station pts/ft among clean ladder ticks in a y-band;
-    None when fewer than two distinct stations exist (no corroboration basis)."""
-    band = sorted({(t.station_ft, t.x, t.y) for t in ticks if y_lo < t.y < y_hi})
-    scales = [math.hypot(b[1] - a[1], b[2] - a[2]) / (b[0] - a[0])
-              for a, b in zip(band, band[1:]) if b[0] > a[0]]
-    return sorted(scales)[len(scales) // 2] if scales else None
 
 
 def sweep_bore(plan: PlanPdf, bore, offset: int) -> dict:

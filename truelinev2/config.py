@@ -32,6 +32,10 @@ class Settings:
     # M8.8: station-axis interval containment retry (tick-ladder path-walk,
     # abstain-fill, REVIEW-cap). DEFAULT OFF -- OFF is byte-identical.
     station_axis_interval_optin: bool = False
+    # M8.14.c: symbol/conduit/matchline stroke lane. DEFAULT OFF -- Phase 0
+    # ships the lane UNWIRED (no engine/service consultation at all); the flag
+    # exists so activation is an explicit owner decision, REVIEW-only.
+    symbol_conduit_lane_optin: bool = False
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -47,6 +51,7 @@ class Settings:
             frame_continuation_optin=os.getenv("TL2_FRAME_AWARE_CONTINUATION_OPTIN", "0") == "1",
             reverse_endpoint_optin=os.getenv("TL2_REVERSE_ENDPOINT_ANCHOR_OPTIN", "0") == "1",
             station_axis_interval_optin=os.getenv("TL2_STATION_AXIS_INTERVAL_OPTIN", "0") == "1",
+            symbol_conduit_lane_optin=os.getenv("TL2_SYMBOL_CONDUIT_LANE_OPTIN", "0") == "1",
         )
 
     @classmethod

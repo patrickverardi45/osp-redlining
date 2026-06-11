@@ -62,6 +62,55 @@ BRENHAM_CONDUIT_LAYERS: Dict[str, str] = {"VACANT HDPE": "BORE - VACANT PIPE"}
 
 
 @dataclass(frozen=True)
+class LaneDialect:
+    """EVERYTHING a plan set must configure for the M8.14.c symbol/conduit/
+    matchline lane. The lane orchestrator (match/symbol_conduit_lane.py) holds
+    ZERO convention strings -- it consumes this object only. Another company
+    onboards by building its own instance (+ a graded proof specimen)."""
+    # structure class -> (label TEXT layer, symbol layer, class fill RGB)
+    structure_layers: Dict[str, Tuple[str, str, Tuple[float, float, float]]]
+    # bore-callout conduit text -> CAD conduit layer
+    conduit_layers: Dict[str, str]
+    # which conduit-layer key the lane's drop bores use
+    conduit_key: str
+    # CAD layer carrying the drawn sheet-boundary lines
+    matchline_layer: str
+    # ordered (class, keywords) pairs classifying a structure-note label
+    class_keywords: Tuple[Tuple[str, Tuple[str, ...]], ...]
+    # structure class -> label-locator strategy:
+    #   "station_context" = station token + context words inside the label box
+    #   "id_token"        = the structure's printed id token (id_token regex)
+    locator: Dict[str, str]
+    # structure class -> context words for the station_context locator
+    context_words: Dict[str, Tuple[str, ...]]
+    # regex for printed structure id tokens (e.g. access-point ids)
+    id_token: str
+    # regex for the reset-equation token inside an origin source line
+    equation_token: str
+
+
+BRENHAM_LANE_DIALECT = LaneDialect(
+    structure_layers=BRENHAM_STRUCTURE_LAYERS,
+    conduit_layers=BRENHAM_CONDUIT_LAYERS,
+    conduit_key="VACANT HDPE",
+    matchline_layer="MATCHLINE",
+    class_keywords=(
+        ("installer_hh", ("INSTALLER HH",)),
+        ("terminal_port_hh", ("PORT HH", "TERMINAL")),
+        ("flower_pot", ("FLOWER POT",)),
+    ),
+    # note-bound classes only -- equation-bound origins always locate by the
+    # equation token itself (lane law); a note-bound class with no locator
+    # entry is a typed refusal, never a guess
+    locator={"flower_pot": "station_context",
+             "terminal_port_hh": "id_token"},
+    context_words={"flower_pot": ("FLOWER", "POT")},
+    id_token=r"AP-\d+",
+    equation_token=r"\d+\+\d+=0\+00",
+)
+
+
+@dataclass(frozen=True)
 class SymbolCluster:
     x: float
     y: float

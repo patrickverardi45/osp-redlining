@@ -83,6 +83,16 @@ def chain_continuity(segments: Sequence[dict],
             "continuous": all(g <= max_gap for g in gaps)}
 
 
+def ladder_scale_for_band(ticks, y_lo: float, y_hi: float) -> Optional[float]:
+    """Median consecutive-station pts/ft among clean ladder ticks in a y-band;
+    None when fewer than two distinct stations exist (no corroboration basis).
+    Re-homed from the b.8 sweep for the M8.14.c lane (general law)."""
+    band = sorted({(t.station_ft, t.x, t.y) for t in ticks if y_lo < t.y < y_hi})
+    scales = [math.hypot(b[1] - a[1], b[2] - a[2]) / (b[0] - a[0])
+              for a, b in zip(band, band[1:]) if b[0] > a[0]]
+    return sorted(scales)[len(scales) // 2] if scales else None
+
+
 def _inside(p: Tuple[float, float], bb: BBox) -> bool:
     return bb[0] <= p[0] <= bb[2] and bb[1] <= p[1] <= bb[3]
 

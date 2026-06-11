@@ -88,60 +88,13 @@ SHEET_A, SHEET_B = 10, 9
 # Stroke-color law: drawn redline strokes are ALWAYS red (canonical pin).
 STROKE_RGB = REDLINE_STROKE_RGB
 
-
-# --- pure helpers (offline-testable) ----------------------------------------------------
-
-def extend_dash_to_boundary(chain: Sequence[dict],
-                            ml_bbox: Tuple[float, float, float, float],
-                            max_gap: float = MAX_DASH_GAP
-                            ) -> Optional[Tuple[float, float]]:
-    """The chain's terminal dash, extended along its OWN drawn direction to
-    the matchline centerline. Returns None (refusal) when no dash endpoint is
-    within ``max_gap`` of the boundary -- a dashed line includes its gaps,
-    nothing more. Works for vertical or horizontal matchlines."""
-    vertical = (ml_bbox[3] - ml_bbox[1]) >= (ml_bbox[2] - ml_bbox[0])
-    target = ((ml_bbox[0] + ml_bbox[2]) / 2.0 if vertical
-              else (ml_bbox[1] + ml_bbox[3]) / 2.0)
-    # Dashes are drawn as outline rectangles: the terminal endpoint belongs to
-    # several line items (long axis, caps, diagonals). Evaluate EVERY item
-    # whose endpoint is within a dash gap of the boundary and keep the valid
-    # intersection with the SHORTEST extension -- deterministic, and the long
-    # axis wins by construction (caps are parallel; diagonals overrun).
-    best = None  # (extension, gap, candidate point)
-    for seg in chain:
-        for ln in seg.get("lines") or ():
-            for p, q in (((ln[0], ln[1]), (ln[2], ln[3])),
-                         ((ln[2], ln[3]), (ln[0], ln[1]))):
-                gap = nearest_gap([p], ml_bbox)
-                if gap is None or gap > max_gap:
-                    continue
-                dx, dy = p[0] - q[0], p[1] - q[1]  # direction toward boundary
-                if (vertical and dx == 0) or (not vertical and dy == 0):
-                    continue  # parallel to the matchline: cannot cross it
-                if vertical:
-                    t = (target - p[0]) / dx
-                    cand = (target, p[1] + dy * t)
-                else:
-                    t = (target - p[1]) / dy
-                    cand = (p[0] + dx * t, target)
-                ext = math.hypot(cand[0] - p[0], cand[1] - p[1])
-                if ext > max_gap:
-                    continue  # oblique overrun longer than a dash gap: refuse
-                if best is None or (ext, gap) < (best[0], best[1]):
-                    best = (ext, gap, cand)
-    return best[2] if best else None
-
-
-def joined_segments_verdict(*, boundary_a_ft: float, boundary_b_ft: float,
-                            seg_a_ft: float, seg_b_ft: float,
-                            span_ft: float) -> dict:
-    """Two sheet-local strokes join iff they share the SAME printed boundary
-    station and their printed footages close the bore span exactly."""
-    okb = boundary_a_ft == boundary_b_ft
-    okf = abs((seg_a_ft + seg_b_ft) - span_ft) <= 0.5
-    return {"joined": okb and okf,
-            "shared_boundary_ft": boundary_a_ft if okb else None,
-            "footage_closure": okf}
+# M8.14.c re-homing (conclusions unchanged): the boundary-anchor laws now
+# live in extract/matchline_join.py for the lane; names re-exported here so
+# the b.10 gates and tests run verbatim.
+from truelinev2.extract.matchline_join import (  # noqa: E402
+    extend_dash_to_boundary,
+    joined_segments_verdict,
+)
 
 
 def _render_png(plan, offset, panels) -> Optional[str]:

@@ -77,92 +77,20 @@ EXPECT_EDGE_SOURCE = "STA 38+90/6+11"
 BOUNDARY_STA_LOCAL = 611.0          # 6+11 -- the shared boundary station
 SEG_A_FT, SEG_B_FT = 160.0, 39.0    # printed run callout footages
 EQ_NEAR_PT = 25.0                   # equation text typeset AT the matchline
-SCALE_REL_TOL = 0.05                # the two implied scales must AGREE tightly
-PROVEN = "CROSS_SHEET_CONTINUATION_PROVEN"
-NOT_PROVEN = "CROSS_SHEET_CONTINUATION_NOT_PROVEN"
 
-PROVEN_LAW = ("bound structure per sheet + chain terminates at its drawn "
-              "matchline + ONE printed frame equation typeset at both "
-              "matchlines + shared boundary station + footage closure with "
-              "agreeing implied scales")
-
-
-# --- pure helpers (offline-testable) ----------------------------------------------------
-
-def nearest_gap(points: Sequence[Tuple[float, float]],
-                bbox: Tuple[float, float, float, float]) -> Optional[float]:
-    """Min distance from any point to a bbox (0 inside). None without points."""
-    best = None
-    for x, y in points:
-        dx = max(bbox[0] - x, 0.0, x - bbox[2])
-        dy = max(bbox[1] - y, 0.0, y - bbox[3])
-        d = math.hypot(dx, dy)
-        best = d if best is None or d < best else best
-    return best
-
-
-def matchline_bboxes(drawings: Sequence[dict], layer: str,
-                     min_len: float = 100.0) -> List[Tuple[float, float, float, float]]:
-    """The sheet's drawn boundary lines: long thin drawings on the matchline
-    layer (length floor excludes legend ticks; injected layer name)."""
-    out = []
-    for d in drawings:
-        if d.get("layer") != layer:
-            continue
-        w, h = d["x1"] - d["x0"], d["y1"] - d["y0"]
-        if max(w, h) >= min_len and min(w, h) <= 6.0:
-            out.append((d["x0"], d["y0"], d["x1"], d["y1"]))
-    return out
-
-
-def find_run_callout_footage(lines: Sequence[str], start_sta: str,
-                             end_sta: str) -> Optional[float]:
-    """Printed footage of the run callout ``STA <a> TO [STA] <b> ... (NNN')``
-    -- footage searched on the callout line and the next two lines."""
-    pat = re.compile(rf"STA\s*{re.escape(start_sta)}\s*TO\s*(?:STA\s*)?"
-                     rf"{re.escape(end_sta)}\b", re.I)
-    foot = re.compile(r"\((\d+(?:,\d{3})?)'\)")
-    for i, ln in enumerate(lines):
-        if not pat.search(ln):
-            continue
-        for cand in lines[i:i + 3]:
-            m = foot.search(cand)
-            if m:
-                return float(m.group(1).replace(",", ""))
-    return None
-
-
-def cross_sheet_join_verdict(*, equation_edge: bool, eq_at_matchline_a: bool,
-                             eq_at_matchline_b: bool, chain_a_reaches: bool,
-                             chain_b_reaches: bool, seg_a_ft: Optional[float],
-                             seg_b_ft: Optional[float], span_ft: float,
-                             scale_a: Optional[float], scale_b: Optional[float],
-                             rel_tol: float = SCALE_REL_TOL) -> dict:
-    """The join law as a pure decision. Any missing clause -> NOT_PROVEN with
-    the exact missing artifact named; nothing is ever inferred to fill a gap."""
-    missing = []
-    if not equation_edge:
-        missing.append("a printed matchline frame equation joining the two "
-                       "sheets (frame-graph HIGH edge)")
-    if not (eq_at_matchline_a and eq_at_matchline_b):
-        missing.append("the equation text typeset AT both drawn matchlines")
-    if not chain_a_reaches:
-        missing.append("sheet A's conduit chain terminating at its matchline")
-    if not chain_b_reaches:
-        missing.append("sheet B's conduit chain terminating at its matchline")
-    if seg_a_ft is None or seg_b_ft is None:
-        missing.append("printed run-callout footages on both sheets")
-    elif abs((seg_a_ft + seg_b_ft) - span_ft) > 0.5:
-        missing.append(f"footage closure (printed {seg_a_ft}+{seg_b_ft} != "
-                       f"bore span {span_ft})")
-    if scale_a is None or scale_b is None or scale_a <= 0:
-        missing.append("drawn structure->matchline distances on both sheets")
-    elif abs(scale_a - scale_b) / scale_a > rel_tol:
-        missing.append(f"implied-scale agreement (sheet A {scale_a:.4f} vs "
-                       f"sheet B {scale_b:.4f} pt/ft)")
-    if missing:
-        return {"verdict": NOT_PROVEN, "named_missing": "; ".join(missing)}
-    return {"verdict": PROVEN, "law": PROVEN_LAW}
+# M8.14.c re-homing (conclusions unchanged): the join laws now live in
+# extract/matchline_join.py for the lane; names re-exported here so the b.9
+# gates and tests run verbatim (SCALE_REL_TOL kept as its lane-era alias).
+from truelinev2.extract.matchline_join import (  # noqa: E402
+    JOIN_SCALE_REL_TOL as SCALE_REL_TOL,
+    NOT_PROVEN,
+    PROVEN,
+    PROVEN_LAW,
+    cross_sheet_join_verdict,
+    find_run_callout_footage,
+    matchline_bboxes,
+    nearest_gap,
+)
 
 
 def _render_png(plan, offset, a, b) -> Optional[str]:
