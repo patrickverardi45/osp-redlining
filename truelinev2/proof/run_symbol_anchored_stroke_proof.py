@@ -73,9 +73,12 @@ from truelinev2.match.transition_classifier import conflict_sheet_pairs
 from truelinev2.proof.run_brenham_corpus import EXPECTED_COUNT, PDF, enumerate_corpus
 from truelinev2.proof.run_reviewer_service_contract import resolve_corpus
 from truelinev2.proof.station_equation_ownership import extract_reset_origins
+from truelinev2.render.crop import REDLINE_STROKE_RGB
 from truelinev2.service import _build_plan_frame_graph
 
 OUT_DIR = _REPO_ROOT / "data" / "outputs" / "symbol_anchored_stroke_proof"
+# Stroke-color law: drawn redline strokes are ALWAYS red (canonical pin).
+STROKE_RGB = REDLINE_STROKE_RGB
 SHEET = 10
 EXPECT_START_XY = (861.3, 354.2)
 EXPECT_END_XY = (291.6, 355.3)
@@ -177,7 +180,7 @@ def _render_png(plan: PlanPdf, offset: int, stroke, start_xy, end_xy,
     def px(p):
         return ((p[0] - cx0) * z, (p[1] - cy0) * z)
 
-    red, grey, white = (220, 25, 25), (110, 110, 110), (255, 255, 255)
+    red, grey, white = STROKE_RGB, (110, 110, 110), (255, 255, 255)
     for r in rival_xys:  # rival HH symbols: greyed, never selected
         x, y = px(r)
         draw.ellipse([x - 11, y - 11, x + 11, y + 11], outline=grey, width=3)

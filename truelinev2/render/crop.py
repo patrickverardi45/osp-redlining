@@ -15,6 +15,13 @@ from PIL import ImageDraw
 from truelinev2.ingest.pdf import PlanPdf
 from truelinev2.schema.models import Callout
 
+# TrueLine overlay stroke color LAW (Patrick, 2026-06-11): every drawn
+# redline/stroke/bore-path overlay is RED -- regardless of source conduit
+# layer color, AUTO/REVIEW status, sheet, or proof type. Source PDF evidence
+# is never recolored; only TrueLine's own drawn strokes are governed. All
+# stroke renderers must reference THIS constant (test-locked).
+REDLINE_STROKE_RGB = (220, 25, 25)
+
 
 def _safe(name: str) -> str:
     return name.replace("+", "p").replace(" ", "_").replace("/", "-")
@@ -62,7 +69,7 @@ def render_redline_stroke(plan: PlanPdf, bore_id: str, sheet: int, offset: int,
         return ((p[0] - clip_x0) * zoom, (p[1] - clip_y0) * zoom)
 
     grey = (110, 110, 110)
-    red = (220, 25, 25)
+    red = REDLINE_STROKE_RGB
     for b in evidence_bboxes:  # supporting evidence highlights only
         (x0, y0), (x1, y1) = px((b[0], b[1])), px((b[2], b[3]))
         draw.rectangle([x0 - 6, y0 - 6, x1 + 6, y1 + 6], outline=grey, width=3)

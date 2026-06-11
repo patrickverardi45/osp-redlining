@@ -61,7 +61,12 @@ from truelinev2.ingest.pdf import PlanPdf
 from truelinev2.match.frames import translate_between_sheets
 from truelinev2.proof.run_brenham_corpus import EXPECTED_COUNT, PDF, enumerate_corpus
 from truelinev2.proof.run_reviewer_service_contract import resolve_corpus
+from truelinev2.render.crop import REDLINE_STROKE_RGB
 from truelinev2.service import _build_plan_frame_graph
+
+# Stroke-color law: the bore's drawn conduit-path overlay is ALWAYS red
+# (never the source layer's color) -- pinned to the canonical constant.
+CHAIN_STROKE_RGB = REDLINE_STROKE_RGB
 
 OUT_DIR = _REPO_ROOT / "data" / "outputs" / "cross_sheet_conduit_join_probe"
 # Brenham dialect fact (proof-local until a resolver lane ships): the drawn
@@ -176,11 +181,11 @@ def _render_png(plan, offset, a, b) -> Optional[str]:
         def px(p, cx0=cx0, cy0=cy0):
             return ((p[0] - cx0) * z, (p[1] - cy0) * z)
 
-        green, orange, purple, blue = ((20, 140, 60), (235, 130, 20),
-                                       (140, 60, 160), (30, 90, 200))
-        for d in s["chain"]:
+        orange, blue = (235, 130, 20), (30, 90, 200)
+        for d in s["chain"]:  # the bore's conduit-path overlay: ALWAYS red
             (x0, y0), (x1, y1) = px((d["x0"], d["y0"])), px((d["x1"], d["y1"]))
-            draw.rectangle([x0 - 3, y0 - 3, x1 + 3, y1 + 3], outline=purple, width=2)
+            draw.rectangle([x0 - 3, y0 - 3, x1 + 3, y1 + 3],
+                           outline=CHAIN_STROKE_RGB, width=3)
         x, y = px(s["anchor_xy"])
         draw.ellipse([x - 13, y - 13, x + 13, y + 13], outline=(255, 255, 255), width=7)
         draw.ellipse([x - 13, y - 13, x + 13, y + 13], outline=s["anchor_color"], width=4)
@@ -321,8 +326,8 @@ def main() -> int:
                 "anchor_color": (30, 90, 200), "matchline": ml_a, "eq_xy": eqA,
                 "clip": [min(ml_a[0], ap.symbol_xy[0]), 300,
                          max(ml_a[2], ap.symbol_xy[0]), 400],
-                "caption": ("sheet 10: AP-163 (blue ring) -> purple conduit "
-                            "chain -> MATCHLINE (blue box) with printed "
+                "caption": ("sheet 10: AP-163 (blue ring) -> RED conduit-path "
+                            "overlay -> MATCHLINE (blue box) with printed "
                             "equation 38+90/6+11 (orange) · 160' segment"),
             }, {
                 "sheet": SHEET_B, "chain": chainB, "anchor_xy": tuple(pot.symbol_xy),
@@ -330,8 +335,8 @@ def main() -> int:
                 "clip": [min(pot.symbol_xy[0], ml_b[0]) - 40, 300,
                          max(ml_b[2], pot.symbol_xy[0]) + 10, 400],
                 "caption": ("sheet 9: same equation at ITS matchline (orange) "
-                            "-> purple conduit stub -> 6+50 flower pot (green "
-                            "ring) · 39' segment · joined span = 199' = bore"),
+                            "-> RED conduit-path overlay -> 6+50 flower pot "
+                            "(green ring) · 39' segment · joined span = 199' = bore"),
             })
         pngs = sorted(p.name for p in OUT_DIR.glob("*.png"))
         g6 = png is not None and len(pngs) == 1 and "stroke" not in pngs[0]

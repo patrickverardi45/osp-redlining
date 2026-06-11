@@ -73,8 +73,11 @@ from truelinev2.proof.run_symbol_anchored_stroke_proof import (
     rival_vertex_safety,
     stroke_endpoint_fidelity,
 )
+from truelinev2.render.crop import REDLINE_STROKE_RGB
 
 OUT_DIR = _REPO_ROOT / "data" / "outputs" / "log51_symbol_anchored_stroke"
+# Stroke-color law: drawn redline strokes are ALWAYS red (canonical pin).
+STROKE_RGB = REDLINE_STROKE_RGB
 SHEET = 8
 EXPECT_START_XY = (577.6, 354.2)   # b.6 conduit winner (AP-154 HH)
 EXPECT_END_XY = (149.9, 343.3)     # b.4-bound end pot
@@ -102,7 +105,7 @@ def _render_png(plan, offset, stroke, start_xy, end_xy) -> str | None:
     def px(p):
         return ((p[0] - cx0) * z, (p[1] - cy0) * z)
 
-    red, grey, white = (220, 25, 25), (110, 110, 110), (255, 255, 255)
+    red, grey, white = STROKE_RGB, (110, 110, 110), (255, 255, 255)
     green, orange = (20, 140, 60), (235, 130, 20)
     for r in (RIVAL_START_POT, RIVAL_234_POT):  # rival pots: greyed
         x, y = px(r)

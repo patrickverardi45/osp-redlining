@@ -85,6 +85,11 @@ from truelinev2.extract.conduit_topology import (  # noqa: E402
 from truelinev2.extract.structure_position import (  # noqa: E402
     BRENHAM_CONDUIT_LAYERS,
 )
+from truelinev2.render.crop import REDLINE_STROKE_RGB  # noqa: E402
+
+# Stroke-color law (2026-06-11): the bore's drawn conduit-path overlay is
+# ALWAYS red, never the source layer's color -- pinned to the canonical.
+CHAIN_STROKE_RGB = REDLINE_STROKE_RGB
 
 
 def _render_png(plan, offset, segs, end_bb, hh_bb, pot_bb, winner_xy) -> str | None:
@@ -101,10 +106,11 @@ def _render_png(plan, offset, segs, end_bb, hh_bb, pot_bb, winner_xy) -> str | N
     def px(p):
         return ((p[0] - cx0) * z, (p[1] - cy0) * z)
 
-    grey, green, orange, purple = (110, 110, 110), (20, 140, 60), (235, 130, 20), (140, 60, 160)
-    for d in segs:  # the drawn conduit chain, highlighted
+    grey, green, orange = (110, 110, 110), (20, 140, 60), (235, 130, 20)
+    for d in segs:  # the bore's conduit-path overlay: ALWAYS red
         (x0, y0), (x1, y1) = px((d["x0"], d["y0"])), px((d["x1"], d["y1"]))
-        draw.rectangle([x0 - 3, y0 - 3, x1 + 3, y1 + 3], outline=purple, width=2)
+        draw.rectangle([x0 - 3, y0 - 3, x1 + 3, y1 + 3],
+                       outline=CHAIN_STROKE_RGB, width=3)
     for bb, color in ((end_bb, green), (hh_bb, orange)):
         (x0, y0), (x1, y1) = px((bb[0], bb[1])), px((bb[2], bb[3]))
         draw.rectangle([x0 - 4, y0 - 4, x1 + 4, y1 + 4], outline=color, width=3)
@@ -114,11 +120,11 @@ def _render_png(plan, offset, segs, end_bb, hh_bb, pot_bb, winner_xy) -> str | N
     wx, wy = px(winner_xy)
     draw.ellipse([wx - 14, wy - 14, wx + 14, wy + 14], outline=(255, 255, 255), width=7)
     draw.ellipse([wx - 14, wy - 14, wx + 14, wy + 14], outline=orange, width=4)
-    cap = ("log51 s8 ORIGIN-CONDUIT TOPOLOGY -- NOT A PLACEMENT: purple = the "
-           "bore's own drawn VACANT-HDPE conduit chain; green = b.4-bound end "
-           "pot (chain closes inside it); orange ring = chain terminates INSIDE "
-           "the AP-154 PORT HH footprint (origin bound by drawn containment); "
-           "grey X = rival pot, ZERO conduit endpoints inside it")
+    cap = ("log51 s8 ORIGIN-CONDUIT TOPOLOGY -- NOT A PLACEMENT: RED = the "
+           "bore's conduit-path overlay (TrueLine stroke color law); green = "
+           "b.4-bound end pot (chain closes inside it); orange ring = chain "
+           "terminates INSIDE the AP-154 PORT HH footprint (origin bound by "
+           "drawn containment); grey X = rival pot, ZERO endpoints inside it")
     draw.rectangle([0, 0, img.width, 30], fill=(255, 255, 255))
     draw.text((8, 8), cap[:230], fill=(20, 20, 20))
     os.makedirs(OUT_DIR, exist_ok=True)
