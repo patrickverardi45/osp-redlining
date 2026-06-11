@@ -98,6 +98,15 @@
   var CONF = { AUTO_EXACT_MATCH: "auto exact match",
                REVIEW_CAVEATED: "review (caveated)",
                REVIEW_OPTIN_SOLVER: "review (opt-in solver)" };
+  // M8.15 design-stroke card bridge (additive section; separate contract).
+  var DESIGN_KEY = "__design_stroke_cards__";
+  var DESIGN_KINDS = [
+    ["DESIGN_STROKE_REVIEW", "var(--placed)",
+     "A graded design-path redline stroke. Geometry is carried VERBATIM from the lane; the image is drawn by the canonical red renderer. Human action: approve / reject / edit. REVIEW-only — never AUTO."],
+    ["DESIGN_PICK_CARD", "var(--pick)",
+     "An end-anchored SUGGESTION. The start identity is not uniquely bound, so NO stroke geometry exists — a suggestion never masquerades as a placement. Human picks, rejects, or draws."]
+  ];
+  var GRADE = { PASS_ACCEPTED: "PASS — accepted (banked grade)", UNGRADED: "ungraded (no banked grade yet)" };
 
   function el(tag, cls, text) {
     var e = document.createElement(tag);
@@ -191,16 +200,26 @@
     return c;
   }
 
-  function renderMode(modeKey) {
-    var main = document.getElementById("main");
-    main.textContent = "";
+  function buildTabs(activeKey) {
     var tabs = el("div", "tabs");
     Object.keys(DATA.bundles).forEach(function (k) {
-      var b = el("button", k === modeKey ? "on" : "", k);
+      var b = el("button", k === activeKey ? "on" : "", k);
       b.onclick = function () { renderMode(k); };
       tabs.appendChild(b);
     });
-    main.appendChild(tabs);
+    if (DATA.design_cards) {
+      var d = el("button", activeKey === DESIGN_KEY ? "on" : "",
+                 "design-stroke cards (M8.15)");
+      d.onclick = function () { renderDesign(); };
+      tabs.appendChild(d);
+    }
+    return tabs;
+  }
+
+  function renderMode(modeKey) {
+    var main = document.getElementById("main");
+    main.textContent = "";
+    main.appendChild(buildTabs(modeKey));
 
     var bundle = DATA.bundles[modeKey];
     var mb = el("div", "modebox");
@@ -244,6 +263,132 @@
       var grid = el("div", "cards");
       items.sort(function (a, b) { return a.bore_id.localeCompare(b.bore_id, undefined, {numeric: true}); })
            .forEach(function (p) { grid.appendChild(card(p, color)); });
+      sec.appendChild(grid);
+      main.appendChild(sec);
+    });
+  }
+
+  function lazyImages(detailsEl, srcs, altPrefix) {
+    // Genuinely on-demand: image src is assigned only the first time the user
+    // opens the <details> — nothing is fetched until the card is expanded.
+    var loaded = false;
+    detailsEl.addEventListener("toggle", function () {
+      if (!detailsEl.open || loaded) return;
+      loaded = true;
+      srcs.forEach(function (src, i) {
+        var img = el("img");
+        img.src = src; img.loading = "lazy"; img.alt = altPrefix + " " + (i + 1);
+        detailsEl.appendChild(img);
+      });
+    });
+  }
+
+  function designCard(c, color) {
+    var card = el("div", "card");
+    card.style.borderLeftColor = color;
+    var h = el("h3", null, c.bore_id);
+    var bd = el("span", "badge",
+      c.kind === "DESIGN_STROKE_REVIEW" ? "stroke · review" : "suggestion");
+    bd.style.background = color;
+    h.appendChild(bd);
+    card.appendChild(h);
+    row(card, "card kind", c.kind);
+    row(card, "lane status", c.lane_status);
+    row(card, "mode", c.mode);
+
+    if (c.kind === "DESIGN_STROKE_REVIEW") {
+      row(card, "design grade", GRADE[c.design_grade] || c.design_grade);
+      (c.segments || []).forEach(function (s, i) {
+        row(card, "segment " + (i + 1),
+          "sheet " + s.sheet + " · " + s.start_ft + " → " + s.end_ft + " ft · " +
+          ((s.stroke_points || []).length) + " vertices");
+      });
+      row(card, "artifact refs", c.artifact_refs);
+      var dp = (c.evidence_chain || []).filter(function (e) {
+        return e.component === "design_path" && e.result === "TRACED"; })[0];
+      if (dp) row(card, "design path", dp.detail);
+      var vis = (DATA.design_cards.visuals || {})[c.bore_id];
+      if (vis && vis.stroke_pngs && vis.stroke_pngs.length) {
+        var det = el("details");
+        det.appendChild(el("summary", null,
+          "show redline stroke (" + vis.stroke_pngs.length +
+          ") — loads on demand"));
+        lazyImages(det, vis.stroke_pngs, "redline stroke " + c.bore_id);
+        card.appendChild(det);
+      }
+    } else {
+      var box = el("div", "cand");
+      box.appendChild(el("div", "sugg", c.suggestion_label));
+      row(box, "candidate", c.pick_candidate);
+      row(box, "candidate (x,y)", c.pick_candidate_xy
+        ? c.pick_candidate_xy.join(", ") : null);
+      row(box, "end anchor (x,y)", c.end_anchor_xy
+        ? c.end_anchor_xy.join(", ") : null);
+      row(box, "named missing relationship", c.named_missing);
+      card.appendChild(box);
+    }
+
+    if (c.evidence_chain && c.evidence_chain.length) {
+      var ev = el("details");
+      ev.appendChild(el("summary", null,
+        "evidence chain (" + c.evidence_chain.length + ")"));
+      c.evidence_chain.forEach(function (e) {
+        ev.appendChild(el("div", "mono",
+          e.component + " / " + e.result + "\n" + e.detail));
+      });
+      card.appendChild(ev);
+    }
+    return card;
+  }
+
+  function renderDesign() {
+    var main = document.getElementById("main");
+    main.textContent = "";
+    main.appendChild(buildTabs(DESIGN_KEY));
+    var dc = DATA.design_cards, pk = dc.packet || {}, dmeta = dc.meta || {};
+
+    var mb = el("div", "modebox");
+    mb.appendChild(el("b", null, "M8.15 design-stroke reviewer cards"));
+    mb.appendChild(el("div"));
+    var kc = pk.kind_counts || {};
+    Object.keys(kc).forEach(function (k) {
+      var s = el("span", "kv");
+      s.appendChild(el("b", null, k + ": "));
+      s.appendChild(document.createTextNode(kc[k]));
+      mb.appendChild(s);
+    });
+    mb.appendChild(el("div"));
+    ["lane", "mode"].forEach(function (k) {
+      if (pk[k] === undefined) return;
+      var s = el("span", "kv");
+      s.appendChild(el("b", null, k + ": "));
+      s.appendChild(document.createTextNode(pk[k]));
+      mb.appendChild(s);
+    });
+    mb.appendChild(el("div", "row", "schema: " +
+      (pk.packet_schema_version || dc.card_schema_version || "?")));
+    if (dmeta.grades_source) mb.appendChild(el("div", "row",
+      "grades: " + dmeta.grades_source));
+    if (dmeta.honesty) mb.appendChild(el("div", "row", dmeta.honesty));
+    main.appendChild(mb);
+
+    var byKind = {};
+    (pk.cards || []).forEach(function (c) {
+      (byKind[c.kind] = byKind[c.kind] || []).push(c);
+    });
+    DESIGN_KINDS.forEach(function (spec) {
+      var kind = spec[0], color = spec[1], desc = spec[2];
+      var items = byKind[kind] || [];
+      if (!items.length) return;
+      var sec = el("section", "lane");
+      var h2 = el("h2", null, kind.replace(/_/g, " "));
+      h2.appendChild(el("span", "count", items.length));
+      sec.appendChild(h2);
+      sec.appendChild(el("p", "desc", desc));
+      var grid = el("div", "cards");
+      items.sort(function (a, b) {
+        return a.bore_id.localeCompare(b.bore_id, undefined, { numeric: true }); })
+        .forEach(function (c) { grid.appendChild(designCard(c, color)); });
       sec.appendChild(grid);
       main.appendChild(sec);
     });

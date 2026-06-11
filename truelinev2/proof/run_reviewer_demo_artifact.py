@@ -17,6 +17,16 @@ Honesty contract:
   * opt-in solvers compose by REVIEWER SERVICE MODE only -- no env flag is
     read or set, nothing activates globally.
 
+M8.15 additive section (the design-stroke reviewer-card bridge made visible):
+  the sidecar grows ONE additive ``design_cards`` key carrying the 9 M8.15
+  cards VERBATIM (the validated ``DesignStrokeCardPacket`` dump -- 4
+  DESIGN_STROKE_REVIEW + 5 DESIGN_PICK_CARD) plus a per-bore stroke-image
+  layer. The pinned M8.10/M8.11 ``bundles`` are byte-untouched. Each stroke
+  image is rendered by the CANONICAL red-stroke renderer from the lane's own
+  traced geometry (verbatim); pick cards carry NO geometry and NO stroke
+  artifact (a suggestion never masquerades as a placement). The viewer shows
+  card METADATA first and loads each stroke image only on demand (per card).
+
 Embedded gates (any failure -> nonzero exit, no force-green):
   G1 corpus integrity (58) and the full M8.11 bundle gates: default_baseline
      24 placed; fullest_safe_review 30 placed with lanes 30/16/6/4/2/0;
@@ -25,10 +35,17 @@ Embedded gates (any failure -> nonzero exit, no force-green):
      bundle's PLACED_REVIEW set
   G3 every PLACED_REVIEW bore yields >= 1 evidence crop, else FAIL naming
      each bore whose callouts carry no renderable bbox
-  G4 every visual reference in demo_data.js resolves to a real file
+  G4 every visual reference in demo_data.js resolves to a real file (now
+     including each design-stroke card's rendered stroke image)
   G5 no numeric confidence anywhere; every pick-card candidate keeps the
      frozen suggestion label; sidecar bundles byte-equal the canonical dumps
   G6 the committed viewer is copied next to demo_data.js
+  G7 the design-stroke card packet reproduces {DESIGN_STROKE_REVIEW: 4,
+     DESIGN_PICK_CARD: 5}, 9 cards, zero refusals among the targeted bores
+  G8 design geometry integrity: every stroke card has >= 1 segment, a closed
+     grade class, and exactly one rendered stroke image per segment; every
+     pick card has NO geometry, NO stroke artifact, and the frozen label
+  G9 the sidecar carries the canonical design-card packet dump byte-for-byte
 
 Run (repo root): $env:PYTHONPATH="."; .\venv\Scripts\python.exe -m truelinev2.proof.run_reviewer_demo_artifact
 Then open:        data\outputs\reviewer_demo\reviewer_viewer.html
@@ -41,19 +58,26 @@ import os
 import re
 import shutil
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 from truelinev2.config import _REPO_ROOT
 from truelinev2.extract.registry import select_dialect
 from truelinev2.extract.station_axis import parse_tick
+from truelinev2.extract.structure_position import BRENHAM_LANE_DIALECT
 from truelinev2.ingest.normalize import load_borelog
 from truelinev2.ingest.pdf import PlanPdf
 from truelinev2.match.collision_gate import collect_all_sheet_equations
 from truelinev2.match.engine import run_match
 from truelinev2.match.reverse_anchor import ReverseAnchorContext
 from truelinev2.match.station_axis_interval import StationAxisContext
+from truelinev2.match.symbol_conduit_lane import LANE_NAME, resolve_bore
 from truelinev2.match.transition_classifier import conflict_sheet_pairs
 from truelinev2.proof.run_brenham_corpus import EXPECTED_COUNT, PDF, enumerate_corpus
+from truelinev2.proof.run_design_path_adherence_proof import PATRICK_DESIGN_GRADES
+from truelinev2.proof.run_design_stroke_cards_proof import (
+    ELIGIBLE as DESIGN_ELIGIBLE,
+    PICKS as DESIGN_PICKS,
+)
 from truelinev2.proof.run_reviewer_service_contract import (
     EXPECTED_DEFAULT,
     EXPECTED_FULLEST_LANES,
@@ -62,7 +86,17 @@ from truelinev2.proof.run_reviewer_service_contract import (
     placed_ids,
     resolve_corpus,
 )
-from truelinev2.render.crop import render_evidence_crop, render_sheet_context
+from truelinev2.render.crop import (
+    render_evidence_crop,
+    render_redline_stroke,
+    render_sheet_context,
+)
+from truelinev2.review.design_stroke_cards import (
+    GRADE_CLASSES,
+    KIND_PICK,
+    KIND_STROKE,
+    build_card_packet,
+)
 from truelinev2.review.reviewer_payloads import SUGGESTION_LABEL, ReviewerLane
 from truelinev2.review.reviewer_service import ReviewerBundleService, ReviewRunMode
 from truelinev2.service import _build_plan_frame_graph
@@ -76,15 +110,35 @@ _FORBIDDEN_KEY = re.compile(r"(?i)score|probability|percent|likelihood")
 # --- pure helpers (offline-tested) ---------------------------------------------------
 
 def build_demo_sidecar(bundles: Dict[str, dict], visuals: Dict[str, dict],
-                       sheet_renders: Dict[str, str], meta: dict) -> dict:
+                       sheet_renders: Dict[str, str], meta: dict,
+                       design_cards: Optional[dict] = None) -> dict:
     """Sidecar layout: canonical bundle dumps VERBATIM under ``bundles``;
-    visuals are a separate harness-level layer keyed by bore_id."""
-    return {
+    visuals are a separate harness-level layer keyed by bore_id. The M8.15
+    ``design_cards`` section is ADDITIVE -- present only when supplied, never
+    touching the pinned ``bundles`` pass-through."""
+    sidecar = {
         "demo_schema_version": "truelinev2-reviewer-demo-1",
         "meta": copy.deepcopy(meta),
         "bundles": copy.deepcopy(bundles),
         "visuals": copy.deepcopy(visuals),
         "sheet_renders": copy.deepcopy(sheet_renders),
+    }
+    if design_cards is not None:
+        sidecar["design_cards"] = copy.deepcopy(design_cards)
+    return sidecar
+
+
+def build_design_card_section(packet_dump: dict, stroke_visuals: Dict[str, dict],
+                              meta: dict) -> dict:
+    """M8.15 design-card section: the validated card packet dump VERBATIM under
+    ``packet`` (the sidecar never mutates it) + a separate per-bore stroke-image
+    layer (``visuals``). Stroke images exist only for DESIGN_STROKE_REVIEW
+    cards; suggestion cards carry none."""
+    return {
+        "card_schema_version": packet_dump.get("packet_schema_version"),
+        "meta": copy.deepcopy(meta),
+        "packet": copy.deepcopy(packet_dump),
+        "visuals": copy.deepcopy(stroke_visuals),
     }
 
 
@@ -129,15 +183,59 @@ def assert_placed_have_crops(bundle: dict, visuals: Dict[str, dict]) -> None:
 
 
 def assert_visual_refs_resolve(sidecar: dict, base_dir) -> None:
-    """Every relative visual reference must resolve to a real file."""
+    """Every relative visual reference must resolve to a real file -- including
+    the M8.15 design-stroke card stroke images when the section is present."""
     base = Path(base_dir)
     refs: List[str] = list(sidecar.get("sheet_renders", {}).values())
     for v in sidecar.get("visuals", {}).values():
         refs.extend(v.get("evidence_crops", []))
         refs.extend(v.get("sheet_context", []))
+    for v in (sidecar.get("design_cards", {}) or {}).get("visuals", {}).values():
+        refs.extend(v.get("stroke_pngs", []))
     broken = [r for r in refs if not (base / r).is_file()]
     if broken:
         raise ValueError(f"visual references do not resolve: {broken}")
+
+
+def assert_design_cards_verbatim(sidecar: dict, packet_dump: dict) -> None:
+    """The sidecar carries the canonical M8.15 card packet dump byte-for-byte
+    (the demo never edits the bridge contract -- same law as the bundles)."""
+    got = (sidecar.get("design_cards") or {}).get("packet")
+    if got != packet_dump:
+        raise ValueError("sidecar mutated the canonical design-card packet dump")
+
+
+def assert_design_geometry_integrity(packet_dump: dict,
+                                     stroke_visuals: Dict[str, dict]) -> None:
+    """Demo-layer masquerade guard over the design cards: every stroke card has
+    >= 1 segment, a closed grade class, and exactly one rendered stroke image
+    per segment; every pick card carries NO geometry, NO stroke artifact, and
+    the frozen suggestion label. Fails naming the offending bore."""
+    for c in packet_dump.get("cards", []):
+        bid, kind = c.get("bore_id"), c.get("kind")
+        if kind == KIND_STROKE:
+            segs = c.get("segments", [])
+            if not segs:
+                raise ValueError(f"{bid}: stroke card with no segments")
+            if c.get("design_grade") not in GRADE_CLASSES:
+                raise ValueError(f"{bid}: stroke grade {c.get('design_grade')!r} "
+                                 f"is not a closed class")
+            pngs = stroke_visuals.get(bid, {}).get("stroke_pngs", [])
+            if len(pngs) != len(segs):
+                raise ValueError(f"{bid}: {len(pngs)} stroke image(s) for "
+                                 f"{len(segs)} segment(s) -- one rendered stroke "
+                                 f"per segment is required")
+        elif kind == KIND_PICK:
+            if c.get("segments") or c.get("artifact_refs"):
+                raise ValueError(f"{bid}: a suggestion card carries stroke "
+                                 f"geometry/artifacts -- it must not masquerade "
+                                 f"as a placement")
+            if c.get("suggestion_label") != SUGGESTION_LABEL:
+                raise ValueError(f"{bid}: suggestion label drift")
+            if bid in stroke_visuals:
+                raise ValueError(f"{bid}: a pick card must carry no stroke image")
+        else:
+            raise ValueError(f"{bid}: unknown design card kind {kind!r}")
 
 
 # --- generation ----------------------------------------------------------------------
@@ -185,6 +283,38 @@ def _fullest_visual_pass(corpus, plan, dialect, offset, crops_dir: Path
     return visuals
 
 
+def _design_stroke_visual_pass(corpus_map: Dict[str, Path], plan, dialect,
+                               offset: int, strokes_dir: Path):
+    """M8.15 design-card pass: re-run the ``symbol_conduit_matchline`` lane for
+    the 9 targeted bores, build the design-stroke card packet (geometry +
+    evidence VERBATIM, grades from Patrick's banked record), and render each
+    STROKE card's segments with the CANONICAL red-stroke renderer from the
+    lane's own traced geometry. Pick cards carry no geometry -> no stroke image
+    (masquerade-safe). Returns (packet_dump, stroke_visuals, refusals)."""
+    graph = _build_plan_frame_graph(plan, offset)
+    outcomes = []
+    for stem in DESIGN_ELIGIBLE + DESIGN_PICKS:
+        bore = load_borelog(str(corpus_map[stem]))
+        outcomes.append(resolve_bore(plan, bore, offset, BRENHAM_LANE_DIALECT,
+                                     frame_graph=graph))
+    packet, refusals = build_card_packet(outcomes, PATRICK_DESIGN_GRADES)
+    out_by_id = {o.bore_id: o for o in outcomes}
+    stroke_visuals: Dict[str, dict] = {}
+    for c in packet.cards:
+        if c.kind != KIND_STROKE:
+            continue                       # suggestions never render a stroke
+        pngs: List[str] = []
+        for seg in out_by_id[c.bore_id].segments:   # verbatim lane geometry
+            png = render_redline_stroke(
+                plan, f"{c.bore_id}_lane", seg.sheet, offset, seg.stroke_points,
+                status="REVIEW", reason=f"{LANE_NAME} (M8.15 design-stroke card)",
+                out_dir=str(strokes_dir))
+            if png:
+                pngs.append(f"visuals/strokes/{Path(png).name}")
+        stroke_visuals[c.bore_id] = {"stroke_pngs": pngs}
+    return packet.model_dump(mode="json"), stroke_visuals, refusals
+
+
 def main() -> int:
     corpus_dir, how = resolve_corpus()
     print(f"[m8.13a] corpus dir : {corpus_dir}  ({how})")
@@ -201,8 +331,11 @@ def main() -> int:
 
     crops_dir = DEMO_DIR / "visuals" / "crops"
     sheets_dir = DEMO_DIR / "visuals" / "sheets"
-    for d in (crops_dir, sheets_dir):
+    strokes_dir = DEMO_DIR / "visuals" / "strokes"   # M8.15 design-stroke images
+    for d in (crops_dir, sheets_dir, strokes_dir):
         d.mkdir(parents=True, exist_ok=True)
+    for stale in strokes_dir.glob("*.png"):
+        stale.unlink()   # only THIS run's design strokes may exist (structural)
 
     # 1. canonical bundles -- the M8.11 seam, modes only, no env flags
     svc = ReviewerBundleService(corpus_dir=corpus_dir, plan_pdf_path=PDF,
@@ -250,6 +383,21 @@ def main() -> int:
             v_sheets = sorted({b["sheet"] for b in v["callout_bboxes"]})
             v["sheet_context"] = [sheet_renders[str(s)] for s in v_sheets
                                   if str(s) in sheet_renders]
+
+        # 3b. M8.15 design-stroke cards (the unwired bridge made visible) --
+        #     9 cards VERBATIM + a stroke image per stroke-card segment, drawn
+        #     by the canonical renderer from the lane's own traced geometry.
+        corpus_map = {p.stem: p for p in corpus}
+        design_packet, design_visuals, design_refusals = (
+            _design_stroke_visual_pass(corpus_map, plan, dialect, offset,
+                                       strokes_dir))
+        g7 = (design_packet["kind_counts"] == {KIND_STROKE: 4, KIND_PICK: 5}
+              and len(design_packet["cards"]) == 9 and not design_refusals)
+        print(f"[m8.13a] {'PASS' if g7 else 'FAIL'}  G7 design-stroke cards: "
+              f"{design_packet['kind_counts']}, "
+              f"{len(design_packet['cards'])} cards, refusals={design_refusals}")
+        if not g7:
+            return 4
     finally:
         plan.close()
 
@@ -263,7 +411,23 @@ def main() -> int:
                           "the engine anchored on) -- NOT drawn bore-path "
                           "strokes; no polyline geometry is invented"),
     }
-    sidecar = build_demo_sidecar(bundles, visuals, sheet_renders, meta)
+    design_meta = {
+        "milestone": ("truelinev2 M8.15 -- design-stroke reviewer cards "
+                      "(9; the unwired lane->card bridge made visible)"),
+        "schema": design_packet["packet_schema_version"],
+        "grades_source": "PATRICK_DESIGN_GRADES (banked 2026-06-11)",
+        "honesty": ("cards carry the lane's stroke GEOMETRY and evidence chain "
+                    "VERBATIM; each stroke image is drawn by the canonical "
+                    "red-stroke renderer from that same traced geometry; "
+                    "suggestion (pick) cards carry NO geometry and keep the "
+                    "frozen SUGGESTION_NOT_PLACEMENT label; grades come only "
+                    "from Patrick's banked design-path PASS record; REVIEW-only; "
+                    "the M8.10/M8.11 reviewer bundles are untouched"),
+    }
+    design_section = build_design_card_section(design_packet, design_visuals,
+                                               design_meta)
+    sidecar = build_demo_sidecar(bundles, visuals, sheet_renders, meta,
+                                 design_cards=design_section)
     g5_msgs = []
     try:
         assert_no_numeric_confidence(sidecar)
@@ -286,6 +450,20 @@ def main() -> int:
     if g5_msgs:
         return 4
 
+    g89_msgs = []
+    try:
+        assert_design_geometry_integrity(design_packet, design_visuals)
+    except ValueError as e:
+        g89_msgs.append(str(e))
+    try:
+        assert_design_cards_verbatim(sidecar, design_packet)
+    except ValueError as e:
+        g89_msgs.append(str(e))
+    print(f"[m8.13a] {'PASS' if not g89_msgs else 'FAIL'}  G8+G9 design "
+          f"geometry integrity + packet verbatim: {g89_msgs or 'ok'}")
+    if g89_msgs:
+        return 4
+
     (DEMO_DIR / "demo_data.js").write_text(demo_data_js(sidecar), encoding="utf-8")
     shutil.copyfile(VIEWER_SRC, DEMO_DIR / "reviewer_viewer.html")
     try:
@@ -294,15 +472,18 @@ def main() -> int:
         print(f"[m8.13a] FAIL  G4 visual refs: {e}")
         return 4
     g6 = (DEMO_DIR / "reviewer_viewer.html").is_file()
+    design_pngs = sum(len(v["stroke_pngs"]) for v in design_visuals.values())
     print(f"[m8.13a] PASS  G4 visual refs resolve "
           f"({sum(len(v['evidence_crops']) for v in visuals.values())} crops, "
-          f"{len(sheet_renders)} sheet renders)")
+          f"{len(sheet_renders)} sheet renders, {len(design_packet['cards'])} "
+          f"design cards / {design_pngs} stroke images)")
     print(f"[m8.13a] {'PASS' if g6 else 'FAIL'}  G6 viewer copied")
     if not g6:
         return 4
 
     print(f"[m8.13a] demo ready -> {DEMO_DIR / 'reviewer_viewer.html'}")
     print("[m8.13a] open it directly in a browser (file://, no server needed)")
+    print("[m8.13a] the M8.15 design-stroke cards are the rightmost tab")
     return 0
 
 
