@@ -141,6 +141,54 @@ def test_unknown_structure_class_abstains():
     assert "no layer/color entry" in v.named_missing_relationship
 
 
+# --- context disambiguation (M8.14.b.4) -------------------------------------------------
+
+def _ctx_scene():
+    """Duplicated identity text: one hit inside a note box that ALSO holds the
+    FLOWER/POT context words; the other hit is a bare run-callout token."""
+    words = [_word("2+99", 125.0, 108.0), _word("FLOWER", 112.0, 112.0),
+             _word("POT", 138.0, 112.0), _word("2+99", 400.0, 50.0)]
+    return words, [_box(), _leader()] + _symbol()
+
+
+def test_context_disambiguates_duplicated_identity_text():
+    words, drawings = _ctx_scene()
+    v = _resolve(words, drawings, text="2+99")
+    assert v.result == LABEL_WORD_NOT_UNIQUE  # b.2 contract: no context -> abstain
+    v2 = resolve_structure_position(label_text="2+99", structure_class="installer_hh",
+                                    words=words, drawings=drawings, layer_table=TABLE,
+                                    context_texts=("FLOWER", "POT"))
+    assert v2.result == POSITION_BOUND
+    assert v2.word_xy == (125.0, 108.0)  # the note token, never the callout token
+
+
+def test_context_unsatisfied_abstains():
+    words, drawings = _ctx_scene()
+    v = resolve_structure_position(label_text="2+99", structure_class="installer_hh",
+                                   words=words, drawings=drawings, layer_table=TABLE,
+                                   context_texts=("FLOWER", "POT", "MISSING"))
+    assert v.result == LABEL_BOX_NOT_UNIQUE
+    assert "context words" in v.named_missing_relationship
+
+
+def test_two_context_boxes_abstain():
+    words, drawings = _ctx_scene()
+    words += [_word("2+99", 225.0, 108.0), _word("FLOWER", 212.0, 112.0),
+              _word("POT", 238.0, 112.0)]
+    drawings += [_box(x0=200.0, x1=250.0)]
+    v = resolve_structure_position(label_text="2+99", structure_class="installer_hh",
+                                   words=words, drawings=drawings, layer_table=TABLE,
+                                   context_texts=("FLOWER", "POT"))
+    assert v.result == LABEL_BOX_NOT_UNIQUE
+
+
+def test_brenham_table_carries_flower_pot_class():
+    from truelinev2.extract.structure_position import BRENHAM_STRUCTURE_LAYERS
+    layer, symbol, fill = BRENHAM_STRUCTURE_LAYERS["flower_pot"]
+    assert layer == "FLOWER POT - TEXT" and symbol == "FLOWER POT"
+    assert fill == (0.0, 0.0, 0.0)
+
+
 # --- helpers ----------------------------------------------------------------------------
 
 def test_cluster_symbols_groups_tight_separates_far():

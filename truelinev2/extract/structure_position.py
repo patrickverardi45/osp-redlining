@@ -46,9 +46,13 @@ FILL_TOL = 0.06         # per-channel RGB tolerance for the class color check
 
 # Brenham/NEXTLINK dialect table: structure class -> (label TEXT layer,
 # symbol layer, class fill RGB). Dialect facts, allowed in extract/ only.
+# flower_pot (M8.14.b.4): own symbol layer; the symbol block's class fill is
+# black (probe-verified uniform across all sheet-8 clusters) -- the LAYER is
+# the primary class discriminator, the fill check stays belt-and-braces.
 BRENHAM_STRUCTURE_LAYERS: Dict[str, Tuple[str, str, Tuple[float, float, float]]] = {
     "installer_hh": ("INSTALLER HH - TEXT", "NEXTLINK", (1.0, 0.0, 0.0)),
     "terminal_port_hh": ("PORT HH - TEXT", "NEXTLINK", (0.15294, 0.46275, 0.73333)),
+    "flower_pot": ("FLOWER POT - TEXT", "FLOWER POT", (0.0, 0.0, 0.0)),
 }
 
 
@@ -169,11 +173,18 @@ def resolve_structure_position(*, label_text: str, structure_class: str,
                                words: Sequence[dict],
                                drawings: Sequence[dict],
                                layer_table: Dict[str, Tuple[str, str, Tuple[float, float, float]]],
+                               context_texts: Tuple[str, ...] = (),
                                ) -> StructurePositionVerdict:
     """Full chain: word -> label box -> leader -> symbol cluster -> class check.
     ``words`` is ``PlanPdf.words`` output; ``drawings`` is ``PlanPdf.line_items``
     output. The class's layer/color expectations come from ``layer_table`` (a
-    dialect fact, injected -- this solver holds no convention defaults)."""
+    dialect fact, injected -- this solver holds no convention defaults).
+
+    ``context_texts`` (M8.14.b.4, additive): when the identity text is not
+    sheet-unique (e.g. a station like ``2+99`` printed both in a structure note
+    and in a run callout), the label box must ALSO contain one word for EACH
+    context text (e.g. ``("FLOWER", "POT")``). Without context, duplicated
+    identity text still abstains -- the b.2 contract is unchanged."""
     base = dict(label_text=label_text, structure_class=structure_class)
     if structure_class not in layer_table:
         return StructurePositionVerdict(
@@ -184,26 +195,37 @@ def resolve_structure_position(*, label_text: str, structure_class: str,
     text_layer, symbol_layer, expected_fill = layer_table[structure_class]
 
     hits = [w for w in words if w["text"] == label_text]
-    if len(hits) != 1:
+    if not hits or (len(hits) > 1 and not context_texts):
         return StructurePositionVerdict(
             **base, result=LABEL_WORD_NOT_UNIQUE,
             named_missing_relationship=(
                 f"{len(hits)} positioned words carry the identity text "
                 f"{label_text!r} on this sheet -- exactly one is required to "
-                f"locate the label; guessing is forbidden"),
+                f"locate the label (no disambiguating context given); guessing "
+                f"is forbidden"),
             detail={"word_hits": len(hits)})
-    word_xy = (float(hits[0]["xc"]), float(hits[0]["yc"]))
 
-    boxes = find_label_box(drawings, text_layer, word_xy)
-    if len(boxes) != 1:
+    def _contains(b: dict, w: dict) -> bool:
+        return b["x0"] <= w["xc"] <= b["x1"] and b["y0"] <= w["yc"] <= b["y1"]
+
+    pairs = []  # (box drawing, identity word hit)
+    for h in hits:
+        for b in find_label_box(drawings, text_layer, (float(h["xc"]), float(h["yc"]))):
+            if all(any(w["text"] == c and _contains(b, w) for w in words)
+                   for c in context_texts):
+                pairs.append((b, h))
+    if len(pairs) != 1:
         return StructurePositionVerdict(
-            **base, result=LABEL_BOX_NOT_UNIQUE, word_xy=word_xy,
+            **base, result=LABEL_BOX_NOT_UNIQUE,
             named_missing_relationship=(
-                f"{len(boxes)} {text_layer!r} label boxes contain the identity "
-                f"word -- exactly one is required; the label-box geometry does "
-                f"not isolate this identity"),
-            detail={"box_hits": len(boxes)})
-    box = (boxes[0]["x0"], boxes[0]["y0"], boxes[0]["x1"], boxes[0]["y1"])
+                f"{len(pairs)} {text_layer!r} label boxes contain the identity "
+                f"word{' plus the context words ' + repr(list(context_texts)) if context_texts else ''} "
+                f"-- exactly one is required; the label-box geometry does not "
+                f"isolate this identity"),
+            detail={"box_hits": len(pairs), "word_hits": len(hits)})
+    box_d, hit = pairs[0]
+    word_xy = (float(hit["xc"]), float(hit["yc"]))
+    box = (box_d["x0"], box_d["y0"], box_d["x1"], box_d["y1"])
 
     leaders = find_leaders(drawings, text_layer, box)
     if len(leaders) != 1:
