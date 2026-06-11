@@ -2,8 +2,8 @@
 
 **Saved:** 2026-06-11
 **Branch:** `feat/truelinev2`
-**Pushed engine HEAD:** `b86e68f2dd83f5d6e99414bc126de82f7ab68919`
-**Verified tests:** `468 passed`
+**Pushed engine HEAD:** `bb78140cf654ca91bd29f36781a4863a588f8f3f`
+**Verified tests:** `474 passed`
 
 ## Guardrails
 
@@ -33,27 +33,50 @@
 - This is the banked evidence-backed honest negative: every refusal is typed
   and names the missing relationship.
 
-## M8.16 Blocker Classes
+### M8.17 - segmented far-sheet callout chains
 
-- No matchline equation sheets.
-- No printed run callout ending at the bore end.
-- Full-span callout contradicts the drawn chain.
-- Segmented far-sheet callout chain for `log8` / `log32`.
-- Far-sheet mismatch for `log12`.
-- Rival far-sheet structures and interleaved ladders for `log42`.
+- Segmented far-sheet callout-chain assembly is pushed for `log8` and `log32`.
+- Neither bore converted to a stroke.
+- Both advanced from `CROSS_SHEET_CONTINUATION_REQUIRED` to
+  `STRUCTURE_IDENTITY_BINDING_REQUIRED`.
+- Their far-sheet chains are now proven:
+  - `log8`: `0+00 -> 1+10 -> 1+76`; `110 + 66 = 176`, plus the `214`-foot
+    end segment gives `390` feet total.
+  - `log32`: `0+00 -> 1+30 -> 1+77`; `130 + 47 = 177`, plus the `36`-foot
+    end segment gives `213` feet total.
+- The remaining blocker shared by `log8`, `log32`, and `log42` is
+  start-structure identity / per-ladder tick clustering.
+
+## Verification
+
+- Tests: `474 passed`.
+- M8.16/M8.17 continuation probe G1-G7: PASS.
+- All-58 sweep G1-G7: PASS; census `25/13/5/5/4/3/1/2 = 58`.
+- Design-path adherence: PASS.
+- M8.15 cards: PASS.
+- M8.10/M8.11: PASS.
+- b.9/b.10: PASS.
+- Demo artifact: PASS.
+
+## Remaining Blocker Classes
+
+1. Start-structure identity / per-ladder tick clustering:
+   `log8`, `log32`, `log42`.
+2. No printed matchline equation:
+   `log10`, `log14`, `log61`, `log62`, `log67`, `log68`, `log70`.
+   Owner decision required: geo/KMZ corroboration or reviewer pick-cards.
+3. Lower-yield printed-evidence gaps:
+   `log12`, `log46`, `log60`, `log64`, `log71`, `log72`.
 
 ## Recommended Next Lane After Reset
 
-1. Use Opus Standard/Max for far-sheet callout-chain assembly, likely starting
-   with `log8` / `log32`.
-2. Obtain an owner decision for no-equation bores:
-   - pursue geo/KMZ corroboration; or
-   - preserve them as reviewer pick-cards.
+1. Use Opus Standard for the per-ladder tick-clustering discriminator.
+2. Do not use Fable unless Opus reaches a geometry-law wall.
 
 ## Session Sizing
 
-Massive Fable lanes should begin with 100% token availability. Otherwise split
-the work into explicit recon / design / pilot / expand / verify phases.
+Fable 5 UltraCode jobs should be split or begin with a 100% token window.
+Opus lanes are generally okay, but their scope should still stay tight.
 
 ## Current Boundary
 

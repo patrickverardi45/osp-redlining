@@ -5,8 +5,8 @@
 
 ## Repo state
 - Branch: `feat/truelinev2`
-- Pushed engine HEAD: `b86e68f2dd83f5d6e99414bc126de82f7ab68919`
-- Latest verified test state: `468 passed`
+- Pushed engine HEAD: `bb78140cf654ca91bd29f36781a4863a588f8f3f`
+- Latest verified test state: `474 passed`
 - Tree at session save: tracked clean; existing untracked files were preserved.
 - Production `main` was not touched, merged, or deployed.
 
@@ -24,23 +24,43 @@
   `CROSS_SHEET_CONTINUATION_REQUIRED` bores.
 - Result: zero converted to strokes. This is an evidence-backed honest
   negative, not a failed or widened placement lane.
-- The proof names these blocker classes:
-  - no matchline equation sheets;
-  - no printed run callout ending at the bore end;
-  - a full-span callout contradicts the drawn chain;
-  - segmented far-sheet callout chains for `log8` / `log32`;
-  - far-sheet mismatch for `log12`;
-  - rival far-sheet structures plus interleaved ladders for `log42`.
+
+### M8.17 pushed
+- Segmented far-sheet callout-chain assembly is implemented for `log8` and
+  `log32`; neither converted to a stroke.
+- Both advanced from `CROSS_SHEET_CONTINUATION_REQUIRED` to
+  `STRUCTURE_IDENTITY_BINDING_REQUIRED`.
+- Proven far-sheet chains:
+  - `log8`: `0+00 -> 1+10 -> 1+76`; `110 + 66 = 176`, plus `214` feet on
+    the end segment = `390` feet total.
+  - `log32`: `0+00 -> 1+30 -> 1+77`; `130 + 47 = 177`, plus `36` feet on
+    the end segment = `213` feet total.
+- Remaining identity frontier: `log8`, `log32`, and `log42` need a
+  start-structure identity discriminator / per-ladder tick clustering.
+
+### Verification state
+- Tests: `474 passed`.
+- PASS: M8.16/M8.17 continuation probe G1-G7.
+- PASS: all-58 sweep G1-G7; census `25/13/5/5/4/3/1/2 = 58`.
+- PASS: design-path adherence, M8.15 cards, M8.10/M8.11, b.9/b.10, and
+  the demo artifact.
+
+### Remaining blocker classes
+1. Start-structure identity / per-ladder tick clustering:
+   `log8`, `log32`, `log42`.
+2. No printed matchline equation:
+   `log10`, `log14`, `log61`, `log62`, `log67`, `log68`, `log70`.
+   Owner decision needed: geo/KMZ corroboration or reviewer pick-cards.
+3. Lower-yield printed-evidence gaps:
+   `log12`, `log46`, `log60`, `log64`, `log71`, `log72`.
 
 ### Next recommended lane after reset
-- Use Opus Standard/Max for far-sheet callout-chain assembly, starting with
-  the `log8` / `log32` shape.
-- Owner decision is required for no-equation bores: pursue geo/KMZ
-  corroboration or preserve them as reviewer pick-cards.
+- Use Opus Standard for the per-ladder tick-clustering discriminator.
+- Do not use Fable unless Opus reaches a geometry-law wall.
 
 ### Session sizing rule
-- Massive Fable lanes should start with 100% token availability or be split
-  into recon / design / pilot / expand / verify phases.
+- Fable 5 UltraCode jobs should be split or start with a 100% token window.
+  Opus lanes are generally okay, but still keep scope tight.
 
 ## Legacy mission context (pre-v2; historical reference)
 Deterministic auto-placement of **ALL** redlines from source files. Manual placement is NOT the product.
