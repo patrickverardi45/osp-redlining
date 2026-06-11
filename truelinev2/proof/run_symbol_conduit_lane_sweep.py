@@ -62,7 +62,11 @@ from truelinev2.service import _build_plan_frame_graph
 
 OUT_DIR = _REPO_ROOT / "data" / "outputs" / "symbol_conduit_lane_sweep"
 S_SOURCE_ERR = "BORE_SOURCE_UNPARSEABLE"   # banked adapter gap, NOT a lane fault
-GRADED = {"log7", "log51", "log65"}        # b.3 / b.7 / b.10 visually graded PASS
+GRADED = {"log7", "log51", "log65"}        # b.3 / b.7 / b.10 graded under the
+                                           # OLD tick-chord geometry
+# Patrick 2026-06-11: the corrected DESIGN-PATH strokes graded PASS -- route
+# adherence formally ACCEPTED; their route geometry must not change.
+DESIGN_GRADED = {"log25", "log59"}
 
 # Banked census (M8.14.c.2 design-path adherence law applied; drift fails G2
 # loudly so any change is examined, never silently absorbed). log7 moved
@@ -115,17 +119,15 @@ def _markdown(census: Dict[str, int], rows: List[dict]) -> str:
         if census.get(k):
             lines.append(f"| {census[k]} | `{k}` |")
     elig = [r for r in rows if r["status"] == S_ELIGIBLE]
-    new = [r["bore_id"] for r in elig if r["bore_id"] not in GRADED]
-    graded = [r["bore_id"] for r in elig if r["bore_id"] in GRADED]
+    accepted = [r["bore_id"] for r in elig if r["bore_id"] in DESIGN_GRADED]
+    pending = [r["bore_id"] for r in elig if r["bore_id"] not in DESIGN_GRADED]
     picks = [r["bore_id"] for r in rows if r["status"] == S_PICK]
     lines += [
         "", "## Stroke-eligible (REVIEW-only; design-path adherence law)",
-        "ALL eligible strokes carry NEW design-path geometry -- every one "
-        "requires (re-)grading:",
-        f"- previously graded under the OLD chord geometry: "
-        f"{', '.join(sorted(graded)) or 'none'}",
-        f"- corrected after the graded-FAIL chords: "
-        f"{', '.join(sorted(new, key=lambda s: int(s[3:]))) or 'none'}",
+        f"- design-path geometry GRADED PASS (route adherence ACCEPTED "
+        f"2026-06-11): {', '.join(sorted(accepted, key=lambda s: int(s[3:]))) or 'none'}",
+        f"- design-path geometry awaiting re-grade (old chord grades do not "
+        f"transfer): {', '.join(sorted(pending, key=lambda s: int(s[3:]))) or 'none'}",
         "", "## Pick-card candidates (end-anchored, start refused)",
         f"- {', '.join(sorted(picks, key=lambda s: int(s[3:]))) or 'none'}",
         "", "## Common blockers",
@@ -143,9 +145,9 @@ def _markdown(census: Dict[str, int], rows: List[dict]) -> str:
         f"- `{S_SOURCE_ERR}` ({census.get(S_SOURCE_ERR, 0)}): banked log37/38 "
         f"adapter station-format gap (NOT a lane fault)",
         "", "## Recommended next gate",
-        "- Re-grade the corrected log25/log59 design-path strokes; then "
-        "reviewer-card payload integration (4 eligible + 5 pick-cards = 9 "
-        "actionable, all REVIEW-only).",
+        "- Re-grade log51/log65's design-path strokes (log25/log59 are "
+        "accepted); then reviewer-card payload integration (4 eligible + 5 "
+        "pick-cards = 9 actionable, all REVIEW-only).",
         "- Targeted resolver expansions, by yield: cross-sheet continuation "
         "(16) via the b.9/b.10 matchline graph; the log7-class strand "
         "discriminator (re-unlocks its design-path stroke).",
@@ -208,8 +210,10 @@ def main() -> int:
                 "named_missing": out.named_missing,
                 "evidence": _evidence_summary(out),
                 "pngs": pngs,
-                "needs_grading": out.status == S_ELIGIBLE,  # M8.14.c.2: ALL
-                # eligible strokes carry never-graded design-path geometry
+                "needs_grading": (out.status == S_ELIGIBLE
+                                  and out.bore_id not in DESIGN_GRADED),
+                # design-path geometry: log25/log59 graded PASS (accepted);
+                # log51/log65's new geometry still awaits its re-grade
             })
 
         census = collections.Counter(r["status"] for r in rows)
@@ -276,17 +280,21 @@ def main() -> int:
             "flag": "TL2_SYMBOL_CONDUIT_LANE_OPTIN (default OFF; lane UNWIRED)",
             "corpus_dir_used": corpus_dir, "corpus_resolution": how,
             "plan_pdf": PDF, "verdict": "PASS" if ok else "FAILURE",
-            "honesty": ("eligible == every lane gate passed, NOT human-graded; "
-                        "ALL eligible strokes carry M8.14.c.2 design-path "
-                        "geometry that has never been visually graded -- every "
-                        "one requires (re-)grading, including log51/log65 "
-                        "whose b.7/b.10 grades covered the old tick-chord "
-                        "geometry; log7 abstains typed (parallel strands); "
-                        "source-parse failures are typed (banked adapter "
-                        "gap), never lane faults; no AUTO; lane unwired"),
+            "honesty": ("eligible == every lane gate passed; design-path "
+                        "geometry for log25/log59 is GRADED PASS (route "
+                        "adherence formally ACCEPTED 2026-06-11; geometry "
+                        "must not change); log51/log65's design-path strokes "
+                        "still await their re-grade (the b.7/b.10 grades "
+                        "covered the old tick-chord geometry); log7 abstains "
+                        "typed (parallel strands); source-parse failures are "
+                        "typed (banked adapter gap), never lane faults; no "
+                        "AUTO; lane unwired; marker rings are curve-thinned "
+                        "for legibility -- geometry/payloads untouched"),
             "census": dict(sorted(census.items())),
+            "design_grades_accepted": sorted(DESIGN_GRADED,
+                                             key=lambda s: int(s[3:])),
             "eligible_needs_regrade": sorted(
-                (r["bore_id"] for r in rows if r["status"] == S_ELIGIBLE),
+                (r["bore_id"] for r in rows if r["needs_grading"]),
                 key=lambda s: int(s[3:])),
             "graded_under_old_geometry": sorted(GRADED),
             "summary_markdown": md,

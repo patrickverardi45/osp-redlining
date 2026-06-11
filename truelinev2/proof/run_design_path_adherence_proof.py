@@ -68,6 +68,13 @@ DETOUR_HH = (252.3, 389.3)
 HANDOFF_HH = (424.7, 379.2)
 CURVE_BOTTOM = (562.7, 446.4)
 
+# BANKED VISUAL GRADES (Patrick, 2026-06-11): the corrected design-path
+# strokes for log25 and log59 were re-graded PASS for design-line adherence /
+# curved route tracing -- the redline follows the actual drawn route and the
+# route GEOMETRY must not change. (The later marker-density thinning is a
+# render-legibility rule only; geometry/payloads untouched.)
+PATRICK_DESIGN_GRADES = {"log25": "PASS", "log59": "PASS"}
+
 
 def main() -> int:
     corpus_dir, how = resolve_corpus()
@@ -175,24 +182,39 @@ def main() -> int:
               f"{out7.status} -- {(out7.named_missing or '')[:110]}")
         ok &= g5
 
-        # G6 corrected artifacts (canonical red, REVIEW dashed)
+        # G6 graded artifacts (canonical red, REVIEW dashed). Structure
+        # landmarks keep their marker rings through curve thinning.
+        landmarks = {"log25": (DETOUR_HH, HANDOFF_HH), "log59": ()}
         pngs = []
         for bid in ("log25", "log59"):
             seg = outs[bid][1].segments[0]
             pngs.append(render_redline_stroke(
                 plan, f"{bid}_design_path", seg.sheet, offset,
                 seg.stroke_points, status="REVIEW",
-                reason="design-path adherence (M8.14.c.2)",
-                out_dir=str(OUT_DIR)))
+                reason="design-path adherence (M8.14.c.2; graded PASS)",
+                out_dir=str(OUT_DIR), mandatory_points=landmarks[bid]))
         on_disk = sorted(p.name for p in OUT_DIR.glob("*.png"))
         g6 = all(pngs) and len(on_disk) == 2
         print(f"[m8.14c2] {'PASS' if g6 else 'FAIL'}  G6 exactly two corrected "
               f"PNGs: {on_disk}")
         ok &= g6
 
+        # G7 the banked grades are formal: both corrected bores carry a
+        # PATRICK PASS for design-line adherence and reproduce eligible.
+        g7 = (set(PATRICK_DESIGN_GRADES) == {"log25", "log59"}
+              and all(v == "PASS" for v in PATRICK_DESIGN_GRADES.values())
+              and all(outs[b][1].status == S_ELIGIBLE
+                      for b in PATRICK_DESIGN_GRADES))
+        print(f"[m8.14c2] {'PASS' if g7 else 'FAIL'}  G7 banked grades formal: "
+              f"{PATRICK_DESIGN_GRADES} (route geometry is ACCEPTED and must "
+              f"not change)")
+        ok &= g7
+
         report = {
             "milestone": ("truelinev2 M8.14.c.2 -- design-path adherence "
-                          "(graded-FAIL correction; re-grade required)"),
+                          "(graded-FAIL correction; log25/log59 GRADED PASS "
+                          "2026-06-11)"),
+            "patrick_design_grades": PATRICK_DESIGN_GRADES,
             "corpus_dir_used": corpus_dir, "corpus_resolution": how,
             "plan_pdf": PDF, "verdict": "PASS" if ok else "FAILURE",
             "honesty": ("strokes now FOLLOW the drawn conduit route (welded-"

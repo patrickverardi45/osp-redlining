@@ -37,9 +37,13 @@ def test_eligible_and_error_idsets_match_counts():
     assert GRADED & EXPECT_ELIGIBLE == {"log51", "log65"}
 
 
-def test_newly_surfaced_are_eligible_minus_graded():
-    new = EXPECT_ELIGIBLE - GRADED
-    assert new == {"log25", "log59"}  # corrected strokes needing the re-grade
+def test_design_grade_split_is_formal():
+    from truelinev2.proof.run_symbol_conduit_lane_sweep import DESIGN_GRADED
+    # log25/log59: design-path strokes GRADED PASS (route adherence ACCEPTED)
+    assert DESIGN_GRADED == {"log25", "log59"}
+    assert DESIGN_GRADED <= EXPECT_ELIGIBLE
+    # log51/log65: eligible, but their design-path geometry awaits re-grade
+    assert EXPECT_ELIGIBLE - DESIGN_GRADED == {"log51", "log65"}
 
 
 def test_num_parses_log_number():
@@ -64,13 +68,12 @@ def test_markdown_names_sections_and_separates_graded_from_new():
     for section in ("Stroke-eligible", "Pick-card candidates",
                     "Common blockers", "Recommended next gate"):
         assert section in md, section
-    # ALL eligible strokes need (re-)grading; the old-geometry-graded set and
-    # the corrected-after-FAIL set stay separately named, never conflated
-    assert "every one requires (re-)grading" in md.replace("\n", " ")
+    # accepted vs awaiting-re-grade stay separately named, never conflated
     assert "log25" in md and "log59" in md
-    graded_line = next(l for l in md.splitlines()
-                       if "previously graded under the OLD chord" in l)
-    assert "log25" not in graded_line and "log59" not in graded_line
-    new_line = next(l for l in md.splitlines()
-                    if "corrected after the graded-FAIL chords" in l)
-    assert "log25" in new_line and "log59" in new_line
+    accepted_line = next(l for l in md.splitlines()
+                         if "GRADED PASS (route adherence ACCEPTED" in l)
+    assert "log25" in accepted_line and "log59" in accepted_line
+    pending_line = next(l for l in md.splitlines()
+                        if "awaiting re-grade" in l)
+    assert "log51" in pending_line and "log65" in pending_line
+    assert "log25" not in pending_line and "log59" not in pending_line

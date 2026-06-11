@@ -22,6 +22,41 @@ from truelinev2.schema.models import Callout
 # stroke renderers must reference THIS constant (test-locked).
 REDLINE_STROKE_RGB = (220, 25, 25)
 
+# Marker-density law (Patrick, 2026-06-11, after the log25/log59 design-path
+# re-grade): station markers on tight curves overlap into a blob. This is a
+# RENDER-DENSITY rule ONLY -- stroke geometry and payload evidence are never
+# altered; only which interior vertices get a visual ring is thinned.
+MARKER_RADIUS_PX = 9
+MIN_MARKER_SPACING_PX = 24.0   # rendered-pixel floor between drawn rings
+                               # (~2.5 x radius; closer rings read as a blob)
+
+
+def thin_markers(pts_px, mandatory_idx=(), min_spacing=MIN_MARKER_SPACING_PX,
+                 show_all=False):
+    """Indices of stroke vertices that get a visual marker ring. Endpoints +
+    mandatory indices (structure/equation/pothole/review anchors) are ALWAYS
+    drawn; an interior vertex is drawn only when it sits >= ``min_spacing``
+    rendered pixels from EVERY already-drawn marker (all-drawn check, not
+    last-only -- a curve that folds back crowds non-consecutive vertices).
+    ``show_all`` is the debug mode: every vertex keeps its ring. Pure: the
+    input is never mutated; output is a subset of input indices in order."""
+    n = len(pts_px)
+    if n == 0:
+        return []
+    if show_all:
+        return list(range(n))
+    keep = {0, n - 1} | {i for i in mandatory_idx if 0 <= i < n}
+    drawn = [pts_px[i] for i in sorted(keep)]
+    for i in range(1, n - 1):
+        if i in keep:
+            continue
+        p = pts_px[i]
+        if all(((p[0] - q[0]) ** 2 + (p[1] - q[1]) ** 2) ** 0.5 >= min_spacing
+               for q in drawn):
+            keep.add(i)
+            drawn.append(p)
+    return sorted(keep)
+
 
 def _safe(name: str) -> str:
     return name.replace("+", "p").replace(" ", "_").replace("/", "-")
@@ -46,13 +81,17 @@ def _dashed(draw: "ImageDraw.ImageDraw", p0, p1, color, width: int,
 def render_redline_stroke(plan: PlanPdf, bore_id: str, sheet: int, offset: int,
                           stroke_points, *, status: str, reason: str,
                           out_dir: str, evidence_bboxes=(), zoom: float = 2.0,
-                          pad: float = 130.0) -> Optional[str]:
-    """The M8.14 REDLINE STROKE overlay: a red polyline along the winning tick
-    path (route-following at station-tick resolution) with circle markers,
-    SOLID for AUTO placements / DASHED for REVIEW placements, grey boxes for
-    matched-callout SUPPORTING EVIDENCE only (never called redlines), and a
-    caption band naming the bore / status / reason. Refuses to draw without a
-    real path (< 2 points) -- abstains never render."""
+                          pad: float = 130.0, mandatory_points=(),
+                          show_all_markers: bool = False) -> Optional[str]:
+    """The M8.14 REDLINE STROKE overlay: a red polyline along the traced
+    route with circle markers, SOLID for AUTO placements / DASHED for REVIEW
+    placements, grey boxes for matched-callout SUPPORTING EVIDENCE only
+    (never called redlines), and a caption band naming the bore / status /
+    reason. Refuses to draw without a real path (< 2 points) -- abstains
+    never render. Marker rings are density-thinned on tight curves
+    (``thin_markers``); ``mandatory_points`` (plan coords of structure/
+    equation/pothole/review anchors) always keep their rings; the STROKE
+    polyline itself always uses every vertex -- geometry is never thinned."""
     pts = [tuple(p) for p in (stroke_points or ())]
     if len(pts) < 2:
         return None
@@ -75,18 +114,28 @@ def render_redline_stroke(plan: PlanPdf, bore_id: str, sheet: int, offset: int,
         draw.rectangle([x0 - 6, y0 - 6, x1 + 6, y1 + 6], outline=grey, width=3)
     solid = status == "AUTO_SELECT"
     ppts = [px(p) for p in pts]
-    for a, b in zip(ppts, ppts[1:]):
+    for a, b in zip(ppts, ppts[1:]):  # the FULL geometry, every vertex, always
         if solid:
             draw.line([a, b], fill=red, width=6)
         else:
             _dashed(draw, a, b, red, width=6)
-    for cx, cy in ppts:  # circle markers at every path point
-        draw.ellipse([cx - 9, cy - 9, cx + 9, cy + 9], outline=(255, 255, 255), width=6)
-        draw.ellipse([cx - 9, cy - 9, cx + 9, cy + 9], outline=red, width=3)
+    mand_idx = [i for i, p in enumerate(pts)
+                if any(((p[0] - m[0]) ** 2 + (p[1] - m[1]) ** 2) ** 0.5 <= 3.0
+                       for m in mandatory_points)]
+    marker_idx = thin_markers(ppts, mandatory_idx=mand_idx,
+                              show_all=show_all_markers)
+    r = MARKER_RADIUS_PX
+    for i in marker_idx:  # density-thinned marker rings (geometry untouched)
+        cx, cy = ppts[i]
+        draw.ellipse([cx - r, cy - r, cx + r, cy + r], outline=(255, 255, 255), width=6)
+        draw.ellipse([cx - r, cy - r, cx + r, cy + r], outline=red, width=3)
 
+    thinned = len(pts) - len(marker_idx)
     cap = (f"{bore_id} · {status} ({'solid=auto' if solid else 'dashed=review'}) · "
-           f"{reason} · redline stroke: route-following at station-tick resolution · "
-           f"grey boxes = supporting callout evidence")
+           f"{reason} · redline stroke: follows the drawn route · "
+           f"grey boxes = supporting callout evidence"
+           + (f" · markers {len(marker_idx)}/{len(pts)} (curve-thinned for "
+              f"legibility; geometry unchanged)" if thinned else ""))
     draw.rectangle([0, 0, img.width, 30], fill=(255, 255, 255))
     draw.text((8, 8), cap[:180], fill=(20, 20, 20))
 
