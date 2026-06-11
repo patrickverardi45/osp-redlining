@@ -4,34 +4,68 @@
 > Those big logs are historical truth — open them only when a specific question needs them.
 
 ## Repo state
-- Branch: `pdf-ap-route-shadow`
-- `origin/main` = `ba6c155` (local HEAD tracks it). PDF-extraction chain shipped: Targets #18–#43 pushed. **#37 = first extractor fix: Primitive-A phantom-competitor gate → AP-164 PROMOTE_TRUSTED + AP-155 recovered; 9 confirmed endpoints, precision 1.00, recall 0.90.** **#39–#42 = bore→drive + segmentation + corpus resolvers (no .FS): placeable set from delivered files = exactly {bore_log7}, proven across 58 bores; bore_log57 blocked on one field.** **#43 = default-OFF ambiguity-resolution input seam (schema + pure resolver + template + #14-style integration seam) — give it bore_log57's start structure and it deterministically places; no ground truth invented.** #35 AP-160 KEEP_TRUSTED_REVIEW.
-- Tree: tracked clean; untracked diagnostics live in `scripts/` (offline probes, *_replay.py, bore_log7_*).
+- Branch: `feat/truelinev2`
+- Pushed engine HEAD: `b86e68f2dd83f5d6e99414bc126de82f7ab68919`
+- Latest verified test state: `468 passed`
+- Tree at session save: tracked clean; existing untracked files were preserved.
+- Production `main` was not touched, merged, or deployed.
 
-## Mission (non-negotiable)
+## Current v2 checkpoint (2026-06-11)
+
+### M8.15 pushed
+- The lane-outcome -> reviewer-card bridge is shipped.
+- The static reviewer demo sidecar exposes exactly 9 design-stroke cards:
+  4 `DESIGN_STROKE_REVIEW` and 5 `DESIGN_PICK_CARD`.
+- Stroke cards retain their evidence-backed geometry/artifact references.
+  Pick cards remain suggestions and carry no stroke geometry/image.
+
+### M8.16 pushed
+- The cross-sheet continuation resolver probe/law attempted all 16 banked
+  `CROSS_SHEET_CONTINUATION_REQUIRED` bores.
+- Result: zero converted to strokes. This is an evidence-backed honest
+  negative, not a failed or widened placement lane.
+- The proof names these blocker classes:
+  - no matchline equation sheets;
+  - no printed run callout ending at the bore end;
+  - a full-span callout contradicts the drawn chain;
+  - segmented far-sheet callout chains for `log8` / `log32`;
+  - far-sheet mismatch for `log12`;
+  - rival far-sheet structures plus interleaved ladders for `log42`.
+
+### Next recommended lane after reset
+- Use Opus Standard/Max for far-sheet callout-chain assembly, starting with
+  the `log8` / `log32` shape.
+- Owner decision is required for no-equation bores: pursue geo/KMZ
+  corroboration or preserve them as reviewer pick-cards.
+
+### Session sizing rule
+- Massive Fable lanes should start with 100% token availability or be split
+  into recon / design / pilot / expand / verify phases.
+
+## Legacy mission context (pre-v2; historical reference)
 Deterministic auto-placement of **ALL** redlines from source files. Manual placement is NOT the product.
 **DO-NOT-WIDEN**: never place a wrong redline. Abstention = interim safety state + a *named* extraction
 target. Drive abstentions to zero by EXTRACTING the missing relationship from the source files — not by
 guessing, and **not by asking a human to decide from vibes**. Human review is FINAL AUDIT ONLY; the
 PDFs/maps/KMZ/bore-logs are the authority.
 
-## Last shipped
+## Legacy last shipped (pre-v2)
 - **Target #14 `20cb32f`** — `TRUELINE_TERMINAL_TAIL_PLACEMENT` (default-OFF). First redline-moving
   proof: bore_log7 moves route_477 → route_469 when ON; only bore_log7 changes; counts + trust ledger
   (34/30/0/0/5) identical OFF and ON; adversarial SAFE.
 - **Target #15 `42f58f6`** — docs-only GAC review packet `gac/bore_log7_ground_truth_review.md`.
 
-## Active flags — ALL default-OFF, NONE flipped on Render
+## Legacy active flags — ALL default-OFF, NONE flipped on Render
 `TRUELINE_TERMINAL_TAIL_PLACEMENT` (requires `TRUELINE_TERMINUS_TYPE_SHADOW`), `TRUELINE_TERMINUS_TYPE_SHADOW`,
 `TRUELINE_MRQ_PLACEMENT_PROOF`, `TRUELINE_BACKBONE_CHAIN_SHADOW`, `TRUELINE_PDF_AP_TOPOLOGY_V2`,
 `TRUELINE_PDF_AP_EXTRACT_V2`, `TRUELINE_MRQ_PLAN_SHEET_GRAPH_EVIDENCE`.
 
-## Forbidden lanes (this mission)
+## Legacy forbidden lanes
 Do NOT: widen `TRUELINE_TERMINAL_TAIL_PLACEMENT`; flip any Render flag; clean Render storage (unless
 uploads are actively blocked); drift into auth, UI, broad PDF interpreter, KMZ Stage B3, densification
 near-ties, or screenshot-tooling plumbing.
 
-## Exact next redline action
+## Legacy exact next redline action (superseded on `feat/truelinev2`)
 **bore_log7 = ADJUDICATED + SHIPPED-as-shadow.** route_469 PROVEN from source (`gac/bore_log7_route_adjudication.md`);
 DrillPathFrame proof layer shipped default-OFF (Target #18 `93434cd`, `TRUELINE_DRILL_PATH_FRAME_SHADOW`).
 Operator-side next (NOT this session): final-audit, then flip `TRUELINE_TERMINAL_TAIL_PLACEMENT`
