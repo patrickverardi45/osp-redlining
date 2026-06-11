@@ -15,6 +15,7 @@ from truelinev2.render import crop
 from truelinev2.proof import (
     run_cross_sheet_conduit_join_probe as b9,
     run_log51_symbol_anchored_stroke_proof as b7,
+    run_log65_cross_sheet_stroke_proof as b10,
     run_origin_conduit_topology_probe as b6,
     run_symbol_anchored_stroke_proof as b3,
 )
@@ -39,7 +40,7 @@ def test_canonical_stroke_color_is_red():
 
 
 def test_every_stroke_renderer_pins_the_canonical_object():
-    pins = [(b3, "STROKE_RGB"), (b7, "STROKE_RGB"),
+    pins = [(b3, "STROKE_RGB"), (b7, "STROKE_RGB"), (b10, "STROKE_RGB"),
             (b6, "CHAIN_STROKE_RGB"), (b9, "CHAIN_STROKE_RGB")]
     for mod, name in pins:
         val = getattr(mod, name)
@@ -55,6 +56,7 @@ def test_renderer_sources_use_the_pin_not_raw_literals():
         "b7._render_png": inspect.getsource(b7._render_png),
         "b6._render_png": inspect.getsource(b6._render_png),
         "b9._render_png": inspect.getsource(b9._render_png),
+        "b10._render_png": inspect.getsource(b10._render_png),
     }
     pin_names = ("REDLINE_STROKE_RGB", "STROKE_RGB", "CHAIN_STROKE_RGB")
     for label, src in sources.items():
