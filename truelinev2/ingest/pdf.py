@@ -84,6 +84,50 @@ class PlanPdf:
                         "width": float(d.get("width") or 0.0)})
         return out
 
+    def line_items(self, sheet: int, offset: int) -> List[Dict[str, Any]]:
+        """Per-drawing vector DETAIL (M8.14.b.2 public-API seam): CAD layer, draw
+        type, fill/stroke color, DISPLAY-space bbox, and every straight-line item
+        mapped to display space (rects contribute their 4 edges). Lets the
+        structure-position solver trace LEADER LINES from a label box to the
+        drawn symbol instead of trusting leader-offset label text. Curves are
+        ignored deliberately -- leaders and label boxes are straight-line work."""
+        page = self._page(sheet, offset)
+        if page is None:
+            return []
+        rot = page.rotation_matrix
+
+        def pt(p) -> Tuple[float, float]:
+            q = fitz.Point(p) * rot
+            return (float(q.x), float(q.y))
+
+        out: List[Dict[str, Any]] = []
+        for d in page.get_drawings():
+            r = d.get("rect")
+            if r is None:
+                continue
+            corners = [fitz.Point(r.x0, r.y0) * rot, fitz.Point(r.x1, r.y0) * rot,
+                       fitz.Point(r.x1, r.y1) * rot, fitz.Point(r.x0, r.y1) * rot]
+            xs = [p.x for p in corners]
+            ys = [p.y for p in corners]
+            lines: List[Tuple[float, float, float, float]] = []
+            for it in d.get("items") or ():
+                if it[0] == "l":
+                    (ax, ay), (bx, by) = pt(it[1]), pt(it[2])
+                    lines.append((ax, ay, bx, by))
+                elif it[0] == "re":
+                    rr = it[1]
+                    cs = [pt((rr.x0, rr.y0)), pt((rr.x1, rr.y0)),
+                          pt((rr.x1, rr.y1)), pt((rr.x0, rr.y1))]
+                    for a, b in zip(cs, cs[1:] + cs[:1]):
+                        lines.append((a[0], a[1], b[0], b[1]))
+            out.append({"layer": d.get("layer"), "type": d.get("type"),
+                        "fill": d.get("fill"), "color": d.get("color"),
+                        "x0": min(xs), "y0": min(ys), "x1": max(xs), "y1": max(ys),
+                        "xc": (min(xs) + max(xs)) / 2.0,
+                        "yc": (min(ys) + max(ys)) / 2.0,
+                        "lines": lines})
+        return out
+
     def search(self, sheet: int, offset: int, text: str) -> List[List[float]]:
         page = self._page(sheet, offset)
         if page is None:
