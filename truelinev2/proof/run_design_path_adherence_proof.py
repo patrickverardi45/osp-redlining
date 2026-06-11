@@ -28,7 +28,7 @@ This proof pins the correction on the failing bores:
      abstains DESIGN_PATH_NOT_TRACEABLE for log7 (named missing: a strand
      discriminator); a chord is no longer drawn there
   G6 exactly TWO corrected stroke PNGs (canonical red, REVIEW dashed) --
-     for Patrick's re-grade
+     banked visual-grade artifacts
 
 Outputs (gitignored): data/outputs/design_path_adherence/
 
@@ -69,11 +69,17 @@ HANDOFF_HH = (424.7, 379.2)
 CURVE_BOTTOM = (562.7, 446.4)
 
 # BANKED VISUAL GRADES (Patrick, 2026-06-11): the corrected design-path
-# strokes for log25 and log59 were re-graded PASS for design-line adherence /
-# curved route tracing -- the redline follows the actual drawn route and the
-# route GEOMETRY must not change. (The later marker-density thinning is a
-# render-legibility rule only; geometry/payloads untouched.)
-PATRICK_DESIGN_GRADES = {"log25": "PASS", "log59": "PASS"}
+# strokes for log25, log51, log59, and log65 were re-graded PASS for
+# design-line adherence / curved route tracing -- the redline follows the
+# actual drawn route and the route GEOMETRY must not change. (The later
+# marker-density thinning is a render-legibility rule only; geometry/payloads
+# untouched.)
+PATRICK_DESIGN_GRADES = {
+    "log25": "PASS",
+    "log51": "PASS",
+    "log59": "PASS",
+    "log65": "PASS",
+}
 
 
 def main() -> int:
@@ -98,7 +104,8 @@ def main() -> int:
         graph = _build_plan_frame_graph(plan, offset)
 
         outs = {}
-        for stem in ("bore_log25", "bore_log59", "bore_log7"):
+        for stem in ("bore_log25", "bore_log51", "bore_log59", "bore_log65",
+                     "bore_log7"):
             bore = load_borelog(str(corpus[stem]))
             outs[bore.bore_id] = (bore, resolve_bore(
                 plan, bore, offset, BRENHAM_LANE_DIALECT, frame_graph=graph))
@@ -199,9 +206,10 @@ def main() -> int:
               f"PNGs: {on_disk}")
         ok &= g6
 
-        # G7 the banked grades are formal: both corrected bores carry a
+        # G7 the banked grades are formal: all four eligible bores carry a
         # PATRICK PASS for design-line adherence and reproduce eligible.
-        g7 = (set(PATRICK_DESIGN_GRADES) == {"log25", "log59"}
+        g7 = (set(PATRICK_DESIGN_GRADES)
+              == {"log25", "log51", "log59", "log65"}
               and all(v == "PASS" for v in PATRICK_DESIGN_GRADES.values())
               and all(outs[b][1].status == S_ELIGIBLE
                       for b in PATRICK_DESIGN_GRADES))
@@ -212,8 +220,8 @@ def main() -> int:
 
         report = {
             "milestone": ("truelinev2 M8.14.c.2 -- design-path adherence "
-                          "(graded-FAIL correction; log25/log59 GRADED PASS "
-                          "2026-06-11)"),
+                          "(graded-FAIL correction; all four eligible design "
+                          "paths GRADED PASS 2026-06-11)"),
             "patrick_design_grades": PATRICK_DESIGN_GRADES,
             "corpus_dir_used": corpus_dir, "corpus_resolution": how,
             "plan_pdf": PDF, "verdict": "PASS" if ok else "FAILURE",
@@ -233,7 +241,7 @@ def main() -> int:
             json.dumps(report, indent=2, default=str), encoding="utf-8")
         print(f"[m8.14c2] verdict: {report['verdict']}")
         for p in pngs:
-            print(f"[m8.14c2] RE-GRADE FILE for Patrick: {p}")
+            print(f"[m8.14c2] BANKED GRADE FILE: {p}")
     finally:
         plan.close()
     return 0 if ok else 4

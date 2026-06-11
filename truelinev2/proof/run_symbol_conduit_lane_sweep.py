@@ -8,8 +8,8 @@ rendered artifacts are REVIEW strokes for bores the lane finds eligible
 
 Honesty rules baked into the report:
   * STROKE_ELIGIBLE_REVIEW means every lane gate passed -- it does NOT mean
-    human-graded. The 3 graded bores (log7/log51/log65) are marked GRADED;
-    any other eligible bore is marked NEEDS_VISUAL_GRADING.
+    human-graded. Old-geometry grades remain recorded separately; all four
+    eligible design-path strokes are now graded PASS.
   * Bores whose SOURCE fails to parse are typed (the banked log37/38 adapter
     gap), never silently dropped and never counted as lane faults.
   * No status is ever AUTO (structural -- the lane has no AUTO).
@@ -18,7 +18,7 @@ Embedded gates (any failure -> nonzero exit):
   G1 all 58 bores enumerated; each yields a typed outcome (no crash)
   G2 census counts match the banked Phase-1 distribution exactly (drift -> loud)
   G3 graded bores under the adherence law: log51/log65 eligible (design-path
-     geometry, re-grade required); log7 abstains typed (parallel strands)
+     geometry graded PASS); log7 abstains typed (parallel strands)
   G4 log50 stays PICK_CARD_WITH_END_ANCHOR
   G5 REVIEW-only + zero-false: every outcome review_only, no AUTO anywhere
   G6 exactly one REVIEW stroke PNG per eligible segment (canonical red); no
@@ -64,9 +64,9 @@ OUT_DIR = _REPO_ROOT / "data" / "outputs" / "symbol_conduit_lane_sweep"
 S_SOURCE_ERR = "BORE_SOURCE_UNPARSEABLE"   # banked adapter gap, NOT a lane fault
 GRADED = {"log7", "log51", "log65"}        # b.3 / b.7 / b.10 graded under the
                                            # OLD tick-chord geometry
-# Patrick 2026-06-11: the corrected DESIGN-PATH strokes graded PASS -- route
-# adherence formally ACCEPTED; their route geometry must not change.
-DESIGN_GRADED = {"log25", "log59"}
+# Patrick 2026-06-11: all four eligible DESIGN-PATH strokes graded PASS --
+# route adherence formally ACCEPTED; their route geometry must not change.
+DESIGN_GRADED = {"log25", "log51", "log59", "log65"}
 
 # Banked census (M8.14.c.2 design-path adherence law applied; drift fails G2
 # loudly so any change is examined, never silently absorbed). log7 moved
@@ -145,9 +145,9 @@ def _markdown(census: Dict[str, int], rows: List[dict]) -> str:
         f"- `{S_SOURCE_ERR}` ({census.get(S_SOURCE_ERR, 0)}): banked log37/38 "
         f"adapter station-format gap (NOT a lane fault)",
         "", "## Recommended next gate",
-        "- Re-grade log51/log65's design-path strokes (log25/log59 are "
-        "accepted); then reviewer-card payload integration (4 eligible + 5 "
-        "pick-cards = 9 actionable, all REVIEW-only).",
+        "- Design-path grading debt is zero: all 4 eligible strokes are "
+        "accepted. Reviewer-card payload integration remains outside this "
+        "grade-banking change.",
         "- Targeted resolver expansions, by yield: cross-sheet continuation "
         "(16) via the b.9/b.10 matchline graph; the log7-class strand "
         "discriminator (re-unlocks its design-path stroke).",
@@ -212,8 +212,8 @@ def main() -> int:
                 "pngs": pngs,
                 "needs_grading": (out.status == S_ELIGIBLE
                                   and out.bore_id not in DESIGN_GRADED),
-                # design-path geometry: log25/log59 graded PASS (accepted);
-                # log51/log65's new geometry still awaits its re-grade
+                # design-path geometry: all four eligible strokes graded PASS
+                # and accepted; route geometry must not change
             })
 
         census = collections.Counter(r["status"] for r in rows)
@@ -281,18 +281,17 @@ def main() -> int:
             "corpus_dir_used": corpus_dir, "corpus_resolution": how,
             "plan_pdf": PDF, "verdict": "PASS" if ok else "FAILURE",
             "honesty": ("eligible == every lane gate passed; design-path "
-                        "geometry for log25/log59 is GRADED PASS (route "
-                        "adherence formally ACCEPTED 2026-06-11; geometry "
-                        "must not change); log51/log65's design-path strokes "
-                        "still await their re-grade (the b.7/b.10 grades "
-                        "covered the old tick-chord geometry); log7 abstains "
-                        "typed (parallel strands); source-parse failures are "
-                        "typed (banked adapter gap), never lane faults; no "
-                        "AUTO; lane unwired; marker rings are curve-thinned "
-                        "for legibility -- geometry/payloads untouched"),
+                        "geometry for log25/log51/log59/log65 is GRADED PASS "
+                        "(route adherence formally ACCEPTED 2026-06-11; "
+                        "geometry must not change); log7 abstains typed "
+                        "(parallel strands); source-parse failures are typed "
+                        "(banked adapter gap), never lane faults; no AUTO; "
+                        "lane unwired; marker rings are curve-thinned for "
+                        "legibility -- geometry/payloads untouched"),
             "census": dict(sorted(census.items())),
             "design_grades_accepted": sorted(DESIGN_GRADED,
                                              key=lambda s: int(s[3:])),
+            "design_grading_debt": sum(1 for r in rows if r["needs_grading"]),
             "eligible_needs_regrade": sorted(
                 (r["bore_id"] for r in rows if r["needs_grading"]),
                 key=lambda s: int(s[3:])),

@@ -37,13 +37,11 @@ def test_eligible_and_error_idsets_match_counts():
     assert GRADED & EXPECT_ELIGIBLE == {"log51", "log65"}
 
 
-def test_design_grade_split_is_formal():
+def test_design_grade_census_is_formal():
     from truelinev2.proof.run_symbol_conduit_lane_sweep import DESIGN_GRADED
-    # log25/log59: design-path strokes GRADED PASS (route adherence ACCEPTED)
-    assert DESIGN_GRADED == {"log25", "log59"}
-    assert DESIGN_GRADED <= EXPECT_ELIGIBLE
-    # log51/log65: eligible, but their design-path geometry awaits re-grade
-    assert EXPECT_ELIGIBLE - DESIGN_GRADED == {"log51", "log65"}
+    # All eligible design-path strokes are GRADED PASS (route adherence accepted).
+    assert DESIGN_GRADED == EXPECT_ELIGIBLE
+    assert EXPECT_ELIGIBLE - DESIGN_GRADED == set()
 
 
 def test_num_parses_log_number():
@@ -55,11 +53,11 @@ def test_num_parses_log_number():
     assert _num(_P("bore_log37")) == 37
 
 
-def test_markdown_names_sections_and_separates_graded_from_new():
+def test_markdown_names_sections_and_reports_zero_grading_debt():
     rows = [
         {"bore_id": "log65", "status": S_ELIGIBLE},
-        {"bore_id": "log25", "status": S_ELIGIBLE},   # corrected, needs re-grade
-        {"bore_id": "log59", "status": S_ELIGIBLE},   # corrected, needs re-grade
+        {"bore_id": "log25", "status": S_ELIGIBLE},
+        {"bore_id": "log59", "status": S_ELIGIBLE},
         {"bore_id": "log51", "status": S_ELIGIBLE},
         {"bore_id": "log50", "status": S_PICK},
     ]
@@ -68,12 +66,13 @@ def test_markdown_names_sections_and_separates_graded_from_new():
     for section in ("Stroke-eligible", "Pick-card candidates",
                     "Common blockers", "Recommended next gate"):
         assert section in md, section
-    # accepted vs awaiting-re-grade stay separately named, never conflated
-    assert "log25" in md and "log59" in md
+    # All four accepted grades are named; the awaiting-re-grade census is empty.
     accepted_line = next(l for l in md.splitlines()
                          if "GRADED PASS (route adherence ACCEPTED" in l)
-    assert "log25" in accepted_line and "log59" in accepted_line
+    assert all(bid in accepted_line
+               for bid in ("log25", "log51", "log59", "log65"))
     pending_line = next(l for l in md.splitlines()
                         if "awaiting re-grade" in l)
-    assert "log51" in pending_line and "log65" in pending_line
-    assert "log25" not in pending_line and "log59" not in pending_line
+    assert pending_line.endswith("none")
+    assert not any(bid in pending_line
+                   for bid in ("log25", "log51", "log59", "log65"))
