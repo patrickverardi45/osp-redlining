@@ -124,6 +124,68 @@ def run_callouts_ending_at(lines: Sequence[str], end_sta: str
             for i, ln in enumerate(lines) if (m := pat.search(ln))]
 
 
+CHAIN_UNIQUE = "CALLOUT_CHAIN_UNIQUE"
+CHAIN_NONE = "CALLOUT_CHAIN_NONE"
+CHAIN_AMBIGUOUS = "CALLOUT_CHAIN_AMBIGUOUS"
+
+
+def assemble_callout_chain(lines: Sequence[str], start_sta: str,
+                           boundary_sta: str, closure_tol: float = 0.5) -> dict:
+    """The segmented printed-reciprocity law (M8.17): a far sheet may state a
+    bore's on-sheet segment as a CHAIN of printed run callouts
+    (``start -> mid -> ... -> boundary``) rather than one callout. This
+    assembles that chain under uniqueness-mandatory rules and NEVER relaxes
+    the single-callout refusal -- it only recovers a segmented printed
+    statement when a direct callout is absent:
+
+      * each hop is a printed run callout STARTING exactly where the previous
+        hop ENDED (station-string identity -> exact bore-local connectivity);
+      * stations strictly INCREASE every hop (bore stationing is monotonic;
+        this also makes the search acyclic and bounds it);
+      * each hop carries a NOTE-SCOPED footage that agrees with its own
+        printed station delta within ``closure_tol`` (the banked closure
+        tolerance applied per segment -- a hop whose footage contradicts its
+        own station label is refused, never trusted);
+      * the chain STARTS at ``start_sta`` and ENDS exactly at ``boundary_sta``
+        (no overshoot -- a hop ending past the boundary is pruned);
+      * EXACTLY ONE such chain may exist (0 -> NONE, >= 2 -> AMBIGUOUS; rival
+        printed chains never resolve to a guess).
+
+    Returns ``{"result": CHAIN_UNIQUE, "hops": [(a,b,foot,note), ...],
+    "footage": sum, "notes": [...]}`` or a typed refusal dict with the path
+    count. Pure; no plan-set knowledge (callout grammar only)."""
+    from truelinev2.stations import parse_station
+
+    target = parse_station(boundary_sta)
+    paths: List[list] = []
+
+    def walk(node_sta: str, node_ft: float, acc: list) -> None:
+        if node_sta == boundary_sta:
+            paths.append(list(acc))
+            return
+        if node_ft >= target or len(acc) > 16:   # monotonic + runaway guard
+            return
+        for end_raw, foot, note in run_callouts_starting_at(lines, node_sta):
+            if foot is None:
+                continue
+            end_ft = parse_station(end_raw)
+            if end_ft <= node_ft or end_ft > target:
+                continue                          # non-monotonic or overshoot
+            if abs(foot - (end_ft - node_ft)) > closure_tol:
+                continue                          # footage contradicts its own
+            walk(end_raw, end_ft, acc + [(node_sta, end_raw, foot, note)])
+
+    walk(start_sta, parse_station(start_sta), [])
+    if not paths:
+        return {"result": CHAIN_NONE, "paths": 0}
+    if len(paths) > 1:
+        return {"result": CHAIN_AMBIGUOUS, "paths": len(paths),
+                "chains": [[(a, b) for a, b, _, _ in p] for p in paths]}
+    hops = paths[0]
+    return {"result": CHAIN_UNIQUE, "hops": hops,
+            "footage": sum(h[2] for h in hops), "notes": [h[3] for h in hops]}
+
+
 def find_run_callout_from(lines: Sequence[str], start_sta: str
                           ) -> Optional[Tuple[str, float]]:
     """(end station raw, footage) of the printed run callout STARTING at

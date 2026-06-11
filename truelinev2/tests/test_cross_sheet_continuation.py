@@ -15,6 +15,10 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from truelinev2.extract.matchline_join import (
+    CHAIN_AMBIGUOUS,
+    CHAIN_NONE,
+    CHAIN_UNIQUE,
+    assemble_callout_chain,
     find_run_callout_footage,
     find_run_callout_to,
     run_callouts_ending_at,
@@ -60,6 +64,68 @@ def test_collectors_report_raw_footage_and_note():
     assert "TERMINAL TAIL" in note
     out2 = run_callouts_starting_at(NOTE_F, "0+00")
     assert out2[0][0] == "2+70" and out2[0][1] == 270.0
+
+
+# --- M8.17 segmented callout-chain assembly --------------------------------------------
+
+# the real log8 far-sheet shape: a 2-hop chain 0+00 -> 1+10 -> 1+76, with a
+# decoy first-hop (0+00 -> 1+65) and a SECOND run's chain (0+00 -> 1+30 -> 1+77)
+LOG8_FARSIDE = [
+    "STA 0+00 TO STA 1+65", "DIR. BORE (165')",
+    "STA 0+00 TO STA 1+10", "E/W PORT TERMINAL TAIL", "DIR. BORE (110')",
+    "STA 0+00 TO STA 1+30", "DIR. BORE (130')",
+    "STA 1+10 TO STA 1+76", "DIR. BORE (66') VACANT HDPE",
+    "STA 1+30 TO STA 1+77", "DIR. BORE (47') VACANT HDPE",
+]
+
+
+def test_chain_assembles_unique_two_hop():
+    r = assemble_callout_chain(LOG8_FARSIDE, "0+00", "1+76")
+    assert r["result"] == CHAIN_UNIQUE
+    assert [(a, b) for a, b, _, _ in r["hops"]] == [("0+00", "1+10"),
+                                                    ("1+10", "1+76")]
+    assert r["footage"] == 176.0
+    # the other run's chain resolves independently to its own boundary
+    r2 = assemble_callout_chain(LOG8_FARSIDE, "0+00", "1+77")
+    assert r2["result"] == CHAIN_UNIQUE and r2["footage"] == 177.0
+
+
+def test_chain_none_when_boundary_unreachable():
+    r = assemble_callout_chain(LOG8_FARSIDE, "0+00", "9+99")
+    assert r["result"] == CHAIN_NONE and r["paths"] == 0
+
+
+def test_chain_ambiguous_when_two_paths_reach_boundary():
+    # two distinct printed paths 0+00 -> ... -> 2+00 (each footage-consistent)
+    lines = [
+        "STA 0+00 TO STA 1+00", "DIR. BORE (100')",
+        "STA 1+00 TO STA 2+00", "DIR. BORE (100')",
+        "STA 0+00 TO STA 1+50", "DIR. BORE (150')",
+        "STA 1+50 TO STA 2+00", "DIR. BORE (50')",
+    ]
+    r = assemble_callout_chain(lines, "0+00", "2+00")
+    assert r["result"] == CHAIN_AMBIGUOUS and r["paths"] == 2
+
+
+def test_chain_hop_footage_must_match_its_own_station_delta():
+    # the 1+10 -> 1+76 hop prints a footage (90') contradicting its 66' delta
+    lines = [
+        "STA 0+00 TO STA 1+10", "DIR. BORE (110')",
+        "STA 1+10 TO STA 1+76", "DIR. BORE (90')",
+    ]
+    r = assemble_callout_chain(lines, "0+00", "1+76")
+    assert r["result"] == CHAIN_NONE   # the bad hop is refused, breaking the path
+
+
+def test_chain_is_monotonic_no_backtracking():
+    # a backward callout (1+76 -> 1+10) can never be used to reach the boundary
+    lines = [
+        "STA 0+00 TO STA 1+76", "DIR. BORE (176')",   # this IS a direct callout
+        "STA 1+76 TO STA 1+10", "DIR. BORE (66')",
+    ]
+    # direct 1-hop still assembles (degenerate chain == single callout)
+    r = assemble_callout_chain(lines, "0+00", "1+76")
+    assert r["result"] == CHAIN_UNIQUE and len(r["hops"]) == 1
 
 
 # --- synthetic far-sheet world for the discovery law -----------------------------------
@@ -147,11 +213,26 @@ def test_discovery_binds_with_printed_provenance():
     assert cs["result"] == CS_BOUND
     assert cs["far_sheet"] == 2
     assert cs["start_layer"] == "NEXTLINK"
-    assert cs["conduit_layer"] == "BORE - PORT"   # from the printed notes
+    assert cs["conduit_layers"] == ("BORE - PORT",)   # from the printed notes
     assert abs(cs["start_xy"][0] - 766.0) < 1.0
     assert cs["boundary_raw"] == "2+70"
     assert cs["seg_far_ft"] == 270.0 and cs["seg_end_ft"] == 17.0
-    assert "TERMINAL TAIL" in cs["detail"]
+    assert "direct callout" in cs["detail"]
+
+
+def test_discovery_binds_via_segmented_callout_chain():
+    # NO direct 0+00 -> 2+70 callout; instead a 2-hop printed chain. The
+    # single-callout refusal is NOT weakened -- the chain recovers it.
+    chain_far = [
+        "STA 0+00 TO STA 1+30", "E/W PORT TERMINAL TAIL", "DIR. BORE (130')",
+        "STA 1+30 TO STA 2+70", "E/W PORT TERMINAL TAIL", "DIR. BORE (140')",
+    ]
+    cs = _discover(plan=_Plan(f_lines=chain_far))
+    assert cs["result"] == CS_BOUND
+    assert cs["seg_far_ft"] == 270.0           # 130 + 140, chain-summed
+    assert "callout chain 0+00->1+30->2+70" in cs["detail"]
+    assert "2 printed segments" in cs["detail"]
+    assert abs(cs["start_xy"][0] - 766.0) < 1.0
 
 
 # --- refusal taxonomy (each names its evidence class) -----------------------------------
@@ -192,10 +273,12 @@ def test_far_sheet_outside_bore_refs_refuses():
 
 
 def test_missing_reciprocal_refuses():
+    # no direct 0+00 -> 2+70 callout AND no connected chain reaches 2+70
     cs = _discover(plan=_Plan(f_lines=["STA 0+00 TO STA 9+99",
                                        "DIR. BORE (999')"]))
     assert cs["result"] == CS_REFUSED
-    assert "reciprocal segment statement" in cs["named_missing"]
+    assert "neither a direct run callout" in cs["named_missing"]
+    assert "nor a connected printed callout chain" in cs["named_missing"]
 
 
 def test_footage_closure_refuses():

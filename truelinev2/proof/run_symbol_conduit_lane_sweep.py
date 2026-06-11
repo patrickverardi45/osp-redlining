@@ -77,16 +77,21 @@ DESIGN_GRADED = {"log25", "log51", "log59", "log65"}
 # STRUCTURE_IDENTITY_BINDING_REQUIRED -- discovery proved its printed
 # boundary + equation + reciprocal callouts + closure, then found rival
 # far-sheet structures the banked corroboration band cannot separate (the
-# rivals' printed labels belong to OTHER runs' frames). ZERO of the 16
-# cross-sheet bores convert to strokes under current printed evidence;
-# every blocker is named per bore in run_cross_sheet_continuation_probe.
+# rivals' printed labels belong to OTHER runs' frames).
+# M8.17 (segmented callout-chain assembly): log8 + log32 ALSO move CROSS_SHEET
+# -> STRUCTURE_IDENTITY_BINDING_REQUIRED -- their far segment is now PROVEN
+# from a uniqueness-mandatory printed callout chain (0+00->mid->boundary,
+# closure holds), leaving only the SAME multi-ladder start-identity blocker as
+# log42. ZERO of the 16 cross-sheet bores convert to strokes under current
+# printed evidence; every blocker is named per bore in
+# run_cross_sheet_continuation_probe.
 EXPECT_CENSUS = {
     S_UNPRINTED: 25,
-    S_CROSS_SHEET: 15,
+    S_CROSS_SHEET: 13,
     S_PICK: 5,
     S_END_POSITION: 5,
     S_ELIGIBLE: 4,
-    S_STRUCTURE_REQUIRED: 1,
+    S_STRUCTURE_REQUIRED: 3,
     S_DESIGN: 1,
     S_SOURCE_ERR: 2,
 }
@@ -148,9 +153,11 @@ def _markdown(census: Dict[str, int], rows: List[dict]) -> str:
         f"callout-chain / no reciprocal) -- see "
         f"run_cross_sheet_continuation_probe",
         f"- `{S_STRUCTURE_REQUIRED}` ({census.get(S_STRUCTURE_REQUIRED, 0)}): "
-        f"discovery proved the printed boundary evidence but rival far-sheet "
-        f"structures cannot be uniquely separated (log42; corroboration "
-        f"refuses, never selects)",
+        f"discovery proved the printed boundary + far-segment evidence "
+        f"(log42 direct; log8/log32 via M8.17 segmented callout-chain "
+        f"assembly) but rival far-sheet structures cannot be uniquely "
+        f"separated -- the multi-ladder band gives corroboration no "
+        f"consistent basis (it refuses, never selects)",
         f"- `{S_END_POSITION}` ({census.get(S_END_POSITION, 0)}): end note "
         f"printed but its symbol could not be uniquely leader-traced",
         f"- `{S_DESIGN}` ({census.get(S_DESIGN, 0)}): drawn conduit present "

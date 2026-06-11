@@ -1,14 +1,20 @@
-r"""M8.16 -- cross-sheet origin continuation: the 16-bore evidence census.
+r"""M8.16/M8.17 -- cross-sheet origin continuation: the 16-bore evidence census.
 
 The M8.14.c lane's ``cross_sheet_origin`` DISCOVERY law (printed-only:
-end-sheet boundary callout -> unique frame-equation edge -> reciprocal far-
-sheet callout + footage closure -> printed conduit class -> unique
-corroborated far-sheet start structure -> full b.9 join re-proof) run over
-ALL 16 banked CROSS_SHEET_CONTINUATION_REQUIRED bores plus the discovery-law
-regression set (log65 printed-identity path; log50 pick-card).
+end-sheet boundary callout -> unique frame-equation edge -> bore-ref check ->
+reciprocal far-sheet segment [direct callout OR, M8.17, a uniqueness-mandatory
+segmented callout CHAIN] + footage closure -> printed conduit class ->
+corroborated unique far-sheet start structure against a CONSISTENT ladder band
+-> full b.9 join re-proof) run over ALL 16 banked
+CROSS_SHEET_CONTINUATION_REQUIRED bores plus the discovery-law regression set
+(log65 printed-identity path; log50 pick-card).
 
 THE BANKED RESULT IS AN HONEST NEGATIVE: ZERO of the 16 convert to strokes
-under current printed evidence -- and every blocker is now NAMED per bore:
+under current printed evidence -- and every blocker is now NAMED per bore.
+M8.17 callout-chain assembly sharpened log8 + log32 from "no reciprocal"
+(CROSS_SHEET) to "start structure identity required" (their far segment is
+PROVEN from a segmented printed chain; only the multi-ladder start-identity
+remains -- they join log42 at that frontier):
 
   * NO printed frame equation at the bore's boundary (the log50-class gap):
     log14 (sheet 15), log61/log62 (sheet 6), log67/log68/log70 (sheet 20)
@@ -16,9 +22,12 @@ under current printed evidence -- and every blocker is now NAMED per bore:
   * no printed run callout ENDING at the bore end: log46, log71, log72
   * full-span callout only (prints no crossing boundary, yet the drawn chain
     exits the sheet -- a contradiction the census surfaces): log60, log64
-  * far-sheet segment is a MULTI-CALLOUT CHAIN (printed as 0+00->mid->boundary;
-    single-callout reciprocity correctly refuses; callout-CHAIN assembly is
-    the named next capability): log8, log32
+  * far-sheet segment is a MULTI-CALLOUT CHAIN (printed as 0+00->mid->boundary):
+    M8.17 callout-chain assembly now PROVES the far segment + closure for
+    log8 (0+00->1+10->1+76, 110'+66'=176', +214' end = 390' span) and log32
+    (0+00->1+30->1+77, 130'+47'=177', +36' end = 213' span); only the start-
+    structure identity remains (the multi-ladder band, same as log42) ->
+    both advance to STRUCTURE_IDENTITY_BINDING_REQUIRED, NOT strokes
   * the bore log's own sheet references do not name the discovered far sheet
     (the bore references only sheet 3; the equation names sheet 23): log12
   * printed-identity matchline path, no shared boundary callouts: log10
@@ -78,18 +87,25 @@ CS16 = ("log8", "log10", "log12", "log14", "log32", "log42", "log46",
         "log71", "log72")
 
 # Banked discovery outcome per bore (drift fails loud, never absorbed).
+# M8.17 callout-chain assembly: log8 + log32 advance CROSS_SHEET ->
+# STRUCTURE_IDENTITY_BINDING_REQUIRED -- their far segment is now PROVEN from
+# a segmented printed callout chain (0+00->mid->boundary), closure holds, and
+# only the start-structure identity remains (the SAME multi-ladder band that
+# blocks log42). They join log42 at the start-identity frontier.
 EXPECT_STATUS = {
     **{b: S_CROSS_SHEET for b in CS16},
+    "log8": S_STRUCTURE_REQUIRED,
+    "log32": S_STRUCTURE_REQUIRED,
     "log42": S_STRUCTURE_REQUIRED,
 }
 # Evidence-class needle each bore's named_missing must mention (G3).
 EXPECT_NEEDLE = {
-    "log8": "reciprocal segment statement",       # far side is a callout CHAIN
+    "log8": "the far segment is PROVEN",          # chain assembled; start id left
     "log10": "run callouts sharing one boundary", # printed-identity path
     "log12": "do not name the discovered far sheet",  # refs [3], equation -> 23
     "log14": "prints no equation at this boundary",
-    "log32": "reciprocal segment statement",      # far side is a callout CHAIN
-    "log42": "cannot be uniquely bound",          # rival far structures
+    "log32": "the far segment is PROVEN",         # chain assembled; start id left
+    "log42": "cannot be uniquely bound",          # rival far structures (direct)
     "log46": "printed run callout ENDING",
     "log60": "full-span callout",
     "log61": "prints no equation at this boundary",
@@ -191,11 +207,36 @@ def main() -> int:
         print(f"[m8.16] {'PASS' if g6 else 'FAIL'}  G6 probe renders nothing")
         ok &= g6
 
+        # G7 (M8.17): log8 + log32's far segment was assembled from a 2-hop
+        # printed callout CHAIN (the segmented reciprocity law), distinct from
+        # log42's DIRECT single callout -- and neither placed a stroke.
+        g7 = True
+        for b, hops in (("log8", "0+00->1+10->1+76"), ("log32", "0+00->1+30->1+77")):
+            proof = (outcomes[b].detail or {}).get("far_segment_proof", "")
+            nm = outcomes[b].named_missing or ""
+            okb = ("callout chain" in proof and hops in proof
+                   and "2 printed segments" in proof
+                   and "the far segment is PROVEN" in nm
+                   and not outcomes[b].segments)
+            if not okb:
+                g7 = False
+                print(f"[m8.16]      G7 miss {b}: proof={proof!r}")
+        # log42 used the DIRECT callout (no chain) -- provenance must differ
+        g7 &= "callout chain" not in (
+            (outcomes["log42"].detail or {}).get("far_segment_proof", ""))
+        print(f"[m8.16] {'PASS' if g7 else 'FAIL'}  G7 log8/log32 far segment "
+              f"assembled from a printed callout CHAIN; log42 stays DIRECT; "
+              f"no chain-bore placed a stroke")
+        ok &= g7
+
         report = {
-            "milestone": ("truelinev2 M8.16 -- cross-sheet origin "
-                          "continuation discovery: 16-bore evidence census "
-                          "(HONEST NEGATIVE: zero safe conversions under "
-                          "current printed evidence; every blocker named)"),
+            "milestone": ("truelinev2 M8.16/M8.17 -- cross-sheet origin "
+                          "continuation discovery + segmented callout-chain "
+                          "assembly: 16-bore evidence census (HONEST "
+                          "NEGATIVE: zero stroke conversions; M8.17 chain "
+                          "assembly proves log8/log32's far segment, leaving "
+                          "only start-structure identity; every blocker "
+                          "named)"),
             "corpus_dir_used": corpus_dir, "corpus_resolution": how,
             "plan_pdf": PDF, "verdict": "PASS" if ok else "FAILURE",
             "law": ("end-sheet boundary callout (uniqueness-mandatory, note-"
