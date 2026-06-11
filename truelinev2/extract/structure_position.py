@@ -55,6 +55,11 @@ BRENHAM_STRUCTURE_LAYERS: Dict[str, Tuple[str, str, Tuple[float, float, float]]]
     "flower_pot": ("FLOWER POT - TEXT", "FLOWER POT", (0.0, 0.0, 0.0)),
 }
 
+# Brenham dialect table (M8.14.b.8, re-homed from the b.6 proof): bore-callout
+# conduit text -> CAD conduit layer. Another plan set configures BOTH tables;
+# the topology laws in extract/conduit_topology.py never name a layer.
+BRENHAM_CONDUIT_LAYERS: Dict[str, str] = {"VACANT HDPE": "BORE - VACANT PIPE"}
+
 
 @dataclass(frozen=True)
 class SymbolCluster:

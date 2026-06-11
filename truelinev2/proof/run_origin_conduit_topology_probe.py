@@ -66,64 +66,25 @@ from truelinev2.proof.station_equation_ownership import extract_reset_origins
 
 OUT_DIR = _REPO_ROOT / "data" / "outputs" / "origin_conduit_topology_probe"
 SHEET = 8
-MAX_DASH_GAP = 35.0   # uniform drawn dash spacing observed 31.3-31.7 pt
-FOOTPRINT_RADIUS = 8.0
-ORIGIN_BOUND = "CONDUIT_ORIGIN_BOUND"
-ORIGIN_AMBIGUOUS = "CONDUIT_ORIGIN_AMBIGUOUS"
-ORIGIN_NOT_FOUND = "CONDUIT_ORIGIN_NOT_FOUND"
-# Brenham dialect fact: bore callout conduit text -> CAD conduit layer.
-BRENHAM_CONDUIT_LAYERS = {"VACANT HDPE": "BORE - VACANT PIPE"}
 
-
-# --- pure helpers (offline-testable) ----------------------------------------------------
-
-def symbol_footprint(drawings: Sequence[dict], layer: str,
-                     center: Tuple[float, float],
-                     radius: float = FOOTPRINT_RADIUS
-                     ) -> Optional[Tuple[float, float, float, float]]:
-    """Union bbox of the symbol-cluster member drawings around ``center`` --
-    the structure's DRAWN footprint (containment target, not a tolerance)."""
-    mem = [d for d in drawings if d.get("layer") == layer
-           and math.hypot(d["xc"] - center[0], d["yc"] - center[1]) <= radius]
-    if not mem:
-        return None
-    return (min(d["x0"] for d in mem), min(d["y0"] for d in mem),
-            max(d["x1"] for d in mem), max(d["y1"] for d in mem))
-
-
-def dash_endpoints(segments: Sequence[dict]) -> List[Tuple[float, float]]:
-    return [p for d in segments for ln in (d.get("lines") or ())
-            for p in ((ln[0], ln[1]), (ln[2], ln[3]))]
-
-
-def chain_continuity(segments: Sequence[dict],
-                     max_gap: float = MAX_DASH_GAP) -> dict:
-    """One dashed chain: sorted by x, every consecutive bbox gap <= max_gap
-    (overlap counts as joined). Reports gaps exactly."""
-    segs = sorted(segments, key=lambda d: d["x0"])
-    gaps = [round(b["x0"] - a["x1"], 1) for a, b in zip(segs, segs[1:])]
-    return {"segments": len(segs), "gaps": gaps,
-            "continuous": all(g <= max_gap for g in gaps)}
-
-
-def _inside(p: Tuple[float, float], bb: Tuple[float, float, float, float]) -> bool:
-    return bb[0] <= p[0] <= bb[2] and bb[1] <= p[1] <= bb[3]
-
-
-def discriminate_origin(endpoints: Sequence[Tuple[float, float]],
-                        footprints: Dict[str, Tuple[float, float, float, float]]
-                        ) -> dict:
-    """The exactly-one law on drawn containment: candidate footprints hit by
-    >= 1 conduit dash endpoint. One hit -> bound; 0 -> not found; >= 2 ->
-    ambiguous. Never a distance comparison."""
-    hits = {label: [p for p in endpoints if _inside(p, bb)]
-            for label, bb in sorted(footprints.items())}
-    winners = [label for label, ps in hits.items() if ps]
-    result = (ORIGIN_BOUND if len(winners) == 1
-              else ORIGIN_NOT_FOUND if not winners else ORIGIN_AMBIGUOUS)
-    return {"result": result,
-            "winner": winners[0] if len(winners) == 1 else None,
-            "hit_counts": {label: len(ps) for label, ps in hits.items()}}
+# M8.14.b.8 re-homing (conclusions unchanged): the general topology laws now
+# live in extract/conduit_topology.py; the Brenham conduit-layer fact lives in
+# the extract/structure_position.py dialect tables. Names re-exported here so
+# the b.6 gates and tests run verbatim.
+from truelinev2.extract.conduit_topology import (  # noqa: E402
+    MAX_DASH_GAP,
+    ORIGIN_AMBIGUOUS,
+    ORIGIN_BOUND,
+    ORIGIN_NOT_FOUND,
+    _inside,
+    chain_continuity,
+    dash_endpoints,
+    discriminate_origin,
+    symbol_footprint,
+)
+from truelinev2.extract.structure_position import (  # noqa: E402
+    BRENHAM_CONDUIT_LAYERS,
+)
 
 
 def _render_png(plan, offset, segs, end_bb, hh_bb, pot_bb, winner_xy) -> str | None:
