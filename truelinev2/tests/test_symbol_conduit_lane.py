@@ -54,15 +54,18 @@ def test_distinct_abstain_statuses_exist():
     # the catch-all was split so the census names the REAL blocker
     assert lane.S_STRUCTURE_REQUIRED == "STRUCTURE_IDENTITY_BINDING_REQUIRED"
     assert lane.S_CROSS_SHEET == "CROSS_SHEET_CONTINUATION_REQUIRED"
-    assert {lane.S_STRUCTURE_REQUIRED, lane.S_CROSS_SHEET} <= set(STATUSES)
-    # all seven are distinct
-    assert len(set(STATUSES)) == len(STATUSES) == 7
+    assert lane.S_DESIGN == "DESIGN_PATH_NOT_TRACEABLE"  # M8.14.c.2 law
+    assert {lane.S_STRUCTURE_REQUIRED, lane.S_CROSS_SHEET,
+            lane.S_DESIGN} <= set(STATUSES)
+    # all eight are distinct
+    assert len(set(STATUSES)) == len(STATUSES) == 8
 
 
 def test_every_component_reports_law_and_configuration():
     assert set(COMPONENTS) == {"end_identity", "structure_position",
                                "start_identity", "conduit_origin", "tick_path",
-                               "matchline_join", "stroke_output", "abstain"}
+                               "design_path", "matchline_join",
+                               "stroke_output", "abstain"}
     for name, meta in COMPONENTS.items():
         assert meta["law"] and meta["configured"], name
     d = ComponentReport("tick_path", "READY").to_dict()
@@ -100,6 +103,9 @@ def test_brenham_dialect_contract_is_complete():
             assert d.context_words.get(klass)
     assert d.conduit_key in d.conduit_layers
     assert d.id_token and d.equation_token and d.matchline_layer
+    # M8.14.c.2: the design-path law traces ALL drawn conduit-path classes
+    assert d.conduit_layers[d.conduit_key] in d.path_layers
+    assert len(d.path_layers) >= 1
 
 
 class _StubPlan:

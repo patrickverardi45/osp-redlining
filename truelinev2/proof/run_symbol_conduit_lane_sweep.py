@@ -17,7 +17,8 @@ Honesty rules baked into the report:
 Embedded gates (any failure -> nonzero exit):
   G1 all 58 bores enumerated; each yields a typed outcome (no crash)
   G2 census counts match the banked Phase-1 distribution exactly (drift -> loud)
-  G3 the graded bores reproduce STROKE_ELIGIBLE_REVIEW (log7/log51/log65)
+  G3 graded bores under the adherence law: log51/log65 eligible (design-path
+     geometry, re-grade required); log7 abstains typed (parallel strands)
   G4 log50 stays PICK_CARD_WITH_END_ANCHOR
   G5 REVIEW-only + zero-false: every outcome review_only, no AUTO anywhere
   G6 exactly one REVIEW stroke PNG per eligible segment (canonical red); no
@@ -45,6 +46,7 @@ from truelinev2.ingest.pdf import PlanPdf
 from truelinev2.match.symbol_conduit_lane import (
     LANE_NAME,
     S_CROSS_SHEET,
+    S_DESIGN,
     S_ELIGIBLE,
     S_END_ONLY,
     S_END_POSITION,
@@ -62,17 +64,21 @@ OUT_DIR = _REPO_ROOT / "data" / "outputs" / "symbol_conduit_lane_sweep"
 S_SOURCE_ERR = "BORE_SOURCE_UNPARSEABLE"   # banked adapter gap, NOT a lane fault
 GRADED = {"log7", "log51", "log65"}        # b.3 / b.7 / b.10 visually graded PASS
 
-# Banked Phase-1 census (this is what the lane produces TODAY; drift fails G2
-# loudly so any change is examined, never silently absorbed).
+# Banked census (M8.14.c.2 design-path adherence law applied; drift fails G2
+# loudly so any change is examined, never silently absorbed). log7 moved
+# STROKE_ELIGIBLE -> DESIGN_PATH_NOT_TRACEABLE: its conduit environment
+# carries 4 physically distinct drawn strands and the lane never picks one
+# (the law's typed cost; named missing = a strand discriminator).
 EXPECT_CENSUS = {
     S_UNPRINTED: 25,
     S_CROSS_SHEET: 16,
     S_PICK: 5,
     S_END_POSITION: 5,
-    S_ELIGIBLE: 5,
+    S_ELIGIBLE: 4,
+    S_DESIGN: 1,
     S_SOURCE_ERR: 2,
 }
-EXPECT_ELIGIBLE = {"log7", "log25", "log51", "log59", "log65"}
+EXPECT_ELIGIBLE = {"log25", "log51", "log59", "log65"}
 EXPECT_SOURCE_ERR = {"log37", "log38"}
 
 
@@ -99,7 +105,7 @@ def _evidence_summary(out) -> Dict[str, Optional[str]]:
 
 
 def _markdown(census: Dict[str, int], rows: List[dict]) -> str:
-    order = [S_ELIGIBLE, S_PICK, S_STRUCTURE_REQUIRED, S_CROSS_SHEET,
+    order = [S_ELIGIBLE, S_PICK, S_DESIGN, S_STRUCTURE_REQUIRED, S_CROSS_SHEET,
              S_END_POSITION, S_UNPRINTED, S_SOURCE_ERR]
     lines = ["# M8.14.c Phase 1 -- symbol_conduit_matchline all-58 census", "",
              f"Total bores: {sum(census.values())}  ·  lane: {LANE_NAME}  ·  "
@@ -113,9 +119,12 @@ def _markdown(census: Dict[str, int], rows: List[dict]) -> str:
     graded = [r["bore_id"] for r in elig if r["bore_id"] in GRADED]
     picks = [r["bore_id"] for r in rows if r["status"] == S_PICK]
     lines += [
-        "", "## Stroke-eligible (REVIEW-only)",
-        f"- GRADED PASS (b.3/b.7/b.10): {', '.join(sorted(graded)) or 'none'}",
-        f"- NEWLY SURFACED -- REQUIRE VISUAL GRADING: "
+        "", "## Stroke-eligible (REVIEW-only; design-path adherence law)",
+        "ALL eligible strokes carry NEW design-path geometry -- every one "
+        "requires (re-)grading:",
+        f"- previously graded under the OLD chord geometry: "
+        f"{', '.join(sorted(graded)) or 'none'}",
+        f"- corrected after the graded-FAIL chords: "
         f"{', '.join(sorted(new, key=lambda s: int(s[3:]))) or 'none'}",
         "", "## Pick-card candidates (end-anchored, start refused)",
         f"- {', '.join(sorted(picks, key=lambda s: int(s[3:]))) or 'none'}",
@@ -127,15 +136,19 @@ def _markdown(census: Dict[str, int], rows: List[dict]) -> str:
         f"cross-sheet join evidence",
         f"- `{S_END_POSITION}` ({census.get(S_END_POSITION, 0)}): end note "
         f"printed but its symbol could not be uniquely leader-traced",
+        f"- `{S_DESIGN}` ({census.get(S_DESIGN, 0)}): drawn conduit present "
+        f"but not uniquely traceable (log7: 4 physically distinct parallel "
+        f"strands; named missing = a strand discriminator); a chord is never "
+        f"drawn across a drawn route",
         f"- `{S_SOURCE_ERR}` ({census.get(S_SOURCE_ERR, 0)}): banked log37/38 "
         f"adapter station-format gap (NOT a lane fault)",
         "", "## Recommended next gate",
-        "- Visually grade the 2 newly-surfaced eligible bores (log25, log59); "
-        "if PASS, reviewer-card payload integration is justified (5 eligible + "
-        "5 pick-cards = 10 actionable, all REVIEW-only).",
-        "- Largest convertible blocker is `CROSS_SHEET_CONTINUATION_REQUIRED` "
-        "(16) -- a cross-sheet resolver expansion (generalize b.9/b.10 over the "
-        "matchline graph) is the highest-yield targeted lane after grading.",
+        "- Re-grade the corrected log25/log59 design-path strokes; then "
+        "reviewer-card payload integration (4 eligible + 5 pick-cards = 9 "
+        "actionable, all REVIEW-only).",
+        "- Targeted resolver expansions, by yield: cross-sheet continuation "
+        "(16) via the b.9/b.10 matchline graph; the log7-class strand "
+        "discriminator (re-unlocks its design-path stroke).",
     ]
     return "\n".join(lines)
 
@@ -195,8 +208,8 @@ def main() -> int:
                 "named_missing": out.named_missing,
                 "evidence": _evidence_summary(out),
                 "pngs": pngs,
-                "needs_grading": (out.status == S_ELIGIBLE
-                                  and out.bore_id not in GRADED),
+                "needs_grading": out.status == S_ELIGIBLE,  # M8.14.c.2: ALL
+                # eligible strokes carry never-graded design-path geometry
             })
 
         census = collections.Counter(r["status"] for r in rows)
@@ -216,9 +229,14 @@ def main() -> int:
         ok &= g2
 
         by_id = {r["bore_id"]: r for r in rows}
-        g3 = all(by_id[b]["status"] == S_ELIGIBLE for b in GRADED)
-        print(f"[m8.14c-p1] {'PASS' if g3 else 'FAIL'}  G3 graded bores "
-              f"reproduce eligible: {[by_id[b]['status'] for b in sorted(GRADED)]}")
+        # M8.14.c.2: log51/log65 stay eligible (design-path geometry); log7
+        # abstains typed -- its conduit environment has 4 parallel strands and
+        # the lane never picks one (the adherence law's documented cost).
+        g3 = (by_id["log51"]["status"] == S_ELIGIBLE
+              and by_id["log65"]["status"] == S_ELIGIBLE
+              and by_id["log7"]["status"] == S_DESIGN)
+        print(f"[m8.14c-p1] {'PASS' if g3 else 'FAIL'}  G3 graded bores under "
+              f"the adherence law: {[by_id[b]['status'] for b in sorted(GRADED)]}")
         ok &= g3
 
         g4 = by_id["log50"]["status"] == S_PICK
@@ -259,14 +277,18 @@ def main() -> int:
             "corpus_dir_used": corpus_dir, "corpus_resolution": how,
             "plan_pdf": PDF, "verdict": "PASS" if ok else "FAILURE",
             "honesty": ("eligible == every lane gate passed, NOT human-graded; "
-                        "newly-surfaced eligible bores are flagged for visual "
-                        "grading; source-parse failures are typed (banked "
-                        "adapter gap), never lane faults; no AUTO; lane unwired"),
+                        "ALL eligible strokes carry M8.14.c.2 design-path "
+                        "geometry that has never been visually graded -- every "
+                        "one requires (re-)grading, including log51/log65 "
+                        "whose b.7/b.10 grades covered the old tick-chord "
+                        "geometry; log7 abstains typed (parallel strands); "
+                        "source-parse failures are typed (banked adapter "
+                        "gap), never lane faults; no AUTO; lane unwired"),
             "census": dict(sorted(census.items())),
-            "newly_surfaced_needs_grading": sorted(
-                (r["bore_id"] for r in rows if r["needs_grading"]),
+            "eligible_needs_regrade": sorted(
+                (r["bore_id"] for r in rows if r["status"] == S_ELIGIBLE),
                 key=lambda s: int(s[3:])),
-            "graded_reproduced": sorted(GRADED),
+            "graded_under_old_geometry": sorted(GRADED),
             "summary_markdown": md,
             "bores": rows,
         }

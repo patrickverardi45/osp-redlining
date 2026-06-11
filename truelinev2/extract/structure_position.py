@@ -73,6 +73,10 @@ class LaneDialect:
     conduit_layers: Dict[str, str]
     # which conduit-layer key the lane's drop bores use
     conduit_key: str
+    # ALL drawn conduit-path layers a redline may trace (M8.14.c.2 design-path
+    # law: the stroke follows the drawn route, which may hand off between
+    # conduit classes at structures)
+    path_layers: Tuple[str, ...]
     # CAD layer carrying the drawn sheet-boundary lines
     matchline_layer: str
     # ordered (class, keywords) pairs classifying a structure-note label
@@ -93,6 +97,7 @@ BRENHAM_LANE_DIALECT = LaneDialect(
     structure_layers=BRENHAM_STRUCTURE_LAYERS,
     conduit_layers=BRENHAM_CONDUIT_LAYERS,
     conduit_key="VACANT HDPE",
+    path_layers=("BORE - VACANT PIPE", "BORE - PORT"),
     matchline_layer="MATCHLINE",
     class_keywords=(
         ("installer_hh", ("INSTALLER HH",)),

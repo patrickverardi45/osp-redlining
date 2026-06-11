@@ -12,7 +12,11 @@ Chain (each component a proven law; any missing artifact -> typed refusal):
   4. conduit-origin topology when the start identity is unprinted
      (containment + span corroboration -- a span-refused candidate is a
      pick-card, never a placement)
-  5. clean station-ladder tick-path interior (unchanged M8.14 solver)
+  5. clean station-ladder tick path as the STATION CONSTRAINT, then the
+     M8.14.c.2 DESIGN-PATH ADHERENCE law for geometry: the stroke FOLLOWS
+     the drawn conduit route (welded-piece walk); ticks never define final
+     geometry; a chord needs a positive straightness certificate; an
+     untraceable design path is a typed abstain, never a chord
   6. matchline-joined cross-sheet continuation when start/end sheets differ
   7. symbol-anchored stroke segments (RED by the stroke-color law; rendering
      itself lives in render/, not here)
@@ -38,6 +42,18 @@ from truelinev2.extract.conduit_topology import (
     ladder_scale_for_band,
     symbol_footprint,
 )
+from truelinev2.extract.design_path import (
+    DESIGN_LENGTH_REL_TOL,
+    NOT_CONNECTED as DP_NOT_CONNECTED,
+    TRACED as DP_TRACED,
+    chord_straightness_certificate,
+    conduit_pieces,
+    parallel_strand_guard,
+    path_length,
+    ticks_adhere,
+    walk_design_path,
+)
+from truelinev2.extract.conduit_topology import FOOTPRINT_RADIUS
 from truelinev2.extract.matchline_join import (
     cross_sheet_join_verdict,
     extend_dash_to_boundary,
@@ -83,8 +99,13 @@ S_END_POSITION = "END_POSITION_UNRESOLVED"
 #     cross-sheet matchline join cannot be proven -> needs the b.9 join evidence
 S_STRUCTURE_REQUIRED = "STRUCTURE_IDENTITY_BINDING_REQUIRED"
 S_CROSS_SHEET = "CROSS_SHEET_CONTINUATION_REQUIRED"
+# M8.14.c.2 (Patrick's graded-FAIL correction): a redline must FOLLOW the
+# drawn design line; when conduit is drawn but the path cannot be traced
+# uniquely (or a chord lacks a straightness certificate), the stroke abstains
+# -- a chord is never drawn across a drawn route.
+S_DESIGN = "DESIGN_PATH_NOT_TRACEABLE"
 STATUSES = (S_ELIGIBLE, S_PICK, S_END_ONLY, S_UNPRINTED, S_END_POSITION,
-            S_STRUCTURE_REQUIRED, S_CROSS_SHEET)
+            S_STRUCTURE_REQUIRED, S_CROSS_SHEET, S_DESIGN)
 
 BAND_HALFWIDTH = 30.0   # ladder-scale corridor around an anchor (b.8 constant)
 
@@ -126,8 +147,20 @@ COMPONENTS: Dict[str, Dict[str, str]] = {
     "tick_path": {
         "law": "clean all-tick-block ladder ticks + symbol anchor ticks "
                "through the uniqueness/scale/branch-safe solver; exactly one "
-               "trimmed stroke; endpoints land ON the anchors",
+               "trimmed stroke; endpoints land ON the anchors; ticks CONSTRAIN "
+               "progress -- they never define final geometry by themselves",
         "configured": "nothing (fully general)",
+    },
+    "design_path": {
+        "law": "the stroke interior FOLLOWS the drawn conduit route: anchor-"
+               "seeded exhaustive walk over conduit piece segments (sub-path "
+               "long axes), nearest-hop with junction tie-branching, dead "
+               "ends pruned, EXACTLY ONE complete path; length corroborates "
+               "the ladder scale; in-span ticks lie ON the path; a chord is "
+               "drawn ONLY with a positive straightness certificate (in-span "
+               "ticks collinear with the anchor chord); anything else is a "
+               "typed abstain -- never a chord across a drawn route",
+        "configured": "drawn conduit-path layers (path_layers)",
     },
     "matchline_join": {
         "law": "printed frame equation typeset at both drawn matchlines + "
@@ -268,22 +301,86 @@ def _locate(plan, sheet: int, offset: int, dialect: LaneDialect, *,
                   f"a note-bound class without a locator is a typed refusal")
 
 
-def _solve_segment(plan, offset: int, *, bore_id: str, sheet: int,
-                   start_ft: float, end_ft: float,
+def _solve_segment(plan, offset: int, dialect: LaneDialect, *, bore_id: str,
+                   sheet: int, start_ft: float, end_ft: float,
                    start_xy: Tuple[float, float], end_xy: Tuple[float, float]
-                   ) -> Tuple[Optional[StrokeSegment], str]:
+                   ) -> Tuple[Optional[StrokeSegment], str, str, str]:
+    """Returns (segment, refusal, abstain_status, design_note). The tick path
+    remains the STATION CONSTRAINT (uniqueness/scale gates); the GEOMETRY must
+    follow the drawn design path (M8.14.c.2) -- a chord is allowed only with a
+    positive straightness certificate."""
     ticks, _counts = route_ladder_ticks(plan, sheet, offset)
     anchors = [Tick(start_ft, *start_xy), Tick(end_ft, *end_xy)]
     v = solve_tick_path(bore_id=bore_id, sheet=sheet, start_ft=start_ft,
                         end_ft=end_ft, ticks=list(ticks) + anchors)
     if v.result != READY or v.strokes_found != 1:
         return None, (f"anchored tick path on sheet {sheet} is {v.result} "
-                      f"({v.named_missing_relationship or 'not unique'})")
+                      f"({v.named_missing_relationship or 'not unique'})"), \
+            S_END_ONLY, ""
     if not stroke_endpoint_fidelity(v, start_xy, end_xy):
         return None, (f"the trimmed stroke on sheet {sheet} does not land ON "
-                      f"the anchor symbols -- fidelity refused")
-    return StrokeSegment(sheet=sheet, start_ft=start_ft, end_ft=end_ft,
-                         stroke_points=tuple(v.stroke_points)), ""
+                      f"the anchor symbols -- fidelity refused"), S_END_ONLY, ""
+
+    inspan = [(t.x, t.y) for t in ticks if start_ft < t.station_ft < end_ft]
+    med = sorted(v.hop_scales)[len(v.hop_scales) // 2] if v.hop_scales else 0.0
+    span_ft = end_ft - start_ft
+    pieces = conduit_pieces(plan.line_items(sheet, offset), dialect.path_layers)
+    walk = walk_design_path(pieces, start_xy, end_xy)
+
+    if walk["result"] == DP_TRACED:
+        stroke = walk["stroke_points"]
+        plen = path_length(stroke)
+        scale_ok = (med > 0 and span_ft > 0
+                    and abs(plen / span_ft - med) / med <= DESIGN_LENGTH_REL_TOL)
+        adhere = ticks_adhere(stroke, inspan, BAND_HALFWIDTH)
+        strands = parallel_strand_guard(
+            pieces, walk["visited_pieces"], stroke,
+            [start_xy, end_xy], BAND_HALFWIDTH, FOOTPRINT_RADIUS)
+        if not strands["clear"]:
+            return None, (f"an unvisited mapped-class conduit piece PARALLELS "
+                          f"the traced path on sheet {sheet} ({strands}) -- a "
+                          f"sibling drawn run the walk never saw complete; "
+                          f"the strand discriminator is the named missing "
+                          f"artifact; tracing one of parallel runs is "
+                          f"forbidden"), S_DESIGN, ""
+        if not scale_ok:
+            return None, (f"the traced design path on sheet {sheet} fails "
+                          f"length corroboration ({round(plen, 1)} pt / "
+                          f"{span_ft} ft vs ladder {round(med, 3)} pt/ft) -- "
+                          f"the drawn route does not account for the bore "
+                          f"span; a chord is never substituted"), S_DESIGN, ""
+        if not adhere["adheres"]:
+            return None, (f"the traced design path on sheet {sheet} leaves "
+                          f"the in-span tick band ({adhere}) -- ticks "
+                          f"constrain progress; refused"), S_DESIGN, ""
+        note = (f"design path TRACED: {len(stroke)} vertices over "
+                f"{len(pieces)} pieces; length {round(plen, 1)} pt "
+                f"corroborates {round(plen / span_ft, 3)} pt/ft; "
+                f"tick adherence {adhere}")
+        return StrokeSegment(sheet=sheet, start_ft=start_ft, end_ft=end_ft,
+                             stroke_points=tuple(stroke)), "", "", note
+
+    if walk["result"] == DP_NOT_CONNECTED:
+        cert = chord_straightness_certificate(inspan, start_xy, end_xy,
+                                              BAND_HALFWIDTH)
+        if cert["straight"]:
+            note = (f"no drawn conduit connects the anchors; chord permitted "
+                    f"by straightness certificate {cert}")
+            return StrokeSegment(sheet=sheet, start_ft=start_ft,
+                                 end_ft=end_ft,
+                                 stroke_points=tuple(v.stroke_points)), \
+                "", "", note
+        return None, (f"no drawn conduit path of the mapped classes connects "
+                      f"the anchors on sheet {sheet} AND the straightness "
+                      f"certificate fails ({cert}) -- a chord across a "
+                      f"non-certified route is forbidden; the named missing "
+                      f"artifact is the bore's drawn conduit class/layer "
+                      f"mapping (extend path_layers) or a straight tick "
+                      f"certificate"), S_DESIGN, ""
+
+    return None, (f"the design-path walk on sheet {sheet} is "
+                  f"{walk['result']} ({walk.get('named_missing', '')}) -- "
+                  f"a chord is never drawn across a drawn route"), S_DESIGN, ""
 
 
 def resolve_bore(plan, bore, offset: int, dialect: LaneDialect,
@@ -450,16 +547,18 @@ def resolve_bore(plan, bore, offset: int, dialect: LaneDialect,
 
     # 5/6/7. strokes: single-sheet or matchline-joined cross-sheet -----------
     if start_sheet == end_sheet:
-        seg, err = _solve_segment(
-            plan, offset, bore_id=bid, sheet=end_sheet,
+        seg, err, abstain, note = _solve_segment(
+            plan, offset, dialect, bore_id=bid, sheet=end_sheet,
             start_ft=bore.station_start_ft, end_ft=bore.station_end_ft,
             start_xy=start_xy, end_xy=tuple(end_pos.symbol_xy))
         if seg is None:
-            ev.append(ComponentReport("tick_path", "REFUSED", err))
-            return LaneOutcome(bore_id=bid, status=S_END_ONLY,
+            comp = "design_path" if abstain == S_DESIGN else "tick_path"
+            ev.append(ComponentReport(comp, "REFUSED", err))
+            return LaneOutcome(bore_id=bid, status=abstain,
                                evidence=tuple(ev), named_missing=err)
         ev.append(ComponentReport("tick_path", "READY",
-                                  f"{len(seg.stroke_points)} stroke points"))
+                                  "station constraint satisfied"))
+        ev.append(ComponentReport("design_path", "TRACED", note))
         segs = (seg,)
     else:
         joined = _cross_sheet_segments(
@@ -573,17 +672,25 @@ def _cross_sheet_segments(plan, offset, dialect: LaneDialect, frame_graph, *,
         f"{round(scale_a, 4)}/{round(scale_b, 4)}"))
 
     out = []
+    notes = []
     for sheet, s_ft, e_ft, s_xy, e_xy in (
             (start_sheet, bore.station_start_ft, boundary_ft, start_xy,
              sides[start_sheet]["boundary"]),
             (end_sheet, boundary_ft, bore.station_end_ft,
              sides[end_sheet]["boundary"], end_xy)):
-        seg, err = _solve_segment(plan, offset, bore_id=bid, sheet=sheet,
-                                  start_ft=s_ft, end_ft=e_ft,
-                                  start_xy=s_xy, end_xy=e_xy)
+        seg, err, abstain, note = _solve_segment(
+            plan, offset, dialect, bore_id=bid, sheet=sheet,
+            start_ft=s_ft, end_ft=e_ft, start_xy=s_xy, end_xy=e_xy)
         if seg is None:
+            if abstain == S_DESIGN:
+                ev.append(ComponentReport("design_path", "REFUSED", err))
+                return LaneOutcome(bore_id=bid, status=S_DESIGN,
+                                   evidence=tuple(ev), named_missing=err)
             return refuse(err)
+        notes.append(note)
         out.append(seg)
     ev.append(ComponentReport("tick_path", "READY",
-                              f"{len(out)} cross-sheet segments"))
+                              f"{len(out)} cross-sheet segments "
+                              f"(station constraints satisfied)"))
+    ev.append(ComponentReport("design_path", "TRACED", " | ".join(notes)))
     return tuple(out)

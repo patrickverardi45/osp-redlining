@@ -4,7 +4,10 @@ The promoted lane (match/symbol_conduit_lane.py) replayed over the graded
 proof set -- NOT an all-58 sweep. Every outcome must REPRODUCE its banked
 b.3/b.7/b.8/b.10 conclusion through the single lane orchestrator:
 
-  log7  -> STROKE_ELIGIBLE_REVIEW, 1 segment s10  (b.3-graded stroke)
+  log7  -> DESIGN_PATH_NOT_TRACEABLE (M8.14.c.2 law cost: its conduit
+           environment carries 4 physically distinct drawn strands; the
+           lane never picks one and never chords across a drawn route;
+           the b.3 graded PROOF artifact stays banked)
   log51 -> STROKE_ELIGIBLE_REVIEW, 1 segment s8   (b.7-graded; start via
            conduit-origin -- and REVIEW-only even though the engine places
            log51 AUTO: the lane caps everything at REVIEW, structural)
@@ -14,13 +17,14 @@ b.3/b.7/b.8/b.10 conclusion through the single lane orchestrator:
 Embedded gates (any failure -> nonzero exit):
   G1 default-OFF: the lane flag is False by default and NOTHING in the
      engine/service consults the lane (source-level pin)
-  G2 log7 reproduces b.3 exactly (status/segments/endpoints/chain stations)
+  G2 log7 abstains typed (parallel-strand ambiguity; named missing artifact)
   G3 log51 reproduces b.7 exactly (+ conduit-origin component in evidence)
   G4 log65 reproduces b.10 exactly (2 segments, shared boundary 6+11)
   G5 log50 refused as pick-card with the named missing artifact; ZERO
      segments; rendered NOTHING
   G6 REVIEW-only + zero-false: every outcome review_only; no AUTO anywhere;
-     exactly 4 stroke PNGs on disk (1+1+2), all via the canonical RED
+     exactly 3 stroke PNGs on disk (log51 1 + log65 2; log7 abstains and
+     renders nothing), all via the canonical RED
      renderer; every outcome carries its component evidence chain with
      law/configured_by
 
@@ -41,6 +45,7 @@ from truelinev2.ingest.normalize import load_borelog
 from truelinev2.ingest.pdf import PlanPdf
 from truelinev2.match.symbol_conduit_lane import (
     LANE_NAME,
+    S_DESIGN,
     S_ELIGIBLE,
     S_PICK,
     resolve_bore,
@@ -53,21 +58,21 @@ from truelinev2.service import _build_plan_frame_graph
 OUT_DIR = _REPO_ROOT / "data" / "outputs" / "symbol_conduit_lane_dryrun"
 DRYRUN = ("bore_log7", "bore_log51", "bore_log65", "bore_log50")
 
-# Banked expectations from the graded proofs (b.3 / b.7 / b.10 / b.8).
+# Banked expectations. M8.14.c.2 (design-path adherence law): stroke geometry
+# now FOLLOWS the drawn conduit; point counts are drawn-route vertex counts.
+# log7's conduit environment carries 4 physically distinct drawn strands ->
+# the lane abstains there (typed law cost; the b.3 PROOF artifact stays
+# banked -- the lane refuses to pick a strand).
 EXPECT = {
-    "log7": {"status": S_ELIGIBLE, "segments": [(10, 55.0, 451.0)],
-             "start_xy": (861.3, 354.2), "end_xy": (291.6, 355.3),
-             "chain_stations": [[55.0, 100.0, 200.0, 300.0, 400.0, 451.0]]},
+    "log7": {"status": S_DESIGN, "segments": [],
+             "missing_needle": "strand discriminator"},
     "log51": {"status": S_ELIGIBLE, "segments": [(8, 0.0, 299.0)],
               "start_xy": (577.6, 354.2), "end_xy": (149.9, 343.3),
-              "chain_stations": [[0.0, 100.0, 200.0, 299.0]],
-              "component": "conduit_origin"},
+              "points": [16], "component": "conduit_origin"},
     "log65": {"status": S_ELIGIBLE,
               "segments": [(10, 451.0, 611.0), (9, 611.0, 650.0)],
               "start_xy": (291.6, 355.3), "end_xy": (1085.2, 356.1),
-              "chain_stations": [[451.0, 500.0, 600.0, 611.0],
-                                 [611.0, 650.0]],
-              "component": "matchline_join"},
+              "points": [9, 3], "component": "matchline_join"},
     "log50": {"status": S_PICK, "segments": [],
               "missing_needle": "span corroboration"},
 }
@@ -132,11 +137,10 @@ def main() -> int:
             if out.segments:
                 g &= _near(out.segments[0].stroke_points[0], want["start_xy"])
                 g &= _near(out.segments[-1].stroke_points[-1], want["end_xy"])
-            if "chain_stations" in want:
-                # endpoints + interior count pinned via segment bounds; the
-                # interior tick stations are pinned through the point count
+            if "points" in want:
+                # drawn-route vertex counts (design-path geometry, M8.14.c.2)
                 g &= [len(s.stroke_points) for s in out.segments] \
-                    == [len(c) for c in want["chain_stations"]]
+                    == want["points"]
             if "component" in want:
                 g &= any(e.component == want["component"]
                          and e.result in ("BOUND", "PROVEN")
@@ -153,12 +157,12 @@ def main() -> int:
         ok &= all(gates)
 
         pngs_on_disk = sorted(p.name for p in OUT_DIR.glob("*.png"))
-        g6 = (len(pngs_on_disk) == 4
+        g6 = (len(pngs_on_disk) == 3
               and all(o["outcome"].review_only for o in rows.values())
               and all("AUTO" not in o["outcome"].status for o in rows.values())
               and all(o["outcome"].evidence for o in rows.values()))
         print(f"[m8.14c-p0] {'PASS' if g6 else 'FAIL'}  G6 REVIEW-only + "
-              f"zero-false: 4 red stroke PNGs -> {pngs_on_disk}")
+              f"zero-false: 3 red stroke PNGs -> {pngs_on_disk}")
         ok &= g6
 
         report = {
@@ -168,10 +172,14 @@ def main() -> int:
             "flag": "TL2_SYMBOL_CONDUIT_LANE_OPTIN (default OFF; lane UNWIRED)",
             "corpus_dir_used": corpus_dir, "corpus_resolution": how,
             "plan_pdf": PDF, "verdict": "PASS" if ok else "FAILURE",
-            "honesty": ("one orchestrator reproduces the graded b.3/b.7/b.10 "
-                        "strokes and the b.8 log50 refusal; REVIEW-only "
-                        "structural; zero engine consultation; renders only "
-                        "fully-proven chains via the canonical red renderer"),
+            "honesty": ("M8.14.c.2 design-path geometry: log51/log65 strokes "
+                        "now FOLLOW the drawn conduit (endpoints unchanged; "
+                        "interiors are drawn-route vertices, NOT the graded "
+                        "b.7/b.10 tick chords -- RE-GRADE REQUIRED); log7 "
+                        "abstains typed (4 parallel drawn strands; the b.3 "
+                        "graded proof artifact stays banked, the lane never "
+                        "picks a strand); log50 refusal reproduces b.8; "
+                        "REVIEW-only structural; zero engine consultation"),
             "bores": {bid: {**r["outcome"].to_dict(), "pngs": r["pngs"]}
                       for bid, r in rows.items()},
         }
