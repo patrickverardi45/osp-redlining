@@ -30,6 +30,7 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Sequence, Tuple
 
 from truelinev2.extract.conduit_topology import (
+    ORIGIN_AMBIGUOUS,
     ORIGIN_BOUND,
     connected_chain,
     dash_endpoints,
@@ -74,7 +75,16 @@ S_PICK = "PICK_CARD_WITH_END_ANCHOR"
 S_END_ONLY = "POSITION_BOUND_END_ONLY"
 S_UNPRINTED = "END_IDENTITY_UNPRINTED"
 S_END_POSITION = "END_POSITION_UNRESOLVED"
-STATUSES = (S_ELIGIBLE, S_PICK, S_END_ONLY, S_UNPRINTED, S_END_POSITION)
+# Distinct abstains so the census names the REAL blocker (not one catch-all):
+#   - structure-identity: the start structure is ON this sheet but >= 2 rival
+#     symbols sit at the conduit origin (the banked b.5 trap) -> needs the
+#     identity discriminator, never a metric guess
+#   - cross-sheet: the conduit run exits the sheet (0 on-sheet candidates) or a
+#     cross-sheet matchline join cannot be proven -> needs the b.9 join evidence
+S_STRUCTURE_REQUIRED = "STRUCTURE_IDENTITY_BINDING_REQUIRED"
+S_CROSS_SHEET = "CROSS_SHEET_CONTINUATION_REQUIRED"
+STATUSES = (S_ELIGIBLE, S_PICK, S_END_ONLY, S_UNPRINTED, S_END_POSITION,
+            S_STRUCTURE_REQUIRED, S_CROSS_SHEET)
 
 BAND_HALFWIDTH = 30.0   # ladder-scale corridor around an anchor (b.8 constant)
 
@@ -409,14 +419,32 @@ def resolve_bore(plan, bore, offset: int, dialect: LaneDialect,
                                    detail={"candidate": disc["winner"],
                                            "candidate_xy": list(cand_xy),
                                            "end_anchor": list(end_pos.symbol_xy)})
-        else:
+        elif disc["result"] == ORIGIN_AMBIGUOUS:
+            # >= 2 rival start-side symbols at the corridor origin ON this sheet
+            # -- the start structure is present but not uniquely identifiable
+            # (the banked b.5 log51 trap): identity binding, never a guess.
             named = (f"no printed start identity on sheets {sheets} and the "
-                     f"end-sheet conduit chain yields {disc['result']} -- the "
-                     f"start cannot be bound on this sheet; cross-sheet "
-                     f"continuation evidence (printed matchline equation + "
-                     f"reaching chains) is the named missing artifact")
+                     f"corridor conduit chain reaches {disc['hit_counts']} -- "
+                     f">= 2 rival start-side structures share the origin; the "
+                     f"start structure identity cannot be uniquely bound "
+                     f"without an identity discriminator (printed start "
+                     f"structure note / equation); guessing is forbidden")
             ev.append(ComponentReport("conduit_origin", "REFUSED", named))
-            return LaneOutcome(bore_id=bid, status=S_END_ONLY,
+            return LaneOutcome(bore_id=bid, status=S_STRUCTURE_REQUIRED,
+                               evidence=tuple(ev), named_missing=named,
+                               detail={"end_anchor": list(end_pos.symbol_xy),
+                                       "origin_hits": disc["hit_counts"]})
+        else:
+            # 0 on-sheet candidates -- the conduit run exits this sheet; the
+            # start lives across a matchline (the log65 class).
+            named = (f"no printed start identity on sheets {sheets} and the "
+                     f"corridor conduit chain finds NO start-side structure on "
+                     f"the end sheet ({disc['result']}) -- the run exits this "
+                     f"sheet; cross-sheet continuation evidence (printed "
+                     f"matchline equation + chains reaching both matchlines) "
+                     f"is the named missing artifact")
+            ev.append(ComponentReport("conduit_origin", "REFUSED", named))
+            return LaneOutcome(bore_id=bid, status=S_CROSS_SHEET,
                                evidence=tuple(ev), named_missing=named,
                                detail={"end_anchor": list(end_pos.symbol_xy)})
 
@@ -465,8 +493,9 @@ def _cross_sheet_segments(plan, offset, dialect: LaneDialect, frame_graph, *,
                           end_sheet: int, end_xy: Tuple[float, float],
                           end_layer: str, ev: List[ComponentReport]):
     """Components 6+5 for the cross-sheet case; returns segments or a typed
-    LaneOutcome refusal."""
-    def refuse(named: str, status: str = S_END_ONLY) -> LaneOutcome:
+    LaneOutcome refusal (cross-sheet by default -- the whole function is the
+    matchline join; an unprovable join IS a cross-sheet-continuation gap)."""
+    def refuse(named: str, status: str = S_CROSS_SHEET) -> LaneOutcome:
         ev.append(ComponentReport("matchline_join", "REFUSED", named))
         return LaneOutcome(bore_id=bid, status=status, evidence=tuple(ev),
                            named_missing=named,

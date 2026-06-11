@@ -50,6 +50,15 @@ def test_review_only_taxonomy_has_no_auto():
     assert out.review_only is True
 
 
+def test_distinct_abstain_statuses_exist():
+    # the catch-all was split so the census names the REAL blocker
+    assert lane.S_STRUCTURE_REQUIRED == "STRUCTURE_IDENTITY_BINDING_REQUIRED"
+    assert lane.S_CROSS_SHEET == "CROSS_SHEET_CONTINUATION_REQUIRED"
+    assert {lane.S_STRUCTURE_REQUIRED, lane.S_CROSS_SHEET} <= set(STATUSES)
+    # all seven are distinct
+    assert len(set(STATUSES)) == len(STATUSES) == 7
+
+
 def test_every_component_reports_law_and_configuration():
     assert set(COMPONENTS) == {"end_identity", "structure_position",
                                "start_identity", "conduit_origin", "tick_path",
