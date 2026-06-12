@@ -32,7 +32,7 @@ import os
 import re
 import shutil
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Callable, Dict, List
 
 from truelinev2.config import _REPO_ROOT
 from truelinev2.extract.registry import select_dialect
@@ -86,6 +86,7 @@ _ARTIFACT_KEYS = {
 _SERVED_URL = re.compile(
     r"^/engine-artifacts/[0-9a-f]{40}/[a-z0-9_]+_redline_stroke\.png$"
 )
+_SAFE_RELATIVE_URL = re.compile(r"^/[a-z0-9_./-]+$")
 
 
 def served_url(sha: str, filename: str) -> str:
@@ -93,7 +94,10 @@ def served_url(sha: str, filename: str) -> str:
     return f"/{ARTIFACT_SUBDIR}/{sha}/{filename}"
 
 
-def build_served_export(base: Dict[str, Any]) -> Dict[str, Any]:
+def build_served_export(
+    base: Dict[str, Any],
+    url_for: Callable[[str, str], str] = served_url,
+) -> Dict[str, Any]:
     """Turn a validated Slice 2a refs-only manifest into a served manifest.
 
     Reviewer-truth fields are carried verbatim; the only additions are the
@@ -111,7 +115,7 @@ def build_served_export(base: Dict[str, Any]) -> Dict[str, Any]:
                 "design_grade": row["design_grade"],
                 "sheets": list(row["sheets"]),
                 "artifact_refs": refs,
-                "artifact_urls": [served_url(sha, ref) for ref in refs],
+                "artifact_urls": [url_for(sha, ref) for ref in refs],
             }
         )
     served = {
@@ -119,11 +123,14 @@ def build_served_export(base: Dict[str, Any]) -> Dict[str, Any]:
         "source": {**base["source"], "served": True},
         "artifacts": artifacts,
     }
-    validate_served_export(served)
+    validate_served_export(served, url_for=url_for)
     return served
 
 
-def validate_served_export(export: Dict[str, Any]) -> None:
+def validate_served_export(
+    export: Dict[str, Any],
+    url_for: Callable[[str, str], str] = served_url,
+) -> None:
     """Fail closed if the served manifest carries anything beyond safe in-app refs."""
     if set(export) != _TOP_LEVEL_KEYS:
         raise ValueError("top-level export fields drift")
@@ -173,15 +180,29 @@ def validate_served_export(export: Dict[str, Any]) -> None:
         for ref, url in zip(refs, urls):
             if not isinstance(ref, str) or not _ARTIFACT_FILENAME.fullmatch(ref):
                 raise ValueError(f"artifact ref must be a bare filename at {path}")
-            if not isinstance(url, str) or not _SERVED_URL.fullmatch(url):
+            if (
+                not isinstance(url, str)
+                or not _SAFE_RELATIVE_URL.fullmatch(url)
+                or ".." in url
+                or "\\" in url
+                or "//" in url
+                or "?" in url
+                or "#" in url
+            ):
                 raise ValueError(
-                    f"served url must be /engine-artifacts/<sha>/<file> at {path}"
+                    f"served url must be a safe API-relative path at {path}"
                 )
-            if url != served_url(sha, ref):
+            if url != url_for(sha, ref):
                 raise ValueError(f"served url must match source sha + ref at {path}")
 
     if len(bore_ids) != len(set(bore_ids)):
         raise ValueError("duplicate source_bore_id")
+
+    approved_urls = {
+        url
+        for artifact in export["artifacts"]
+        for url in artifact["artifact_urls"]
+    }
 
     def walk(value: Any, path: str = "$") -> None:
         if isinstance(value, (bytes, bytearray, memoryview)):
@@ -201,8 +222,8 @@ def validate_served_export(export: Dict[str, Any]) -> None:
                 raise ValueError(f"URL/binary locator forbidden at {path}")
             if re.match(r"^[a-zA-Z]:[\\/]", value):
                 raise ValueError(f"absolute path forbidden at {path}")
-            # A leading '/' is allowed ONLY for our validated served URL shape.
-            if value.startswith("/") and not _SERVED_URL.fullmatch(value):
+            # A leading '/' is allowed ONLY for an exact, validated artifact URL.
+            if value.startswith("/") and value not in approved_urls:
                 raise ValueError(f"absolute path forbidden at {path}")
 
     walk(export)

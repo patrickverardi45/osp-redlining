@@ -34,4 +34,8 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     app.state.tl2 = Container(settings=settings, artifacts=artifacts, db=db,
                               service=RedlineService(settings, artifacts, db))
     app.include_router(router)
+    if settings.reviewer_api_optin:
+        from truelinev2.api.reviewer_routes import router as reviewer_router
+
+        app.include_router(reviewer_router)
     return app

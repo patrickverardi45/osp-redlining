@@ -176,21 +176,17 @@ def validate_export(export: Dict[str, Any]) -> None:
     walk(export)
 
 
-def main() -> int:
-    corpus_dir, how = resolve_corpus()
-    print(f"[design-stroke-export] corpus dir : {corpus_dir}  ({how})")
-    print(f"[design-stroke-export] plan PDF   : {PDF}")
+def generate_export() -> Dict[str, Any]:
+    """Generate and validate the refs-only manifest without writing it."""
+    corpus_dir, _ = resolve_corpus()
     if not os.path.isfile(PDF) or not os.path.isdir(corpus_dir):
-        print("[design-stroke-export] STOP: inputs missing")
-        return 2
+        raise FileNotFoundError("design-stroke export inputs missing")
 
     corpus = {path.stem: path for path in enumerate_corpus(corpus_dir)}
     if len(corpus) != EXPECTED_COUNT:
-        print(
-            f"[design-stroke-export] STOP: corpus drift "
-            f"({len(corpus)} != {EXPECTED_COUNT})"
+        raise ValueError(
+            f"design-stroke corpus drift ({len(corpus)} != {EXPECTED_COUNT})"
         )
-        return 3
 
     plan = PlanPdf(PDF)
     try:
@@ -214,10 +210,31 @@ def main() -> int:
         plan.close()
 
     if refusals:
-        print(f"[design-stroke-export] STOP: card refusals: {refusals}")
-        return 4
+        raise ValueError(f"design-stroke card refusals: {refusals}")
+    return build_export(packet, source_git_head())
 
-    export = build_export(packet, source_git_head())
+
+def main() -> int:
+    corpus_dir, how = resolve_corpus()
+    print(f"[design-stroke-export] corpus dir : {corpus_dir}  ({how})")
+    print(f"[design-stroke-export] plan PDF   : {PDF}")
+    if not os.path.isfile(PDF) or not os.path.isdir(corpus_dir):
+        print("[design-stroke-export] STOP: inputs missing")
+        return 2
+
+    corpus = {path.stem: path for path in enumerate_corpus(corpus_dir)}
+    if len(corpus) != EXPECTED_COUNT:
+        print(
+            f"[design-stroke-export] STOP: corpus drift "
+            f"({len(corpus)} != {EXPECTED_COUNT})"
+        )
+        return 3
+
+    try:
+        export = generate_export()
+    except ValueError as exc:
+        print(f"[design-stroke-export] STOP: {exc}")
+        return 4
     OUT_JSON.parent.mkdir(parents=True, exist_ok=True)
     OUT_JSON.write_text(
         json.dumps(export, indent=2, sort_keys=True) + "\n",

@@ -10,6 +10,9 @@ from typing import Optional, Tuple
 # truelinev2/config.py -> truelinev2/ -> repo root
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _OUT = _REPO_ROOT / "data" / "outputs" / "truelinev2"
+_DESIGN_STROKE_DIR = (
+    _REPO_ROOT / "data" / "outputs" / "symbol_conduit_lane_sweep"
+)
 
 
 @dataclass(frozen=True)
@@ -36,6 +39,11 @@ class Settings:
     # ships the lane UNWIRED (no engine/service consultation at all); the flag
     # exists so activation is an explicit owner decision, REVIEW-only.
     symbol_conduit_lane_optin: bool = False
+    # Local-only, read-only reviewer API handoff. DEFAULT OFF: reviewer routes
+    # are not mounted unless explicitly enabled.
+    reviewer_api_optin: bool = False
+    # Approved design-stroke PNG source for the reviewer API asset route.
+    design_stroke_dir: Path = _DESIGN_STROKE_DIR
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -52,6 +60,10 @@ class Settings:
             reverse_endpoint_optin=os.getenv("TL2_REVERSE_ENDPOINT_ANCHOR_OPTIN", "0") == "1",
             station_axis_interval_optin=os.getenv("TL2_STATION_AXIS_INTERVAL_OPTIN", "0") == "1",
             symbol_conduit_lane_optin=os.getenv("TL2_SYMBOL_CONDUIT_LANE_OPTIN", "0") == "1",
+            reviewer_api_optin=os.getenv("TL2_REVIEWER_API_OPTIN", "0") == "1",
+            design_stroke_dir=Path(
+                os.getenv("TL2_DESIGN_STROKE_DIR", str(_DESIGN_STROKE_DIR))
+            ),
         )
 
     @classmethod
@@ -62,4 +74,6 @@ class Settings:
             db_path=_OUT / "truelinev2.db",
             sheet_offset=13,
             allowed_origins=("http://localhost:3000", "http://127.0.0.1:8100"),
+            reviewer_api_optin=False,
+            design_stroke_dir=_DESIGN_STROKE_DIR,
         )

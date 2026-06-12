@@ -121,6 +121,28 @@ def validate_export(export: Dict[str, Any]) -> None:
     walk(bundle)
 
 
+def generate_export() -> Dict[str, Any]:
+    """Generate and validate the default-baseline export without writing it."""
+    corpus_dir, _ = resolve_corpus()
+    if not os.path.isfile(PDF) or not os.path.isdir(corpus_dir):
+        raise FileNotFoundError("reviewer bundle inputs missing")
+
+    corpus = enumerate_corpus(corpus_dir)
+    if len(corpus) != EXPECTED_COUNT:
+        raise ValueError(
+            f"reviewer corpus drift ({len(corpus)} != {EXPECTED_COUNT})"
+        )
+
+    service = ReviewerBundleService(
+        corpus_dir=corpus_dir,
+        plan_pdf_path=PDF,
+        project_id="brenham-ph5",
+        bore_log_paths=corpus,
+    )
+    bundle = service.generate(ReviewRunMode.DEFAULT_BASELINE)
+    return build_export(bundle, source_git_head())
+
+
 def main() -> int:
     corpus_dir, how = resolve_corpus()
     print(f"[web-adapter] corpus dir : {corpus_dir}  ({how})")
@@ -137,14 +159,8 @@ def main() -> int:
         )
         return 3
 
-    service = ReviewerBundleService(
-        corpus_dir=corpus_dir,
-        plan_pdf_path=PDF,
-        project_id="brenham-ph5",
-        bore_log_paths=corpus,
-    )
-    bundle = service.generate(ReviewRunMode.DEFAULT_BASELINE)
-    export = build_export(bundle, source_git_head())
+    export = generate_export()
+    bundle = export["bundle"]
 
     OUT_JSON.parent.mkdir(parents=True, exist_ok=True)
     OUT_JSON.write_text(
@@ -153,7 +169,7 @@ def main() -> int:
     )
     print(
         "[web-adapter] PASS: "
-        f"{len(bundle.payloads)} cards, statuses {bundle.status_counts}"
+        f"{len(bundle['payloads'])} cards, statuses {bundle['status_counts']}"
     )
     print(f"[web-adapter] output -> {OUT_JSON}")
     return 0
