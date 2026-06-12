@@ -5,8 +5,8 @@
 
 ## Repo state
 - Branch: `feat/truelinev2`
-- Pushed engine HEAD: `bb78140cf654ca91bd29f36781a4863a588f8f3f`
-- Latest verified test state: `474 passed`
+- Pushed engine HEAD: `b7410a50b0f39f5292ae4eb4c2676359ab1c1f4a`
+- Latest verified test state: `480 passed`
 - Tree at session save: tracked clean; existing untracked files were preserved.
 - Production `main` was not touched, merged, or deployed.
 
@@ -38,25 +38,45 @@
 - Remaining identity frontier: `log8`, `log32`, and `log42` need a
   start-structure identity discriminator / per-ladder tick clustering.
 
+### M8.18 pushed
+- M8.18 is pushed at engine HEAD `b7410a5`.
+- Added the proof-only ladder discriminator seam:
+  - `truelinev2/extract/ladder_cluster.py`
+  - `truelinev2/proof/run_ladder_discriminator_probe.py`
+  - `truelinev2/tests/test_ladder_cluster.py`
+- Proof only: No strokes placed. No lane wiring.
+- The all-58 sweep census is unchanged: `13 cross-sheet / 3 structure-required`;
+  there is no census change or accepted-log drift.
+- `log42` has 0 traceable survivors.
+- `log8` and `log32` narrow to the same port HH `NEXTLINK@378,409`, creating a
+  cross-bore collision.
+- The banked b.9 join refuses `log8` and `log32` on implied-scale because the
+  curved end-sheet routes fail the 5% gate.
+- The blocker shifted from start identity to cross-sheet join geometry.
+
 ### Verification state
-- Tests: `474 passed`.
+- Tests: `480 passed`.
+- PASS: M8.18 ladder discriminator probe G1-G6.
 - PASS: M8.16/M8.17 continuation probe G1-G7.
 - PASS: all-58 sweep G1-G7; census `25/13/5/5/4/3/1/2 = 58`.
 - PASS: design-path adherence, M8.15 cards, M8.10/M8.11, b.9/b.10, and
   the demo artifact.
 
 ### Remaining blocker classes
-1. Start-structure identity / per-ladder tick clustering:
-   `log8`, `log32`, `log42`.
-2. No printed matchline equation:
+1. Cross-sheet join geometry for `log8` and `log32`; the named next capability
+   is a path-length-based cross-sheet join. Their shared
+   `NEXTLINK@378,409` survivor remains a separate cross-bore collision.
+2. Uniquely traceable design path through the dense network for `log42`.
+3. No printed matchline equation:
    `log10`, `log14`, `log61`, `log62`, `log67`, `log68`, `log70`.
    Owner decision needed: geo/KMZ corroboration or reviewer pick-cards.
-3. Lower-yield printed-evidence gaps:
+4. Lower-yield printed-evidence gaps:
    `log12`, `log46`, `log60`, `log64`, `log71`, `log72`.
 
 ### Next recommended lane after reset
-- Use Opus Standard for the per-ladder tick-clustering discriminator.
-- Do not use Fable unless Opus reaches a geometry-law wall.
+- Design the path-length-based cross-sheet join law.
+- Treat the next geometry/join law as a careful Opus/Fable decision lane, not
+  casual wiring.
 
 ### Session sizing rule
 - Fable 5 UltraCode jobs should be split or start with a 100% token window.

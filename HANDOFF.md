@@ -2,8 +2,8 @@
 
 **Saved:** 2026-06-11
 **Branch:** `feat/truelinev2`
-**Pushed engine HEAD:** `bb78140cf654ca91bd29f36781a4863a588f8f3f`
-**Verified tests:** `474 passed`
+**Pushed engine HEAD:** `b7410a50b0f39f5292ae4eb4c2676359ab1c1f4a`
+**Verified tests:** `480 passed`
 
 ## Guardrails
 
@@ -47,9 +47,28 @@
 - The remaining blocker shared by `log8`, `log32`, and `log42` is
   start-structure identity / per-ladder tick clustering.
 
+### M8.18 - proof-only ladder discriminator seam
+
+- M8.18 is pushed at engine HEAD `b7410a5`.
+- Added the proof-only ladder discriminator seam:
+  - `truelinev2/extract/ladder_cluster.py`
+  - `truelinev2/proof/run_ladder_discriminator_probe.py`
+  - `truelinev2/tests/test_ladder_cluster.py`
+- The seam is not wired into a placement lane. No strokes were placed.
+  No lane wiring was added.
+- The all-58 sweep census is unchanged: `13 cross-sheet / 3 structure-required`.
+  There is no census change or accepted-log drift.
+- `log42` has 0 traceable survivors.
+- `log8` and `log32` narrow to the same port HH `NEXTLINK@378,409`, creating a
+  cross-bore collision.
+- The banked b.9 join refuses `log8` and `log32` on implied-scale because their
+  curved end-sheet routes fail the 5% gate.
+- The blocker has shifted from start identity to cross-sheet join geometry.
+
 ## Verification
 
-- Tests: `474 passed`.
+- Tests: `480 passed`.
+- M8.18 ladder discriminator probe G1-G6: PASS.
 - M8.16/M8.17 continuation probe G1-G7: PASS.
 - All-58 sweep G1-G7: PASS; census `25/13/5/5/4/3/1/2 = 58`.
 - Design-path adherence: PASS.
@@ -60,18 +79,21 @@
 
 ## Remaining Blocker Classes
 
-1. Start-structure identity / per-ladder tick clustering:
-   `log8`, `log32`, `log42`.
-2. No printed matchline equation:
+1. Cross-sheet join geometry for `log8` and `log32`; the named next capability
+   is a path-length-based cross-sheet join. Their shared
+   `NEXTLINK@378,409` survivor remains a separate cross-bore collision.
+2. Uniquely traceable design path through the dense network for `log42`.
+3. No printed matchline equation:
    `log10`, `log14`, `log61`, `log62`, `log67`, `log68`, `log70`.
    Owner decision required: geo/KMZ corroboration or reviewer pick-cards.
-3. Lower-yield printed-evidence gaps:
+4. Lower-yield printed-evidence gaps:
    `log12`, `log46`, `log60`, `log64`, `log71`, `log72`.
 
 ## Recommended Next Lane After Reset
 
-1. Use Opus Standard for the per-ladder tick-clustering discriminator.
-2. Do not use Fable unless Opus reaches a geometry-law wall.
+1. Design the path-length-based cross-sheet join law.
+2. Treat the next geometry/join law as a careful Opus/Fable decision lane, not
+   casual wiring.
 
 ## Session Sizing
 
