@@ -1,9 +1,9 @@
 # TrueLine v2 Session Handoff
 
-**Saved:** 2026-06-11
+**Saved:** 2026-06-12
 **Branch:** `feat/truelinev2`
-**Pushed engine HEAD:** `b7410a50b0f39f5292ae4eb4c2676359ab1c1f4a`
-**Verified tests:** `480 passed`
+**Pushed engine HEAD:** `972b83449e1bf8ab00def945e5120dc9918f3bd9`
+**Verified tests:** `484 passed`
 
 ## Guardrails
 
@@ -65,9 +65,33 @@
   curved end-sheet routes fail the 5% gate.
 - The blocker has shifted from start identity to cross-sheet join geometry.
 
+### M8.19 - path-length cross-sheet join Phase 0/1
+
+- M8.19 is pushed at engine HEAD `972b834`.
+- Added the proof-only path-length cross-sheet join probe:
+  - `truelinev2/proof/run_path_length_join_probe.py`
+  - `truelinev2/tests/test_path_length_join.py`
+- No lane wiring. No strokes placed.
+- The all-58 sweep census is unchanged: `13 cross-sheet / 3 structure-required`.
+  There is no census change.
+- The current b.9 join failure for `log8` and `log32` is caused by
+  chord/implied-scale measurement on curved routes.
+- Path-length measurement using `walk_design_path` + `path_length`, with
+  the unchanged `cross_sheet_join_verdict` and unchanged 5% tolerance, proves:
+  - `log8`: `1.508` vs `1.554`
+  - `log32`: `1.499` vs `1.441`
+  - `log65` remains proven both ways.
+- The remaining blocker is adjudication, not geometry:
+  - `log8` and `log32` both bind the same port HH `NEXTLINK@378,409`.
+  - The owner must decide/confirm whether this is a valid
+    multi-drop/shared-origin terminal.
+  - If it is not confirmed, the next capability is a per-bore discriminator
+    using intermediate chain stations `1+10` vs `1+30`.
+
 ## Verification
 
-- Tests: `480 passed`.
+- Tests: `484 passed`.
+- M8.19 path-length cross-sheet join probe G1-G5: PASS.
 - M8.18 ladder discriminator probe G1-G6: PASS.
 - M8.16/M8.17 continuation probe G1-G7: PASS.
 - All-58 sweep G1-G7: PASS; census `25/13/5/5/4/3/1/2 = 58`.
@@ -79,9 +103,10 @@
 
 ## Remaining Blocker Classes
 
-1. Cross-sheet join geometry for `log8` and `log32`; the named next capability
-   is a path-length-based cross-sheet join. Their shared
-   `NEXTLINK@378,409` survivor remains a separate cross-bore collision.
+1. Shared-origin adjudication for `log8` and `log32`: both bind
+   `NEXTLINK@378,409`. Geometry is proven; owner confirmation is required for
+   a valid multi-drop/shared-origin terminal. Otherwise, discriminate by the
+   intermediate chain stations `1+10` vs `1+30`.
 2. Uniquely traceable design path through the dense network for `log42`.
 3. No printed matchline equation:
    `log10`, `log14`, `log61`, `log62`, `log67`, `log68`, `log70`.
@@ -91,9 +116,10 @@
 
 ## Recommended Next Lane After Reset
 
-1. Design the path-length-based cross-sheet join law.
-2. Treat the next geometry/join law as a careful Opus/Fable decision lane, not
-   casual wiring.
+1. Patrick makes the visual/field call on shared `NEXTLINK@378,409`.
+2. Then use an Opus follow-up for either safe wiring as REVIEW strokes or the
+   per-bore discriminator.
+3. No Fable escalation is warranted yet.
 
 ## Session Sizing
 
