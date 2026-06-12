@@ -112,6 +112,26 @@ unique-trace capability for dense conduit networks. A budget raise alone is
 NOT the target — with 68 complete paths found, an exhaustive search would
 land in `DESIGN_PATH_AMBIGUOUS`, and distinct geometry is never tiebroken.
 
+## Owner-supplied log42 correction after M8.20
+
+log42 is not part of the log8/log32 shared-origin collision. Patrick's owner
+evidence indicates that the original handwritten bore log is split into two
+table blocks but describes one physical run/segment context: block 1 is
+`0+00 -> 0+44`, and block 2 is `0+00 -> 2+87`.
+
+The likely printed parent chain is `0+00 -> 2+70` (270 ft),
+`2+70 -> 2+87` (17 ft), and `2+87 -> 5+19` (232 ft), totaling 519 ft from
+`0+00 -> 5+19`. This suggests parent/child segments and a possibly implicit
+or missing 17 ft bridge, not separate unrelated bores.
+
+The engine must treat this as a future parent/child split-log reconciliation
+problem, paired with corridor-pruned unique tracing, not as justification for
+raising the walk budget. This owner evidence changes no placement: no stroke
+is added, and the all-58 census is unchanged.
+
+**Future Fable lane: log42 parent-child split-log reconciliation and
+corridor-pruned unique tracing.**
+
 ## 6. Boundary
 
 No lane wiring, no stroke, no card, no grade change, no tolerance change,
