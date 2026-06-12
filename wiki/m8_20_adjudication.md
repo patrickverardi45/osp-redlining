@@ -214,9 +214,24 @@ writes engine state, never produces a placement/segment/stroke, and is not
 wired into any per-bore producer. The bores stay blocked per-bore until a
 human confirms the grouping.
 
-REMAINING (separately authorized): wire the corpus extraction into the SHIPPED
-reviewer service/bundle (so a real consumer emits the card outside a proof
-run), and any eventual UI. No geometry/stroke milestone is part of this.
+### Real reviewer service output -- IMPLEMENTED
+
+`truelinev2/review/group_review_service.py::GroupReviewService.generate`
+now composes the shipped product-layer path
+`extract_group_claims -> shared_alignment_verdict -> build_group_review_card`
+and emits the standalone GROUP schema from a real reviewer service surface.
+It remains parallel to `ReviewerBundleService.generate(mode)`: the per-bore
+bundle method is untouched and is byte-identical before/after group generation.
+
+The service emits exactly one card for `{log8, log32}` at
+`NEXTLINK@378,409`, boundaries `{1+76, 1+77}`. Both members carry unchanged
+`STRUCTURE_IDENTITY_BINDING_REQUIRED`; log42 produces no claim and is excluded.
+No proof imports, geometry, stroke, segment, PNG, AUTO, status, census, or
+per-bore contract change is introduced.
+
+REMAINING (separately authorized): expose this parallel service output through
+an API/bundle transport and any eventual UI. No geometry/stroke milestone is
+part of this.
 
 ## 6. Boundary
 

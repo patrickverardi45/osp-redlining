@@ -163,9 +163,23 @@
 - Remaining (separately authorized): wire the corpus extraction into the
   SHIPPED reviewer service/bundle (+ any UI). No geometry milestone here.
 
+### M8.20 GROUP REVIEW real service output
+
+- Added `truelinev2/review/group_review_service.py::GroupReviewService`.
+- The real service path composes shipped product modules only:
+  `extract_group_claims -> shared_alignment_verdict -> build_group_review_card`.
+- Emits exactly one `truelinev2-shared-alignment-group-review-1` card for
+  `{log8, log32}`, origin `NEXTLINK@378,409`, boundaries `{1+76, 1+77}`.
+- `ReviewerBundleService.generate(mode)` is untouched and byte-identical
+  before/after group generation; per-bore statuses/census/contracts unchanged.
+- log8/log32 remain `STRUCTURE_IDENTITY_BINDING_REQUIRED`; log42 is excluded.
+- No proof imports, AUTO, geometry, strokes, segments, PNGs, or KMZ work.
+- Remaining: API/bundle transport exposure and UI are separately authorized.
+
 ## Verification
 
-- Tests: `569 passed`.
+- Tests: `580 passed`.
+- M8.20 real GROUP reviewer service proof G1-G8: PASS.
 - M8.20 §7 GROUP review proof G1-G8: PASS.
 - M8.20 Law 1 (SHARED_ALIGNMENT_MULTI_DROP) probe G1-G8: PASS.
 - M8.20 shared-origin adjudication probe G1-G6: PASS.
@@ -184,10 +198,10 @@
 1. `log8`/`log32` shared-origin: Law 1 + the §7 GROUP review card are now
    IMPLEMENTED + PROVEN proof-first (REVIEW-only standalone contract
    `truelinev2-shared-alignment-group-review-1`; members/origin/boundaries
-   proven; per-bore truth + census unchanged). Remaining gate: wire the corpus
-   extraction into the SHIPPED reviewer service/bundle (so a real consumer
-   emits the card outside a proof run) + eventual UI -- a separately authorized
-   step. The per-bore lane stays pure (no flip); no geometry milestone yet.
+   proven; per-bore truth + census unchanged). The parallel real service output
+   is now IMPLEMENTED + PROVEN. Remaining gate: expose it through an authorized
+   API/bundle transport; any eventual UI is separate. The per-bore lane stays
+   pure (no flip); no geometry milestone yet.
 2. Uniquely traceable design path through the dense network for `log42`:
    named target is corridor-pruned/junction-bounded unique tracing (12 of 13
    rivals die by search exhaustion with up to 68 complete paths; a budget
@@ -200,15 +214,11 @@
 
 ## Recommended Next Lane After Reset
 
-0. SURFACE the §7 GROUP card in the SHIPPED reviewer service/bundle: run the
-   corpus extraction (M8.18 + M8.19 + Law 1, OUTSIDE the per-bore lane) inside
-   the service so a real consumer emits `truelinev2-shared-alignment-group-
-   review-1`; contract-pinned, additive, no per-bore census change. Opus lane.
-1. Owner decision to SURFACE Law 1: authorize the §7 extension -- a corpus-
-   level extraction pass (M8.18 discriminator + M8.19 join, OUTSIDE the
-   per-bore lane) feeding `shared_alignment_verdict`, plus a GROUP REVIEW card
-   in the M8.10/M8.11 contracts. Opus lane, proof-first, contract-pinned; it
-   adds a review surface and never flips the per-bore census.
+0. Expose the parallel GROUP reviewer service through an authorized API/bundle
+   transport. Keep the separate schema additive and leave the per-bore
+   M8.10/M8.11 bundle byte-identical. Opus lane.
+1. Decide whether any eventual UI should consume that transport. This remains
+   separate from the engine service milestone and does not authorize geometry.
 2. Then (and only after the reviewer confirms a multi-drop) any geometry is a
    further, separate milestone -- two redlines sharing their far-sheet
    alignment; red stroke law unchanged.
