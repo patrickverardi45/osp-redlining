@@ -88,9 +88,36 @@
   - If it is not confirmed, the next capability is a per-bore discriminator
     using intermediate chain stations `1+10` vs `1+30`.
 
+### M8.20 - shared-origin adjudication by extraction
+
+- Added the proof-only shared-origin adjudication probe (G1-G6 PASS):
+  - `truelinev2/proof/run_shared_origin_adjudication_probe.py`
+  - `truelinev2/tests/test_shared_origin_adjudication.py`
+  - `wiki/m8_20_adjudication.md` (the formal adjudication + law specs)
+- No lane wiring. No strokes. Census unchanged. All three bores stay
+  `STRUCTURE_IDENTITY_BINDING_REQUIRED`.
+- EXTRACTED (not inferred): `log8`/`log32` are TWO DISTINCT PRINTED RUNS
+  (chains `0+00->1+10->1+76` vs `0+00->1+30->1+77`, both closure-proven,
+  each printing `E/W PORT TERMINAL TAIL` + its own `1-1.25"` conduit) over
+  ONE drawn alignment (walk dev 0.0 pt; piece Jaccard 1.0; the load-bearing
+  independent fact: boundary gap 0.0 pt from two DIFFERENT printed
+  equations). "False collision" is REFUTED; placement stays gated on the
+  M8.20 Law 1 multi-drop spec (separately authorized implementation).
+- The intermediate-station discriminator (`1+10` vs `1+30`) is REJECTED as
+  an identity law: it discriminates runs (already proven), not origins —
+  there is no second drawn route to bind.
+- `log42` sharpened: 13 sheet-2 rivals = 12 `DESIGN_PATH_SEARCH_EXHAUSTED`
+  (up to 68 complete paths found; uniqueness uncertifiable) + 1 no-chain.
+  Named target: corridor-pruned/junction-bounded unique tracing — a budget
+  raise alone would land in `DESIGN_PATH_AMBIGUOUS`.
+- Adversarial 3-lens review pre-commit: no blocking findings; hardenings
+  landed (pinned G5 taxonomy, TARGETS<->borelog sync assert, edge-uniqueness
+  assert, stale-report deletion, replay-honesty wording).
+
 ## Verification
 
-- Tests: `484 passed`.
+- Tests: `539 passed`.
+- M8.20 shared-origin adjudication probe G1-G6: PASS.
 - M8.19 path-length cross-sheet join probe G1-G5: PASS.
 - M8.18 ladder discriminator probe G1-G6: PASS.
 - M8.16/M8.17 continuation probe G1-G7: PASS.
@@ -103,11 +130,16 @@
 
 ## Remaining Blocker Classes
 
-1. Shared-origin adjudication for `log8` and `log32`: both bind
-   `NEXTLINK@378,409`. Geometry is proven; owner confirmation is required for
-   a valid multi-drop/shared-origin terminal. Otherwise, discriminate by the
-   intermediate chain stations `1+10` vs `1+30`.
-2. Uniquely traceable design path through the dense network for `log42`.
+1. `log8`/`log32` shared-origin: ADJUDICATED by M8.20 extraction (one drawn
+   alignment, two distinct printed runs, printed PORT TERMINAL origin).
+   Remaining gate: implement the M8.20 Law 1 `SHARED_ALIGNMENT_MULTI_DROP`
+   evidence law (REVIEW-only; spec in `wiki/m8_20_adjudication.md`) under a
+   separate explicit authorization, including the hardened conduit-token
+   grammar and the claim-bijection gate.
+2. Uniquely traceable design path through the dense network for `log42`:
+   named target is corridor-pruned/junction-bounded unique tracing (12 of 13
+   rivals die by search exhaustion with up to 68 complete paths; a budget
+   raise alone lands in AMBIGUOUS and is NOT the target).
 3. No printed matchline equation:
    `log10`, `log14`, `log61`, `log62`, `log67`, `log68`, `log70`.
    Owner decision required: geo/KMZ corroboration or reviewer pick-cards.
@@ -116,10 +148,14 @@
 
 ## Recommended Next Lane After Reset
 
-1. Patrick makes the visual/field call on shared `NEXTLINK@378,409`.
-2. Then use an Opus follow-up for either safe wiring as REVIEW strokes or the
-   per-bore discriminator.
-3. No Fable escalation is warranted yet.
+1. Patrick ratifies the M8.20 Law 1 spec (`wiki/m8_20_adjudication.md`) --
+   the printed evidence (PORT TERMINAL TAIL + per-run `1-1.25"`) is now
+   extracted; the remaining call is doctrinal, not evidentiary.
+2. Then an Opus follow-up implements Law 1 as a REVIEW-only lane gate
+   (hardened token grammar + claim bijection + pairwise rejection), proof
+   runner first, gates pinned, before any stroke.
+3. `log42` needs a Fable lane only when corridor-pruned unique tracing is
+   prioritized; it is not unblocked by Law 1.
 
 ## Session Sizing
 
