@@ -132,9 +132,60 @@ is added, and the all-58 census is unchanged.
 **Future Fable lane: log42 parent-child split-log reconciliation and
 corridor-pruned unique tracing.**
 
+## 7. Law 1 implemented proof-first (REVIEW-only), lane NOT flipped
+
+Law 1 is now IMPLEMENTED as a pure corpus-level decision and PROVEN; no
+per-bore lane status, card, stroke, grade, tolerance, or census changed.
+
+**Phase 1 -- conduit-token grammar hardened** (`extract/matchline_join.py`
+`parse_conduit_evidence` / `chain_conduit_evidence`, dialect-injected
+materials): a conduit statement is recognized ONLY when a count-size token is
+POSITIVELY bound to a conduit material word; depth/cover ranges (`24-36" MIN.
+DEPTH`, `... DEPTH`, `... COVER`) yield zero conduit evidence; fraction/mixed
+notation is captured (presence is the gate). 8 tests.
+
+**Phase 2 -- the law** (`match/shared_alignment.py` `shared_alignment_verdict`,
+imported only by proof + tests): the seven gates, Law 2 typed pairwise
+rejection, Law 3 encoded by absence (intermediate stations only PROVE
+distinctness, never split the origin). Proof `proof/run_shared_alignment_law_probe.py`
+G1-G8 PASS: Law 1 PROVES log8+log32 -> `SHARED_ALIGNMENT_MULTI_DROP_REVIEW`
+on `NEXTLINK@378,409`, boundaries `{1+76, 1+77}`; the bijection universe is
+REAL (exactly the two claimed runs); log42 never enters (0 survivors ->
+no claim; one bore -> NOT_APPLICABLE); every positive gate removed yields a
+typed, named pairwise rejection. Gate 2 reuses `JITTER_EQUIV_TOL` verbatim
+(tripwire-pinned to the engine's own `_cross_deviation`). 12 tests.
+
+**Phase 3 -- lane/card eligibility NOT changed; minimal extension reported.**
+The existing architecture cannot honestly flip log8/log32 to REVIEW
+eligibility:
+  * the per-bore lane refuses them at `len(reaching) > 1` (band corroboration,
+    0 survivors) and NEVER narrows to the single survivor -- the M8.18
+    discriminator + M8.19 join that produce Law 1's preconditions are
+    proof-only, not wired into `resolve_bore`;
+  * Law 1 is inherently corpus-level + pairwise; a per-bore status cannot
+    carry "this bore shares its origin with log32" without the orchestrator
+    (§2.6). Flipping would require wiring M8.18/M8.19 into the per-bore path
+    (out of scope, census-risking, accepted-log-risking) and would break
+    per-bore purity.
+So log8/log32/log42 remain `STRUCTURE_IDENTITY_BINDING_REQUIRED`; the census
+is unchanged.
+
+**Smallest required extension (for a future, separately authorized milestone):**
+1. a corpus-level extraction pass (NOT the per-bore lane) that runs the M8.18
+   discriminator + M8.19 join to emit per-bore `BoreClaim`s for cross-sheet
+   collision bores;
+2. that pass calls `shared_alignment_verdict` (this law);
+3. a NEW schema-versioned GROUP review card in the M8.10/M8.11 contracts -- a
+   `SHARED_ALIGNMENT_MULTI_DROP_REVIEW` card that references the member bores,
+   the shared origin, and per-run boundaries; frozen `SUGGESTION_NOT_PLACEMENT`;
+   it ADDS a review surface and never flips the per-bore placement/census.
+This is a payload/card-contract extension; it is deliberately NOT forced here.
+
 ## 6. Boundary
 
-No lane wiring, no stroke, no card, no grade change, no tolerance change,
-no status change shipped with this adjudication. Implementing Law 1/2 is a
-separate, explicitly authorized milestone; until then all three bores remain
-typed abstains.
+No lane wiring, no stroke, no card, no grade change, no tolerance change, and
+no per-bore status/census change shipped with this milestone. Law 1 is
+implemented + proven PROOF-FIRST only (consumed by `run_shared_alignment_law_probe`
++ tests, never by `resolve_bore`/sweep/reviewer-service). Surfacing it as a
+REVIEW card (§7 extension) and any geometry remain separate, explicitly
+authorized milestones; until then all three bores remain typed abstains.

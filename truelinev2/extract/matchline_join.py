@@ -207,6 +207,62 @@ def find_run_callout_to(lines: Sequence[str], end_sta: str
     return None
 
 
+# A printed conduit SIZE: decimal inches (``1.25``), inch-fractions
+# (``1/4``), or a mixed number (``1-1/4`` = one-and-a-quarter inch). Longest
+# alternative first so ``1-1/4`` is never clipped to ``1``.
+_CONDUIT_SIZE = r"\d+-\d+/\d+|\d+/\d+|\d+(?:\.\d+)?"
+# A depth/cover range is ``<lo>-<hi>" MIN. DEPTH`` (or DEPTH/COVER) -- it
+# matches the same count-size SHAPE as a conduit token, so it is rejected
+# explicitly AND is never followed by a conduit material (the law's real
+# discriminator). Both guards are deliberate (defense in depth).
+_DEPTH_AFTER = r"(?!\s*(?:MIN|MINIMUM|DEPTH|COVER)\b)"
+
+
+def parse_conduit_evidence(note: Optional[str],
+                           materials: Sequence[str]) -> List[dict]:
+    """Printed conduit-count statements POSITIVELY bound to a conduit MATERIAL
+    word (e.g. ``1-1.25" HDPE``, ``1-1/4" PVC``). The bare ``count-size"``
+    shape also matches a depth/cover range (``24-36" MIN. DEPTH``); a conduit
+    statement is recognized ONLY when a material word follows within a short
+    descriptor window AND the size is not immediately a MIN/DEPTH/COVER range.
+    This is the M8.20 PRE-LAW grammar hardening: a multi-drop law must never
+    consume a loose ``count-size`` string coincidence as conduit evidence.
+
+    Convention-agnostic: the material vocabulary is injected (the lane sources
+    it from its dialect). Returns ``[{count, size, material, raw}, ...]`` in
+    print order; an empty list is a typed absence the caller treats as missing
+    conduit evidence (never inferred).
+    """
+    if not note or not materials:
+        return []
+    mat = "|".join(re.escape(m) for m in materials if m)
+    if not mat:
+        return []
+    pat = re.compile(
+        rf'(\d+)\s*-\s*({_CONDUIT_SIZE})\s*"'      # count - size "
+        rf'{_DEPTH_AFTER}'                          # not a depth/cover range
+        rf'\s*(?:[A-Za-z][A-Za-z./]*\s+){{0,3}}?'   # <=3 descriptor words
+        rf'({mat})\b',                              # bound to a conduit material
+        re.I)
+    out: List[dict] = []
+    for m in pat.finditer(note):
+        out.append({"count": int(m.group(1)), "size": m.group(2),
+                    "material": m.group(3).upper(),
+                    "raw": " ".join(m.group(0).split())})
+    return out
+
+
+def chain_conduit_evidence(notes: Sequence[str],
+                           materials: Sequence[str]) -> List[dict]:
+    """Flatten ``parse_conduit_evidence`` across a chain's hop notes, in order.
+    A chain with zero material-bound statements has NO conduit evidence -- the
+    caller's gate fails closed, never inferring a conduit from silence."""
+    out: List[dict] = []
+    for note in notes:
+        out.extend(parse_conduit_evidence(note, materials))
+    return out
+
+
 def cross_sheet_join_verdict(*, equation_edge: bool, eq_at_matchline_a: bool,
                              eq_at_matchline_b: bool, chain_a_reaches: bool,
                              chain_b_reaches: bool, seg_a_ft: Optional[float],

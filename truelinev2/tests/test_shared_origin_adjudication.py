@@ -95,11 +95,21 @@ def test_probe_never_renders_and_engine_never_consumes_probe():
                     + sorted((pkg / "review").glob("*.py"))
                     + [pkg / "service.py"])
     assert engine_files
+    # No engine module may import EITHER M8.20 probe -- extraction stays in the
+    # proof layer; the engine never consumes a probe.
     for path in engine_files:
         engine_src = path.read_text(encoding="utf-8")
-        assert "shared_origin" not in engine_src, path.name
-        assert "SHARED_ALIGNMENT" not in engine_src, path.name
         assert "run_shared_origin_adjudication_probe" not in engine_src, path.name
+        assert "run_shared_alignment_law_probe" not in engine_src, path.name
+
+    # The PER-BORE lane stays pure: corpus-level shared-origin / shared-
+    # alignment detection lives in match/shared_alignment.py (above resolve_bore),
+    # never inside the per-bore lane.
+    lane_src = (pkg / "match" / "symbol_conduit_lane.py").read_text(
+        encoding="utf-8")
+    assert "shared_origin" not in lane_src
+    assert "shared_alignment" not in lane_src
+    assert "SHARED_ALIGNMENT" not in lane_src
 
 
 def test_deviation_formula_matches_design_path_equivalence_law():
