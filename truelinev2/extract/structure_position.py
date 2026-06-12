@@ -99,6 +99,10 @@ class LaneDialect:
     id_token: str
     # regex for the reset-equation token inside an origin source line
     equation_token: str
+    # structure classes whose printed origin can legitimately serve multiple
+    # drops (the multi-port / shared-origin evidence the M8.20 shared-alignment
+    # law consumes). Empty by default; a plan set declares its own.
+    multiport_origin_classes: Tuple[str, ...] = ()
 
 
 BRENHAM_LANE_DIALECT = LaneDialect(
@@ -120,6 +124,7 @@ BRENHAM_LANE_DIALECT = LaneDialect(
     context_words={"flower_pot": ("FLOWER", "POT")},
     id_token=r"AP-\d+",
     equation_token=r"\d+\+\d+=0\+00",
+    multiport_origin_classes=("terminal_port_hh",),
 )
 
 
