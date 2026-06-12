@@ -222,4 +222,52 @@ Build the local `/v2/reviewer/bundle` FastAPI route on the existing v2 scaffold 
 
 ---
 
-*Audit only. No engine, web, or mobile code changed. Sources inspected: v2 `review/{reviewer_payloads,reviewer_service,design_stroke_cards}.py`, `proof/run_reviewer_demo_artifact.py`, the all-58 sweep + M8.19 probe; web `src/contracts/index.ts`, `src/lib/api/{types,index,client}.ts`, `src/app/redlines/{review-types,page,ReviewQueue,ReviewDetail}.tsx`, `src/lib/status.ts`, `scripts/check-contract-parity.mjs`, `docs/{CONTRACTS,PRODUCT_UX_PLAN,MOBILE_ALIGNMENT}.md`, `README.md`.*
+## 12. Slice 1 shipped + Slice 2 split (2026-06-12)
+
+### Slice 1 — shipped (read-only reviewer cards)
+- v2 `truelinev2/proof/export_reviewer_bundle_json.py` (pushed `b107e28`) emits `reviewer_bundle.v1.json` (M8.11 `default_baseline` dump under a versioned envelope `truelinev2-web-reviewer-bundle-export-1` recording the source Git SHA). Its validator **forbids geometry/artifact keys** (`segments`/`stroke_points`/`artifact_refs`) and pins confidence to the closed class — so the reviewer bundle carries **no images and no geometry by construction**.
+- web branch `codex/v2-reviewer-bundle-adapter` (`8aabf73`): `src/lib/api/adapters/v2Bundle.ts` maps it to a **web-local** `EngineCard[]` (lane/status/reason/confidence-class/stations/candidates) — kept OUT of the parity-checked `src/contracts/index.ts`; the adapter ALSO runs `assertNoGeometry`. `/redlines` shows it read-only behind `api.reviews.engineBundle()`. Every card is `runMapping: 'unmapped'`, `runId: null`. Parity stayed green.
+
+**Consequence for Slice 2:** design-stroke ARTIFACTS live in a different contract (`truelinev2-design-stroke-card-1`) that the Slice 1 export deliberately excludes. Slice 2 needs its own path.
+
+### Slice 2 split into 2a (availability, shipped) + 2b (served geometry, blocked)
+The original "Slice 2 — geometry + lazy artifact" was too big and the artifacts can't be safely served (the 4 graded-PASS stroke PNGs are gitignored ~0.2–1.1 MB regenerables under the engine's `data/outputs/symbol_conduit_lane_sweep/`; auto-copying large files is forbidden). It splits:
+
+**Slice 2a — design-stroke artifact AVAILABILITY (shipped, web-local placeholder).** web commit `e0ab766`:
+- `src/lib/api/fixtures/design_stroke_artifacts.v1.json` — the 4 graded-PASS cards' artifact-ref **filenames only** (`log25_lane_s21_…`, `log51_lane_s8_…`, `log59_lane_s21_…`, `log65_lane_s10/s9_…`), `served:false`, NO geometry/binaries/paths. Hand-derived from the banked M8.15 packet (provenance recorded in the fixture).
+- `src/lib/api/adapters/v2Artifacts.ts` — strict web-local adapter: refs must be **bare engine filenames** (`^[a-z0-9_]+_redline_stroke\.png$`, never a path/URL), grade a closed class, `served` must be false, geometry keys rejected.
+- `api.reviews.engineDesignStrokeArtifacts()` (read-only) + `EngineArtifactPanel` — a `<details>`-gated availability list; **never an `<img>`**, zero network requests, each ref tagged "not served."
+- Checks: `contracts:check` PASS, `tsc --noEmit` clean, `eslint` clean, `next build` prerenders `/redlines`.
+
+**Slice 2b — SERVED stroke images + geometry overlay (NOT started; blocked).** Still needs the PDF→sheet coordinate transform, an artifact serving strategy (decision below), and a lazy image component — see §5/§13.
+
+### bore→run mapping recommendation
+1. **Keep `sourceBoreId` primary + `runMapping: 'unmapped'`** (already true). The web `Run.boreLogRef.refId` (e.g. `bl-a12`) IS the natural join key, but the web demo project is fictional "Cedar Ridge" while the engine cards are Brenham (`brenham-ph5`) — **there is genuinely no overlap**, so `unmapped` is the honest state. Do not invent run ids.
+2. **Path to mapping = a temporary Brenham project container, web-local.** Seed a web `Project` (`p-brenham-ph5`) whose `Run`s carry `boreLogRef.refId == <v2 bore_id>` (`log7`, `log25`, …). Then the join is `boreLogRef.refId === sourceBoreId`, computed in the adapter, with `runMapping: 'mapped'`/`'unmapped'` per-card. This is fixture-only and changes no shared contract.
+3. **Do NOT** author a bare `bore→run` map fixture against the fictional Cedar Ridge runs — it would fabricate placements onto unrelated runs. The project-container route keeps provenance honest.
+4. Keep the explicit `unmapped` status whenever a bore has no `boreLogRef` match (already enforced).
+
+### artifact / lazy-loading recommendation
+- **Availability first, pixels later (done in 2a):** show the engine's canonical filenames + grade with zero fetches; the card list renders before any artifact work.
+- **Never auto-copy the PNGs.** They are gitignored regenerables; a build that copies them bloats the web repo and drifts from engine truth.
+- **For 2b, decide a serving strategy (owner):** (a) a v2 export runner that writes a manifest **and** copies just the graded PNGs into a gitignored `web/public/engine/<sha>/…` on demand (explicit, not automatic); or (b) a local v2 image route (Slice 3 territory; needs auth). Either way the web component sets `img.src` only on `<details>` open (the M8.15 pattern) — **one image per opened card, never a preload**.
+- **Generate the manifest from the engine** (a tiny v2 export, like Slice 1's) so 2a's hand-derived fixture stops being hand-maintained.
+
+---
+
+## 13. Remaining blockers before REAL (served) Slice 2b
+
+1. **No artifact serving path decided** — the PNGs can't be auto-copied; owner must pick manifest-export+on-demand-copy vs an image route.
+2. **No PDF→sheet coordinate transform** — required before any stroke geometry can become `RedlinePath.points`; deferred out of 2a.
+3. **Manifest is hand-derived** — 2a's fixture should be replaced by an engine-generated export before it's trusted as truth.
+4. **bore→run still unmapped** — needs the temporary Brenham project container (above) before a card can attach to a web run.
+5. **No lazy image component yet** — 2a renders placeholders only; the on-open `img.src` loader is unbuilt.
+
+### Next recommended prompts
+- **Slice 2a-follow (Codex):** add a v2 export runner `export_design_stroke_artifacts_json.py` (refs-only manifest, geometry-forbidden validator like the Slice 1 exporter) so the web fixture is engine-generated + SHA-pinned; regenerate `design_stroke_artifacts.v1.json` from it. Small, two-repo, no UI change.
+- **bore→run mapping (Codex/Opus):** seed a web-local `p-brenham-ph5` project container + runs keyed by `boreLogRef.refId == sourceBoreId`; adapter computes `runMapping`. Fixture-only; no shared contract.
+- **Slice 2b (Opus):** owner picks the serving strategy; then build the lazy on-open image loader + the PDF→sheet transform (loss-checked) to render the 4 graded strokes RED on the SVG layer. Design-sensitive, zero-false.
+
+---
+
+*Slice 1 + Slice 2a code lives in the named commits; this doc is planning only. Sources inspected this round (Slice 2a): v2 `proof/export_reviewer_bundle_json.py`, `review/design_stroke_cards.py`, the banked `design_stroke_cards_proof.json`; web `src/lib/api/adapters/v2Bundle.ts`, `src/app/redlines/{page,EngineReviewPanel}.tsx`, `src/lib/api/{client,types,index}.ts`, `src/lib/api/mock/fixtures.ts`. Original audit sources: v2 `review/{reviewer_payloads,reviewer_service,design_stroke_cards}.py`, `proof/run_reviewer_demo_artifact.py`; web `src/contracts/index.ts`, `src/lib/api/{types,index,client}.ts`, `src/app/redlines/*`, `scripts/check-contract-parity.mjs`, `docs/*`, `README.md`.*
