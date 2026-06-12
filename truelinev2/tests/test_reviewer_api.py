@@ -65,6 +65,51 @@ def _bundle_export() -> dict:
             "payloads": [],
             "source": {},
         },
+        "group_review": {
+            "schema_version": "truelinev2-shared-alignment-group-review-1",
+            "service": "GroupReviewService",
+            "cards": [
+                {
+                    "schema_version": "truelinev2-shared-alignment-group-review-1",
+                    "group_lane": "SHARED_ALIGNMENT_MULTI_DROP_REVIEW",
+                    "law": "SHARED_ALIGNMENT_MULTI_DROP",
+                    "mode": "REVIEW_ONLY",
+                    "review_only": True,
+                    "auto": False,
+                    "has_geometry": False,
+                    "has_strokes": False,
+                    "label": "SUGGESTION_NOT_PLACEMENT",
+                    "human_action": "CONFIRM_OR_REJECT_MULTI_DROP_GROUPING",
+                    "shared_origin": "NEXTLINK@378,409",
+                    "boundaries": ["1+76", "1+77"],
+                    "members": [
+                        {
+                            "bore_id": "log8",
+                            "boundary_raw": "1+76",
+                            "per_bore_status": "STRUCTURE_IDENTITY_BINDING_REQUIRED",
+                            "chain_hops": [
+                                ["0+00", "1+10", 110.0],
+                                ["1+10", "1+76", 66.0],
+                            ],
+                            "conduit_evidence_count": 2,
+                            "origin_multiport": True,
+                        },
+                        {
+                            "bore_id": "log32",
+                            "boundary_raw": "1+77",
+                            "per_bore_status": "STRUCTURE_IDENTITY_BINDING_REQUIRED",
+                            "chain_hops": [
+                                ["0+00", "1+30", 130.0],
+                                ["1+30", "1+77", 47.0],
+                            ],
+                            "conduit_evidence_count": 2,
+                            "origin_multiport": True,
+                        },
+                    ],
+                    "detail": "two distinct printed runs share one proven origin",
+                }
+            ],
+        },
     }
 
 
@@ -152,6 +197,13 @@ def test_bundle_route_validates_and_memoizes(tmp_path, monkeypatch):
     assert first == _bundle_export()
     assert second == first
     assert calls == 1
+    group = first["group_review"]["cards"][0]
+    assert sorted(member["bore_id"] for member in group["members"]) == [
+        "log32",
+        "log8",
+    ]
+    assert group["auto"] is False
+    assert "log42" not in str(first["group_review"])
     assert "segments" not in str(first)
     assert "stroke_points" not in str(first)
 

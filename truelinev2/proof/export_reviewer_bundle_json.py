@@ -1,9 +1,11 @@
-r"""Export the M8.11 default reviewer bundle for the static web adapter.
+r"""Export the M8.11 default reviewer bundle plus additive GROUP REVIEW cards.
 
-Proof/export only. This runner does not add an API route, mutate the reviewer
-service contract, activate an opt-in solver, render artifacts, or write engine
-state. It serializes the validated ``ReviewerBundleService`` baseline output
-under a small versioned envelope that records the source Git HEAD.
+The same validated envelope backs the static fixture and the flag-gated,
+read-only v2 reviewer API. The canonical per-bore ``ReviewerBundleService``
+output remains verbatim under ``bundle``; the parallel ``GroupReviewService``
+output is carried separately under ``group_review``. This runner does not
+mutate either service contract, activate an opt-in solver, render artifacts,
+or write engine state.
 
 Output (gitignored):
   data/outputs/web_adapter/reviewer_bundle.v1.json
@@ -18,9 +20,10 @@ import os
 import re
 import subprocess
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, Sequence
 
 from truelinev2.config import _REPO_ROOT
+from truelinev2.extract.structure_position import BRENHAM_LANE_DIALECT
 from truelinev2.proof.run_brenham_corpus import (
     EXPECTED_COUNT,
     PDF,
@@ -31,6 +34,11 @@ from truelinev2.review.reviewer_payloads import (
     ConfidenceClass,
     SUGGESTION_LABEL,
 )
+from truelinev2.review.group_review import (
+    GROUP_SCHEMA_VERSION,
+    SharedAlignmentGroupCard,
+)
+from truelinev2.review.group_review_service import GroupReviewService
 from truelinev2.review.reviewer_service import (
     ReviewerBundle,
     ReviewerBundleService,
@@ -43,7 +51,14 @@ OUT_JSON = (
 )
 
 _FULL_SHA = re.compile(r"^[0-9a-f]{40}$")
-_FORBIDDEN_GEOMETRY_KEYS = {"segments", "stroke_points", "artifact_refs"}
+_FORBIDDEN_GEOMETRY_KEYS = {
+    "segments",
+    "stroke_points",
+    "stroke_rgb",
+    "walk_points",
+    "boundary_xy",
+    "artifact_refs",
+}
 _CONFIDENCE_CLASSES = {item.value for item in ConfidenceClass}
 
 
@@ -62,8 +77,13 @@ def source_git_head(repo_root: Path = _REPO_ROOT) -> str:
     return head
 
 
-def build_export(bundle: ReviewerBundle, source_head: str) -> Dict[str, Any]:
-    """Wrap the canonical bundle dump without renaming or mutating its fields."""
+def build_export(
+    bundle: ReviewerBundle,
+    source_head: str,
+    *,
+    group_cards: Sequence[SharedAlignmentGroupCard],
+) -> Dict[str, Any]:
+    """Wrap the canonical bundle plus a separate validated group section."""
     export = {
         "export_schema_version": EXPORT_SCHEMA_VERSION,
         "source": {
@@ -75,6 +95,11 @@ def build_export(bundle: ReviewerBundle, source_head: str) -> Dict[str, Any]:
             "payload_schema_version": bundle.payload_schema_version,
         },
         "bundle": bundle.model_dump(mode="json"),
+        "group_review": {
+            "schema_version": GROUP_SCHEMA_VERSION,
+            "service": "GroupReviewService",
+            "cards": [card.model_dump(mode="json") for card in group_cards],
+        },
     }
     validate_export(export)
     return export
@@ -99,7 +124,20 @@ def validate_export(export: Dict[str, Any]) -> None:
     if bundle.get("run_mode") != ReviewRunMode.DEFAULT_BASELINE.value:
         raise ValueError("canonical bundle run_mode must be default_baseline")
 
-    def walk(value: Any, path: str = "$") -> None:
+    group_review = export.get("group_review")
+    if not isinstance(group_review, dict):
+        raise ValueError("separate group_review section is required")
+    if set(group_review) != {"schema_version", "service", "cards"}:
+        raise ValueError("group_review fields drift")
+    if group_review.get("schema_version") != GROUP_SCHEMA_VERSION:
+        raise ValueError("group_review schema version drift")
+    if group_review.get("service") != "GroupReviewService":
+        raise ValueError("group_review service drift")
+    raw_cards = group_review.get("cards")
+    if not isinstance(raw_cards, list):
+        raise ValueError("group_review cards must be a list")
+
+    def walk(value: Any, path: str = "$", *, forbid_png: bool = False) -> None:
         if isinstance(value, dict):
             for key, child in value.items():
                 if key in _FORBIDDEN_GEOMETRY_KEYS:
@@ -113,12 +151,21 @@ def validate_export(export: Dict[str, Any]) -> None:
                         )
                 if key == "label" and child != SUGGESTION_LABEL:
                     raise ValueError(f"suggestion label drift at {path}.{key}")
-                walk(child, f"{path}.{key}")
+                walk(child, f"{path}.{key}", forbid_png=forbid_png)
         elif isinstance(value, list):
             for index, child in enumerate(value):
-                walk(child, f"{path}[{index}]")
+                walk(child, f"{path}[{index}]", forbid_png=forbid_png)
+        elif forbid_png and isinstance(value, str) and ".png" in value.lower():
+            raise ValueError(f"PNG reference forbidden at {path}")
 
     walk(bundle)
+    walk(group_review, "$.group_review", forbid_png=True)
+    for index, raw in enumerate(raw_cards):
+        if not isinstance(raw, dict):
+            raise ValueError(f"group_review card {index} must be an object")
+        card = SharedAlignmentGroupCard.model_validate(raw)
+        if card.model_dump(mode="json") != raw:
+            raise ValueError(f"group_review card {index} fields drift")
 
 
 def generate_export() -> Dict[str, Any]:
@@ -140,7 +187,18 @@ def generate_export() -> Dict[str, Any]:
         bore_log_paths=corpus,
     )
     bundle = service.generate(ReviewRunMode.DEFAULT_BASELINE)
-    return build_export(bundle, source_git_head())
+    group_service = GroupReviewService(
+        corpus_dir=corpus_dir,
+        plan_pdf_path=PDF,
+        bore_log_paths=corpus,
+        lane_dialect=BRENHAM_LANE_DIALECT,
+    )
+    group_cards = group_service.generate()
+    return build_export(
+        bundle,
+        source_git_head(),
+        group_cards=group_cards,
+    )
 
 
 def main() -> int:
@@ -169,7 +227,9 @@ def main() -> int:
     )
     print(
         "[web-adapter] PASS: "
-        f"{len(bundle['payloads'])} cards, statuses {bundle['status_counts']}"
+        f"{len(bundle['payloads'])} per-bore cards, "
+        f"{len(export['group_review']['cards'])} group cards, "
+        f"statuses {bundle['status_counts']}"
     )
     print(f"[web-adapter] output -> {OUT_JSON}")
     return 0

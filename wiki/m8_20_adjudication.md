@@ -229,9 +229,26 @@ The service emits exactly one card for `{log8, log32}` at
 No proof imports, geometry, stroke, segment, PNG, AUTO, status, census, or
 per-bore contract change is introduced.
 
-REMAINING (separately authorized): expose this parallel service output through
-an API/bundle transport and any eventual UI. No geometry/stroke milestone is
-part of this.
+The additive API/bundle transport is implemented below. Any eventual UI remains
+separately authorized; no geometry/stroke milestone is part of this.
+
+### Additive reviewer API/bundle transport -- IMPLEMENTED
+
+The existing validated reviewer export returned by
+`GET /v2/reviewer/bundle?mode=default_baseline` now carries a separate
+`group_review` section. Its `schema_version` is
+`truelinev2-shared-alignment-group-review-1`; its cards come from the real
+`GroupReviewService`. The canonical per-bore `bundle` object is serialized
+verbatim and remains byte-identical.
+
+The live transport contains one REVIEW-only card for `{log8, log32}` at
+`NEXTLINK@378,409`, boundaries `{1+76, 1+77}`. Both per-bore statuses remain
+`STRUCTURE_IDENTITY_BINDING_REQUIRED`; log42 is excluded. Transport validation
+rejects AUTO, geometry, stroke, segment, PNG, schema, label, or extra-field
+drift. The API remains local-only, read-only, and default-OFF.
+
+REMAINING (separately authorized): any consumer/UI adoption. No placement,
+writeback, geometry, or production activation is authorized by this transport.
 
 ## 6. Boundary
 

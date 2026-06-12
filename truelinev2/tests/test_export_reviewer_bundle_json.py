@@ -10,6 +10,11 @@ from truelinev2.proof.export_reviewer_bundle_json import (
     build_export,
     validate_export,
 )
+from truelinev2.review.group_review import (
+    GROUP_SCHEMA_VERSION,
+    GroupMember,
+    SharedAlignmentGroupCard,
+)
 from truelinev2.review.reviewer_payloads import (
     ConfidenceClass,
     HumanAction,
@@ -87,31 +92,64 @@ def _bundle() -> ReviewerBundle:
     )
 
 
+def _group_card() -> SharedAlignmentGroupCard:
+    return SharedAlignmentGroupCard(
+        shared_origin="NEXTLINK@378,409",
+        boundaries=("1+76", "1+77"),
+        members=(
+            GroupMember(
+                bore_id="log8",
+                boundary_raw="1+76",
+                per_bore_status="STRUCTURE_IDENTITY_BINDING_REQUIRED",
+                chain_hops=(("0+00", "1+10", 110.0), ("1+10", "1+76", 66.0)),
+                conduit_evidence_count=2,
+                origin_multiport=True,
+            ),
+            GroupMember(
+                bore_id="log32",
+                boundary_raw="1+77",
+                per_bore_status="STRUCTURE_IDENTITY_BINDING_REQUIRED",
+                chain_hops=(("0+00", "1+30", 130.0), ("1+30", "1+77", 47.0)),
+                conduit_evidence_count=2,
+                origin_multiport=True,
+            ),
+        ),
+        detail="two distinct printed runs share one proven origin",
+    )
+
+
 def test_export_wraps_canonical_default_bundle_verbatim():
     bundle = _bundle()
     canonical = bundle.model_dump(mode="json")
 
-    export = build_export(bundle, SOURCE_HEAD)
+    export = build_export(bundle, SOURCE_HEAD, group_cards=[_group_card()])
 
     assert export["export_schema_version"] == EXPORT_SCHEMA_VERSION
     assert export["source"]["source_git_head"] == SOURCE_HEAD
     assert export["source"]["run_mode"] == "default_baseline"
     assert export["bundle"] == canonical
     assert bundle.model_dump(mode="json") == canonical
+    assert export["group_review"]["schema_version"] == GROUP_SCHEMA_VERSION
+    assert export["group_review"]["service"] == "GroupReviewService"
+    assert len(export["group_review"]["cards"]) == 1
 
 
 def test_export_preserves_closed_confidence_and_suggestion_label():
-    export = build_export(_bundle(), SOURCE_HEAD)
+    export = build_export(_bundle(), SOURCE_HEAD, group_cards=[_group_card()])
     payloads = export["bundle"]["payloads"]
+    group = export["group_review"]["cards"][0]
 
     assert payloads[0]["confidence_class"] == "AUTO_EXACT_MATCH"
     assert payloads[1]["candidates"][0]["label"] == SUGGESTION_LABEL
+    assert group["label"] == SUGGESTION_LABEL
+    assert group["mode"] == "REVIEW_ONLY"
+    assert group["auto"] is False
     assert "segments" not in str(export)
     assert "stroke_points" not in str(export)
 
 
 def test_export_rejects_truth_or_geometry_drift():
-    export = build_export(_bundle(), SOURCE_HEAD)
+    export = build_export(_bundle(), SOURCE_HEAD, group_cards=[_group_card()])
 
     bad_label = copy.deepcopy(export)
     bad_label["bundle"]["payloads"][1]["candidates"][0]["label"] = "PLACEMENT"
@@ -128,9 +166,47 @@ def test_export_rejects_truth_or_geometry_drift():
     with pytest.raises(ValueError, match="geometry/artifact"):
         validate_export(geometry)
 
+    group_geometry = copy.deepcopy(export)
+    group_geometry["group_review"]["cards"][0]["segments"] = []
+    with pytest.raises(ValueError, match="geometry/artifact"):
+        validate_export(group_geometry)
+
+    group_png = copy.deepcopy(export)
+    group_png["group_review"]["cards"][0]["detail"] = "proof.png"
+    with pytest.raises(ValueError, match="PNG reference"):
+        validate_export(group_png)
+
 
 def test_export_rejects_nonbaseline_mode_claim():
-    export = build_export(_bundle(), SOURCE_HEAD)
+    export = build_export(_bundle(), SOURCE_HEAD, group_cards=[_group_card()])
     export["source"]["run_mode"] = ReviewRunMode.FULLEST_SAFE_REVIEW.value
     with pytest.raises(ValueError, match="default_baseline"):
         validate_export(export)
+
+
+def test_group_review_section_is_strict_and_separate():
+    export = build_export(_bundle(), SOURCE_HEAD, group_cards=[_group_card()])
+    group = export["group_review"]
+    card = group["cards"][0]
+
+    assert sorted(member["bore_id"] for member in card["members"]) == [
+        "log32",
+        "log8",
+    ]
+    assert card["shared_origin"] == "NEXTLINK@378,409"
+    assert sorted(card["boundaries"]) == ["1+76", "1+77"]
+    assert all(
+        member["per_bore_status"] == "STRUCTURE_IDENTITY_BINDING_REQUIRED"
+        for member in card["members"]
+    )
+    assert "log42" not in str(group)
+
+    extra = copy.deepcopy(export)
+    extra["group_review"]["cards"][0]["placement"] = True
+    with pytest.raises(ValueError, match="fields drift"):
+        validate_export(extra)
+
+    missing = copy.deepcopy(export)
+    del missing["group_review"]
+    with pytest.raises(ValueError, match="group_review"):
+        validate_export(missing)
