@@ -7,6 +7,9 @@ canonical lane-sweep output into the static web app's ``public`` tree under a
 source-SHA namespace, then writes a served manifest whose refs each gain a
 site-absolute web URL.
 
+Static copy is one serving path; the opt-in live reviewer API is the alternate
+current handoff path.
+
 What it deliberately does NOT do: add an API route or auth; change matching,
 grades, reviewer semantics, or geometry; render anything; copy PDFs; copy
 un-approved artifacts; accept arbitrary paths/URLs/``..``/``/``/``\``; preload

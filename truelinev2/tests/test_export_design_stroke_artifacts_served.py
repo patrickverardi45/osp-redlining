@@ -5,6 +5,7 @@ import copy
 
 import pytest
 
+from truelinev2.api.reviewer_routes import reviewer_asset_url
 from truelinev2.match.symbol_conduit_lane import LANE_NAME, S_ELIGIBLE
 from truelinev2.proof.export_design_stroke_artifacts_served import (
     ARTIFACT_SUBDIR,
@@ -238,3 +239,26 @@ def test_served_url_shape():
     assert served_url(SHA, "log65_lane_s9_redline_stroke.png") == (
         f"/{ARTIFACT_SUBDIR}/{SHA}/log65_lane_s9_redline_stroke.png"
     )
+
+
+def test_static_and_live_manifest_url_policies_require_full_source_sha():
+    static = build_served_export(_base())
+    validate_served_export(static)
+    assert static["artifacts"][0]["artifact_urls"][0].startswith(
+        f"/{ARTIFACT_SUBDIR}/{SHA}/"
+    )
+
+    live = build_served_export(_base(), url_for=reviewer_asset_url)
+    validate_served_export(live, url_for=reviewer_asset_url)
+    assert live["artifacts"][0]["artifact_urls"][0] == (
+        "/v2/reviewer/design-stroke/asset/"
+        "log65_lane_s10_redline_stroke.png"
+    )
+
+    for manifest, url_for in (
+        (static, served_url),
+        (live, reviewer_asset_url),
+    ):
+        manifest["source"]["source_git_head"] = "fcba5a8"
+        with pytest.raises(ValueError, match="full Git SHA"):
+            validate_served_export(manifest, url_for=url_for)
