@@ -179,13 +179,51 @@ is unchanged.
    `SHARED_ALIGNMENT_MULTI_DROP_REVIEW` card that references the member bores,
    the shared origin, and per-run boundaries; frozen `SUGGESTION_NOT_PLACEMENT`;
    it ADDS a review surface and never flips the per-bore placement/census.
-This is a payload/card-contract extension; it is deliberately NOT forced here.
+
+### §7 -- IMPLEMENTED: standalone GROUP review card (REVIEW-only)
+
+The extension is now IMPLEMENTED proof-first as a STANDALONE schema-versioned
+contract -- NOT by overloading the per-bore M8.10/M8.11 payloads (a group item
+is structurally multi-bore; the per-bore `ReviewerPayload` carries one
+`bore_id`). New schema **`truelinev2-shared-alignment-group-review-1`**
+(`truelinev2/review/group_review.py`):
+  * `SharedAlignmentGroupCard` + `GroupMember`, pydantic, validation-is-contract;
+  * `group_lane == SHARED_ALIGNMENT_MULTI_DROP_REVIEW`, `mode REVIEW_ONLY`,
+    `auto=False`, label frozen `SUGGESTION_NOT_PLACEMENT`, action
+    `CONFIRM_OR_REJECT_MULTI_DROP_GROUPING`;
+  * `has_geometry=False` / `has_strokes=False` and a geometry-key walker -- the
+    card carries NO coordinates, NO segments, NO strokes;
+  * every `GroupMember` carries its UNCHANGED per-bore blocked status verbatim
+    (the validator REFUSES any non-blocked status) -- the card cannot overwrite
+    per-bore truth; `boundaries == members' distinct boundaries` (bijection);
+  * `build_group_review_card(verdict, claims, statuses)` returns a card ONLY for
+    a `V_REVIEW` verdict (REJECTED / NOT_APPLICABLE -> `None`).
+The corpus/group extraction pass is `proof/run_shared_alignment_group_review_proof.py`
+(G1-G8 PASS): it runs the M8.18/M8.19/Law-1 extraction OUTSIDE the per-bore
+lane and builds the card -- members `{log8, log32}`, origin `NEXTLINK@378,409`,
+boundaries `{1+76, 1+77}`, all three bores still
+`STRUCTURE_IDENTITY_BINDING_REQUIRED`, log42 not a member. The module is NOT
+imported by `resolve_bore` / the sweep / the reviewer service / the per-bore
+contracts; the all-58 census and the M8.10/M8.11/M8.15 counts are unchanged
+(re-proven). 10 contract tests.
+
+WHY it does not flip per-bore truth: the group card is a SEPARATE review
+surface keyed on the GROUP, not the bore. It records each member's per-bore
+status as read-only data and is validated to be the blocked status; it never
+writes engine state, never produces a placement/segment/stroke, and is not
+wired into any per-bore producer. The bores stay blocked per-bore until a
+human confirms the grouping.
+
+REMAINING (separately authorized): wire the corpus extraction into the SHIPPED
+reviewer service/bundle (so a real consumer emits the card outside a proof
+run), and any eventual UI. No geometry/stroke milestone is part of this.
 
 ## 6. Boundary
 
-No lane wiring, no stroke, no card, no grade change, no tolerance change, and
-no per-bore status/census change shipped with this milestone. Law 1 is
-implemented + proven PROOF-FIRST only (consumed by `run_shared_alignment_law_probe`
-+ tests, never by `resolve_bore`/sweep/reviewer-service). Surfacing it as a
-REVIEW card (§7 extension) and any geometry remain separate, explicitly
-authorized milestones; until then all three bores remain typed abstains.
+No per-bore lane wiring, no stroke, no per-bore card/grade change, no tolerance
+change, and no per-bore status/census change shipped with this milestone. Law 1
+and the §7 GROUP card are implemented + proven PROOF-FIRST (consumed by their
+proof runners + tests, never by `resolve_bore`/sweep/reviewer-service). The
+GROUP card is a standalone REVIEW surface that never overwrites per-bore truth;
+surfacing it through the shipped service and any geometry remain separate,
+explicitly authorized milestones. All three bores remain typed abstains.

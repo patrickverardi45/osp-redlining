@@ -139,9 +139,34 @@
 - No tolerance widened (`JITTER_EQUIV_TOL` reused, tripwire-pinned). No stroke,
   card, grade, or PNG produced. Accepted grades (log25/51/59/65) re-proven.
 
+### M8.20 §7 - GROUP review card (standalone schema, REVIEW-only)
+
+- New files (proof-only; per-bore contracts/census UNCHANGED):
+  - `truelinev2/review/group_review.py` -- schema
+    **`truelinev2-shared-alignment-group-review-1`** (`SharedAlignmentGroupCard`
+    + `GroupMember` + `build_group_review_card`)
+  - `truelinev2/proof/run_shared_alignment_group_review_proof.py` (G1-G8 PASS)
+  - `truelinev2/tests/test_shared_alignment_group_review.py` (10)
+- A proven Law-1 multi-drop becomes ONE REVIEW group item: members
+  `{log8, log32}`, origin `NEXTLINK@378,409`, boundaries `{1+76, 1+77}`. It is a
+  STANDALONE schema (NOT the per-bore M8.10/M8.11 payloads -- a group is
+  multi-bore; per-bore `ReviewerPayload` carries one `bore_id`).
+- REVIEW-only by construction: `auto=False`, frozen `SUGGESTION_NOT_PLACEMENT`,
+  action `CONFIRM_OR_REJECT_MULTI_DROP_GROUPING`, `has_geometry=False` /
+  `has_strokes=False` + a geometry-key walker -> no coordinates/segments/strokes.
+- Each member carries its UNCHANGED per-bore status (validator REFUSES any
+  non-blocked status) -> the card never overwrites per-bore truth. Only a
+  `V_REVIEW` verdict builds a card (REJECTED/NOT_APPLICABLE -> None); log42 is
+  never a member (no survivor -> no claim).
+- NOT wired into `resolve_bore`/sweep/reviewer-service/per-bore contracts;
+  M8.10 (30/16/.../2), M8.11, M8.15, and the all-58 census re-proven unchanged.
+- Remaining (separately authorized): wire the corpus extraction into the
+  SHIPPED reviewer service/bundle (+ any UI). No geometry milestone here.
+
 ## Verification
 
-- Tests: `559 passed`.
+- Tests: `569 passed`.
+- M8.20 §7 GROUP review proof G1-G8: PASS.
 - M8.20 Law 1 (SHARED_ALIGNMENT_MULTI_DROP) probe G1-G8: PASS.
 - M8.20 shared-origin adjudication probe G1-G6: PASS.
 - M8.19 path-length cross-sheet join probe G1-G5: PASS.
@@ -156,12 +181,13 @@
 
 ## Remaining Blocker Classes
 
-1. `log8`/`log32` shared-origin: Law 1 `SHARED_ALIGNMENT_MULTI_DROP` is now
-   IMPLEMENTED + PROVEN proof-first (REVIEW-only, all gates incl. claim
-   bijection + hardened conduit grammar). Remaining gate: the §7 payload/card
-   extension (corpus extraction pass wiring M8.18/M8.19 + a GROUP review card
-   in the M8.10/M8.11 contracts) to SURFACE the REVIEW -- a separately
-   authorized milestone. The per-bore lane stays pure (no flip).
+1. `log8`/`log32` shared-origin: Law 1 + the §7 GROUP review card are now
+   IMPLEMENTED + PROVEN proof-first (REVIEW-only standalone contract
+   `truelinev2-shared-alignment-group-review-1`; members/origin/boundaries
+   proven; per-bore truth + census unchanged). Remaining gate: wire the corpus
+   extraction into the SHIPPED reviewer service/bundle (so a real consumer
+   emits the card outside a proof run) + eventual UI -- a separately authorized
+   step. The per-bore lane stays pure (no flip); no geometry milestone yet.
 2. Uniquely traceable design path through the dense network for `log42`:
    named target is corridor-pruned/junction-bounded unique tracing (12 of 13
    rivals die by search exhaustion with up to 68 complete paths; a budget
@@ -174,6 +200,10 @@
 
 ## Recommended Next Lane After Reset
 
+0. SURFACE the §7 GROUP card in the SHIPPED reviewer service/bundle: run the
+   corpus extraction (M8.18 + M8.19 + Law 1, OUTSIDE the per-bore lane) inside
+   the service so a real consumer emits `truelinev2-shared-alignment-group-
+   review-1`; contract-pinned, additive, no per-bore census change. Opus lane.
 1. Owner decision to SURFACE Law 1: authorize the §7 extension -- a corpus-
    level extraction pass (M8.18 discriminator + M8.19 join, OUTSIDE the
    per-bore lane) feeding `shared_alignment_verdict`, plus a GROUP REVIEW card
