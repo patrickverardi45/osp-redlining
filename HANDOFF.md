@@ -2,11 +2,11 @@
 
 **Saved:** 2026-06-13
 **Branch:** `feat/truelinev2`
-**Pushed engine HEAD:** `2b3f6c9` (M9.5 cross-sheet feasibility, proof-only); advanced by
-this M9.6 run-assembly API-transport commit (additive, default-OFF, read-only). The
-intervening M9.2→M9.5 milestones are recorded in `wiki/current-sprint.md` + the
+**Pushed engine HEAD:** `dfc650e` (M9.6 run-assembly API transport); advanced by this M9.8
+Structure-Identity Binder feasibility commit (proof-only). The intervening M9.2→M9.6 + M9.7
+(web, separate repo, local-only) milestones are recorded in `wiki/current-sprint.md` + the
 `wiki/m9_*.md` docs.
-**Verified tests:** `797 passed`
+**Verified tests:** `811 passed`
 
 ## Guardrails
 
@@ -524,6 +524,36 @@ intervening M9.2→M9.5 milestones are recorded in `wiki/current-sprint.md` + th
   changes to `match/`/`schema/`. No frontend/Vercel/UI, no deploy, no main/v1, no placement/AUTO/
   geometry/PNG, no product-bucket movement, no reviewer-bundle mutation, no cross-sheet/M9.2 widen.
 - Next: a frontend/Vercel UI rendering these cards is a SEPARATE, authorized milestone; not begun.
+
+### M9.8 Phase 0 - STRUCTURE-IDENTITY BINDER feasibility (proof-only; FEASIBLE yield 1 = control, 0 product yield)
+
+- New files (proof-only; no core/service change; no wiring; zero bores moved; M8.27 + product
+  lanes + M9.x results untouched):
+  - `truelinev2/proof/run_structure_identity_binder_phase0.py` (G1-G11 + G10b PASS)
+  - `truelinev2/tests/test_structure_identity_binder_phase0.py` (14; offline pure + posture)
+  - `wiki/m9_8_structure_identity_binder_phase0.md`
+- The binder: per CANDIDATE SHEET, run the SHIPPED M9.3.1 `detect_endpoint_note` +
+  `attribute_endpoint` at the bore END; BIND iff EXACTLY ONE candidate sheet carries a
+  terminal-class FULL_PAIR (AP+splice) identity; 0/>=2/contradiction -> ABSTAIN. Never
+  proximity/length/nearest/AP-only/splice-only. Strengthens M9.3.1's union scan (catches a
+  cross-sheet >=2 fork; synthetic-verified, none in corpus, G10b).
+- **Verdict `STRUCTURE_IDENTITY_BINDER_FEASIBLE_YIELD_1`** (derived). Positive control log12
+  -> BIND@sheet3 (AP-121 SPLICE LOC 28 on sheet 3 only, candidate frames {2,3}); but sheet 3
+  has 2 holding intervals -> route_unique=False, so `product_yield=0` (log12 stays
+  HUMAN_ADJUSTABLE; the frame-identity bind does NOT alone place it). All 10 pick-cards
+  (log5/11/36/59/66 parallel-run; log6/41/58/63/64 multi-frame) ABSTAIN_NO_TERMINAL_IDENTITY
+  -- their ends print no terminal AP+splice (the M8.26 wall); the parallel-run real fork is
+  WITHIN-frame (a per-frame binder cannot resolve it even with an identity).
+- Effectively another honest-negative for broad review reduction (like M9.5/M8.26): **engine
+  headroom on current printed evidence is near-exhausted**; further yield needs owner source
+  re-reads / new printed coverage, not a new solver. NO product bucket moved; NO bore promoted.
+- Adversarial 4-lens audit: SOUND (log12 computed not hardcoded; exactly-one-identity the only
+  bind path; tampering refuted every wrong path; posture clean). Precision findings converted
+  to gates/fixes pre-commit (G10b per-sheet==per-frame; within-frame-fork note; synthetic-only
+  strengthening; explicit `product_yield`; G9 extended to the candidate-frame harness).
+- Posture: full v2 suite 811 passed (797 + 14); guards green; M8.27/M9.3.1/M9.4.1/M9.4.2/M9.5
+  proofs re-confirmed PASS. ZERO changes to `match/`/`schema/`. No AUTO/geometry/strokes/PNG,
+  no reviewer-service/UI/API, no deploy, no main/v1.
 
 ## Verification
 
