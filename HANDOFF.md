@@ -2,8 +2,8 @@
 
 **Saved:** 2026-06-12
 **Branch:** `feat/truelinev2`
-**Pushed engine HEAD:** `972b83449e1bf8ab00def945e5120dc9918f3bd9`
-**Verified tests:** `484 passed`
+**Pushed engine HEAD:** `06709a3` (the M8.26 honest-negative commit advances this)
+**Verified tests:** `643 passed`
 
 ## Guardrails
 
@@ -343,9 +343,40 @@
   adversarially-proven end-identity gate) -- not a family lever. Census frozen;
   log8/log32/log42 + M8.20 untouched.
 
+### M8.26 - END_IDENTITY_UNPRINTED population CLOSED as honest-negative
+
+- New files (proof-only; HONEST NEGATIVE; census frozen; NO promotion):
+  - `truelinev2/proof/run_end_identity_population_probe.py` (G1-G6 PASS)
+  - `truelinev2/tests/test_end_identity_population_probe.py` (6, offline)
+  - `wiki/m8_26_end_identity_population_honest_negative.md`
+- Enumerated the 25 END_IDENTITY_UNPRINTED bores live + dumped complete end-
+  station printed evidence per referenced sheet. The named lever (a printed
+  terminal/AP-HH layer the grammar excludes) DOES NOT EXIST here:
+  - G3: ZERO AP-id terminals at any of the 25 ends (ending + starting callouts);
+    zero AP position-chains resolve -> frame/layer ownership never proven.
+  - G4: exactly ONE printed end NOTE the grammar binds = log27
+    (`NEXTLINK HH PROP. SPLICE POINT`), class OUTSIDE class_keywords; the
+    `NEXTLINK` symbol layer shares red/blue fills with installer_hh/
+    terminal_port_hh (no discriminator), no AP id, no end tick -> class-
+    ambiguous + unlocatable. (log27 already places via M8.5/M8.8 opt-ins.)
+  - G5: zero clean gate candidates; the only ending-callout keyword
+    (log3/log4 `PORT TERMINAL TAIL`) is a CONDUIT class, not a handhole.
+- Adversarial workflow (construct->refute->synthesize): 0 gate proposals of 5
+  candidate classes; 0 survived the skeptic panel. Panel live-inspection
+  corroboration: log3/log4's real PORT HHs are rival AP-137/AP-138 (>=2 ->
+  abstain); log5/log15/log30 nearest end-tick symbol is a FLOWER POT / 200+pt
+  (wrong-class / unowned).
+- Taxonomy (25): 15 pure printed void · 8 frame-reset `=0+00` ends · 5 run/
+  continuation callouts · 1 unmodeled printed note (log27). 23 of 25 are
+  KMZ/geo or SOURCE_REVIEW lanes; the single redline-engine lever is the
+  log27 NEXTLINK class-fill disambiguation + a 13+55 station tick (clears at
+  most 1 of 25; changes no redline). Census frozen; log8/log32/log42 + M8.20
+  untouched.
+
 ## Verification
 
-- Tests: `637 passed`.
+- Tests: `643 passed`.
+- M8.26 END_IDENTITY_UNPRINTED population probe G1-G6: PASS (honest negative).
 - M8.25 bore_log17 family abstain probe G1-G7: PASS.
 - M8.24 origin-identity abstain probe G1-G7: PASS.
 - M8.23 END-continuity abstain probe G1-G7: PASS.
@@ -394,6 +425,13 @@
    Owner decision required: geo/KMZ corroboration or reviewer pick-cards.
 4. Lower-yield printed-evidence gaps:
    `log12`, `log46`, `log60`, `log64`, `log71`, `log72`.
+5. `END_IDENTITY_UNPRINTED` (25 bores): CLOSED as honest-negative by M8.26 --
+   no zero-false terminal/AP-HH end-identity gate exists; 23 of 25 are KMZ/geo
+   or SOURCE_REVIEW. The single redline-engine lever is `log27`: disambiguate
+   the `NEXTLINK` symbol-layer class-fill (distinct color / printed class
+   id_token / structure-id token) AND obtain a drawn axis station tick at 13+55
+   on sheet 16 (currently absent). Both required; clears at most 1 of 25 and
+   changes no redline (log27 already places via opt-ins).
 
 ## Recommended Next Lane After Reset
 
