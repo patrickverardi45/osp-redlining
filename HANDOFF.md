@@ -552,7 +552,19 @@
    (no opt-in flag; nothing imports it); composes the M9.1 join, so two over-broad
    phase-0 unwired-guards were narrowed to the placement-path scope (matching the
    authoritative `test_kmz_structure_join` test). Full suite 717. Zero bores moved.
-   Next: a gated run-assembly lane consuming the 7 anchors + 3 junctions.
+   **M9.4 Phase 0 (`run_run_assembly_phase0`, G1–G10 PASS) proved the gated
+   REVIEW-only run-assembly lane is feasible** (see `wiki/m9_4_run_assembly_phase0.md`;
+   no lane shipped — deferred to M9.4.1). The 3 junctions emit as SHARED-TERMINAL-NODE
+   evidence (END→START), evidence-only, no bucket/AUTO/geometry: **2
+   `RUN_ASSEMBLY_REVIEW_CANDIDATE`** (log10→log27 @AP152, log72→log39 @AP117; departure
+   run class undetermined — the reviewer classifies, NO continuity asserted) + **1
+   `JUNCTION_DROP_BRANCH`** (log7→log65 @AP163 — the adversarial audit caught that
+   log65 is a printed `FOR FIBER DROP` lateral, 199′=span, NOT the trunk continuing).
+   The audit also added a `SELF_JUNCTION_REFUSED` gate. M9.4.1 must inject the
+   drop-marker grammar + enumerate ALL physical terminal departures (not only
+   JUNCTION_ORIGIN starts) for the competing guard; the evidence is a NEW review item
+   (like the M8.20 group card), never a per-bore bucket change. Full suite 729; zero
+   bores moved; M9.3.1 census + M8.11 lanes + M9.2 negative all intact.
 4. Lower-yield printed-evidence gaps:
    `log12`, `log46`, `log60`, `log64`, `log71`, `log72`.
 5. `END_IDENTITY_UNPRINTED` (25 bores): CLOSED as honest-negative by M8.26 --
