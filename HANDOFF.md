@@ -224,9 +224,41 @@
   ({0+44, 0+50, printed 0+46}; no preferred reading -- validator-enforced);
   owner re-read of source photo 2025-12-03_212755 - Jimenez.
 
+### M8.22 - log42 strand discriminator at the callout-frame origin
+
+- New files (proof-only; lane/census/grades/tolerances/budget UNCHANGED):
+  - `truelinev2/proof/run_strand_discriminator_probe.py` (G1-G10 PASS)
+  - `truelinev2/tests/test_strand_discriminator_probe.py` (11)
+  - `wiki/m8_22_strand_discriminator.md`
+- RESOLVED the M8.21 named target: log42's origin NEXTLINK@819,351 was
+  DESIGN_PATH_AMBIGUOUS (full universe EXHAUSTED). A directional eligibility
+  filter (remove conduit pieces entirely behind the printed origin on the
+  origin->2+70-terminus chord) traces GROUP 0 uniquely = 272.3 ft (+0.9% vs
+  printed 270' = ~46' drop + ~224' east). LICENSED by the printed two-tail
+  structure (origin prints 0+00->2+70 270' AND 0+00->5+26 526', each with its
+  own matchline -- the West tail is a distinct printed run, not this bore's).
+- Adversarial 5-lens panel pre-commit caught that chord projection != station
+  (the codebase already refuted projection-ordering, design_path.py:9-11), so
+  the law is NOT shipped as a general module: it is probe-local and fires only
+  under (G2) the printed multi-tail license, (G5) a per-survivor chord-
+  monotonicity certificate + parallel_strand_guard, (G6) robustness at both
+  co-located origins. One-sided (conservative NOT_CONNECTED for backward
+  routes; never a false survivor); provenance DIRECTIONAL_FORWARD_OF_PRINTED_
+  ORIGIN (not M8.18/corridor class). Controls log8/log32 byte-identical.
+- log42 stays STRUCTURE_IDENTITY_BINDING_REQUIRED -- strand resolved, bore NOT
+  placed. Blocker SHIFTS to the END side: the M8.19 scale-join refuses under
+  the correct NEXTLINK terminal_port_hh anchor (6.3%>5%) but the 17-ft end
+  segment is below the scale-measurement floor (5% = ~1.2pt draw noise; the
+  wrong FLOWER POT anchor flips it to PROVEN). Named-missing = a NON-SCALE
+  cross-sheet continuity corroboration for sub-floor segments (the boundary
+  equation + closure 270+17=287 already prove the crossing), NOT a tolerance
+  widen. Owner 0+00-0+44 re-read does not affect M8.22 (filter uses geometry
+  only, never the 44/46 digit).
+
 ## Verification
 
-- Tests: `608 passed`.
+- Tests: `619 passed`.
+- M8.22 strand discriminator probe G1-G10: PASS.
 - M8.21 split-log corridor probe G1-G9: PASS.
 - M8.20 GROUP REVIEW API/bundle transport proof G1-G8: PASS.
 - M8.20 real GROUP reviewer service proof G1-G8: PASS.
@@ -253,14 +285,14 @@
    authorized consumer/UI adoption; production activation still requires its
    separate auth/tenant decision. The per-bore lane stays pure (no flip); no
    geometry milestone yet.
-2. `log42` (SHARPENED by M8.21): the corridor capability is SHIPPED and the
-   dense sheet-2 search now completes with typed certificates; the blocker
-   is no longer search exhaustion. The origin is the callout-frame 0+00
-   structure (`NEXTLINK@819,351`), corridor verdict DESIGN_PATH_AMBIGUOUS
-   (4 paths / 2 jitter groups) -- named targets: a strand discriminator at
-   that origin, plus owner source re-reads (bore_log13 block semantics;
-   log41 end digit 44/50 vs printed 46). The equation-bound installer HH is
-   the printed INTERIOR reset at 0+46, NOT the origin (G7-proven).
+2. `log42` (SHARPENED again by M8.22): the strand ambiguity at the origin is
+   RESOLVED (directional discriminator -> GROUP 0, the full 270' route). The
+   blocker is now END-side: the M8.19 cross-sheet scale-join is unmeasurable
+   on the 17-ft end segment (5% < draw-noise floor). Named target = a
+   NON-SCALE cross-sheet continuity corroboration for sub-floor segments (the
+   printed boundary equation + 270+17=287 closure already prove the crossing).
+   Owner re-reads still open (bore_log13 block semantics; log41 44 vs printed
+   46). The equation-bound installer HH stays the INTERIOR reset at 0+46.
 3. No printed matchline equation:
    `log10`, `log14`, `log61`, `log62`, `log67`, `log68`, `log70`.
    Owner decision required: geo/KMZ corroboration or reviewer pick-cards.
