@@ -2,8 +2,8 @@
 
 **Saved:** 2026-06-12
 **Branch:** `feat/truelinev2`
-**Pushed engine HEAD:** `06709a3` (the M8.26 honest-negative commit advances this)
-**Verified tests:** `643 passed`
+**Pushed engine HEAD:** `075c670` (M8.26); the M8.27 truth-table commit advances this
+**Verified tests:** `651 passed`
 
 ## Guardrails
 
@@ -373,9 +373,36 @@
   most 1 of 25; changes no redline). Census frozen; log8/log32/log42 + M8.20
   untouched.
 
+### M8.27 - final all-58 engine truth table + completion map
+
+- New files (proof-only; adversarially audited FAITHFUL; census frozen):
+  - `truelinev2/proof/run_final_engine_truth_table.py` (G1-G15 PASS)
+  - `truelinev2/tests/test_final_engine_truth_table.py` (8, offline)
+  - `wiki/m8_27_final_engine_truth_table.md`
+- ONE authoritative completion map joining 3 orthogonal axes per bore WITHOUT
+  altering any: PRODUCT (M8.11 fullest_safe_review -> one M8.10 lane;
+  authoritative), ROUTE-STROKE (symbol_conduit lane; proof-only, default-OFF,
+  UNWIRED -- STROKE_ELIGIBLE is never a product placement), GROUP (M8.20 card,
+  the 59th review item). completion_bucket is a pure derived UI-readiness VIEW.
+- 58 vs 59 resolved: exactly 58 production logs (log2..log72, 13 numbering gaps,
+  no dups); the 59th is the M8.20 group card. 58 per-bore + 1 card = 59 items.
+- Buckets: DRAWABLE_REVIEW 30 / PICK_CARD_REVIEW 17 / HUMAN_ADJUSTABLE_REVIEW 6 /
+  SOURCE_OR_KMZ_REQUIRED 3 / SOURCE_REVIEW_REQUIRED 2 (+ 1 GROUP_REVIEW).
+  Headlines: drawable 30, review-ready 53, source/kmz/owner 5, engine-law 4
+  (route-stroke doctrine ONLY -- log7/8/32/42 already place; ZERO bores product-
+  blocked on engine law).
+- Reconciliations gated: log8/32/42 product PLACED + stroke STRUCTURE_IDENTITY
+  (log8/32 group, log42 excluded); log43/44 OUT_OF_CLASS+END_IDENTITY+
+  SOURCE_OR_KMZ; END_IDENTITY 25 honest-negative; default_baseline 24 + stroke
+  census unchanged; M8.10/M8.11/M8.14.c/M8.20 contracts untouched.
+- Audit fix: log11 was mis-bucketed ENGINE_LAW_REQUIRED; its M8.7 verdict is
+  MULTIPLE_PATHS_PICK_CARD (routing-order OUT_OF_CLASS, no source defect) ->
+  re-bucketed PICK_CARD_REVIEW (review-eligible now). Gated by G15.
+
 ## Verification
 
-- Tests: `643 passed`.
+- Tests: `651 passed`.
+- M8.27 final engine truth table G1-G15: PASS (audited FAITHFUL).
 - M8.26 END_IDENTITY_UNPRINTED population probe G1-G6: PASS (honest negative).
 - M8.25 bore_log17 family abstain probe G1-G7: PASS.
 - M8.24 origin-identity abstain probe G1-G7: PASS.
