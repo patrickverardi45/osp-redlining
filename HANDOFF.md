@@ -191,9 +191,43 @@
 - Remaining: consumer/UI adoption is separately authorized; no writeback or
   geometry milestone is included.
 
+### M8.21 - log42 split-log / corridor-pruned trace / frame ownership
+
+- New files (proof-only; lane/sweep/contracts/census UNCHANGED):
+  - `truelinev2/extract/corridor_prune.py` -- the M8.20-named corridor
+    capability: the existing length law as a piece filter (banked constants
+    only, budget and jump cap untouched; proof-consumed, UNWIRED)
+  - `truelinev2/proof/run_split_log_corridor_probe.py` (G1-G9 PASS)
+  - `truelinev2/tests/test_corridor_prune.py` +
+    `test_split_log_corridor_probe.py` (27)
+  - `wiki/m8_21_split_log_corridor.md` (the adjudication)
+- The owner's printed parent chain is VERIFIED: 270' + 17' (PORT TERMINAL
+  TAIL) + 232' (VACANT, class-distinct ADJACENT, claimed by no corpus bore);
+  270+17 = 287 = log42 exactly; 519 is arithmetic, never printed.
+- Corridor results: log42's 13 candidates all die/survive with POSITIVE
+  typed certificates (8 chord-infeasible / 1 out-of-tolerance / 2 finished
+  AMBIGUOUS / 1 no-chain / 1 corridor survivor); log8/log32 controls
+  byte-identical pruned vs unpruned. Corridor uniqueness is a DIFFERENT
+  certificate class (LENGTH_ADMISSIBLE_CORRIDOR) -- Law 1 does not accept
+  it; provenance-tagged on every record.
+- Adversarial 5-lens panel pre-implementation: the naive "survivor = origin"
+  claim was REFUTED by the completeness critic and the refutation is now
+  G7-proven: the equation-bound 13"X24"X24" INSTALLER HH (corridor survivor
+  NEXTLINK@818,419) is the printed INTERIOR reset at callout-frame 0+46
+  (M8.6 interior case; path = footage-46 within 0.5%). New frame-ownership
+  law shipped in the probe (unique interior-tick ladder placing the printed
+  boundary; y-band selection forbidden).
+- log42 stays STRUCTURE_IDENTITY_BINDING_REQUIRED with a SHARPER named
+  target: strand discriminator at the callout-frame origin NEXTLINK@819,351
+  (DESIGN_PATH_AMBIGUOUS, 4 paths / 2 groups) + owner source re-reads.
+- log41: typed SOURCE_DIGIT_REREAD_REQUIRED conflict enumeration
+  ({0+44, 0+50, printed 0+46}; no preferred reading -- validator-enforced);
+  owner re-read of source photo 2025-12-03_212755 - Jimenez.
+
 ## Verification
 
-- Tests: `581 passed`.
+- Tests: `608 passed`.
+- M8.21 split-log corridor probe G1-G9: PASS.
 - M8.20 GROUP REVIEW API/bundle transport proof G1-G8: PASS.
 - M8.20 real GROUP reviewer service proof G1-G8: PASS.
 - M8.20 §7 GROUP review proof G1-G8: PASS.
@@ -219,10 +253,14 @@
    authorized consumer/UI adoption; production activation still requires its
    separate auth/tenant decision. The per-bore lane stays pure (no flip); no
    geometry milestone yet.
-2. Uniquely traceable design path through the dense network for `log42`:
-   named target is corridor-pruned/junction-bounded unique tracing (12 of 13
-   rivals die by search exhaustion with up to 68 complete paths; a budget
-   raise alone lands in AMBIGUOUS and is NOT the target).
+2. `log42` (SHARPENED by M8.21): the corridor capability is SHIPPED and the
+   dense sheet-2 search now completes with typed certificates; the blocker
+   is no longer search exhaustion. The origin is the callout-frame 0+00
+   structure (`NEXTLINK@819,351`), corridor verdict DESIGN_PATH_AMBIGUOUS
+   (4 paths / 2 jitter groups) -- named targets: a strand discriminator at
+   that origin, plus owner source re-reads (bore_log13 block semantics;
+   log41 end digit 44/50 vs printed 46). The equation-bound installer HH is
+   the printed INTERIOR reset at 0+46, NOT the origin (G7-proven).
 3. No printed matchline equation:
    `log10`, `log14`, `log61`, `log62`, `log67`, `log68`, `log70`.
    Owner decision required: geo/KMZ corroboration or reviewer pick-cards.
@@ -239,9 +277,10 @@
 2. Then (and only after the reviewer confirms a multi-drop) any geometry is a
    further, separate milestone -- two redlines sharing their far-sheet
    alignment; red stroke law unchanged.
-3. `log42` needs a Fable lane only when parent-child split-log reconciliation
-   + corridor-pruned unique tracing is prioritized; it is NOT unblocked by
-   Law 1 (it never enters the law).
+3. `log42`: the parent-child split-log reconciliation + corridor lane RAN
+   (M8.21). Remaining unlocks are the strand discriminator at
+   `NEXTLINK@819,351` and the two owner source re-reads named in
+   `wiki/m8_21_split_log_corridor.md` 5. Still NOT unblocked by Law 1.
 
 ## Session Sizing
 

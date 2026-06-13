@@ -52,6 +52,10 @@ may bind N > 1 bores to one origin structure iff ALL of:
    (0.5 ft, unchanged); M8.18-class single design-path survivor at
    `DESIGN_LENGTH_REL_TOL` (unchanged); M8.19 path-length join at
    `JOIN_SCALE_REL_TOL` 0.05 (unchanged). No gate is weakened for the group.
+   (M8.21 vocabulary note: "M8.18-class survivor" means FULL-UNIVERSE
+   survivorship from a finished unpruned search; the M8.21 corridor's
+   `LENGTH_ADMISSIBLE_CORRIDOR` certificates are a DIFFERENT class this
+   gate does not accept — see `wiki/m8_21_split_log_corridor.md` §2.)
 2. **Measured shared alignment.** All N retained walks are pairwise
    jitter-equivalent (≤ `JITTER_EQUIV_TOL`, structural weld-contact scale,
    never loosened) AND boundary points coincide within the same band. If any
