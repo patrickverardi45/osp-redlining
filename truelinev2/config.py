@@ -42,6 +42,10 @@ class Settings:
     # Local-only, read-only reviewer API handoff. DEFAULT OFF: reviewer routes
     # are not mounted unless explicitly enabled.
     reviewer_api_optin: bool = False
+    # M9.6: local-only, read-only RUN-ASSEMBLY review-card transport. DEFAULT OFF:
+    # the run-assembly route is not mounted unless explicitly enabled. Independent of
+    # reviewer_api_optin so the run-assembly surface can be enabled/inert on its own.
+    run_assembly_api_optin: bool = False
     # Approved design-stroke PNG source for the reviewer API asset route.
     design_stroke_dir: Path = _DESIGN_STROKE_DIR
 
@@ -61,6 +65,7 @@ class Settings:
             station_axis_interval_optin=os.getenv("TL2_STATION_AXIS_INTERVAL_OPTIN", "0") == "1",
             symbol_conduit_lane_optin=os.getenv("TL2_SYMBOL_CONDUIT_LANE_OPTIN", "0") == "1",
             reviewer_api_optin=os.getenv("TL2_REVIEWER_API_OPTIN", "0") == "1",
+            run_assembly_api_optin=os.getenv("TL2_RUN_ASSEMBLY_API_OPTIN", "0") == "1",
             design_stroke_dir=Path(
                 os.getenv("TL2_DESIGN_STROKE_DIR", str(_DESIGN_STROKE_DIR))
             ),
@@ -75,5 +80,6 @@ class Settings:
             sheet_offset=13,
             allowed_origins=("http://localhost:3000", "http://127.0.0.1:8100"),
             reviewer_api_optin=False,
+            run_assembly_api_optin=False,
             design_stroke_dir=_DESIGN_STROKE_DIR,
         )

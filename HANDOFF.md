@@ -2,10 +2,11 @@
 
 **Saved:** 2026-06-13
 **Branch:** `feat/truelinev2`
-**Pushed engine HEAD:** `cce632c` (V2-HYG-1b); advanced by this M9.5 cross-sheet
-feasibility commit (proof-only). The intervening M9.2→M9.4.2 milestones are recorded in
-`wiki/current-sprint.md` + the `wiki/m9_*.md` docs.
-**Verified tests:** `778 passed`
+**Pushed engine HEAD:** `2b3f6c9` (M9.5 cross-sheet feasibility, proof-only); advanced by
+this M9.6 run-assembly API-transport commit (additive, default-OFF, read-only). The
+intervening M9.2→M9.5 milestones are recorded in `wiki/current-sprint.md` + the
+`wiki/m9_*.md` docs.
+**Verified tests:** `797 passed`
 
 ## Guardrails
 
@@ -490,6 +491,39 @@ feasibility commit (proof-only). The intervening M9.2→M9.4.2 milestones are re
   "already-counted" overclaim, single-hop scope, dead BLOCKED token, dead-end terminals,
   AP-152 imprecision) was converted to a MEASURED gate pre-commit (G6/G12/G13/G7 +
   `decide_verdict`).
+
+### M9.6 - RUN-ASSEMBLY review-card read-only API/transport contract (additive; default-OFF)
+
+- New flag + files (additive transport; no core/service change; per-bore bundle byte-identical;
+  zero bores moved; M8.27 + product lanes + M9.4.1/M9.4.2 cards + the M9.5 result untouched):
+  - `truelinev2/config.py` (+6): `run_assembly_api_optin` (env `TL2_RUN_ASSEMBLY_API_OPTIN`),
+    default OFF, in `Settings` + `from_env` + `for_proof`.
+  - `truelinev2/api/app.py` (+4): one gated `include_router` block mirroring `reviewer_api_optin`.
+  - `truelinev2/proof/export_run_assembly_cards_json.py` (NEW): `generate_export`/`build_export`/
+    `validate_export` -- wraps `RunAssemblyReviewService.generate()` cards in the transport
+    envelope `truelinev2-web-run-assembly-export-1`; fail-closed validation.
+  - `truelinev2/api/run_assembly_routes.py` (NEW): context-free `GET /v2/reviewer/run-assembly`,
+    consumes + (re)validates the export, memoizes on `app.state`, 503 on inputs missing or a
+    poisoned cache.
+  - `truelinev2/proof/run_run_assembly_api_contract.py` (NEW): G1-G12 PASS.
+  - `truelinev2/tests/test_run_assembly_api.py` (NEW): 19 offline tests.
+- The transport CONSUMES the service verbatim (reimplements no run-assembly logic; G12
+  byte-compares the envelope cards full-dict against a direct `service.generate()`). It emits the
+  EXISTING M9.4.1 card schema (`truelinev2-run-assembly-review-1`), never a new product bucket.
+- Exact cards (unchanged): log10->log27 @AP-152 + log72->log39 @AP-117 (RUN_CONTINUATION_CANDIDATE)
+  + log7->log65 @AP-163 (JUNCTION_DROP_BRANCH; log65 prints `FOR FIBER DROP`). `competing_departures
+  == 1` on all (M9.5 frame-scoped result preserved).
+- Default-OFF: `create_app(flag OFF)` mounts no route; the two opt-in flags are independent; the
+  route is context-free (no auth/tenant/db/writes), mirroring the existing reviewer routes.
+- Adversarial 5-lens audit: confirmed sound; 3 low-severity findings -> fixes + gates pre-commit
+  (PNG-key guard asymmetry -> key-side check + G5 vector; poisoned-cache -> 503; full-dict verbatim
+  gate G12). Recorded-not-a-defect: the route transitively loads `truelinev2.render` via the shared
+  proof-helper chain exactly as the existing `reviewer_routes` does -- no new regression; removing
+  it is out-of-scope cleanup.
+- Posture: full v2 suite 797 passed (794 + 3); guards green; M9.4.2 + M9.5 proofs PASS. ZERO
+  changes to `match/`/`schema/`. No frontend/Vercel/UI, no deploy, no main/v1, no placement/AUTO/
+  geometry/PNG, no product-bucket movement, no reviewer-bundle mutation, no cross-sheet/M9.2 widen.
+- Next: a frontend/Vercel UI rendering these cards is a SEPARATE, authorized milestone; not begun.
 
 ## Verification
 

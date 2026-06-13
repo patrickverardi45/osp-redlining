@@ -38,4 +38,8 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         from truelinev2.api.reviewer_routes import router as reviewer_router
 
         app.include_router(reviewer_router)
+    if settings.run_assembly_api_optin:
+        from truelinev2.api.run_assembly_routes import router as run_assembly_router
+
+        app.include_router(run_assembly_router)
     return app
