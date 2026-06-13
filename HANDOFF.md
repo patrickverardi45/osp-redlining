@@ -2,8 +2,8 @@
 
 **Saved:** 2026-06-12
 **Branch:** `feat/truelinev2`
-**Pushed engine HEAD:** `075c670` (M8.26); the M8.27 truth-table commit advances this
-**Verified tests:** `651 passed`
+**Pushed engine HEAD:** `ee4ddef` (M8.27); the M9.0 KMZ-correlation commit advances this
+**Verified tests:** `663 passed`
 
 ## Guardrails
 
@@ -399,9 +399,44 @@
   MULTIPLE_PATHS_PICK_CARD (routing-order OUT_OF_CLASS, no source defect) ->
   re-bucketed PICK_CARD_REVIEW (review-eligible now). Gated by G15.
 
+### M9.0 - KMZ<->PDF correlation architecture (first geo-lane milestone)
+
+- New files (proof-only; KMZ reader UNWIRED; zero bores moved; M8.27 + census +
+  contracts untouched):
+  - `truelinev2/extract/kmz.py` (KMZ feature reader; pure, dialect-injected)
+  - `truelinev2/proof/run_kmz_correlation_audit.py` (G1-G7 + G2b PASS)
+  - `truelinev2/tests/test_kmz_correlation.py` (12)
+  - `wiki/m9_0_kmz_pdf_correlation_architecture.md`
+- KMZ assets FOUND: the Brenham Phase 5 design KMZ (1116 features; tracked
+  fixture brenham_phase5_source_truth.kmz == data/uploads design KMZ). v2 had
+  ingested no KMZ; this begins the geo lane. Geo lon/lat, NO stationing,
+  attributes in <description> HTML tables.
+- Taxonomy: 576 structure points + 539 routes; folders map 1:1 to PDF classes
+  (terminal_port_hh 64, installer_hh 37, splice_hh 16, flower_pot 158; Vacant
+  Pipe routes 58 == bore count).
+- ZERO-FALSE JOIN KEY = TWO-FIELD agreement: PDF 'AP-NNN SPLICE LOC MM' <-> KMZ
+  terminal_port_hh with AP Number NNN AND splice_loc MM. AP unique across 64
+  terminals (0 collisions); the splice-loc field is load-bearing because the
+  same-AP splice twin is 28-181m away (NOT co-located) and the PDF prints no
+  terminal class keyword. PROVEN on controls log7 (AP-163/SPLICE LOC 46) +
+  log42 (AP-105/SPLICE LOC 25).
+- Per-target (ZERO moved): log37/38 SOURCE_REVIEW_ONLY (source unparseable, no
+  join key); log43 SOURCE_REVIEW_ONLY (void end 59+19, multi-drive source);
+  log44 KMZ_ENDPOINT_BRIDGE candidate (terminals in KMZ but 325' source-vs-plan
+  mismatch -> after source fix); log68 KMZ_MATCHLINE_SUBSTITUTE candidate
+  (cross-sheet no-equation; needs both endpoints bound). Future-eligible:
+  log44, log68. Source-only: log37/38/43.
+- Adversarial audit: dispositions zero-false; it CAUGHT an earlier draft that
+  called the splice/terminal pair "co-located" and assumed a PDF class keyword
+  the plan never prints -> replaced with the verified two-field join (G2b banks
+  the twin distances). Next: ship KMZ_AP_STRUCTURE_JOIN, then
+  KMZ_MATCHLINE_SUBSTITUTE for the cross-sheet class (log68 + log10/14/61/62/
+  67/68/70) + route-stroke geometry for log8/32/42 via KMZ AP terminals.
+
 ## Verification
 
-- Tests: `651 passed`.
+- Tests: `663 passed`.
+- M9.0 KMZ correlation audit G1-G7 + G2b: PASS (zero bores moved; reader UNWIRED).
 - M8.27 final engine truth table G1-G15: PASS (audited FAITHFUL).
 - M8.26 END_IDENTITY_UNPRINTED population probe G1-G6: PASS (honest negative).
 - M8.25 bore_log17 family abstain probe G1-G7: PASS.
