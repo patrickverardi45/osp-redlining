@@ -285,9 +285,42 @@
   discriminator at NEXTLINK@819,351 that binds identity not just position; /
   owner bore_log13 re-read). Census frozen; log8/log32 + M8.20 untouched.
 
+### M8.24 - log42 START origin identity NOT bindable (ABSTAIN + reframe)
+
+- New files (proof-only; SAFE ABSTAIN; census frozen; NO promotion):
+  - `truelinev2/proof/run_origin_identity_abstain_probe.py` (G1-G7 PASS)
+  - `truelinev2/tests/test_origin_identity_abstain_probe.py` (6)
+  - `wiki/m8_24_origin_identity_abstain.md`
+- ANSWER to "can START origin identity be bound through lane-accepted
+  evidence?": NO. The dominant shipped-lane abstain is the cross_sheet_origin
+  corroboration-band refusal (11 sheet-2 structures reach the matchline, 0
+  corroborate). The 0+00 origin is printed-UNIDENTIFIED four ways:
+  bind_origin_by_parent_station(0.0)=REQUIRED (no =0+00 parent==0),
+  bind_end_structure_note(0.0,sheet2)=REQUIRED, no AP at the origin
+  (AP-106/107 are 338/370 pt away), and the origin NEXTLINK symbol is
+  unidentified by BOTH label AND fill (None/white/black, neither installer-red
+  nor terminal-blue).
+- REFRAME (4-lens panel, all SOUND, 0 blocking): log42's only printed-bound
+  structure is its END terminal (6 PORT HH AP-105 @2+87). NOT a universal
+  "terminal tails are free-origin" law -- log8/log32 share the unidentified-
+  origin situation (their M8.20 card is REVIEW-only for the same reason). The
+  "bind the origin" approach M8.21/22/23 circled is the wrong frame.
+- Owner Segment-B answer: Segment B's 0+00 = the callout-frame ORIGIN (span
+  287=270+17 + bound END terminal + interior installer reset), NOT the
+  installer reset, NOT from the log41 44/46 digit (separate
+  SOURCE_DIGIT_REREAD_REQUIRED).
+- Named NEXT capability: an ORIGIN-SYMBOL-IDENTITY binder (far-sheet origin
+  structure from the bound END terminal via a lane-accepted frame relation the
+  M8.2f classifier rejects on the (1,2) hop). Explicitly NOT M8.5 reverse_anchor
+  (footage START-position, identity-agnostic), NOT station_axis, NOT the M8.22
+  directional filter (all 3 already refuse). Latent cross-frame false-bind
+  hazard named (sheet-1 STA 0+00 SPLICE note saved only by _classify_label=None
+  -> a future frame-ownership gate). Census frozen; log8/log32 + M8.20 untouched.
+
 ## Verification
 
-- Tests: `625 passed`.
+- Tests: `631 passed`.
+- M8.24 origin-identity abstain probe G1-G7: PASS.
 - M8.23 END-continuity abstain probe G1-G7: PASS.
 - M8.22 strand discriminator probe G1-G10: PASS.
 - M8.21 split-log corridor probe G1-G9: PASS.
@@ -316,18 +349,19 @@
    authorized consumer/UI adoption; production activation still requires its
    separate auth/tenant decision. The per-bore lane stays pure (no flip); no
    geometry milestone yet.
-2. `log42` (CORRECTED by M8.23): the real shipped-lane blocker is
-   START-STRUCTURE-IDENTITY -- the 0+00 origin (NEXTLINK@819,351) cannot be
-   uniquely bound (11 co-aligned structures, 0 corroborate; identity ABSTAINED,
-   DESIGN_PATH_AMBIGUOUS). M8.22's "blocker shifts to END side" was a
-   PROBE-ONLY artifact: the shipped join has 0 far survivors for log42, so the
-   END-scale gate is never reached. log42 is NOT a REVIEW candidate. The END
-   terminus is bound terminal_port_hh by printed class (FLOWER POT excluded by
-   class -- red herring settled, M8.23 G3/G4). Named target = a strand
-   discriminator that BINDS the START origin IDENTITY (not just position) via
-   a lane-accepted path, and/or the owner bore_log13 block-semantics re-read
-   (is Segment B's 0+00 the callout-frame origin or the installer reset?).
-   The equation-bound installer HH stays the INTERIOR reset at 0+46.
+2. `log42` (RESOLVED-TO-ABSTAIN by M8.24): the START origin identity is NOT
+   bindable by any lane-accepted printed path -- the 0+00 origin is printed-
+   UNIDENTIFIED four ways (no =0+00 parent==0 equation; no STA 0+00 structure
+   note; no AP at the origin; the origin symbol unidentified by both label AND
+   fill). log42's ONLY printed-bound structure is its END terminal (6 PORT HH
+   AP-105 @2+87). The owner Segment-B question is answered: Segment B's 0+00 =
+   the callout-frame ORIGIN (span 287=270+17), installer reset interior at
+   0+46. NOT a REVIEW candidate. The named next capability is an ORIGIN-SYMBOL-
+   IDENTITY binder (far-sheet origin structure from the bound END terminal via
+   a lane-accepted frame relation) -- net-new work, NOT M8.5 reverse_anchor /
+   station_axis / the M8.22 directional filter (all already refuse). The "bind
+   the origin" approach M8.21/22/23 circled is the wrong frame; log42 is a
+   terminal tail whose identity anchor is its END.
 3. No printed matchline equation:
    `log10`, `log14`, `log61`, `log62`, `log67`, `log68`, `log70`.
    Owner decision required: geo/KMZ corroboration or reviewer pick-cards.
