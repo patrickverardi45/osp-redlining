@@ -2,8 +2,8 @@
 
 **Saved:** 2026-06-13
 **Branch:** `feat/truelinev2`
-**Pushed engine HEAD:** `19d3838` (M9.4 Phase 0); the M9.4.1 run-assembly extractor commit advances this
-**Verified tests:** `751 passed`
+**Pushed engine HEAD:** `fb70ae4` (M9.4.1 run-assembly extractor); the M9.4.2 review-service commit advances this
+**Verified tests:** `759 passed`
 
 ## Guardrails
 
@@ -576,6 +576,23 @@
    service / engine imports it). 8-lens adversarial audit: 7 sound, 1 low-severity
    overclaim ("ALL departures") corrected pre-commit. Full suite 751; zero bores moved;
    M9.3.1 census + M8.11 lanes + M9.2 negative all intact.
+   **M9.4.2 SHIPPED the reviewer-service SURFACE for the run-assembly cards**
+   (`review/run_assembly_review_service.py` `RunAssemblyReviewService.generate()`; proof
+   `run_run_assembly_review_service_proof` G1–G10 PASS; see
+   `wiki/m9_4_2_run_assembly_review_service.md`). A STANDALONE parallel service (the M8.20
+   `GroupReviewService` precedent) composing `attribute_bore → extract_run_assembly →
+   build_run_assembly_cards` → the exact 3 cards (log10→log27 @AP-152 + log72→log39 @AP-117
+   CANDIDATE; log7→log65 @AP-163 DROP_BRANCH). REVIEW/evidence-only, frozen
+   `SUGGESTION_NOT_PLACEMENT`, schema `truelinev2-run-assembly-review-1` (disjoint). The
+   per-bore M8.10/M8.11 bundle is BYTE-IDENTICAL before/after (proof G1); default counts
+   `14/10/32/2=24` + fullest lanes `30/16/6/4/2` unchanged (G6, live re-verification);
+   `reviewer_service.py` not modified. UNWIRED (no placement-path module imports it; it
+   imports no `resolve_bore`/`run_match`/frame graph — strictly LESS wired than its M8.20
+   precedent). KMZ model + profile + banked source-contradiction set INJECTED (zero
+   literals). Frame-scoped competing guard PRESERVED (each card `competing_departures==1`;
+   no cross-sheet/M9.2 widen). 6-lens adversarial audit: 0 findings. Full suite 759; zero
+   bores moved; zero product-bucket movement. NO UI/API/transport (a separate, authorized
+   milestone) — the surface emits cards, nothing more.
 4. Lower-yield printed-evidence gaps:
    `log12`, `log46`, `log60`, `log64`, `log71`, `log72`.
 5. `END_IDENTITY_UNPRINTED` (25 bores): CLOSED as honest-negative by M8.26 --
