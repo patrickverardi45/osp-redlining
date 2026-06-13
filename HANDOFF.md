@@ -2,8 +2,10 @@
 
 **Saved:** 2026-06-13
 **Branch:** `feat/truelinev2`
-**Pushed engine HEAD:** `fb70ae4` (M9.4.1 run-assembly extractor); the M9.4.2 review-service commit advances this
-**Verified tests:** `759 passed`
+**Pushed engine HEAD:** `cce632c` (V2-HYG-1b); advanced by this M9.5 cross-sheet
+feasibility commit (proof-only). The intervening M9.2→M9.4.2 milestones are recorded in
+`wiki/current-sprint.md` + the `wiki/m9_*.md` docs.
+**Verified tests:** `778 passed`
 
 ## Guardrails
 
@@ -458,6 +460,36 @@
 - Controls log7 (AP-163 SPLICE LOC 46) + log42 (AP-105 SPLICE LOC 25) BIND;
   corpus 64 terminals, 0 (ap,splice) collisions, self-bind bijection clean.
   UNWIRED (no placement path imports it); zero bores moved.
+
+### M9.5 - CROSS_SHEET_COMPETING frame-graph feasibility (proof-only; FEASIBLE, zero yield)
+
+- New files (proof-only; no core/service change; zero bores moved; M8.27 + product
+  lanes + M9.0–M9.4.2 + census untouched):
+  - `truelinev2/proof/run_cross_sheet_competing_phase0.py` (G1–G14 PASS)
+  - `truelinev2/tests/test_cross_sheet_competing_phase0.py` (19; offline pure + posture)
+  - `wiki/m9_5_cross_sheet_competing_phase0.md`
+- The question: can the M9.4.1/M9.4.2 FRAME-SCOPED competing-departure limitation be
+  SAFELY lifted using the SHIPPED `match.frames` graph to enumerate cross-sheet
+  departures at a shared terminal — by FRAME-PROVEN station translation, never proximity,
+  never raw-number equality?
+- Verdict **`SAFE_FRAME_GRAPH_EXTENSION_FEASIBLE`** (derived from gates; all three
+  verdict tokens reachable via `decide_verdict`): a safe frame-equivalence relation EXISTS
+  (AP-117 sheet 24↔25, component {25,26,27,28}; AP-163 sheet 10↔9/12/13, component
+  {7,8,9,12,13,14}). The mechanism is non-vacuous (synthetic G10: a real frame-translated
+  competitor → 1; raw-equality decoy / 3 ft near-miss / isolated anchor → 0).
+- BUT zero corpus yield: EXACT cross-sheet departures = 0 at all 3 terminals, single-hop
+  (G5) AND full multi-hop component (G12). The three outcomes are UNCHANGED (2 candidate +
+  1 drop, `competing_departures == 1`); log65 stays a drop. **Recommendation: DEFER the
+  core widen** — the M9.4.1/M9.4.2 frame-scoped guard stays exactly as shipped.
+- AP-152 sub-gap: terminal sheet 15 is isolated (its only matchline equation
+  `STA 4+02/4+16` is MULTI-linked → MEDIUM, no edge); both sheets 15 and 16 (departing
+  log27's frame) are isolated. Missing target = a UNIQUELY-linked HIGH matchline edge on
+  sheets 15/16. Scope boundary (G13): the 4 clean END terminals AP-105/121/148/157 have
+  no junction and are out of scope for this junction-based search.
+- Adversarial 5-lens audit: verdict confirmed sound; every real finding (the
+  "already-counted" overclaim, single-hop scope, dead BLOCKED token, dead-end terminals,
+  AP-152 imprecision) was converted to a MEASURED gate pre-commit (G6/G12/G13/G7 +
+  `decide_verdict`).
 
 ## Verification
 
