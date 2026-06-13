@@ -539,6 +539,20 @@
    AP/splice/station grammars, and gate the END-direction + one-terminal-per-END
    uniqueness invariant. None of the 6 no-equation bores attributes (their ends
    are non-terminal), so M9.2's negative stands.
+   **M9.3.1 SHIPPED the extractor** (`match/terminus_attribution.py`, universal
+   core + injected `extract/terminus_profile.py` `BRENHAM_TERMINUS_PROFILE`; proof
+   `run_terminus_attribution_extract`, G1–G12 PASS; see
+   `wiki/m9_3_1_terminus_attribution_extractor.md`). Convention-agnostic (zero plan
+   literals; AP id type is profile-injected via `ap_cast` — proven on numeric AND
+   zone/alpha-AP synthetic profiles; the M9.3.1 audit caught + fixed an AP-as-int
+   coupling, parallel to the M9.1 splice-token fix). Reproduces the M9.3
+   bore-disposition census + all controls (7 attributed / 3 junctions / log46
+   contradiction / log68 rejection / log44 source-contradiction / 44 rejected);
+   per-endpoint taxonomy refined (adds `NON_TERMINAL_ENDPOINT`). **UNWIRED/unconsumed**
+   (no opt-in flag; nothing imports it); composes the M9.1 join, so two over-broad
+   phase-0 unwired-guards were narrowed to the placement-path scope (matching the
+   authoritative `test_kmz_structure_join` test). Full suite 717. Zero bores moved.
+   Next: a gated run-assembly lane consuming the 7 anchors + 3 junctions.
 4. Lower-yield printed-evidence gaps:
    `log12`, `log46`, `log60`, `log64`, `log71`, `log72`.
 5. `END_IDENTITY_UNPRINTED` (25 bores): CLOSED as honest-negative by M8.26 --

@@ -137,9 +137,17 @@ def test_read_only_posture_no_render_no_placement():
 
 
 def test_proof_not_imported_by_engine_and_join_unwired():
+    # nothing in match/review/service imports this PROOF runner
     engine = (list((PKG / "match").glob("*.py"))
               + list((PKG / "review").glob("*.py")) + [PKG / "service.py"])
     for f in engine:
-        src = f.read_text(encoding="utf-8")
-        assert "run_terminus_attribution_phase0" not in src, f
-        assert "kmz_structure_join" not in src, f
+        assert "run_terminus_attribution_phase0" not in f.read_text(encoding="utf-8"), f
+    # the M9.1 join stays UNWIRED from the PLACEMENT PATH specifically. (The shipped
+    # M9.3.1 extractor match/terminus_attribution.py legitimately COMPOSES the join
+    # for its cross-check; the contract is no-placement-path-consumption, matching the
+    # authoritative test_kmz_structure_join unwired test -- not "no match/ file ever".)
+    placement = [PKG / "match" / "engine.py",
+                 PKG / "match" / "symbol_conduit_lane.py",
+                 PKG / "review" / "reviewer_service.py", PKG / "service.py"]
+    for f in placement:
+        assert "kmz_structure_join" not in f.read_text(encoding="utf-8"), f

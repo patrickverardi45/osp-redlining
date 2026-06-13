@@ -123,9 +123,14 @@ def test_read_only_posture_no_render_no_placement():
 
 
 def test_join_and_reader_stay_unwired_from_engine():
-    engine = (list((PKG / "match").glob("*.py"))
-              + list((PKG / "review").glob("*.py")) + [PKG / "service.py"])
-    for f in engine:
+    # the join + reader stay UNWIRED from the PLACEMENT PATH. (The shipped M9.3.1
+    # extractor match/terminus_attribution.py legitimately composes the M9.1 join;
+    # the contract is no-placement-path-consumption, matching the authoritative
+    # test_kmz_structure_join unwired test -- not "no match/ file ever imports it".)
+    placement = [PKG / "match" / "engine.py",
+                 PKG / "match" / "symbol_conduit_lane.py",
+                 PKG / "review" / "reviewer_service.py", PKG / "service.py"]
+    for f in placement:
         src = f.read_text(encoding="utf-8")
         assert "kmz_structure_join" not in src, f
         assert "extract.kmz" not in src and "extract import kmz" not in src, f
