@@ -144,7 +144,10 @@ def test_proof_is_read_only_evidence_only():
     assert "TA.attribute_bore" in src and "TA.resolve_junctions" in src
 
 
-def test_no_run_assembly_core_module_shipped_yet():
+def test_run_assembly_core_module_shipped_in_m941():
+    # Phase 0 named the core as the next milestone; M9.4.1 ships it. The core stays
+    # UNWIRED from the placement path (guarded in test_run_assembly.py).
     from pathlib import Path
     pkg = Path(p0.__file__).resolve().parents[1]
-    assert not (pkg / "match" / "run_assembly.py").exists()
+    assert (pkg / "match" / "run_assembly.py").exists()
+    assert (pkg / "review" / "run_assembly_review.py").exists()

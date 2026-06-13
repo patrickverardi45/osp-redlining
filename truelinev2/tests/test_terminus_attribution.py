@@ -189,10 +189,16 @@ def test_core_holds_zero_plan_set_literal():
 
 
 def test_extractor_unwired_from_placement_path():
+    # The terminus extractor is consumed only by terminus_attribution.py itself and by
+    # the M9.4.1 run-assembly extractor (a downstream, proof-only COMPOSER -- exactly as
+    # terminus_attribution composes the M9.1 join). Both are UNWIRED from the placement
+    # path; run_assembly's own unwired-ness is guarded in test_run_assembly.py. No
+    # placement-path module (engine / lane / service / reviewer service) imports it.
+    _COMPOSERS = {"terminus_attribution.py", "run_assembly.py"}
     engine = (list((PKG / "match").glob("*.py"))
               + list((PKG / "review").glob("*.py")) + [PKG / "service.py"])
     for f in engine:
-        if f.name == "terminus_attribution.py":
+        if f.name in _COMPOSERS:
             continue
         assert "terminus_attribution" not in f.read_text(encoding="utf-8"), f
 

@@ -43,6 +43,13 @@ class TerminusProfile:
     # across both sources). A digit-AP plan set uses ``int``; a zone/alpha-AP plan
     # set (e.g. "A12") supplies ``str``/a normaliser so the id is NOT coerced to int.
     ap_cast: Callable[[str], object] = int
+    # run-assembly drop-marker grammar (M9.4.1): the printed token(s) that mark a
+    # departing run callout as a fiber-drop / lateral OFF the terminus -- a branch,
+    # NEVER the trunk continuing. Injected here so the convention-agnostic run-
+    # assembly core (match/run_assembly.py) holds no plan-set drop literal. Empty
+    # tuple == this plan set declares no drop grammar (every departure reads as a
+    # non-drop run; the core never invents a drop marker).
+    drop_markers: Tuple[str, ...] = ()
 
 
 # Reference profile (the shipped proof specimen). Lives in extract/ -- the only place
@@ -63,4 +70,5 @@ BRENHAM_TERMINUS_PROFILE = TerminusProfile(
     splice_token=r"SPLICE\s*LOC\s*\d+",
     pair_re=r"AP-?\s?(\d+)\s+SPLICE\s*LOC\s*(\d+)",
     ap_cast=int,                                           # digit AP ids; matches the KMZ int APs
+    drop_markers=("FOR FIBER DROP",),                      # M9.4.1: the Brenham printed drop-lateral marker
 )

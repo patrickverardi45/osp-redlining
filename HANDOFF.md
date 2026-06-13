@@ -1,9 +1,9 @@
 # TrueLine v2 Session Handoff
 
-**Saved:** 2026-06-12
+**Saved:** 2026-06-13
 **Branch:** `feat/truelinev2`
-**Pushed engine HEAD:** `dc89310` (M9.0); the M9.1 KMZ-join commit advances this
-**Verified tests:** `675 passed`
+**Pushed engine HEAD:** `19d3838` (M9.4 Phase 0); the M9.4.1 run-assembly extractor commit advances this
+**Verified tests:** `751 passed`
 
 ## Guardrails
 
@@ -560,11 +560,22 @@
    run class undetermined — the reviewer classifies, NO continuity asserted) + **1
    `JUNCTION_DROP_BRANCH`** (log7→log65 @AP163 — the adversarial audit caught that
    log65 is a printed `FOR FIBER DROP` lateral, 199′=span, NOT the trunk continuing).
-   The audit also added a `SELF_JUNCTION_REFUSED` gate. M9.4.1 must inject the
-   drop-marker grammar + enumerate ALL physical terminal departures (not only
-   JUNCTION_ORIGIN starts) for the competing guard; the evidence is a NEW review item
-   (like the M8.20 group card), never a per-bore bucket change. Full suite 729; zero
-   bores moved; M9.3.1 census + M8.11 lanes + M9.2 negative all intact.
+   The audit also added a `SELF_JUNCTION_REFUSED` gate.
+   **M9.4.1 SHIPPED the convention-agnostic run-assembly core + an M8.20-style review
+   card** (`match/run_assembly.py`, `review/run_assembly_review.py`, schema
+   `truelinev2-run-assembly-review-1`; proof `run_run_assembly_extract` G1–G11 PASS; see
+   `wiki/m9_4_1_run_assembly_extractor.md`). The drop-marker grammar is now profile-
+   injected (`TerminusProfile.drop_markers`; the core holds zero drop literal). The
+   competing guard enumerates physical departures WITHIN the terminal's own frame (the
+   END bore's sheets), beyond only JUNCTION_ORIGIN starts — on Brenham 1/terminal,
+   reproducing the 3 relations exactly (2 candidates + the log7→log65 drop branch,
+   non-promotable). **Named limitation (honest, pinned):** a cross-sheet lateral drawn
+   outside the END bore's frame is not yet enumerated (a station token is frame-local; a
+   corpus-wide scan would false-positive — the M9.2 trap) → the M9.2 frame-equation graph
+   is the open target. Core is UNWIRED/unconsumed (no resolve_bore / sweep / reviewer-
+   service / engine imports it). 8-lens adversarial audit: 7 sound, 1 low-severity
+   overclaim ("ALL departures") corrected pre-commit. Full suite 751; zero bores moved;
+   M9.3.1 census + M8.11 lanes + M9.2 negative all intact.
 4. Lower-yield printed-evidence gaps:
    `log12`, `log46`, `log60`, `log64`, `log71`, `log72`.
 5. `END_IDENTITY_UNPRINTED` (25 bores): CLOSED as honest-negative by M8.26 --
