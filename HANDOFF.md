@@ -317,9 +317,36 @@
   hazard named (sheet-1 STA 0+00 SPLICE note saved only by _classify_label=None
   -> a future frame-ownership gate). Census frozen; log8/log32 + M8.20 untouched.
 
+### M8.25 - bore_log17 family (log43/log44) CLOSED as both abstaining
+
+- New files (proof-only; SAFE CLOSURE-ABSTAIN; census frozen; NO promotion):
+  - `truelinev2/proof/run_log17_family_abstain_probe.py` (G1-G7 PASS)
+  - `truelinev2/tests/test_log17_family_abstain_probe.py` (6)
+  - `wiki/m8_25_log17_family_abstain.md`
+- PREMISE CORRECTED (4-agent recon): log43 is NOT "resolved/grade A" in the
+  real engine -- design_grades_accepted = {log25,51,59,65}; the lone mention is
+  a not-built design mock (card body shows log51's data).
+- Both abstain, DIFFERENT per-bore reasons: log43 (print 10, 40+00->59+19) =
+  END_IDENTITY_UNPRINTED + OUT_OF_CLASS/M87_STATION_TICK_NOT_FOUND, a SOURCE-
+  quality abstain (print-10 axis stops at 45+33; 45+33->59+19 is a printed
+  void; "continues bore_log16" REFUTED, log16 ends 39+79; discontinuous multi-
+  drive). log44 (print 18, 0+00->3+25, 325') = END_IDENTITY_UNPRINTED +
+  OUT_OF_CLASS/M87_MULTIPLE_PATHS_PICK_CARD, a SOURCE-vs-PLAN mismatch (325'
+  matches no print-18 run; chain 0+00->3+25=CALLOUT_CHAIN_NONE; end inside 2
+  distinct-class intervals 503' 1-1.25 / 68' 2-1.25).
+- FAMILY RULE = GROUPING-ONLY (run-segment-hierarchy S8; engine consumes no
+  family/split/daily_bundle relation; each child standalone on its own printed
+  evidence). NO safe family/child law places a member. Blocker is PER-BORE:
+  placeable split-siblings log51/59/65 are STROKE_ELIGIBLE_REVIEW.
+- Generalization: ~13 END_IDENTITY_UNPRINTED children corpus-wide, closable
+  only if a printed terminal/AP-HH end-structure layer is found (a new
+  adversarially-proven end-identity gate) -- not a family lever. Census frozen;
+  log8/log32/log42 + M8.20 untouched.
+
 ## Verification
 
-- Tests: `631 passed`.
+- Tests: `637 passed`.
+- M8.25 bore_log17 family abstain probe G1-G7: PASS.
 - M8.24 origin-identity abstain probe G1-G7: PASS.
 - M8.23 END-continuity abstain probe G1-G7: PASS.
 - M8.22 strand discriminator probe G1-G10: PASS.
