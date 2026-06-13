@@ -18,23 +18,11 @@ from truelinev2.match.collision_gate import (
     load_human_grades,
 )
 from truelinev2.match.engine import run_match
-from truelinev2.match.frames import build_frame_edges, build_frame_graph, frame_for_sheet, parse_frame_equations
+from truelinev2.match.frames import _build_plan_frame_graph
 from truelinev2.extract.station_axis import parse_tick
 from truelinev2.match.reverse_anchor import ReverseAnchorContext
 from truelinev2.match.station_axis_interval import StationAxisContext
 from truelinev2.match.transition_classifier import conflict_sheet_pairs
-
-
-def _build_plan_frame_graph(plan: PlanPdf, offset: int):
-    """The SAFE frame graph from the plan's own text (HIGH/unique/conflict-free edges
-    only -- ``match.frames`` drops everything ambiguous). Built ONLY when the M8.4
-    continuation flag is ON; the default path never constructs or consults it."""
-    edges = []
-    for idx in range(plan.page_count):
-        text = " ".join(ln for ln in plan.text_by_index(idx).splitlines() if ln.strip())
-        edges.extend(build_frame_edges(parse_frame_equations(text),
-                                       frame_for_sheet(idx - offset + 1)))
-    return build_frame_graph(edges)
 from truelinev2.render.crop import render_evidence_crop
 from truelinev2.review.payload import build_review_payload
 from truelinev2.schema.models import Placement, PlacementStatus, ReviewPayload

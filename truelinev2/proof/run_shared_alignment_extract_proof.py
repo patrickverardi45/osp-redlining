@@ -43,7 +43,7 @@ from truelinev2.proof.run_reviewer_service_contract import resolve_corpus
 from truelinev2.proof.run_shared_alignment_law_probe import _claim as _probe_claim
 from truelinev2.proof.run_shared_origin_adjudication_probe import TARGETS
 from truelinev2.review.group_review import build_group_review_card
-from truelinev2.service import _build_plan_frame_graph
+from truelinev2.match.frames import _build_plan_frame_graph
 
 OUT_DIR = _REPO_ROOT / "data" / "outputs" / "shared_alignment_extract_proof"
 

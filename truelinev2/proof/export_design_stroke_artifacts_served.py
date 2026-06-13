@@ -56,7 +56,7 @@ from truelinev2.proof.run_design_stroke_cards_proof import ELIGIBLE
 from truelinev2.proof.run_reviewer_service_contract import resolve_corpus
 from truelinev2.proof.run_symbol_conduit_lane_sweep import OUT_DIR as LANE_SWEEP_DIR
 from truelinev2.review.design_stroke_cards import GRADE_ACCEPTED, build_card_packet
-from truelinev2.service import _build_plan_frame_graph
+from truelinev2.match.frames import _build_plan_frame_graph
 
 # Default web public dir = the sibling static web app. Override with the env var
 # to point at another checkout; the runner fails closed if it does not exist.

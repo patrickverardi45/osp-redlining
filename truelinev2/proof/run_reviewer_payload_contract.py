@@ -34,7 +34,7 @@ from truelinev2.review.reviewer_payloads import (
     payload_out_of_class,
     payload_source_error,
 )
-from truelinev2.service import _build_plan_frame_graph
+from truelinev2.match.frames import _build_plan_frame_graph
 
 OUT_JSON = _REPO_ROOT / "data" / "outputs" / "reviewer_payload_contract.json"
 OUT_MD = _REPO_ROOT / "data" / "outputs" / "reviewer_payload_contract.md"

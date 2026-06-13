@@ -99,7 +99,7 @@ from truelinev2.review.design_stroke_cards import (
 )
 from truelinev2.review.reviewer_payloads import SUGGESTION_LABEL, ReviewerLane
 from truelinev2.review.reviewer_service import ReviewerBundleService, ReviewRunMode
-from truelinev2.service import _build_plan_frame_graph
+from truelinev2.match.frames import _build_plan_frame_graph
 
 DEMO_DIR = _REPO_ROOT / "data" / "outputs" / "reviewer_demo"
 VIEWER_SRC = Path(__file__).resolve().parent.parent / "demo" / "reviewer_viewer.html"

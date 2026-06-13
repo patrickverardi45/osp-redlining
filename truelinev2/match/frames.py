@@ -12,7 +12,7 @@ station numbers ALONE never establish a link, and an unknown frame pair translat
 from __future__ import annotations
 
 import re
-from typing import List, Optional, Tuple
+from typing import TYPE_CHECKING, List, Optional, Tuple
 
 from truelinev2.schema.frames import (
     EquationKind,
@@ -25,6 +25,9 @@ from truelinev2.schema.frames import (
     StationValue,
 )
 from truelinev2.stations import parse_station
+
+if TYPE_CHECKING:                       # annotation only -- no runtime ingest dependency
+    from truelinev2.ingest.pdf import PlanPdf
 
 # --- grammar (frame-neutral; no customer/region assumptions) ------------------
 _STA = r"\d+\+\d+(?:\.\d+)?"
@@ -195,3 +198,17 @@ def translate_between_sheets(graph: FrameGraph, from_sheet: int, to_sheet: int,
     fall back to the raw value (a raw equal station across sheets is not proof)."""
     return translate_station_ft(graph, frame_for_sheet(from_sheet),
                                 frame_for_sheet(to_sheet), feet)
+
+
+def _build_plan_frame_graph(plan: "PlanPdf", offset: int) -> FrameGraph:
+    """The SAFE frame graph from the plan's own text (HIGH/unique/conflict-free edges
+    only -- this module drops everything ambiguous). Built ONLY when the M8.4
+    continuation flag is ON; the default path never constructs or consults it.
+    (Relocated from service.py in V2-HYG-1b -- it is pure match.frames composition;
+    ``plan`` is duck-typed by ``page_count`` + ``text_by_index``.)"""
+    edges = []
+    for idx in range(plan.page_count):
+        text = " ".join(ln for ln in plan.text_by_index(idx).splitlines() if ln.strip())
+        edges.extend(build_frame_edges(parse_frame_equations(text),
+                                       frame_for_sheet(idx - offset + 1)))
+    return build_frame_graph(edges)

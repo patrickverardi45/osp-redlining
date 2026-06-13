@@ -99,7 +99,7 @@ from truelinev2.proof.run_final_engine_truth_table import completion_bucket
 from truelinev2.proof.run_kmz_correlation_audit import _bore_pdf_aps, resolve_kmz
 from truelinev2.proof.run_reviewer_service_contract import resolve_corpus
 from truelinev2.review.reviewer_service import ReviewerBundleService, ReviewRunMode
-from truelinev2.service import _build_plan_frame_graph
+from truelinev2.match.frames import _build_plan_frame_graph
 
 OUT_DIR = _REPO_ROOT / "data" / "outputs" / "kmz_matchline_substitute_phase0"
 

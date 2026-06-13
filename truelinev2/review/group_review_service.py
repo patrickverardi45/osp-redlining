@@ -34,7 +34,7 @@ from truelinev2.review.group_review import (
     SharedAlignmentGroupCard,
     build_group_review_card,
 )
-from truelinev2.service import _build_plan_frame_graph
+from truelinev2.match.frames import _build_plan_frame_graph
 from truelinev2.stations import feet_to_station
 
 

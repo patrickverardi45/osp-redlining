@@ -81,7 +81,7 @@ from truelinev2.proof.run_symbol_anchored_stroke_proof import (
     stroke_endpoint_fidelity,
 )
 from truelinev2.render.crop import REDLINE_STROKE_RGB
-from truelinev2.service import _build_plan_frame_graph
+from truelinev2.match.frames import _build_plan_frame_graph
 
 OUT_DIR = _REPO_ROOT / "data" / "outputs" / "log65_cross_sheet_stroke"
 SHEET_A, SHEET_B = 10, 9

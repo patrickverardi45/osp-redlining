@@ -58,7 +58,7 @@ from truelinev2.review.design_stroke_cards import (
     build_card_packet,
     card_from_outcome,
 )
-from truelinev2.service import _build_plan_frame_graph
+from truelinev2.match.frames import _build_plan_frame_graph
 
 OUT_DIR = _REPO_ROOT / "data" / "outputs" / "design_stroke_cards"
 SWEEP_PNG_DIR = _REPO_ROOT / "data" / "outputs" / "symbol_conduit_lane_sweep"

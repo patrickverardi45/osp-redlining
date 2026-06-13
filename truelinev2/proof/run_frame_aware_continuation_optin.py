@@ -29,7 +29,7 @@ from truelinev2.ingest.normalize import load_borelog
 from truelinev2.ingest.pdf import PlanPdf
 from truelinev2.match.engine import run_match
 from truelinev2.proof.run_brenham_corpus import CORPUS_DIR, EXPECTED_COUNT, PDF, enumerate_corpus
-from truelinev2.service import _build_plan_frame_graph
+from truelinev2.match.frames import _build_plan_frame_graph
 
 OUT_JSON = _REPO_ROOT / "data" / "outputs" / "frame_aware_continuation_optin.json"
 OUT_MD = _REPO_ROOT / "data" / "outputs" / "frame_aware_continuation_optin.md"

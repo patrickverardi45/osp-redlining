@@ -57,7 +57,7 @@ from truelinev2.review.group_review import (
     MEMBER_BLOCKED_STATUS,
     build_group_review_card,
 )
-from truelinev2.service import _build_plan_frame_graph
+from truelinev2.match.frames import _build_plan_frame_graph
 
 OUT_DIR = _REPO_ROOT / "data" / "outputs" / "shared_alignment_group_review_proof"
 

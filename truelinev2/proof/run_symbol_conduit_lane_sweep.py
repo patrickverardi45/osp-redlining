@@ -58,7 +58,7 @@ from truelinev2.match.symbol_conduit_lane import (
 from truelinev2.proof.run_brenham_corpus import EXPECTED_COUNT, PDF, enumerate_corpus
 from truelinev2.proof.run_reviewer_service_contract import resolve_corpus
 from truelinev2.render.crop import render_redline_stroke
-from truelinev2.service import _build_plan_frame_graph
+from truelinev2.match.frames import _build_plan_frame_graph
 
 OUT_DIR = _REPO_ROOT / "data" / "outputs" / "symbol_conduit_lane_sweep"
 S_SOURCE_ERR = "BORE_SOURCE_UNPARSEABLE"   # banked adapter gap, NOT a lane fault

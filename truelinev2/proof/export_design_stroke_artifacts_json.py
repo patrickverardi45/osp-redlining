@@ -36,7 +36,7 @@ from truelinev2.review.design_stroke_cards import (
     DesignStrokeCardPacket,
     build_card_packet,
 )
-from truelinev2.service import _build_plan_frame_graph
+from truelinev2.match.frames import _build_plan_frame_graph
 
 EXPORT_SCHEMA_VERSION = "truelinev2-web-design-stroke-artifacts-1"
 OUT_JSON = (

@@ -28,7 +28,7 @@ from truelinev2.match.transition_classifier import conflict_sheet_pairs
 from truelinev2.proof.frame_ownership_candidates import classify_frame_ownership
 from truelinev2.proof.run_brenham_corpus import CORPUS_DIR, EXPECTED_COUNT, PDF, enumerate_corpus
 from truelinev2.proof.station_equation_ownership import extract_reset_origins, parse_hh_distances
-from truelinev2.service import _build_plan_frame_graph
+from truelinev2.match.frames import _build_plan_frame_graph
 
 OUT_JSON = _REPO_ROOT / "data" / "outputs" / "frame_ownership_candidates.json"
 OUT_MD = _REPO_ROOT / "data" / "outputs" / "frame_ownership_candidates.md"

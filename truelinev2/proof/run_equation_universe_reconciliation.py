@@ -50,7 +50,7 @@ from truelinev2.match.station_axis_interval import StationAxisContext
 from truelinev2.match.transition_classifier import conflict_sheet_pairs
 from truelinev2.proof.run_brenham_corpus import CORPUS_DIR, EXPECTED_COUNT, PDF, enumerate_corpus
 from truelinev2.proof.run_reviewer_service_contract import resolve_corpus
-from truelinev2.service import _build_plan_frame_graph
+from truelinev2.match.frames import _build_plan_frame_graph
 
 OUT_JSON = _REPO_ROOT / "data" / "outputs" / "equation_universe_reconciliation.json"
 OUT_MD = _REPO_ROOT / "data" / "outputs" / "equation_universe_reconciliation.md"

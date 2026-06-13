@@ -63,7 +63,7 @@ from truelinev2.review.reviewer_payloads import (
     payload_out_of_class,
     payload_source_error,
 )
-from truelinev2.service import _build_plan_frame_graph
+from truelinev2.match.frames import _build_plan_frame_graph
 
 BUNDLE_SCHEMA_VERSION = "truelinev2-reviewer-bundle-1"
 

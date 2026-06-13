@@ -55,7 +55,7 @@ from truelinev2.match.symbol_conduit_lane import (S_UNPRINTED, resolve_bore)
 from truelinev2.proof.run_brenham_corpus import (EXPECTED_COUNT, PDF,
                                                  enumerate_corpus)
 from truelinev2.proof.run_reviewer_service_contract import resolve_corpus
-from truelinev2.service import _build_plan_frame_graph
+from truelinev2.match.frames import _build_plan_frame_graph
 from truelinev2.stations import feet_to_station
 
 OUT_DIR = _REPO_ROOT / "data" / "outputs" / "end_identity_population_probe"

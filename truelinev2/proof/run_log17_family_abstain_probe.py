@@ -70,7 +70,7 @@ from truelinev2.match.symbol_conduit_lane import (S_ELIGIBLE, S_UNPRINTED,
                                                   resolve_bore)
 from truelinev2.proof.run_brenham_corpus import PDF, enumerate_corpus
 from truelinev2.proof.run_reviewer_service_contract import resolve_corpus
-from truelinev2.service import _build_plan_frame_graph
+from truelinev2.match.frames import _build_plan_frame_graph
 
 OUT_DIR = _REPO_ROOT / "data" / "outputs" / "log17_family_abstain_probe"
 

@@ -67,7 +67,7 @@ from truelinev2.proof.run_shared_origin_adjudication_probe import (
     _candidate_walks,
     _matchline_for,
 )
-from truelinev2.service import _build_plan_frame_graph
+from truelinev2.match.frames import _build_plan_frame_graph
 
 OUT_DIR = _REPO_ROOT / "data" / "outputs" / "shared_alignment_law_probe"
 

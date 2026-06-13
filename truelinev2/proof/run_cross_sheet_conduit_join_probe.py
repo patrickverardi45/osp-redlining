@@ -62,7 +62,7 @@ from truelinev2.match.frames import translate_between_sheets
 from truelinev2.proof.run_brenham_corpus import EXPECTED_COUNT, PDF, enumerate_corpus
 from truelinev2.proof.run_reviewer_service_contract import resolve_corpus
 from truelinev2.render.crop import REDLINE_STROKE_RGB
-from truelinev2.service import _build_plan_frame_graph
+from truelinev2.match.frames import _build_plan_frame_graph
 
 # Stroke-color law: the bore's drawn conduit-path overlay is ALWAYS red
 # (never the source layer's color) -- pinned to the canonical constant.

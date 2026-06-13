@@ -74,7 +74,7 @@ from truelinev2.proof.run_brenham_corpus import EXPECTED_COUNT, PDF, enumerate_c
 from truelinev2.proof.run_reviewer_service_contract import resolve_corpus
 from truelinev2.proof.station_equation_ownership import extract_reset_origins
 from truelinev2.render.crop import REDLINE_STROKE_RGB
-from truelinev2.service import _build_plan_frame_graph
+from truelinev2.match.frames import _build_plan_frame_graph
 
 OUT_DIR = _REPO_ROOT / "data" / "outputs" / "symbol_anchored_stroke_proof"
 # Stroke-color law: drawn redline strokes are ALWAYS red (canonical pin).

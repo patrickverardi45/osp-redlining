@@ -52,7 +52,7 @@ from truelinev2.review.group_review_service import GroupReviewService
 from truelinev2.review.reviewer_payloads import ReviewerLane
 from truelinev2.review.reviewer_service import (ReviewerBundleService,
                                                 ReviewRunMode)
-from truelinev2.service import _build_plan_frame_graph
+from truelinev2.match.frames import _build_plan_frame_graph
 
 OUT_DIR = _REPO_ROOT / "data" / "outputs" / "final_engine_truth_table"
 
