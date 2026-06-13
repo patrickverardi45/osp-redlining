@@ -2,8 +2,8 @@
 
 **Saved:** 2026-06-12
 **Branch:** `feat/truelinev2`
-**Pushed engine HEAD:** `ee4ddef` (M8.27); the M9.0 KMZ-correlation commit advances this
-**Verified tests:** `663 passed`
+**Pushed engine HEAD:** `dc89310` (M9.0); the M9.1 KMZ-join commit advances this
+**Verified tests:** `675 passed`
 
 ## Guardrails
 
@@ -433,9 +433,37 @@
   KMZ_MATCHLINE_SUBSTITUTE for the cross-sheet class (log68 + log10/14/61/62/
   67/68/70) + route-stroke geometry for log8/32/42 via KMZ AP terminals.
 
+### M9.1 - KMZ_AP_STRUCTURE_JOIN shipped extractor (universal core + profile)
+
+- New/changed files (engine; UNWIRED; zero bores moved; M8.27 + M9.0 + census +
+  contracts untouched):
+  - `truelinev2/match/kmz_structure_join.py` (NEW; universal core, zero literals)
+  - `truelinev2/extract/kmz.py` (added `terminal_class` to the KMZ profile)
+  - `truelinev2/proof/run_kmz_structure_join_proof.py` (G1-G10 PASS)
+  - `truelinev2/tests/test_kmz_structure_join.py` (12)
+  - `wiki/m9_1_kmz_ap_structure_join.md`
+- The law: join_terminal binds PDF 'AP-NNN SPLICE LOC MM' to EXACTLY ONE
+  terminal-class KMZ structure carrying BOTH ids. Typed refusals for AP-only /
+  splice-only / missing / ambiguous / no-terminal-class. Class-scoped (the
+  same-AP splice twin 28-181m away is never bound); no coordinate read in the
+  bind; uniqueness-mandatory; self-dup AP collapses to one candidate.
+- Universal core / profile separation: match/ holds zero customer literals
+  (drift guard); terminal_class + ap/splice grammars are injected; Brenham is
+  only a profile/fixture. Proven on a SYNTHETIC non-Brenham model.
+- AUDIT FIX (load-bearing): the first draft collapsed splice-loc to a trailing
+  integer -> the adversarial audit demonstrated a LIVE false bind on a zone-
+  prefixed profile (A-12/B-12 -> 12) and a whole-plan abstain for non-integer
+  ids (Loc 5A). Fixed to whole opaque-TOKEN comparison (zone/alpha-safe);
+  Brenham binding byte-identical; G10 regression locks it.
+- Controls log7 (AP-163 SPLICE LOC 46) + log42 (AP-105 SPLICE LOC 25) BIND;
+  corpus 64 terminals, 0 (ap,splice) collisions, self-bind bijection clean.
+  UNWIRED (no placement path imports it); zero bores moved.
+
 ## Verification
 
-- Tests: `663 passed`.
+- Tests: `675 passed`.
+- M9.1 KMZ structure-join proof G1-G10: PASS (universal; controls bind; AP-only/
+  splice-only/proximity refused; zone/alpha safe; UNWIRED; zero moves).
 - M9.0 KMZ correlation audit G1-G7 + G2b: PASS (zero bores moved; reader UNWIRED).
 - M8.27 final engine truth table G1-G15: PASS (audited FAITHFUL).
 - M8.26 END_IDENTITY_UNPRINTED population probe G1-G6: PASS (honest negative).

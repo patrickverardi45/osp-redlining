@@ -85,6 +85,10 @@ class KmzDialect:
     route_folders: Dict[str, str]       # KMZ folder name -> route class
     ap_token: str = r"AP\s*-?\s*(\d+)"  # AP id grammar inside name/notes
     splice_token: str = r"SPLICE LOC\s*\d+"
+    # which structure class is the BORE TERMINUS that the AP/splice-loc two-field
+    # join binds (M9.1). The universal join law reads this from the profile; it
+    # never hardcodes a class. Empty -> this plan set declares no terminus class.
+    terminal_class: str = ""
 
 
 # Brenham/NEXTLINK KMZ dialect (folder taxonomy verified against the shipped
@@ -108,6 +112,7 @@ BRENHAM_KMZ_DIALECT = KmzDialect(
         "underground cable": "underground_cable",
         "Backbone": "backbone",
     },
+    terminal_class="terminal_port_hh",          # the bore-terminus join class
 )
 
 
