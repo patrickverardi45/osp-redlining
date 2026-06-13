@@ -51,8 +51,10 @@ already injected).
 
 PROOF-ONLY: no placement change, no engine wiring, no stroke/PNG/segment, no AUTO,
 no tolerance/budget change. Composes the SHIPPED structure_anchor + symbol_conduit
-classifier + M9.1 join WITHOUT altering any; adds nothing to core/engine (the
-extractor is deferred to M9.3.1). Nothing wired; zero bores moved. All-58 census +
+classifier + M9.1 join WITHOUT altering any; this Phase-0 proof adds nothing to
+core/engine itself. The convention-agnostic extractor it named HAS SINCE SHIPPED in
+M9.3.1 (match/terminus_attribution.py); this proof is retained BANKED as the historical
+boundary record and is still green. Nothing wired; zero bores moved. All-58 census +
 product lanes + M9.0/M9.1/M9.2 results frozen.
 
 Exit codes: 0 PASS, 2 inputs missing, 3 corpus drift, 4 gate FAILURE.

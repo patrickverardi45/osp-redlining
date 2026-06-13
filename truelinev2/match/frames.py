@@ -22,7 +22,6 @@ from truelinev2.schema.frames import (
     FrameGraph,
     FrameId,
     ParseConfidence,
-    SheetFrame,
     StationValue,
 )
 from truelinev2.stations import parse_station
@@ -42,11 +41,6 @@ _CONTEXT_WINDOW = 70
 def frame_for_sheet(sheet: int) -> FrameId:
     """The canonical FrameId for a plan sheet's station frame."""
     return FrameId(f"sheet:{int(sheet)}")
-
-
-def sheet_frame(sheet: int) -> SheetFrame:
-    """A SheetFrame binding a sheet number to its canonical FrameId."""
-    return SheetFrame(frame_id=frame_for_sheet(sheet), sheet=int(sheet))
 
 
 def parse_station_value(raw) -> Optional[StationValue]:

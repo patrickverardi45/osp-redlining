@@ -6,8 +6,11 @@ evidence item -- without moving a product bucket, drawing a stroke, or marking A
 
 It consumes the SHIPPED M9.3.1 extractor (match/terminus_attribution.py) facts ONLY
 -- the 7 clean terminal-END attributions + the 3 junction-origin facts -- and
-evaluates each junction against a safety law. It SHIPS NO LANE: Phase 0 proves the
-boundary; the M9.4.1 extractor (a convention-agnostic core) is the next milestone.
+evaluates each junction against a safety law. This Phase-0 proof itself SHIPS NO LANE;
+it remains BANKED as the boundary proof. The convention-agnostic run-assembly core it
+named HAS SINCE SHIPPED in M9.4.1 (match/run_assembly.py + review/run_assembly_review.py)
+and was surfaced by the M9.4.2 reviewer-service (review/run_assembly_review_service.py);
+this proof is retained as the historical boundary record and is still green.
 
 WHAT THE EVIDENCE IS (and is NOT):
   The base fact is a SHARED TERMINAL NODE: the END bore TERMINATES at terminal T

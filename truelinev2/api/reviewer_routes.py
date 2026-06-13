@@ -7,7 +7,6 @@ reviewer-export data and manifest-approved proof PNGs.
 from __future__ import annotations
 
 import os
-import re
 from pathlib import Path
 from typing import Any, Dict, Set
 

@@ -47,12 +47,6 @@ class StationValue(BaseModel):
     feet: float
 
 
-class SheetFrame(BaseModel):
-    """A station frame anchored to a specific plan sheet number."""
-    frame_id: FrameId
-    sheet: int
-
-
 class FrameEquation(BaseModel):
     """A station-pair equation ``a <sep> b`` parsed from plan text, plus the nearby
     context that decides whether it links two frames. Frame-neutral: it records the

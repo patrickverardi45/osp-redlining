@@ -37,7 +37,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from typing import List, Optional, Sequence, Tuple
+from typing import List, Optional, Tuple
 
 # typed outcomes (the join is uniqueness-mandatory and two-field-mandatory)
 JOIN_BOUND = "KMZ_TERMINAL_JOIN_BOUND"
@@ -212,13 +212,3 @@ def parse_terminus_pair(line: str, *, ap_re: str, splice_re: str
     if ms:
         sp = _norm_token(ms.group(0))
     return ap, sp
-
-
-def bore_terminus_joins(model, terminal_class: str,
-                        pdf_pairs: Sequence[Tuple[Optional[int], Optional[str]]]
-                        ) -> List[TerminalJoin]:
-    """Proof-only reporting: the typed join for each PDF terminus pair of a bore.
-    Read-only; binds nothing in the product. The caller decides what, if
-    anything, a BOUND anchor unlocks (a future, separately-gated lane)."""
-    return [join_terminal(model, terminal_class=terminal_class,
-                          pdf_ap=ap, pdf_splice_loc=sp) for ap, sp in pdf_pairs]

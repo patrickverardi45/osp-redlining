@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Tuple
 
 # truelinev2/config.py -> truelinev2/ -> repo root
 _REPO_ROOT = Path(__file__).resolve().parent.parent
