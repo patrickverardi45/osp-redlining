@@ -512,7 +512,18 @@
    terminal tail whose identity anchor is its END.
 3. No printed matchline equation:
    `log10`, `log14`, `log61`, `log62`, `log67`, `log68`, `log70`.
-   Owner decision required: geo/KMZ corroboration or reviewer pick-cards.
+   **M9.2 Phase 0 (`run_kmz_matchline_substitute_phase0`, G1–G7 PASS) resolved
+   the geo/KMZ-corroboration half as an HONEST NEGATIVE.** Strict no-equation
+   class is 6 bores (`log14/61/62/67/68/70`); `log10` is `NOT_IN_CLASS` (a
+   printed-identity matchline path whose END binds `AP-152` → a future
+   single-anchor / endpoint-bridge candidate). 0/6 bind a terminal at BOTH
+   endpoints (their endpoints are non-terminal drop structures — flower pot /
+   installer HH — with no AP+splice id), and the KMZ has no non-geometric
+   route↔structure linkage, so `KMZ_MATCHLINE_SUBSTITUTE` is not safely
+   satisfiable from current printed evidence. No extractor shipped; zero bores
+   moved. Forward lever: a START/END terminus-attribution model (see
+   `wiki/m9_2_kmz_matchline_substitute_phase0.md`). Remaining owner choice for
+   this class: reviewer pick-cards.
 4. Lower-yield printed-evidence gaps:
    `log12`, `log46`, `log60`, `log64`, `log71`, `log72`.
 5. `END_IDENTITY_UNPRINTED` (25 bores): CLOSED as honest-negative by M8.26 --
