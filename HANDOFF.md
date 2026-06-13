@@ -255,9 +255,40 @@
   widen. Owner 0+00-0+44 re-read does not affect M8.22 (filter uses geometry
   only, never the 44/46 digit).
 
+### M8.23 - log42 END continuity: corroborated but NON-PROMOTING (ABSTAIN)
+
+- New files (proof-only; SAFE ABSTAIN; census frozen; NO REVIEW promotion):
+  - `truelinev2/proof/run_end_continuity_abstain_probe.py` (G1-G7 PASS)
+  - `truelinev2/tests/test_end_continuity_abstain_probe.py` (6)
+  - `wiki/m8_23_end_continuity_abstain.md`
+- The owner asked whether a non-scale END-continuity law can move log42 to a
+  REVIEW candidate. A 5-lens adversarial panel REFUTED it (2 REFUTED verdicts)
+  and the probe pins the refutation as measured fact:
+  * the END-scale "6% disagreement" is a PROBE-ONLY artifact -- the SHIPPED
+    join has 0 far survivors for log42 (extract_group_claims([log42])=0), so
+    it never reaches the scale gate; the 6% story exists only via M8.22's
+    Law-1-barred directional survivor.
+  * log42's ACTUAL shipped-lane blocker is START-structure-identity (the 0+00
+    origin can't be uniquely bound; named_missing mentions START identity, NOT
+    scale). Promoting log42 to REVIEW on an END-continuity proof would be a
+    FALSE REVIEW candidate (origin identity unknown). Continuity is NOT claimed
+    proven (closure 270+17=287 is arithmetic, never sole load-bearing).
+- BANKED (the one sound gate the panel validated): the END terminus is
+  terminal_port_hh by PRINTED CLASS (bind_end_structure_note(287) -> 'TERMINAL
+  6 PORT HH AP-105'; resolve_structure_position(AP-105,terminal_port_hh) ->
+  BOUND @(84.6,419.4)); FLOWER POT is excluded by printed class (different CAD
+  layer, no PORT-HH/AP at 2+87) -- the '3.4% PROVE' flower pot is the WRONG
+  class, red herring SETTLED. Over-fire guard pinned: log32's 36' end segment
+  also trips any sub-floor yet stays blocked on START (necessary-not-sufficient).
+- Outcome: SAFE ABSTAIN. log42 stays STRUCTURE_IDENTITY_BINDING_REQUIRED; NOT a
+  REVIEW candidate. Named missing = the START origin IDENTITY binding (strand
+  discriminator at NEXTLINK@819,351 that binds identity not just position; /
+  owner bore_log13 re-read). Census frozen; log8/log32 + M8.20 untouched.
+
 ## Verification
 
-- Tests: `619 passed`.
+- Tests: `625 passed`.
+- M8.23 END-continuity abstain probe G1-G7: PASS.
 - M8.22 strand discriminator probe G1-G10: PASS.
 - M8.21 split-log corridor probe G1-G9: PASS.
 - M8.20 GROUP REVIEW API/bundle transport proof G1-G8: PASS.
@@ -285,14 +316,18 @@
    authorized consumer/UI adoption; production activation still requires its
    separate auth/tenant decision. The per-bore lane stays pure (no flip); no
    geometry milestone yet.
-2. `log42` (SHARPENED again by M8.22): the strand ambiguity at the origin is
-   RESOLVED (directional discriminator -> GROUP 0, the full 270' route). The
-   blocker is now END-side: the M8.19 cross-sheet scale-join is unmeasurable
-   on the 17-ft end segment (5% < draw-noise floor). Named target = a
-   NON-SCALE cross-sheet continuity corroboration for sub-floor segments (the
-   printed boundary equation + 270+17=287 closure already prove the crossing).
-   Owner re-reads still open (bore_log13 block semantics; log41 44 vs printed
-   46). The equation-bound installer HH stays the INTERIOR reset at 0+46.
+2. `log42` (CORRECTED by M8.23): the real shipped-lane blocker is
+   START-STRUCTURE-IDENTITY -- the 0+00 origin (NEXTLINK@819,351) cannot be
+   uniquely bound (11 co-aligned structures, 0 corroborate; identity ABSTAINED,
+   DESIGN_PATH_AMBIGUOUS). M8.22's "blocker shifts to END side" was a
+   PROBE-ONLY artifact: the shipped join has 0 far survivors for log42, so the
+   END-scale gate is never reached. log42 is NOT a REVIEW candidate. The END
+   terminus is bound terminal_port_hh by printed class (FLOWER POT excluded by
+   class -- red herring settled, M8.23 G3/G4). Named target = a strand
+   discriminator that BINDS the START origin IDENTITY (not just position) via
+   a lane-accepted path, and/or the owner bore_log13 block-semantics re-read
+   (is Segment B's 0+00 the callout-frame origin or the installer reset?).
+   The equation-bound installer HH stays the INTERIOR reset at 0+46.
 3. No printed matchline equation:
    `log10`, `log14`, `log61`, `log62`, `log67`, `log68`, `log70`.
    Owner decision required: geo/KMZ corroboration or reviewer pick-cards.
