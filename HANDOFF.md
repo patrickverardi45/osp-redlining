@@ -524,6 +524,21 @@
    moved. Forward lever: a START/END terminus-attribution model (see
    `wiki/m9_2_kmz_matchline_substitute_phase0.md`). Remaining owner choice for
    this class: reviewer pick-cards.
+   **M9.3 Phase 0 (`run_terminus_attribution_phase0`, G1–G11 PASS) built that
+   forward lever as a POSITIVE proof** (see `wiki/m9_3_terminus_attribution_phase0.md`):
+   the station-note-frame attribution yields **7 clean terminal-END attributions,
+   each KMZ-join BOUND to a unique terminal** (log42/72/12/2/10/57/7 →
+   AP-105/117/121/148/152/157/163), correctly REJECTS log68's flat-scan AP-148
+   (owns STA 20+71 = log2's terminal), and surfaces a PDF↔KMZ contradiction
+   (log46: PDF `AP-161 SPLICE LOC 35` vs KMZ `Splice Loc 45`). Direction rule:
+   a terminal is end-of-feed, so a terminal at a START is a `JUNCTION_ORIGIN`
+   (3 found: log27→log10, log39→log72, log65→log7 — bore-to-bore junctions for a
+   run-assembly lane), never the START bore's identity. **Deferred to M9.3.1**
+   (Phase 0 proves, does not ship); M9.3.1 must inject the note-detection
+   keyword set (`structure_anchor._STRUCTURE_WORDS`, the one core literal) +
+   AP/splice/station grammars, and gate the END-direction + one-terminal-per-END
+   uniqueness invariant. None of the 6 no-equation bores attributes (their ends
+   are non-terminal), so M9.2's negative stands.
 4. Lower-yield printed-evidence gaps:
    `log12`, `log46`, `log60`, `log64`, `log71`, `log72`.
 5. `END_IDENTITY_UNPRINTED` (25 bores): CLOSED as honest-negative by M8.26 --
