@@ -20,10 +20,13 @@ def detect_format(path: str) -> str:
     return "brenham_flat"
 
 
-def load_borelog(path: str) -> Bore:
+def load_borelog(path: str, *, normalize_station_label: bool = False) -> Bore:
+    """Load a bore log. ``normalize_station_label`` (default OFF, byte-identical)
+    is forwarded to the Brenham reader; see ``read_brenham_borelog`` -- a
+    default-OFF opt-in that affects only the ``STA``-prefixed log37/log38."""
     fmt = detect_format(path)
     if fmt == "brenham_flat":
-        return read_brenham_borelog(path)
+        return read_brenham_borelog(path, normalize_station_label=normalize_station_label)
     if fmt == "odot_construction_log":
         return read_odot_borelog(path)
     raise ValueError(f"unrecognized bore-log format: {path}")

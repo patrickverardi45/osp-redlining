@@ -10,7 +10,7 @@ from typing import List
 import openpyxl
 
 from truelinev2.schema.models import Bore
-from truelinev2.stations import parse_station
+from truelinev2.stations import parse_station, strip_station_label
 
 
 def sheets_from_print(print_val) -> List[int]:
@@ -22,7 +22,15 @@ def sheets_from_print(print_val) -> List[int]:
     return out
 
 
-def read_brenham_borelog(path: str) -> Bore:
+def read_brenham_borelog(path: str, *, normalize_station_label: bool = False) -> Bore:
+    """Read a Brenham flat-table bore log.
+
+    ``normalize_station_label`` (default OFF, byte-identical) strips an optional
+    leading ``STA``/``STA.``/``STA:`` label from each station cell before parsing.
+    It is a DEFAULT-OFF opt-in: the only corpus logs whose cells carry the label
+    are the PDF digital-fill forms log37/log38 (proven isolated), so turning it ON
+    changes EXACTLY those two and nothing else. Kept opt-in so the frozen census
+    and every baseline proof stay byte-identical until activation is authorized."""
     wb = openpyxl.load_workbook(path, data_only=True)
     try:
         ws = wb.worksheets[0]
@@ -53,9 +61,14 @@ def read_brenham_borelog(path: str) -> Bore:
         if not r:
             continue
         raw = r[ci_sta] if ci_sta < len(r) else None
-        ft = parse_station(raw)
+        # Default OFF: bare ``raw`` is parsed exactly as before. When opted in, an
+        # optional leading 'STA'/'STA.'/'STA:' label is stripped first (PDF
+        # digital-fill forms keep it); bare stations and non-station text are
+        # unchanged either way. No fuzzy OCR correction.
+        normalized = strip_station_label(raw) if normalize_station_label else raw
+        ft = parse_station(normalized)
         if ft is not None:
-            stations.append((ft, str(raw).strip()))
+            stations.append((ft, str(normalized).strip() if normalized is not None else None))
         if print_val is None and ci_print is not None and ci_print < len(r):
             pv = r[ci_print]
             if pv not in (None, ""):

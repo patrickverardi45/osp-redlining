@@ -6,6 +6,21 @@ from typing import Optional
 
 _STA_RE = re.compile(r"^\s*(\d+)\s*\+\s*(\d+(?:\.\d+)?)\s*$")
 
+# An optional leading station LABEL only: ``STA`` / ``STA.`` / ``STA:`` followed by
+# whitespace and a digit. Used by ingest readers to normalize a label some sources
+# (e.g. PDF digital-fill forms) keep in the station cell. Deliberately narrow: it
+# strips ONLY this exact label and ONLY when a station number follows -- it performs
+# no fuzzy OCR correction and leaves bare stations and non-station text untouched.
+_STA_LABEL_RE = re.compile(r"^\s*STA[.:]?\s+(?=\d)", re.IGNORECASE)
+
+
+def strip_station_label(value) -> str:
+    """``'STA 3+50'`` / ``'STA. 3+50'`` / ``'STA: 3+50'`` -> ``'3+50'``; everything
+    else (bare ``'3+50'``, ``'nope'``, ``'STATION 3+50'``) returned unchanged.
+    Pure string normalization for the ingest seam; does not itself parse."""
+    s = "" if value is None else str(value)
+    return _STA_LABEL_RE.sub("", s, count=1)
+
 
 def parse_station(value) -> Optional[float]:
     """``'12+22'`` -> ``1222.0``; None if unparseable."""

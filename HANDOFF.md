@@ -2,11 +2,35 @@
 
 **Saved:** 2026-06-13
 **Branch:** `feat/truelinev2`
-**Pushed engine HEAD:** `dfc650e` (M9.6 run-assembly API transport); advanced by this M9.8
-Structure-Identity Binder feasibility commit (proof-only). The intervening M9.2→M9.6 + M9.7
-(web, separate repo, local-only) milestones are recorded in `wiki/current-sprint.md` + the
-`wiki/m9_*.md` docs.
-**Verified tests:** `811 passed`
+**Pushed engine HEAD:** advanced through M9.8 (proof-only) → OWNER-PACKET-1 `24ea530`
+(docs) → PARENT-CHILD-RECON-1 `a7858f7` (audit) → **PARENT-CHILD-RECON-2** (this commit:
+the `STA ` ingest fix as a DEFAULT-OFF opt-in + the per-column print-assignment audit). The
+intervening M9.2→M9.6 + M9.7 (web, separate repo, local-only) milestones are recorded in
+`wiki/current-sprint.md` + the `wiki/m9_*.md` docs.
+**Verified tests:** `842 passed`
+
+## PARENT-CHILD-RECON-2 (latest)
+
+- **Part A — `STA ` station-label ingest fix, DEFAULT-OFF opt-in.** log37/log38 were never
+  missing source; their stations are present as `STA 3+50`/`STA 0+62`… and the shared
+  `parse_station` rejects the prefix. New pure `stations.strip_station_label` +
+  `read_brenham_borelog(..., normalize_station_label=False)` (threaded through `load_borelog`).
+  **Default OFF = byte-identical** (frozen census + ~15 baseline proofs untouched, M8.27 PASS).
+  Opted in, **exactly log37/log38 change** (proven, per-bore 58-row diff): log37 → `PLACED_REVIEW`
+  (drawable), log38 → `OUT_OF_CLASS`; `parse_station` itself unchanged. Activation (flip the
+  default + update the ~15 frozen baselines to the corrected census) is a NAMED follow-up.
+  Proof `run_station_label_optin_sweep` (G1–G5), tests `test_station_label_normalization`.
+- **Part B — per-column print/sheet assignment audit (read-only; no new solver).** The 13
+  families' **33 children** classified over existing evidence (shared `Print #`, child station,
+  shipped M8.7 station-axis verdict, M8.27 lane; never proximity/order/length): **13 ASSIGNABLE
+  (placed) · 11 UNASSIGNABLE_SHARED_PRINT_AMBIGUITY (the deterministic extraction target) · 3
+  CONFLICTING_SOURCE_EVIDENCE (log44/54/69 field-print vs plan-sheet) · 3 REVIEW_BY_DESIGN
+  (log48/59/66 parallel-run forks) · 2 NEEDS_HUMAN_OCR_REREAD (log41/43) · 1
+  PARENT_RUN_MULTI_SHEET_REQUIRED (log68)**. log46 = shared-print ambiguity decided WITHOUT the
+  splice (splice 35/45 stays a separate plan-only issue); log52 rival is sheet 10 not 21; log69
+  off-print to sheet 21. Proof `run_parent_child_print_assignment_phase0` (G1–G4). Named next:
+  **PARENT-CHILD-RECON-3** — per-column print derivation (proof-first, zero-false). Canonical:
+  `wiki/parent_child_print_assignment_phase0.md`.
 
 ## Guardrails
 
