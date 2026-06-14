@@ -43,11 +43,13 @@ def test_out_of_class_refinement_is_grounded_and_exact():
 def test_banked_constants_reconcile():
     assert sum(tt.BANKED_FULLEST_LANES.values()) == 58
     assert sum(tt.BANKED_STROKE_CENSUS.values()) == 58
-    # PLACED == AUTO + REVIEW; statuses sum to 58
+    # PLACED == AUTO + REVIEW; statuses sum to 58. (PARENT-CHILD-RECON-2A: the
+    # `STA ` activation moved log37 -> placed, log38 -> OUT_OF_CLASS, so PLACED
+    # 24 -> 25 and BANKED_FULLEST_LANES["PLACED_REVIEW"] 30 -> 31; only those two.)
     s = tt.BANKED_DEFAULT_STATUS
-    assert s["PLACED"] == s["AUTO_SELECT"] + s["REVIEW"] == 24
+    assert s["PLACED"] == s["AUTO_SELECT"] + s["REVIEW"] == 25
     assert s["AUTO_SELECT"] + s["REVIEW"] + s["ABSTAIN"] + s["ERROR"] == 58
-    assert tt.BANKED_FULLEST_LANES["PLACED_REVIEW"] == 30
+    assert tt.BANKED_FULLEST_LANES["PLACED_REVIEW"] == 31
 
 
 def test_controls_pin_two_axes_and_group_membership():

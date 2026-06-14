@@ -48,7 +48,12 @@ from truelinev2.proof.run_brenham_corpus import CORPUS_DIR, EXPECTED_COUNT, PDF,
 from truelinev2.proof.run_frame_optin_validation import build_plan_frame_graph
 
 PLACED = ("AUTO_SELECT", "REVIEW")
-GOLDEN = {"AUTO_SELECT": 14, "REVIEW": 9, "ABSTAIN": 33, "ERROR": 2}  # default 23/58
+# Measured current default 25/58. This file was the lone straggler still on the old
+# 23/58 GOLDEN, so the delta spans TWO corrections (both already live, now reflected):
+#   REVIEW 9->10 = catch-up to the 2026-06-10 corrected-source baseline (log9; never
+#                  applied here); REVIEW 10->11 = RECON-2A log37 `STA ` activation.
+#   ABSTAIN 33 net-unchanged = log9 leaving ABSTAIN (-1) + log38 entering ABSTAIN (+1).
+GOLDEN = {"AUTO_SELECT": 14, "REVIEW": 11, "ABSTAIN": 33, "ERROR": 0}
 # The 8 logs M8.2d's edge-required opt-in regressed (placed by default -> abstain under opt-in).
 REGRESSED = ["log2", "log3", "log4", "log42", "log50", "log57", "log62", "log65"]
 LOG11 = "log11"

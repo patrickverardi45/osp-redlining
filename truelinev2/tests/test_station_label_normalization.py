@@ -71,18 +71,19 @@ def _make_xlsx(tmp_path, name, station_cells):
     return str(p)
 
 
-def test_reader_default_off_is_byte_identical_raises(tmp_path):
-    """DEFAULT (OFF): a 'STA '-prefixed sheet still raises 'no parseable stations'
-    -- the opt-in is dormant, so the frozen census + baseline proofs are untouched."""
+def test_reader_default_on_parses_explicit_off_raises(tmp_path):
+    """DEFAULT (ON since RECON-2A activation): a 'STA '-prefixed sheet now PARSES.
+    Passing normalize_station_label=False recovers the pre-activation raise (the
+    proofs that demonstrate the OFF baseline do exactly this)."""
     path = _make_xlsx(tmp_path, "bore_log37.xlsx", ["STA 3+50", "STA 4+08"])
-    with pytest.raises(ValueError):
-        read_brenham_borelog(path)                       # default normalize=OFF
+    bore = read_brenham_borelog(path)                    # default now ON
+    assert bore.station_start_ft == 350.0 and bore.station_end_ft == 408.0
     with pytest.raises(ValueError):
         read_brenham_borelog(path, normalize_station_label=False)
 
 
 def test_reader_optin_parses_sta_prefixed_log37_shape(tmp_path):
-    """OPT-IN (ON): log37 shape parses ('STA 3+50'/'STA 4+08' -> 3+50..4+08)."""
+    """Explicit ON: log37 shape parses ('STA 3+50'/'STA 4+08' -> 3+50..4+08)."""
     path = _make_xlsx(tmp_path, "bore_log37.xlsx", ["STA 3+50", "STA 4+08"])
     bore = read_brenham_borelog(path, normalize_station_label=True)
     assert bore.station_start_ft == 350.0

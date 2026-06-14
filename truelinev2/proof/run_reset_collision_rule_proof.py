@@ -35,7 +35,7 @@ OUT_MD = _REPO_ROOT / "data" / "outputs" / "reset_collision_rule_proof.md"
 # Default distribution the rule must be judged against (banked; re-verified by the
 # external default-sweep gate every session). Corrected-source baseline 2026-06-10
 # (bore_log9/15/16 station OCR fixed; log9 places via M7): 23 -> 24 placed.
-EXPECTED_DEFAULT = {"AUTO_SELECT": 14, "REVIEW": 10, "ABSTAIN": 32, "ERROR": 2, "PLACED": 24}
+EXPECTED_DEFAULT = {"AUTO_SELECT": 14, "REVIEW": 11, "ABSTAIN": 33, "ERROR": 0, "PLACED": 25}  # RECON-2A: log37/log38 only
 
 # --- the three banked collision evidence records --------------------------------
 # Every field cites its banked source: the committed M8.2j ledger (grades, evidence

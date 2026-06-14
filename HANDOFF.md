@@ -3,13 +3,30 @@
 **Saved:** 2026-06-13
 **Branch:** `feat/truelinev2`
 **Pushed engine HEAD:** advanced through M9.8 (proof-only) → OWNER-PACKET-1 `24ea530`
-(docs) → PARENT-CHILD-RECON-1 `a7858f7` (audit) → **PARENT-CHILD-RECON-2** (this commit:
-the `STA ` ingest fix as a DEFAULT-OFF opt-in + the per-column print-assignment audit). The
-intervening M9.2→M9.6 + M9.7 (web, separate repo, local-only) milestones are recorded in
-`wiki/current-sprint.md` + the `wiki/m9_*.md` docs.
+(docs) → PARENT-CHILD-RECON-1 `a7858f7` (audit) → PARENT-CHILD-RECON-2 `eb5740c` (`STA `
+ingest fix as default-OFF opt-in + per-column print-assignment audit) → **PARENT-CHILD-RECON-2A**
+(this commit: ACTIVATE the `STA ` normalization — flip the default ON + update the intentionally-
+changed baselines). The intervening M9.2→M9.6 + M9.7 (web, separate repo, local-only)
+milestones are recorded in `wiki/current-sprint.md` + the `wiki/m9_*.md` docs.
 **Verified tests:** `842 passed`
 
-## PARENT-CHILD-RECON-2 (latest)
+## PARENT-CHILD-RECON-2A (latest) — ACTIVATION of the `STA ` normalization
+
+- Flipped `normalize_station_label` default OFF→**ON** in `read_brenham_borelog` / `load_borelog`
+  (`parse_station` UNCHANGED; pass `False` to recover the pre-activation byte-identical load).
+- **Exactly log37/log38 move** (full 58-row per-bore diff; the other 56 byte-identical):
+  **log37 → `PLACED_REVIEW`/DRAWABLE** (`3+50→4+08`, sheet 23; placed by existing engine law, not
+  forced), **log38 → `OUT_OF_CLASS`** (`0+62→16+21`; endpoint not deterministically locatable —
+  **deliberately NOT promoted**, matching the operator's manual finding that 0+62 isn't safely
+  locatable though HH 16+21 is).
+- **Intentional census update** (`ERROR 2→0`, `PLACED +1`, `OUT_OF_CLASS +1`, `SOURCE_REVIEW 2→0`):
+  default baseline `14/10/32/2/24 → 14/11/33/0/25`; fullest lanes `30/16/6/4/2 → 31/16/6/5` (SOURCE_REVIEW
+  dropped); stroke census `25/13/5/5/4/3/1/2 → 26/13/5/6/4/3/1` (BORE_SOURCE_UNPARSEABLE dropped).
+  ~20 baseline proofs updated to the measured new values + the M8.27 test + the RECON-2 test (default
+  now ON). M8.27 PASS; full v2 suite 842 passed; guards green; RECON-1 + RECON-2 Part B proofs PASS.
+- Canonical: `wiki/station_label_activation_recon2a.md`.
+
+## PARENT-CHILD-RECON-2
 
 - **Part A — `STA ` station-label ingest fix, DEFAULT-OFF opt-in.** log37/log38 were never
   missing source; their stations are present as `STA 3+50`/`STA 0+62`… and the shared

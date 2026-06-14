@@ -108,9 +108,8 @@ EXPECT_STRUCTURES = 576
 EXPECT_ROUTES = 539
 # Banked M8.11 fullest_safe_review product lanes (must match M8.27; no drift).
 BANKED_FULLEST_LANES = {
-    "PLACED_REVIEW": 30, "PICK_CARD_ROUTE_SUGGESTION": 16,
-    "HUMAN_ADJUSTABLE_LENGTH_REDLINE": 6, "OUT_OF_CLASS": 4,
-    "SOURCE_REVIEW_REQUIRED": 2,
+    "PLACED_REVIEW": 31, "PICK_CARD_ROUTE_SUGGESTION": 16,   # RECON-2A: +log37
+    "HUMAN_ADJUSTABLE_LENGTH_REDLINE": 6, "OUT_OF_CLASS": 5,  # +log38; SOURCE_REVIEW 2->0
 }
 
 # The NAMED scope (M9.0 next_law / m9_0+m9_1 wiki). Verified against repo truth.

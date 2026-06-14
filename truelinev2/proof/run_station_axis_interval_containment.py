@@ -27,7 +27,7 @@ OUT_JSON = _REPO_ROOT / "data" / "outputs" / "station_axis_interval_containment.
 OUT_MD = _REPO_ROOT / "data" / "outputs" / "station_axis_interval_containment.md"
 
 # Corrected-source baseline (see run_reverse_endpoint_anchor_proof provenance).
-EXPECTED_OFF = {"AUTO_SELECT": 14, "REVIEW": 10, "ABSTAIN": 32, "ERROR": 2, "PLACED": 24}
+EXPECTED_OFF = {"AUTO_SELECT": 14, "REVIEW": 11, "ABSTAIN": 33, "ERROR": 0, "PLACED": 25}
 PRIMARY = "log15"
 # The bore's print refs plus adjacent sheets: the path may continue past the
 # referenced sheets' edges (log15's 24+00 sits at/off the sheet bottom).

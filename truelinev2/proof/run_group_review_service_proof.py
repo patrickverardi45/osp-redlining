@@ -111,9 +111,9 @@ def main() -> int:
           f"imports; per-bore generate unaware")
     ok &= g5
 
-    expected_status = {
-        "AUTO_SELECT": 14, "REVIEW": 10, "ABSTAIN": 32, "ERROR": 2,
-        "PLACED": 24}
+    expected_status = {  # RECON-2A `STA ` activation: log37/log38 (only) move
+        "AUTO_SELECT": 14, "REVIEW": 11, "ABSTAIN": 33, "ERROR": 0,
+        "PLACED": 25}
     g6 = (before.status_counts == after.status_counts == expected_status
           and len(before.payloads) == len(after.payloads) == 58)
     print(f"[m8.20-service] {'PASS' if g6 else 'FAIL'}  G6 banked per-bore "

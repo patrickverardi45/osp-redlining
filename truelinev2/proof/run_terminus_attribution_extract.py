@@ -44,9 +44,8 @@ OUT_DIR = _REPO_ROOT / "data" / "outputs" / "terminus_attribution_extract"
 EXPECT_STRUCTURES = 576
 EXPECT_ROUTES = 539
 BANKED_FULLEST_LANES = {
-    "PLACED_REVIEW": 30, "PICK_CARD_ROUTE_SUGGESTION": 16,
-    "HUMAN_ADJUSTABLE_LENGTH_REDLINE": 6, "OUT_OF_CLASS": 4,
-    "SOURCE_REVIEW_REQUIRED": 2,
+    "PLACED_REVIEW": 31, "PICK_CARD_ROUTE_SUGGESTION": 16,   # RECON-2A: +log37
+    "HUMAN_ADJUSTABLE_LENGTH_REDLINE": 6, "OUT_OF_CLASS": 5,  # +log38; SOURCE_REVIEW 2->0
 }
 TARGETS = ("log10", "log68", "log7", "log42", "log44")
 SOURCE_CONTRADICTION_BORES = {"log44"}                 # banked M8.25/M9.0
@@ -58,7 +57,7 @@ EXPECT_JUNCTIONS = {("log27", 152, "log10"), ("log39", 117, "log72"),
                     ("log65", 163, "log7")}
 EXPECT_BORE_CENSUS = {
     "ENDPOINT_ATTRIBUTED": 7, "JUNCTION_ORIGIN": 3, "PDF_KMZ_CONTRADICTION": 1,
-    "SOURCE_CONTRADICTION": 1, "SHEET_NEIGHBOR_REJECTED": 44,
+    "SOURCE_CONTRADICTION": 1, "SHEET_NEIGHBOR_REJECTED": 46,  # RECON-2A: +log37/log38
 }
 # customer-literal guard mirror (the convention-clean-core gate)
 FORBIDDEN = re.compile(r"(?i)\b(brenham|odot|tulsa|creek|nextlink|verofy)\b")
@@ -186,7 +185,7 @@ def main() -> int:
           f"(violations={uniq_violations}; 7 distinct terminals)")
     ok &= g8
 
-    g9 = dict(bore_census) == EXPECT_BORE_CENSUS and sum(bore_census.values()) == 56
+    g9 = dict(bore_census) == EXPECT_BORE_CENSUS and sum(bore_census.values()) == 58  # RECON-2A: +log37/log38
     print(f"[m9.3.1] {'PASS' if g9 else 'FAIL'}  G9 bore census reproduces M9.3: "
           f"{dict(sorted(bore_census.items()))}")
     ok &= g9

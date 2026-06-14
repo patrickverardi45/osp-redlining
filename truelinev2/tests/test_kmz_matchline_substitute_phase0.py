@@ -108,7 +108,7 @@ def test_banked_controls_and_lanes():
     assert p0.CONTROLS == {"log7": (163, "SPLICE LOC 46"),
                            "log42": (105, "SPLICE LOC 25")}
     assert sum(p0.BANKED_FULLEST_LANES.values()) == 58
-    assert p0.BANKED_FULLEST_LANES["PLACED_REVIEW"] == 30
+    assert p0.BANKED_FULLEST_LANES["PLACED_REVIEW"] == 31   # RECON-2A: +log37
 
 
 # ---- read-only posture + UNWIRED -------------------------------------------

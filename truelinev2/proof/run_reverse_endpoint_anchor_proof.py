@@ -46,7 +46,7 @@ CROPS_DIR = _REPO_ROOT / "data" / "outputs" / "m85_crops"
 
 # Corrected-source baseline 2026-06-10 (bore_log9/15/16 station OCR fixed;
 # log9 places REVIEW via the M7 unique-footage fallback): default 23 -> 24.
-EXPECTED_OFF = {"AUTO_SELECT": 14, "REVIEW": 10, "ABSTAIN": 32, "ERROR": 2, "PLACED": 24}
+EXPECTED_OFF = {"AUTO_SELECT": 14, "REVIEW": 11, "ABSTAIN": 33, "ERROR": 0, "PLACED": 25}
 PRIMARY = ("log9", "log15", "log16")
 AMBIGUITY_REASONS = ("GE_2_COEQUAL_CANDIDATES_NO_TIEBREAKER",)
 

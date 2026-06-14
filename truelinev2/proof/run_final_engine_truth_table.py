@@ -123,23 +123,30 @@ _STROKE_SOURCE_KMZ = {
 # annotation only, never placement proof).
 KNOWN_FAMILIES = {"bore_log17": ("log43", "log44")}
 
+# Census updated by PARENT-CHILD-RECON-2A (activation of the `STA ` station-label
+# normalization). The ONLY change vs the pre-activation baseline is log37/log38,
+# whose stations were present but `STA `-prefixed: log37 -> PLACED_REVIEW (now
+# END_IDENTITY_UNPRINTED stroke; +1 placed, drawable), log38 -> OUT_OF_CLASS (now
+# END_POSITION_UNRESOLVED stroke). `BORE_SOURCE_UNPARSEABLE` -> 0 (key drops). A
+# per-bore diff proves no other bore moved. Pre-activation values are preserved in
+# the RECON-2 docs + `run_station_label_optin_sweep` (the OFF leg).
 BANKED_STROKE_CENSUS = {
-    "END_IDENTITY_UNPRINTED": 25,
+    "END_IDENTITY_UNPRINTED": 26,            # 25 -> 26 (log37)
     "CROSS_SHEET_CONTINUATION_REQUIRED": 13,
     "PICK_CARD_WITH_END_ANCHOR": 5,
-    "END_POSITION_UNRESOLVED": 5,
+    "END_POSITION_UNRESOLVED": 6,            # 5 -> 6 (log38)
     "STROKE_ELIGIBLE_REVIEW": 4,
     "STRUCTURE_IDENTITY_BINDING_REQUIRED": 3,
     "DESIGN_PATH_NOT_TRACEABLE": 1,
-    "BORE_SOURCE_UNPARSEABLE": 2,
+    # BORE_SOURCE_UNPARSEABLE: 2 -> 0 (log37/log38 now parse) -- key absent
 }
 BANKED_FULLEST_LANES = {
-    "PLACED_REVIEW": 30, "PICK_CARD_ROUTE_SUGGESTION": 16,
-    "HUMAN_ADJUSTABLE_LENGTH_REDLINE": 6, "OUT_OF_CLASS": 4,
-    "SOURCE_REVIEW_REQUIRED": 2,
+    "PLACED_REVIEW": 31, "PICK_CARD_ROUTE_SUGGESTION": 16,   # PLACED 30 -> 31 (log37)
+    "HUMAN_ADJUSTABLE_LENGTH_REDLINE": 6, "OUT_OF_CLASS": 5,  # OUT_OF_CLASS 4 -> 5 (log38)
+    # SOURCE_REVIEW_REQUIRED: 2 -> 0 (log37/log38 leave) -- key absent
 }
-BANKED_DEFAULT_STATUS = {"AUTO_SELECT": 14, "REVIEW": 10, "ABSTAIN": 32,
-                         "ERROR": 2, "PLACED": 24}
+BANKED_DEFAULT_STATUS = {"AUTO_SELECT": 14, "REVIEW": 11, "ABSTAIN": 33,
+                         "ERROR": 0, "PLACED": 25}   # was 10/32/2/24 pre-activation
 CONTROLS = {"log8": ("PLACED_REVIEW", "STRUCTURE_IDENTITY_BINDING_REQUIRED", True),
             "log32": ("PLACED_REVIEW", "STRUCTURE_IDENTITY_BINDING_REQUIRED", True),
             "log42": ("PLACED_REVIEW", "STRUCTURE_IDENTITY_BINDING_REQUIRED", False)}
@@ -380,21 +387,21 @@ def main() -> int:
 
     eid = [r["bore_id"] for r in rows
            if r["stroke_status"] == "END_IDENTITY_UNPRINTED"]
-    g10 = (len(eid) == 25
+    g10 = (len(eid) == 26
            and not any(r["proof_only_route_stroke_eligible"] for r in rows
                        if r["stroke_status"] == "END_IDENTITY_UNPRINTED"))
     print(f"[m8.27] {'PASS' if g10 else 'FAIL'}  G10 END_IDENTITY_UNPRINTED "
-          f"honest-negative represented (25; none drew a stroke)")
+          f"honest-negative represented (26 post-RECON-2A; none drew a stroke)")
     ok &= g10
 
     g11 = dict(stroke_census) == BANKED_STROKE_CENSUS
     print(f"[m8.27] {'PASS' if g11 else 'FAIL'}  G11 all-58 stroke census "
-          f"unchanged 25/13/5/5/4/3/1/2: {dict(sorted(stroke_census.items()))}")
+          f"(RECON-2A) 26/13/5/6/4/3/1: {dict(sorted(stroke_census.items()))}")
     ok &= g11
 
     g12 = default.status_counts == BANKED_DEFAULT_STATUS
     print(f"[m8.27] {'PASS' if g12 else 'FAIL'}  G12 M8.11 default_baseline "
-          f"unchanged (24 placed): {default.status_counts}")
+          f"(RECON-2A, 25 placed): {default.status_counts}")
     ok &= g12
 
     # column reconciliation: every needs_source_kmz_owner row is SOURCE/SRC_KMZ;

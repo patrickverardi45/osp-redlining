@@ -86,9 +86,8 @@ OUT_DIR = _REPO_ROOT / "data" / "outputs" / "run_assembly_phase0"
 EXPECT_STRUCTURES = 576
 EXPECT_ROUTES = 539
 BANKED_FULLEST_LANES = {
-    "PLACED_REVIEW": 30, "PICK_CARD_ROUTE_SUGGESTION": 16,
-    "HUMAN_ADJUSTABLE_LENGTH_REDLINE": 6, "OUT_OF_CLASS": 4,
-    "SOURCE_REVIEW_REQUIRED": 2,
+    "PLACED_REVIEW": 31, "PICK_CARD_ROUTE_SUGGESTION": 16,   # RECON-2A: +log37
+    "HUMAN_ADJUSTABLE_LENGTH_REDLINE": 6, "OUT_OF_CLASS": 5,  # +log38; SOURCE_REVIEW 2->0
 }
 SOURCE_CONTRADICTION_BORES = {"log44"}                 # banked M8.25/M9.0
 EXPECT_CLEAN_END = {"log42": 105, "log72": 117, "log12": 121, "log2": 148,
@@ -369,7 +368,7 @@ def main() -> int:
           and dict(bore_census) == {
               "ENDPOINT_ATTRIBUTED": 7, "JUNCTION_ORIGIN": 3,
               "PDF_KMZ_CONTRADICTION": 1, "SOURCE_CONTRADICTION": 1,
-              "SHEET_NEIGHBOR_REJECTED": 44}
+              "SHEET_NEIGHBOR_REJECTED": 46}   # RECON-2A: +log37/log38
           and full.lane_counts == BANKED_FULLEST_LANES
           and completion_bucket(lane_by_id["log10"], "log10")[0] == "DRAWABLE_REVIEW")
     print(f"[m9.4] {'PASS' if g9 else 'FAIL'}  G9 M9.2 negative intact + M9.3.1 "

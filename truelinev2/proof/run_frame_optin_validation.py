@@ -37,7 +37,7 @@ from truelinev2.proof.run_brenham_corpus import CORPUS_DIR, EXPECTED_COUNT, PDF,
 
 # Corrected-source baseline 2026-06-10 (bore_log9/15/16 station OCR fixed;
 # log9 places REVIEW via the M7 unique-footage fallback): default 24/58.
-GOLDEN = {"AUTO_SELECT": 14, "REVIEW": 10, "ABSTAIN": 32, "ERROR": 2}
+GOLDEN = {"AUTO_SELECT": 14, "REVIEW": 11, "ABSTAIN": 33, "ERROR": 0}  # RECON-2A `STA ` activation: log37/log38 only
 PLACED = ("AUTO_SELECT", "REVIEW")
 LOG11 = "bore_log11"
 

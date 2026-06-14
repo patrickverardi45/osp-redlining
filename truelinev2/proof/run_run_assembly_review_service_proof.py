@@ -59,11 +59,11 @@ from truelinev2.review.run_assembly_review_service import RunAssemblyReviewServi
 OUT_DIR = _REPO_ROOT / "data" / "outputs" / "run_assembly_review_service_proof"
 
 SOURCE_CONTRADICTION_BORES = {"log44"}                 # banked M8.25/M9.0 (injected)
-EXPECT_DEFAULT_STATUS = {"AUTO_SELECT": 14, "REVIEW": 10, "ABSTAIN": 32,
-                         "ERROR": 2, "PLACED": 24}
-EXPECT_FULLEST_LANES = {"PLACED_REVIEW": 30, "PICK_CARD_ROUTE_SUGGESTION": 16,
-                        "HUMAN_ADJUSTABLE_LENGTH_REDLINE": 6, "OUT_OF_CLASS": 4,
-                        "SOURCE_REVIEW_REQUIRED": 2}
+# RECON-2A: the `STA ` activation moves only log37 (-> placed) + log38 (-> OUT_OF_CLASS).
+EXPECT_DEFAULT_STATUS = {"AUTO_SELECT": 14, "REVIEW": 11, "ABSTAIN": 33,
+                         "ERROR": 0, "PLACED": 25}
+EXPECT_FULLEST_LANES = {"PLACED_REVIEW": 31, "PICK_CARD_ROUTE_SUGGESTION": 16,
+                        "HUMAN_ADJUSTABLE_LENGTH_REDLINE": 6, "OUT_OF_CLASS": 5}
 # the exact run-assembly cards (end_bore, start_bore, terminal_ap, continuation_class)
 EXPECT_CARDS = {
     ("log10", "log27", 152, CONTINUATION_CANDIDATE),

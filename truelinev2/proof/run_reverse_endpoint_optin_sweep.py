@@ -44,7 +44,7 @@ OUT_MD = _REPO_ROOT / "data" / "outputs" / "reverse_endpoint_optin_sweep.md"
 
 # Corrected-source baseline 2026-06-10 (bore_log9/15/16 station OCR fixed;
 # log9 places REVIEW via the M7 unique-footage fallback): default 23 -> 24.
-EXPECTED_OFF = {"AUTO_SELECT": 14, "REVIEW": 10, "ABSTAIN": 32, "ERROR": 2, "PLACED": 24}
+EXPECTED_OFF = {"AUTO_SELECT": 14, "REVIEW": 11, "ABSTAIN": 33, "ERROR": 0, "PLACED": 25}
 # The M8.5 proof's READY set AFTER the adversarial-review guards (reset-boundary
 # mask killed log36; near-rival guard pick-carded log5; frame-coherence demoted
 # log45) and the corrected-source replay. log7 + log27 are held-out-corroborated.

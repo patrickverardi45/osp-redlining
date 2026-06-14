@@ -46,15 +46,16 @@ OUT_JSON = _REPO_ROOT / "data" / "outputs" / "reviewer_service_contract.json"
 OUT_MD = _REPO_ROOT / "data" / "outputs" / "reviewer_service_contract.md"
 PIN_DIR = _REPO_ROOT / "data" / "outputs" / "corpus_pin"
 
-EXPECTED_DEFAULT = {"AUTO_SELECT": 14, "REVIEW": 10, "ABSTAIN": 32, "ERROR": 2,
-                    "PLACED": 24}
-EXPECTED_FULLEST_PLACED = 30
+# RECON-2A: the `STA ` activation moves log37 -> placed, log38 -> OUT_OF_CLASS.
+EXPECTED_DEFAULT = {"AUTO_SELECT": 14, "REVIEW": 11, "ABSTAIN": 33, "ERROR": 0,
+                    "PLACED": 25}
+EXPECTED_FULLEST_PLACED = 31
 EXPECTED_FULLEST_LANES = {
-    ReviewerLane.PLACED_REVIEW.value: 30,
+    ReviewerLane.PLACED_REVIEW.value: 31,
     ReviewerLane.PICK_CARD_ROUTE_SUGGESTION.value: 16,
     ReviewerLane.HUMAN_ADJUSTABLE_LENGTH_REDLINE.value: 6,
-    ReviewerLane.OUT_OF_CLASS.value: 4,
-    ReviewerLane.SOURCE_REVIEW_REQUIRED.value: 2,
+    ReviewerLane.OUT_OF_CLASS.value: 5,
+    # SOURCE_REVIEW_REQUIRED: 2 -> 0 (log37/log38 leave) -- key absent
 }
 EXPECTED_INCREMENT = {"log7", "log15", "log16", "log27", "log45", "log72"}
 

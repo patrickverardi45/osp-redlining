@@ -33,8 +33,8 @@ from truelinev2.match.frames import _build_plan_frame_graph
 OUT_JSON = _REPO_ROOT / "data" / "outputs" / "frame_ownership_candidates.json"
 OUT_MD = _REPO_ROOT / "data" / "outputs" / "frame_ownership_candidates.md"
 
-EXPECTED_OFF = {"AUTO_SELECT": 14, "REVIEW": 10, "ABSTAIN": 32, "ERROR": 2, "PLACED": 24}
-EXPECTED_COMBINED_PLACED = 30
+EXPECTED_OFF = {"AUTO_SELECT": 14, "REVIEW": 11, "ABSTAIN": 33, "ERROR": 0, "PLACED": 25}
+EXPECTED_COMBINED_PLACED = 31   # RECON-2A: +log37 (`STA ` activation)
 
 
 def main() -> int:

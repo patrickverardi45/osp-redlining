@@ -41,8 +41,8 @@ OUT_MD = _REPO_ROOT / "data" / "outputs" / "reset_collision_optin_sweep.md"
 # Corrected-source baseline 2026-06-10 (bore_log9/15/16 station OCR fixed;
 # log9 places REVIEW via the M7 unique-footage fallback): default 23 -> 24
 # placed. The gate's 3 graded demotions (log42/57/65) are unchanged.
-EXPECTED_OFF = {"AUTO_SELECT": 14, "REVIEW": 10, "ABSTAIN": 32, "ERROR": 2, "PLACED": 24}
-EXPECTED_ON = {"AUTO_SELECT": 11, "REVIEW": 12, "ABSTAIN": 33, "ERROR": 2, "PLACED": 23}
+EXPECTED_OFF = {"AUTO_SELECT": 14, "REVIEW": 11, "ABSTAIN": 33, "ERROR": 0, "PLACED": 25}
+EXPECTED_ON = {"AUTO_SELECT": 11, "REVIEW": 13, "ABSTAIN": 34, "ERROR": 0, "PLACED": 24}  # RECON-2A: +log37 REVIEW, +log38 ABSTAIN, ERROR 2->0
 EXPECTED_CHANGES = {"log42": ("AUTO_SELECT", "REVIEW"),
                     "log57": ("AUTO_SELECT", "REVIEW"),
                     "log65": ("AUTO_SELECT", "ABSTAIN")}

@@ -20,10 +20,11 @@ def detect_format(path: str) -> str:
     return "brenham_flat"
 
 
-def load_borelog(path: str, *, normalize_station_label: bool = False) -> Bore:
-    """Load a bore log. ``normalize_station_label`` (default OFF, byte-identical)
-    is forwarded to the Brenham reader; see ``read_brenham_borelog`` -- a
-    default-OFF opt-in that affects only the ``STA``-prefixed log37/log38."""
+def load_borelog(path: str, *, normalize_station_label: bool = True) -> Bore:
+    """Load a bore log. ``normalize_station_label`` (DEFAULT ON since
+    PARENT-CHILD-RECON-2A) is forwarded to the Brenham reader; see
+    ``read_brenham_borelog`` -- it affects only the ``STA``-prefixed log37/log38.
+    Pass ``False`` for the pre-activation byte-identical load."""
     fmt = detect_format(path)
     if fmt == "brenham_flat":
         return read_brenham_borelog(path, normalize_station_label=normalize_station_label)

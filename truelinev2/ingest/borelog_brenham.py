@@ -22,15 +22,17 @@ def sheets_from_print(print_val) -> List[int]:
     return out
 
 
-def read_brenham_borelog(path: str, *, normalize_station_label: bool = False) -> Bore:
+def read_brenham_borelog(path: str, *, normalize_station_label: bool = True) -> Bore:
     """Read a Brenham flat-table bore log.
 
-    ``normalize_station_label`` (default OFF, byte-identical) strips an optional
-    leading ``STA``/``STA.``/``STA:`` label from each station cell before parsing.
-    It is a DEFAULT-OFF opt-in: the only corpus logs whose cells carry the label
-    are the PDF digital-fill forms log37/log38 (proven isolated), so turning it ON
-    changes EXACTLY those two and nothing else. Kept opt-in so the frozen census
-    and every baseline proof stay byte-identical until activation is authorized."""
+    ``normalize_station_label`` (DEFAULT ON since PARENT-CHILD-RECON-2A) strips an
+    optional leading ``STA``/``STA.``/``STA:`` label from each station cell before
+    parsing. The only corpus logs whose cells carry the label are the PDF
+    digital-fill forms log37/log38 (proven isolated), so the active behavior changes
+    EXACTLY those two and nothing else: log37 -> PLACED_REVIEW, log38 -> OUT_OF_CLASS
+    (existing engine law decides; no forced promotion). Pass ``False`` to recover the
+    pre-activation byte-identical load (the proofs that demonstrate the OFF baseline
+    do exactly this). ``parse_station`` itself is unchanged."""
     wb = openpyxl.load_workbook(path, data_only=True)
     try:
         ws = wb.worksheets[0]

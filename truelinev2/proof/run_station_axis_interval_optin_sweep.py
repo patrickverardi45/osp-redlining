@@ -44,7 +44,7 @@ OUT_JSON = _REPO_ROOT / "data" / "outputs" / "station_axis_interval_optin_sweep.
 OUT_MD = _REPO_ROOT / "data" / "outputs" / "station_axis_interval_optin_sweep.md"
 
 # Corrected-source baseline 2026-06-10 (see run_reverse_endpoint_anchor_proof).
-EXPECTED_OFF = {"AUTO_SELECT": 14, "REVIEW": 10, "ABSTAIN": 32, "ERROR": 2, "PLACED": 24}
+EXPECTED_OFF = {"AUTO_SELECT": 14, "REVIEW": 11, "ABSTAIN": 33, "ERROR": 0, "PLACED": 25}
 PREDICTED_AXIS_ALONE = ["log15", "log16", "log27", "log45", "log72"]  # M8.7 READY set
 PREDICTED_INCREMENT_OVER_M85 = ["log15", "log16", "log45", "log72"]   # log27 -> M8.5
 PLACED = ("AUTO_SELECT", "REVIEW")
@@ -139,11 +139,10 @@ def main() -> int:
         "off_matches_default": off_counts == EXPECTED_OFF,
         "axis_alone_set_matches_m87_proof": empirical_axis == sorted(PREDICTED_AXIS_ALONE),
         "increment_over_m85_matches": increment == sorted(PREDICTED_INCREMENT_OVER_M85),
-        # 24 baseline + {log7,log27} via the reverse retry (runs first) + the
-        # axis increment {log15,log16,log45,log72} = 30 distinct placements.
-        # (29 was the pre-sweep estimate that assumed M8.8-alone would not also
-        # cover log27 -- it does, per the M8.7 proof; no log places twice.)
-        "combined_ceiling_30": am_counts["PLACED"] == 30,
+        # 25 baseline (incl. log37 via RECON-2A `STA ` activation) + {log7,log27}
+        # via the reverse retry + the axis increment {log15,log16,log45,log72}
+        # = 31 distinct placements (was 30 pre-activation; only log37 added).
+        "combined_ceiling_31": am_counts["PLACED"] == 31,
         "zero_placed_logs_changed": not placed_changed,
         "zero_auto_promotions": not promotions,
         "all_new_placements_review_axis_reason": not bad_new,

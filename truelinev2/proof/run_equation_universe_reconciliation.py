@@ -55,8 +55,8 @@ from truelinev2.match.frames import _build_plan_frame_graph
 OUT_JSON = _REPO_ROOT / "data" / "outputs" / "equation_universe_reconciliation.json"
 OUT_MD = _REPO_ROOT / "data" / "outputs" / "equation_universe_reconciliation.md"
 
-EXPECTED_PARSED = {"AUTO_SELECT": 14, "REVIEW": 16, "ABSTAIN": 26}
-EXPECTED_ERRORS = 2
+EXPECTED_PARSED = {"AUTO_SELECT": 14, "REVIEW": 17, "ABSTAIN": 27}  # RECON-2A: +log37 REVIEW, +log38 ABSTAIN
+EXPECTED_ERRORS = 0   # RECON-2A: log37/log38 now parse (was 2)
 PIN_BORE = "log62"
 PIN_MASKED_SUBSTR = "STA 1+92 TO STA 2+01"
 PIN_PERBORE_RESULT = "MULTIPLE_REVERSE_PATHS_PICK_CARD"
@@ -159,7 +159,7 @@ def main() -> int:
          f"{len(engine_diffs)} engine-level differences")
     gate("G3 banked fullest-safe distribution",
          counts["perbore"] == EXPECTED_PARSED and counts["allsheets"] == EXPECTED_PARSED
-         and errors == EXPECTED_ERRORS and placed["allsheets"] == 30,
+         and errors == EXPECTED_ERRORS and placed["allsheets"] == 31,  # RECON-2A: +log37
          f"perbore {counts['perbore']}, allsheets {counts['allsheets']}, "
          f"errors {errors}, placed {placed}")
     pin_ok = bool(pin_record) and (
