@@ -50,6 +50,40 @@ _REQUIRED_LOG_FIELDS = (
     "needs_review", "needs_source_verification",
 )
 
+# --- OWNER-PACKET-2 endpoint-anchor bridge (schema extension; OPTIONAL/additive) --
+#
+# Preserves the owner's reviewed endpoint IDENTITY + BOUNDARY semantics (the visual
+# review the index captured but the flat artifact dropped) as machine-consumable
+# input. DESIGN LAW: identity + boundary semantics ONLY -- never coordinates, never
+# stroke geometry, never a placement. The deterministic engine still computes
+# positions from PDF primitives downstream (e.g. extract.structure_position); these
+# fields are consumable INPUT, not output, and authorize no drawing.
+BOUNDARY_KIND_ENUM = frozenset({
+    "structure_terminus", "matchline_continuation", "drive_boundary", "mid_run",
+})
+ENDPOINT_CLARITY_ENUM = frozenset({"CLEAR", "PARTIAL", "UNCLEAR"})
+# Structure classes the deterministic identity binder recognizes (names kept
+# compatible with extract.structure_position / extract.structure_anchor so the
+# identity can later feed resolve_structure_position without translation).
+ENDPOINT_STRUCTURE_CLASS_ENUM = frozenset({
+    "installer_hh", "terminal_port_hh", "flower_pot", "nextlink_hh",
+    "splice", "terminal", "access_point",
+})
+_ANCHOR_ALLOWED_KEYS = frozenset({
+    "station", "boundary_kind", "structure_class", "structure_label",
+    "owner_note_text", "clarity", "evidence_ref", "ap_id",
+    "continues_to_sheet", "continues_as",
+})
+# Coordinate/geometry key names are categorically forbidden in an anchor: the
+# whitelist above already rejects any unknown key, but this explicit set yields a
+# NAMED error (defense in depth -- the structure_position both-guards precedent).
+_COORD_FORBIDDEN_KEYS = frozenset({
+    "x", "y", "z", "xc", "yc", "x0", "y0", "x1", "y1", "cx", "cy", "xy",
+    "lat", "lon", "lng", "coord", "coords", "coordinate", "coordinates",
+    "px", "py", "pixel", "pixels", "point", "points",
+    "symbol_xy", "anchor_xy", "stroke", "stroke_points", "geometry", "geom",
+})
+
 
 class AdjudicationError(ValueError):
     """Raised when the adjudication artifact fails fail-closed validation."""
@@ -72,6 +106,7 @@ class Disposition:
     corrected_end: Optional[str]
     corrected_sheets: tuple
     evidence_refs: tuple
+    endpoint_anchors: Optional[dict] = None
 
 
 def load_adjudication(path: Path = DEFAULT_ARTIFACT) -> dict:
@@ -133,7 +168,70 @@ def validate_adjudication(doc: dict) -> List[str]:
                               f"until source-verified")
             if status in ("RECOVERED", "CORRECT_AS_DRAWN") and not rec.get("correction_types"):
                 errors.append(f"{tag}: {status} must record at least one correction_type")
+        errors.extend(validate_endpoint_anchors(rec))
     return errors
+
+
+def _validate_anchor(side: str, a: object, tag: str) -> List[str]:
+    """Validate one endpoint anchor ('start'/'end'). Identity + boundary semantics
+    only; coordinate/stroke fields are categorically rejected (the design law)."""
+    if not isinstance(a, dict):
+        return [f"{tag}: endpoint_anchors.{side} must be an object"]
+    errs: List[str] = []
+    coord_hits = sorted(k for k in a if str(k).lower() in _COORD_FORBIDDEN_KEYS)
+    if coord_hits:
+        errs.append(f"{tag}: endpoint_anchors.{side} carries forbidden coordinate "
+                    f"field(s) {coord_hits} -- the bridge holds identity/boundary "
+                    f"semantics only, never coordinates or stroke geometry")
+    unknown = sorted(str(k) for k in a if k not in _ANCHOR_ALLOWED_KEYS)
+    if unknown:
+        errs.append(f"{tag}: endpoint_anchors.{side} unknown field(s) {unknown}")
+    bk = a.get("boundary_kind")
+    if bk not in BOUNDARY_KIND_ENUM:
+        errs.append(f"{tag}: endpoint_anchors.{side} boundary_kind '{bk}' not in enum")
+    cl = a.get("clarity")
+    if cl is not None and cl not in ENDPOINT_CLARITY_ENUM:
+        errs.append(f"{tag}: endpoint_anchors.{side} clarity '{cl}' not in enum")
+    sc = a.get("structure_class")
+    if sc is not None and sc not in ENDPOINT_STRUCTURE_CLASS_ENUM:
+        errs.append(f"{tag}: endpoint_anchors.{side} structure_class '{sc}' not in enum")
+    # identity/boundary coherence -- the bridge must not contradict itself:
+    if bk == "structure_terminus" and not (sc and a.get("structure_label")):
+        errs.append(f"{tag}: endpoint_anchors.{side} structure_terminus requires both "
+                    f"structure_class and structure_label (a terminus must be identified)")
+    if bk == "matchline_continuation":
+        if sc is not None or a.get("structure_label") is not None:
+            errs.append(f"{tag}: endpoint_anchors.{side} matchline_continuation must NOT "
+                        f"carry a terminus structure identity (it is a boundary, not a "
+                        f"terminus)")
+        if a.get("continues_to_sheet") is None:
+            errs.append(f"{tag}: endpoint_anchors.{side} matchline_continuation requires "
+                        f"continues_to_sheet")
+    return errs
+
+
+def validate_endpoint_anchors(rec: dict) -> List[str]:
+    """Validate the OPTIONAL owner endpoint-anchor bridge on one record.
+
+    Additive + fail-closed: absent -> no error (every pre-bridge record still
+    validates). Present -> identity/boundary semantics only; coordinate/stroke
+    fields are categorically rejected. NEVER authorizes drawing -- a downstream
+    solver still computes geometry from the PDF.
+    """
+    ea = rec.get("endpoint_anchors")
+    if ea is None:
+        return []
+    tag = rec.get("log_id", "?")
+    if not isinstance(ea, dict):
+        return [f"{tag}: endpoint_anchors must be an object with 'start'/'end'"]
+    errs: List[str] = []
+    unknown_sides = sorted(str(k) for k in ea if k not in ("start", "end"))
+    if unknown_sides:
+        errs.append(f"{tag}: endpoint_anchors unknown side(s) {unknown_sides}")
+    for side in ("start", "end"):
+        if side in ea:
+            errs.extend(_validate_anchor(side, ea[side], tag))
+    return errs
 
 
 def parent_run_duplicate_check(doc: dict) -> List[str]:
@@ -191,6 +289,7 @@ def resolve(doc: dict) -> Dict[str, Disposition]:
             corrected_end=rec.get("corrected_end"),
             corrected_sheets=tuple(rec.get("corrected_sheets") or []),
             evidence_refs=tuple(rec.get("evidence_refs") or []),
+            endpoint_anchors=rec.get("endpoint_anchors"),
         )
     return out
 
@@ -265,6 +364,9 @@ def flag_on_disposition(rec: dict) -> dict:
         "shared_print_child": bool(rec.get("shared_print_child")),
         "needs_review": bool(rec.get("needs_review")),
         "needs_source_verification": bool(rec.get("needs_source_verification")),
+        # owner endpoint-anchor bridge: identity/boundary semantics only, never
+        # geometry; carried through so a downstream solver can consume it (no draw).
+        "endpoint_anchors": rec.get("endpoint_anchors"),
     }
 
 
@@ -372,6 +474,16 @@ def placement_geometry_readiness(rec: dict) -> dict:
                    "solve_tick_path stroke_points (x,y) on the sheet's clean ladder; "
                    "the artifact carries corrected stations/prints/sheets, not "
                    "coordinate geometry")
+    # owner endpoint-anchor bridge (identity/boundary only): sharpen the blocker but
+    # NEVER make it geometry-ready -- a matchline-continuation end still needs
+    # cross-sheet boundary geometry, not a structure-identity bind, and no coordinate
+    # is ever added here.
+    end_a = (rec.get("endpoint_anchors") or {}).get("end") or {}
+    if end_a.get("boundary_kind") == "matchline_continuation":
+        reasons.append(
+            f"owner-reviewed end is a matchline continuation to sheet "
+            f"{end_a.get('continues_to_sheet')} (not a terminus structure) -> the end "
+            f"anchor needs cross-sheet boundary geometry, still unresolved (no coords)")
     return {"status": PLACE_NEEDS_GEOMETRY, "reasons": reasons,
             "sheet_count": len(sheets), "has_positioned_geometry": False,
             "corrected_start": start, "corrected_end": end, "corrected_sheets": sheets,

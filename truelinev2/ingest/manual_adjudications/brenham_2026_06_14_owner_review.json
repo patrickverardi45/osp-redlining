@@ -1,12 +1,16 @@
 {
   "milestone": "OWNER-PACKET-2 manual adjudication ingestion -- Brenham Phase 5 (2026-06-14 owner source review)",
-  "schema": "truelinev2-manual-adjudication-1",
+  "schema": "truelinev2-manual-adjudication-2",
   "engine_head": "9c37835",
   "branch": "feat/truelinev2",
   "source_of_truth": "owner manual source review (handwritten parent/child bore-log columns + plan PDF callouts/matchlines/leader-lines + HH-HH annotations + reset labels). Screenshots are corroborating evidence only; the written facts are authoritative.",
   "doctrine": "Reviewed source-correction evidence the deterministic v2 engine can consume and re-run. NOT a solver, NOT auto-placement. AI/OCR output is untrusted until owner-reviewed; no geometry invented; no proximity/nearest/length-only placement; no parent+child duplicate overlapping redline.",
   "status_enum": ["RECOVERED", "CORRECT_AS_DRAWN", "ABSTAIN_NO_SAFE_SOURCE", "NEEDS_SOURCE_VERIFICATION"],
   "correction_type_enum": ["STATION_OCR_CORRECTION", "PRINT_OCR_CORRECTION", "MISSING_PRINT_SHEET", "STATION_RESET_SEGMENT_BOUNDARY", "MATCHLINE_CHAIN", "HH_HH_ANNOTATION", "LEADER_LINE_TO_STRUCTURE", "DIRECT_BORE_CALLOUT", "ORIGINAL_PARENT_COLUMN_SPLIT", "REVIEW_APPROVED_AS_DRAWN"],
+  "endpoint_anchor_boundary_kind_enum": ["structure_terminus", "matchline_continuation", "drive_boundary", "mid_run"],
+  "endpoint_anchor_structure_class_enum": ["installer_hh", "terminal_port_hh", "flower_pot", "nextlink_hh", "splice", "terminal", "access_point"],
+  "endpoint_anchor_clarity_enum": ["CLEAR", "PARTIAL", "UNCLEAR"],
+  "endpoint_anchor_doctrine": "OWNER-PACKET-2 endpoint-anchor bridge (schema-2, OPTIONAL/additive per log): preserves the owner's reviewed endpoint IDENTITY + BOUNDARY semantics as machine-consumable INPUT. Identity + boundary only -- NO coordinates, NO stroke geometry, NEVER authorizes drawing. The deterministic engine still computes positions from PDF primitives downstream.",
   "expected_summary": {
     "original_problem_logs": 27,
     "recoverable_or_correct_as_drawn": 23,
@@ -85,7 +89,28 @@
       "correction_types": ["STATION_OCR_CORRECTION", "STATION_RESET_SEGMENT_BOUNDARY", "DIRECT_BORE_CALLOUT"],
       "corrected_prints": null, "corrected_start": "21+63", "corrected_end": "24+11", "corrected_sheets": [5], "span_ft": 248.0,
       "evidence_notes": "Start-station OCR correction 21+45 -> 21+63. STA 21+63 -> STA 24+11, length 248'. Black/white box says 'STA 21+63 = 0+00' at the HH (that structure is the endpoint of another segment and the start of this one); callout confirms 'STA 21+63 TO STA 24+11 DIR. BORE (248')'.",
-      "evidence_refs": [],
+      "evidence_refs": ["Screenshot 2026-06-14 032035.png", "Screenshot 2026-06-14 032447.png"],
+      "endpoint_anchors": {
+        "start": {
+          "station": "21+63",
+          "boundary_kind": "structure_terminus",
+          "structure_class": "nextlink_hh",
+          "structure_label": "NEXTLINK HH",
+          "owner_note_text": "STA 21+63=0+00 PLACE (4'X4'X4') NEXTLINK HH PROP. SPLICE POINT 32",
+          "clarity": "CLEAR",
+          "evidence_ref": "Screenshot 2026-06-14 032035.png"
+        },
+        "end": {
+          "station": "24+11",
+          "boundary_kind": "matchline_continuation",
+          "continues_to_sheet": 6,
+          "continues_as": "STA 24+11 TO STA 26+38",
+          "structure_class": null,
+          "structure_label": null,
+          "clarity": "CLEAR",
+          "evidence_ref": "Screenshot 2026-06-14 032447.png"
+        }
+      },
       "allowed_to_draw": true, "must_remain_abstained": false, "needs_review": false, "needs_source_verification": false, "review_reason": null
     },
     {
