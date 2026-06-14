@@ -46,6 +46,13 @@ class Settings:
     # the run-assembly route is not mounted unless explicitly enabled. Independent of
     # reviewer_api_optin so the run-assembly surface can be enabled/inert on its own.
     run_assembly_api_optin: bool = False
+    # OWNER-PACKET-2 activation: consume the reviewed manual adjudication artifact
+    # during ingest/resolution. DEFAULT OFF -- OFF is byte-identical (the frozen
+    # M8.27 census is unchanged); ON overlays the reviewed corrections/abstains onto
+    # the resolved truth table (review-drawable / source-verification / hard-abstain),
+    # carrying reviewed corrected facts only -- never invented geometry, never a
+    # forced placement. Env var: TRUELINE_MANUAL_ADJUDICATIONS.
+    manual_adjudications_optin: bool = False
     # Approved design-stroke PNG source for the reviewer API asset route.
     design_stroke_dir: Path = _DESIGN_STROKE_DIR
 
@@ -66,6 +73,7 @@ class Settings:
             symbol_conduit_lane_optin=os.getenv("TL2_SYMBOL_CONDUIT_LANE_OPTIN", "0") == "1",
             reviewer_api_optin=os.getenv("TL2_REVIEWER_API_OPTIN", "0") == "1",
             run_assembly_api_optin=os.getenv("TL2_RUN_ASSEMBLY_API_OPTIN", "0") == "1",
+            manual_adjudications_optin=os.getenv("TRUELINE_MANUAL_ADJUDICATIONS", "0") == "1",
             design_stroke_dir=Path(
                 os.getenv("TL2_DESIGN_STROKE_DIR", str(_DESIGN_STROKE_DIR))
             ),

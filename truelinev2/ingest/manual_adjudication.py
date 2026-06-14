@@ -221,3 +221,121 @@ def load_evidence_index(path: Path = DEFAULT_EVIDENCE_INDEX) -> Optional[dict]:
     if not p.is_file():
         return None
     return json.loads(p.read_text(encoding="utf-8"))
+
+
+# --- OWNER-PACKET-2 activation overlay (resolution layer; default-OFF) -----------
+#
+# Flag env var: TRUELINE_MANUAL_ADJUDICATIONS (Settings.manual_adjudications_optin).
+# This is a RESOLUTION overlay, not a placement/geometry step: with the flag ON it
+# reclassifies the 27 reviewed problem logs out of their false unresolved/owner-source
+# buckets, carrying ONLY the owner-reviewed corrected facts (station/print/sheet) and
+# the reviewed abstain decisions. It invents no geometry, re-runs no match engine, and
+# never forces a placement. The other (already-drawable) rows are returned untouched,
+# so the engine's frozen census is byte-identical when the flag is OFF.
+
+# Flag-on completion buckets -- disjoint from the engine's frozen bucket names.
+ADJ_BUCKET_REVIEW_DRAWABLE = "MANUAL_ADJUDICATED_REVIEW_DRAWABLE"
+ADJ_BUCKET_SOURCE_VERIFY = "MANUAL_ADJUDICATION_SOURCE_VERIFICATION"
+ADJ_BUCKET_ABSTAIN = "MANUAL_ADJUDICATION_ABSTAIN"
+
+
+def flag_on_disposition(rec: dict) -> dict:
+    """Map one reviewed adjudication record to its flag-ON resolution disposition.
+
+    Carries the reviewed corrected facts only (never invents geometry, never places).
+    Fail-closed: a log flagged ``must_remain_abstained`` is forced to ABSTAIN, and a
+    log that is not ``allowed_to_draw`` can never become review-drawable.
+    """
+    status = rec.get("status")
+    if rec.get("must_remain_abstained") or status == "ABSTAIN_NO_SAFE_SOURCE":
+        bucket, draw = ADJ_BUCKET_ABSTAIN, "abstain"
+    elif status == "NEEDS_SOURCE_VERIFICATION" or not rec.get("allowed_to_draw"):
+        bucket, draw = ADJ_BUCKET_SOURCE_VERIFY, "non_drawable"
+    else:  # RECOVERED / CORRECT_AS_DRAWN, allowed_to_draw
+        bucket, draw = ADJ_BUCKET_REVIEW_DRAWABLE, "review_drawable"
+    return {
+        "bucket": bucket,
+        "drawable_status": draw,           # review_drawable | non_drawable | abstain
+        "status": status,
+        "corrected_prints": list(rec.get("corrected_prints") or []) or None,
+        "corrected_start": rec.get("corrected_start"),
+        "corrected_end": rec.get("corrected_end"),
+        "corrected_sheets": list(rec.get("corrected_sheets") or []),
+        "correction_types": list(rec.get("correction_types") or []),
+        "shared_print_child": bool(rec.get("shared_print_child")),
+        "needs_review": bool(rec.get("needs_review")),
+        "needs_source_verification": bool(rec.get("needs_source_verification")),
+    }
+
+
+def apply_adjudications(baseline_rows: Dict[str, dict], *, enabled: bool,
+                        doc: Optional[dict] = None) -> Dict[str, dict]:
+    """Resolution-layer activation overlay over the M8.27 truth-table rows.
+
+    ``baseline_rows``: ``{bore_id: row}`` from the frozen final-engine truth table.
+
+    * ``enabled=False`` -> returns ``baseline_rows`` UNCHANGED (the same object); no
+      ``adjudication`` key is added to any row. Census is byte-identical.
+    * ``enabled=True``  -> returns a NEW dict. Each of the reviewed problem logs gains
+      an ``adjudication`` overlay + a new ``completion_bucket`` (its baseline bucket is
+      preserved under ``baseline_completion_bucket`` for movement proof). Rows not in
+      the artifact (the already-drawable set) are returned UNCHANGED.
+
+    Raises ``AdjudicationError`` if the artifact fails fail-closed validation.
+    """
+    if not enabled:
+        return baseline_rows
+    if doc is None:
+        doc = load_adjudication()
+    errs = validate_adjudication(doc)
+    if errs:
+        raise AdjudicationError("; ".join(errs[:5]))
+    adj = {r["log_id"]: r for r in doc["logs"]}
+    out: Dict[str, dict] = {}
+    for bid, row in baseline_rows.items():
+        if bid in adj:
+            disp = flag_on_disposition(adj[bid])
+            new = dict(row)
+            new["baseline_completion_bucket"] = row.get("completion_bucket")
+            new["adjudication"] = disp
+            new["completion_bucket"] = disp["bucket"]
+            new["can_draw_now"] = False           # review-drawable is never auto-placed
+            new["adjudicated"] = True
+            out[bid] = new
+        else:
+            out[bid] = row
+    return out
+
+
+def activation_summary(applied_rows: Dict[str, dict]) -> dict:
+    """Compute the flag-ON movement summary from ACTUAL overlay output (not asserted)."""
+    moved = []
+    buckets: Dict[str, int] = {}
+    review_drawable = source_verify = abstain = 0
+    for bid, row in applied_rows.items():
+        adj = row.get("adjudication")
+        bucket = row.get("completion_bucket")
+        buckets[bucket] = buckets.get(bucket, 0) + 1
+        if not adj:
+            continue
+        base = row.get("baseline_completion_bucket")
+        if bucket != base:
+            moved.append({"bore_id": bid, "from": base, "to": bucket,
+                          "drawable_status": adj["drawable_status"]})
+        if adj["drawable_status"] == "review_drawable":
+            review_drawable += 1
+        elif adj["drawable_status"] == "non_drawable":
+            source_verify += 1
+        elif adj["drawable_status"] == "abstain":
+            abstain += 1
+    engine_drawable = sum(1 for r in applied_rows.values()
+                          if not r.get("adjudication") and r.get("completion_bucket") == "DRAWABLE_REVIEW")
+    return {
+        "engine_drawable_unchanged": engine_drawable,
+        "manual_review_drawable": review_drawable,
+        "manual_source_verification": source_verify,
+        "manual_abstain": abstain,
+        "moved_count": len(moved),
+        "completion_bucket_counts": buckets,
+        "moved": sorted(moved, key=lambda m: m["bore_id"]),
+    }
