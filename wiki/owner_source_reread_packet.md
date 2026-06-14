@@ -1,5 +1,7 @@
 # Owner Source Re-Read Packet (OWNER-PACKET-1)
 
+> **⚠️ SUPERSEDED (2026-06-14) by [OWNER-PACKET-2](owner_packet_2_final_engine_truth.md).** This packet was authored before the handwritten-source reconciliation (RECON-1/2/2A/3) and contains provisional/mis-framed asks: log37/log38 are no longer "unparseable" (fixed by RECON-2A); log46's blocker is per-column print ambiguity, not the splice; and the shared-print children's decisive question is per-column print/sheet assignment. **Use OWNER-PACKET-2 as the authoritative owner-facing surface.** Preserved here for provenance only.
+
 **Branch:** `feat/truelinev2` · **Engine HEAD:** `5f077fe` · **Date:** 2026-06-13
 **Status:** owner-action packet · documentation only · no engine code · no deploy
 **Scope:** the Brenham Phase 5 corpus (58 production bore logs, `log2..log72`)
