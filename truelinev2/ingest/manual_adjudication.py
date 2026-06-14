@@ -307,6 +307,77 @@ def apply_adjudications(baseline_rows: Dict[str, dict], *, enabled: bool,
     return out
 
 
+# --- OWNER-PACKET-2 placement/redline readiness adapter (proof-only) -------------
+#
+# Answers, per manual-adjudicated review-drawable row, whether it carries the
+# coordinate/path geometry the EXISTING v2 redline renderer requires -- WITHOUT
+# inventing geometry. The canonical renderer (proof/run_redline_stroke_proof ->
+# extract.tick_path.solve_tick_path -> render.crop.render_redline_stroke) needs, for
+# a row to render a red stroke:
+#   (a) exactly ONE sheet (the tick-path solver works a single sheet at a time);
+#   (b) plan-station-coordinate endpoints that bracket the sheet's CLEAN route-ladder
+#       ticks (a reset-local 0+00 origin must first be frame-translated to plan
+#       coordinates);
+#   (c) a non-structure-owned endpoint pair (a structure-owned origin ABSTAINS as
+#       STRUCTURE_IDENTITY_BINDING_REQUIRED -- see log51/log7 in the redline proof); and
+#   (d) ultimately a POSITIONED stroke path (solve_tick_path ``stroke_points`` x,y).
+# The manual adjudication artifact carries corrected stations/prints/sheets only --
+# never positioned coordinates -- so this adapter classifies the gap precisely; it
+# synthesizes no coordinates, no nearest-neighbour endpoints, no length-only draw.
+
+PLACE_RENDERABLE = "RENDERABLE_PROOF_ARTIFACT"
+PLACE_NEEDS_GEOMETRY = "REVIEW_DRAWABLE_NEEDS_GEOMETRY_RESOLUTION"
+PLACE_BLOCKED_SOURCE_VERIFY = "BLOCKED_BY_SOURCE_VERIFICATION"
+PLACE_BLOCKED_ENGINE_LAW = "BLOCKED_BY_ENGINE_LAW"
+
+
+def placement_geometry_readiness(rec: dict) -> dict:
+    """Classify one adjudication record for v2-renderer placement readiness.
+
+    Returns ``{status, reasons, sheet_count, has_positioned_geometry}`` where status is
+    one of the four PLACE_* constants. Pure: reads only the reviewed artifact fields,
+    parses NO PDF, and invents NO geometry.
+    """
+    status = rec.get("status")
+    cts = list(rec.get("correction_types") or [])
+    sheets = list(rec.get("corrected_sheets") or [])
+    start = rec.get("corrected_start")
+    end = rec.get("corrected_end")
+
+    # source-verification / non-drawable (e.g. log44) is blocked, never rendered
+    if rec.get("must_remain_abstained"):
+        return {"status": PLACE_BLOCKED_ENGINE_LAW,  # not a review-drawable row
+                "reasons": ["owner-reviewed abstain (no safe source); never drawn"],
+                "sheet_count": len(sheets), "has_positioned_geometry": False}
+    if status == "NEEDS_SOURCE_VERIFICATION" or not rec.get("allowed_to_draw"):
+        return {"status": PLACE_BLOCKED_SOURCE_VERIFY,
+                "reasons": ["source-row exact start/end unverified -> non-drawable; "
+                            "must not be activated into placement until verified"],
+                "sheet_count": len(sheets), "has_positioned_geometry": False}
+
+    # review-drawable: assess the renderer's geometry prerequisites
+    reasons: List[str] = []
+    if len(sheets) == 0:
+        reasons.append("no recorded sheet -> cannot source positioned route-ladder ticks")
+    if len(sheets) > 1:
+        reasons.append(f"cross-sheet matchline path across sheets {sheets} -> the v2 "
+                       f"tick-path renderer solves ONE sheet; the plan-coordinate "
+                       f"matchline chain is unresolved in the reviewed artifact")
+    if "STATION_RESET_SEGMENT_BOUNDARY" in cts and start in ("0+00", None):
+        reasons.append("reset-local origin (STA reset = 0+00) -> the bore-local 0+00 "
+                       "must be frame-translated to plan-station coordinates before a "
+                       "tick-path can solve")
+    # the renderer ALWAYS needs a positioned stroke path; the artifact carries none
+    reasons.append("no positioned stroke path: render_redline_stroke requires "
+                   "solve_tick_path stroke_points (x,y) on the sheet's clean ladder; "
+                   "the artifact carries corrected stations/prints/sheets, not "
+                   "coordinate geometry")
+    return {"status": PLACE_NEEDS_GEOMETRY, "reasons": reasons,
+            "sheet_count": len(sheets), "has_positioned_geometry": False,
+            "corrected_start": start, "corrected_end": end, "corrected_sheets": sheets,
+            "corrected_prints": list(rec.get("corrected_prints") or []) or None}
+
+
 def activation_summary(applied_rows: Dict[str, dict]) -> dict:
     """Compute the flag-ON movement summary from ACTUAL overlay output (not asserted)."""
     moved = []
