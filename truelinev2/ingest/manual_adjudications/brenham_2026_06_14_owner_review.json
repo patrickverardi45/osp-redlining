@@ -50,6 +50,24 @@
       "corrected_prints": null, "corrected_start": "0+00", "corrected_end": "1+00", "corrected_sheets": [21], "span_ft": 100.0,
       "evidence_notes": "bore_log28 column 3. 0+00 -> 1+00 on print/sheet 21. Reset 'STA 3+69 = 0+00' at installer HH; direct callout 'STA 0+00 TO STA 1+00 DIR. BORE (100')'; ends at STA 1+00 FLOWER POT.",
       "evidence_refs": [],
+      "endpoint_anchors": {
+        "start": {
+          "station": "3+69",
+          "boundary_kind": "structure_terminus",
+          "structure_class": "installer_hh",
+          "structure_label": "INSTALLER HH",
+          "owner_note_text": "STA 3+69 = 0+00 at INSTALLER HH (reset/segment boundary; bore_log28 column-3 start); direct callout 'STA 0+00 TO STA 1+00 DIR. BORE (100')'",
+          "clarity": "CLEAR"
+        },
+        "end": {
+          "station": "1+00",
+          "boundary_kind": "structure_terminus",
+          "structure_class": "flower_pot",
+          "structure_label": "FLOWER POT",
+          "owner_note_text": "ends at STA 1+00 FLOWER POT (column-3 end of the 100' direct bore on sheet 21)",
+          "clarity": "CLEAR"
+        }
+      },
       "allowed_to_draw": true, "must_remain_abstained": false, "needs_review": false, "needs_source_verification": false, "review_reason": null
     },
     {

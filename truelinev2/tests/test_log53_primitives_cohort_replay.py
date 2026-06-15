@@ -160,15 +160,17 @@ def test_log53_is_source_bindable_now():
 
 
 def test_full_cohort_census_counts():
-    """The headline census is deterministic and frozen against the reviewed artifact."""
+    """The headline census is deterministic against the reviewed artifact. Intentional gated
+    delta: encoding log64's endpoint-anchor bridge moved it PARTIAL -> SOURCE_BINDABLE_NOW
+    (see test_log64_endpoint_anchor_bridge_slice), so SOURCE_BINDABLE_NOW=2 / PARTIAL=9."""
     rows = classify_cohort(load_adjudication())
     assert len(rows) == 27
     counts = {}
     for r in rows:
         counts[r["classification"]] = counts.get(r["classification"], 0) + 1
     assert counts == {
-        SOURCE_BINDABLE_NOW: 1,
-        PARTIAL_SOURCE_BINDABLE: 10,
+        SOURCE_BINDABLE_NOW: 2,          # log53 (rendered) + log64 (identity bridge encoded)
+        PARTIAL_SOURCE_BINDABLE: 9,
         REPRESENTATIVE_ROUTE_CANDIDATE: 9,
         HUMAN_REVIEW_REQUIRED: 3,
         STILL_BLOCKED: 4,
