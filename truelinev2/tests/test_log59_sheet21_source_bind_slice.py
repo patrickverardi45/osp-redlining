@@ -1,0 +1,83 @@
+"""OWNER-PACKET-2 log59 sheet-21 source bind -- offline tests.
+
+Locks the proof's pure laws + committed-data facts: the result/blocker enum (R_PARTIAL is a passing
+confirm, like log64); the slice consumes log59's encoded installer_hh @2+76 -> flower_pot @4+46
+identity; the start label is a PLAIN station '2+76' (non-reset, unlike log64's '3+69=0+00'); sheet 21
+is consumed as SOURCE-RECOVERED bridge evidence with corrected_sheets kept [] (not promoted); the
+span is 170'; log66/log36 stay un-anchored and log59 is not seam-eligible; and the proof reuses the
+proven corridor laws (orientation-aware leg_corridor_band + axis-agnostic corridor_is_continuous) and
+has no render lane. No PDF parse here (the proof runs the real sheet-21 bind at verification).
+"""
+from pathlib import Path
+
+from truelinev2.ingest.manual_adjudication import load_adjudication
+from truelinev2.proof.run_log59_sheet21_source_bind_slice import (
+    ALLOWED,
+    R_CONFIRMED,
+    R_PARTIAL,
+    SHEET,
+    SPAN_FT,
+)
+from truelinev2.seam import ELIGIBLE_EXEMPLARS, build_seam_payload
+from truelinev2.stations import parse_station
+import pytest
+
+DOC = load_adjudication()
+REC = {r["log_id"]: r for r in DOC["logs"]}
+L59 = REC["log59"]
+
+
+def test_result_enum_exact():
+    assert ALLOWED == {
+        "LOG59_SHEET21_SOURCE_BIND_CONFIRMED", "LOG59_PARTIAL_SOURCE_BIND_CONFIRMED",
+        "BLOCKED_LOG59_ANCHORS_MISSING", "BLOCKED_LOG59_START_BIND_FAILED",
+        "BLOCKED_LOG59_END_BIND_FAILED", "BLOCKED_LOG59_CONDUIT_SEED_NOT_FOUND",
+        "BLOCKED_LOG59_ROUTE_NOT_SOURCE_BACKED", "BLOCKED_LOG59_SPAN_ANNOTATION_MISMATCH",
+    }
+    assert {R_CONFIRMED, R_PARTIAL} <= ALLOWED          # both are passing confirms (log64 precedent)
+    assert SHEET == 21 and SPAN_FT == 170.0
+
+
+def test_slice_consumes_log59_encoded_identity():
+    s = L59["endpoint_anchors"]["start"]
+    e = L59["endpoint_anchors"]["end"]
+    assert (s["structure_class"], s["station"], s["boundary_kind"]) == ("installer_hh", "2+76", "structure_terminus")
+    assert (e["structure_class"], e["station"], e["boundary_kind"]) == ("flower_pot", "4+46", "structure_terminus")
+
+
+def test_start_label_is_a_plain_station_not_a_reset_token():
+    # log59's start is NOT a reset (no STATION_RESET_SEGMENT_BOUNDARY) -> the bind label is the bare
+    # station '2+76', not log64's reset token '<station>=0+00'
+    assert "STATION_RESET_SEGMENT_BOUNDARY" not in (L59.get("correction_types") or [])
+    assert L59["endpoint_anchors"]["start"]["station"] == "2+76"
+
+
+def test_sheet21_is_bridge_evidence_corrected_sheets_not_promoted():
+    assert L59["corrected_sheets"] == []                 # NOT promoted to owner-confirmed production truth
+    for side in ("start", "end"):
+        note = L59["endpoint_anchors"][side]["owner_note_text"].upper()
+        assert "21" in note and "SOURCE-RECOVERED" in note
+
+
+def test_station_span_is_170():
+    s, e = L59["endpoint_anchors"]["start"]["station"], L59["endpoint_anchors"]["end"]["station"]
+    assert abs((parse_station(e) - parse_station(s)) - 170.0) <= 0.5
+
+
+def test_log66_log36_untouched_and_log59_not_seam_eligible():
+    assert not REC["log66"].get("endpoint_anchors")
+    assert not REC["log36"].get("endpoint_anchors")
+    assert tuple(ELIGIBLE_EXEMPLARS) == ("log53", "log64", "log71")
+    with pytest.raises(ValueError):
+        build_seam_payload("log59", L59)               # bridged + source-bound, but NOT seam-promoted
+
+
+def test_proof_reuses_proven_corridor_laws_and_has_no_render_lane():
+    src = (Path(__file__).resolve().parent.parent / "proof" / "run_log59_sheet21_source_bind_slice.py").read_text(encoding="utf-8")
+    # reuse, not reinvent: orientation-aware band (log71) + axis-agnostic continuity (log64)
+    assert "from truelinev2.proof.run_log71_two_leg_source_bind_slice import leg_corridor_band" in src
+    assert "corridor_is_continuous" in src
+    # no render lane
+    assert "from truelinev2.render" not in src
+    assert "import truelinev2.render" not in src
+    assert "render_redline_stroke" not in src
