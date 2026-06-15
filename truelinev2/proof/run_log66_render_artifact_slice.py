@@ -31,10 +31,10 @@ evidence colors are never touched; only TrueLine's own drawn REVIEW stroke is go
 red. Source-backed REVIEW/proof artifact, NOT a broad renderer and NOT wired into product/UI/API. PNG
 + JSON are written under the gitignored data/outputs path and are NOT committed.
 
-Sheet 10 is OWNER-CONFIRMED (2026-06-15): log66's corrected_sheets == [10]. log66 is source-bound AND
-now rendered, but it is STILL held back from the seam -- the seam contract eligible set stays
-log53/log64/log71/log59 and build_seam_payload refuses log66 (seam promotion is the separately-
-authorized next step). Census stays frozen (no artifact change).
+Sheet 10 is OWNER-CONFIRMED (2026-06-15): log66's corrected_sheets == [10]. log66 is source-bound,
+rendered, and PROMOTED into the seam contract eligible set (log53/log64/log71/log59/log66;
+build_seam_payload builds it; the contract/adapter/end-to-end driver all carry log66). Census stays
+frozen (no artifact change).
 
 Run (repo root):
   $env:PYTHONPATH="."; .\venv\Scripts\python.exe -m truelinev2.proof.run_log66_render_artifact_slice
@@ -93,7 +93,7 @@ BASE_CONDUIT = set(BRENHAM_CONDUIT_LAYERS.values())   # BORE - VACANT PIPE / BOR
 FROZEN_BUCKETS = {"DRAWABLE_REVIEW": 31, "HUMAN_ADJUSTABLE_REVIEW": 6,
                   "OUT_OF_CLASS": 1, "PICK_CARD_REVIEW": 17, "SOURCE_OR_KMZ_REQUIRED": 3}
 ABSTAIN_4 = ("log5", "log31", "log38", "log43")
-SEAM_ELIGIBLE = ("log53", "log64", "log71", "log59")   # log66 NOT promoted into the seam this slice
+SEAM_ELIGIBLE = ("log53", "log64", "log71", "log59", "log66")   # log66 since promoted into the seam
 # proven sheet-10 binds (extractor-derived in the source-bind slice; the render is gated to match these)
 PROVEN = {"start": (861.3, 354.19), "end": (941.04, 353.28)}
 MATCH_TOL = 4.0
@@ -291,10 +291,10 @@ def _emit(gates, result, ev, artifacts, rec) -> int:
                   list(REDLINE_STROKE_RGB)))
     # scope / safety gates (always run): no promotion, no eligibility expansion, near-misses untouched
     l66 = rec.get("log66") or {}
-    gates.append(("G10 log66 corrected_sheets == [10]; source-bound + rendered but NOT seam-promoted (ELIGIBLE_EXEMPLARS == 4; seam REFUSES log66)",
+    gates.append(("G10 log66 corrected_sheets == [10]; source-bound + rendered + seam-PROMOTED (ELIGIBLE_EXEMPLARS == 5; seam builds log66)",
                   l66.get("corrected_sheets") == [10]
                   and tuple(ELIGIBLE_EXEMPLARS) == SEAM_ELIGIBLE
-                  and _refuses_seam("log66", rec), None))
+                  and not _refuses_seam("log66", rec), None))
     gates.append(("G11 log36 un-anchored + blank; log59 seam-promoted (builds); log53/log64/log71 bridges intact",
                   not rec["log36"].get("endpoint_anchors") and rec["log36"].get("corrected_sheets") == []
                   and not _refuses_seam("log59", rec)
@@ -325,21 +325,20 @@ def _emit(gates, result, ev, artifacts, rec) -> int:
         "span_evidence": ("HH-HH=55' annotation + owner span_ft=55; both ends reset to 0+00 in DIFFERENT "
                           "frames, so NO same-frame station-span arithmetic was performed"),
         "sheet_10_provenance": ("SOURCE-RECOVERED by the near-miss scout, now OWNER-CONFIRMED 2026-06-15; "
-                                "corrected_sheets == [10]; log66 source-bound + rendered but NOT promoted "
-                                "to seam eligibility (held back)"),
+                                "corrected_sheets == [10]; log66 source-bound + rendered + PROMOTED "
+                                "into the seam (5th exemplar)"),
         "sheet_local_only": True, "log66_only": True, "single_sheet": True,
         "source_corridor_layers": sorted(BASE_CONDUIT),
         "max_dash_gap_not_loosened": MAX_DASH_GAP == 35.0,
         "coords_are_extractor_derived": True, "no_invented_coordinates": True,
         "no_screenshot_pixels": True, "no_cross_sheet": True, "no_fake_straight_corridor": True,
         "no_station_subtraction": True,
-        "corrected_sheets_owner_confirmed": True, "seam_promoted": False,
-        "seam_eligible_unchanged": list(ELIGIBLE_EXEMPLARS),
+        "corrected_sheets_owner_confirmed": True, "seam_promoted": True,
+        "seam_eligible": list(ELIGIBLE_EXEMPLARS),
         "broad_renderer": False, "product_wired": False,
-        "next_slice": ("log66 seam promotion is the separately-authorized next step (add log66 to the seam "
-                       "contract/adapter/driver, the controlled path log59 walked); the seam eligible set "
-                       "stays log53/log64/log71/log59 until then. (log36 is the remaining un-anchored "
-                       "near-miss for a later bridge.)"),
+        "next_slice": ("log66 seam promotion is COMPLETE (log66 is the 5th seam exemplar in the "
+                       "contract/adapter/end-to-end driver, the controlled path log59 walked); next growth "
+                       "is the next endpoint-anchor bridge (log36, the remaining un-anchored near-miss)."),
         "evidence": ev,
         "gates": [{"name": n, "pass": bool(x), "detail": d} for n, x, d in gates],
     }

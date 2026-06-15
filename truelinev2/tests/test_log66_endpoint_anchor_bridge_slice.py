@@ -5,8 +5,8 @@ Locks the bridge's pure facts: log66's endpoint_anchors are schema-valid and ide
 installer-to-nextlink variant); the HH-HH=55' annotation + owner span_ft corroborate (both ends reset
 to 0+00 in different frames, so NO cross-frame station arithmetic); sheet 10 was SOURCE-RECOVERED and is
 now OWNER-CONFIRMED (recorded in corrected_sheets=[10]); the cohort classifier moves log66 to
-SOURCE_BINDABLE_NOW (the explicit log66-limited delta); log36 stays un-anchored; and log66 is still
-NOT promoted to the seam contract eligible set (it stays log53/log64/log71/log59). No PDF parse here.
+SOURCE_BINDABLE_NOW (the explicit log66-limited delta); log36 stays un-anchored; and log66 is now
+PROMOTED into the seam contract eligible set (log53/log64/log71/log59/log66). No PDF parse here.
 """
 from pathlib import Path
 
@@ -79,11 +79,11 @@ def test_cohort_delta_log66_source_bindable_now_only():
     assert not REC["log36"].get("endpoint_anchors")
 
 
-def test_log66_not_promoted_to_seam_eligibility():
-    assert tuple(ELIGIBLE_EXEMPLARS) == ("log53", "log64", "log71", "log59")   # seam set unchanged
-    for lid in ("log66", "log36"):
-        with pytest.raises(ValueError):
-            build_seam_payload(lid, REC[lid])
+def test_log66_promoted_to_seam_eligibility_log36_not():
+    assert tuple(ELIGIBLE_EXEMPLARS) == ("log53", "log64", "log71", "log59", "log66")
+    build_seam_payload("log66", L66)                 # promoted -> builds
+    with pytest.raises(ValueError):
+        build_seam_payload("log36", REC["log36"])    # log36 still un-anchored -> refused
 
 
 def test_bridge_proof_has_no_render_lane():

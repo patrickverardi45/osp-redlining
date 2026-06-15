@@ -162,11 +162,11 @@ def test_log53_is_source_bindable_now():
 def test_full_cohort_census_counts():
     """The headline census is deterministic against the reviewed artifact. Intentional gated
     deltas as endpoint-anchor bridges are encoded: log64 then log71 moved PARTIAL ->
-    SOURCE_BINDABLE_NOW, then log59 (source-recovered sheet 21, since owner-confirmed + seam-promoted)
-    and log66 (source-recovered sheet 10 bridge, held back from the seam) each moved
+    SOURCE_BINDABLE_NOW, then log59 (owner-confirmed sheet 21, since seam-promoted) and log66
+    (owner-confirmed sheet 10, since seam-promoted) each moved
     REPRESENTATIVE_ROUTE_CANDIDATE -> SOURCE_BINDABLE_NOW -- so SOURCE_BINDABLE_NOW=5
-    (log53, log64, log71, log59, log66) / REPRESENTATIVE_ROUTE_CANDIDATE=7. (log66 is source-bindable in
-    the COHORT classifier; it is NOT in the seam contract eligible set, which stays at 4.)"""
+    (log53, log64, log71, log59, log66) / REPRESENTATIVE_ROUTE_CANDIDATE=7. (log66 is now in BOTH the
+    cohort classifier and the seam contract eligible set, which is 5.)"""
     rows = classify_cohort(load_adjudication())
     assert len(rows) == 27
     counts = {}

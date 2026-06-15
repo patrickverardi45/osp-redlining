@@ -156,8 +156,9 @@ def main() -> int:
              for lid in ELIGIBLE_EXEMPLARS)
     gates.append(("G2 driver consumes canonical adapter dispatch (modules == adapter registry)", g2, None))
 
-    gates.append(("G3 driver runs EXACTLY log53/log64/log71/log59",
-                  tuple(plan) == ELIGIBLE_EXEMPLARS == ("log53", "log64", "log71", "log59"), sorted(plan)))
+    gates.append(("G3 driver runs EXACTLY log53/log64/log71/log59/log66",
+                  tuple(plan) == ELIGIBLE_EXEMPLARS == ("log53", "log64", "log71", "log59", "log66"),
+                  sorted(plan)))
 
     refusals = {lid: _refuses(lid, rec) for lid in REFUSAL_PROBES}
     refusals["log999_unknown"] = _refuses("log999", rec)
@@ -175,6 +176,8 @@ def main() -> int:
                   "render": "truelinev2.proof.run_log71_render_artifact_slice"},
         "log59": {"src": {"truelinev2.proof.run_log59_sheet21_source_bind_slice"},
                   "render": "truelinev2.proof.run_log59_render_artifact_slice"},
+        "log66": {"src": {"truelinev2.proof.run_log66_sheet10_source_bind_slice"},
+                  "render": "truelinev2.proof.run_log66_render_artifact_slice"},
     }
     g5 = all(set(plan[lid]["source_bind_modules"]) == expected[lid]["src"] for lid in ELIGIBLE_EXEMPLARS)
     g6 = all(plan[lid]["render_module"] == expected[lid]["render"]

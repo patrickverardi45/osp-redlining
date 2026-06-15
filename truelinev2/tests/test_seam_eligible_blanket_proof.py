@@ -1,9 +1,9 @@
 """OWNER-PACKET-2 seam-eligible blanket proof -- offline tests.
 
 Locks the blanket's PURE plan (the heavy proof invocation is verified by running the proof itself, not
-here): the result enum; the blanket covers EXACTLY the four seam-eligible exemplars (log53/log64/log71/
-log59) and no more; each eligible log carries its seam shape, render mode(s), and the source-bind +
-render proof families (log59 maps to its OWN family + modules); every NON-eligible cohort log is refused
+here): the result enum; the blanket covers EXACTLY the five seam-eligible exemplars (log53/log64/log71/
+log59/log66) and no more; each eligible log carries its seam shape, render mode(s), and the source-bind +
+render proof families (log59 + log66 each map to their OWN family + modules); every NON-eligible cohort log is refused
 by BOTH the contract and the adapter with a named reason; the blanket is the eligible set ONLY -- NOT a
 claim that all production logs can draw (the rest stay refused/review); and the proof is contained (no
 product/render/runtime imports). No PDF parse / no subprocess here -- build_blanket_plan is pure.
@@ -35,20 +35,22 @@ def test_result_enum():
     assert R_PASS == "SEAM_ELIGIBLE_BLANKET_PASS"
 
 
-def test_blanket_covers_exactly_the_four_eligible():
-    assert EXPECTED_ELIGIBLE == ("log53", "log64", "log71", "log59")
+def test_blanket_covers_exactly_the_five_eligible():
+    assert EXPECTED_ELIGIBLE == ("log53", "log64", "log71", "log59", "log66")
     assert tuple(ELIGIBLE_EXEMPLARS) == EXPECTED_ELIGIBLE
-    assert tuple(e["bore_id"] for e in ELIG) == EXPECTED_ELIGIBLE   # exactly the 4, in order
+    assert tuple(e["bore_id"] for e in ELIG) == EXPECTED_ELIGIBLE   # exactly the 5, in order
 
 
 def test_each_eligible_has_shape_render_mode_and_proof_families():
     by_id = {e["bore_id"]: e for e in ELIG}
     assert by_id["log64"]["seam_shape"] == "single_sheet_structure_to_structure"
     assert by_id["log59"]["seam_shape"] == "single_sheet_structure_to_structure"
+    assert by_id["log66"]["seam_shape"] == "single_sheet_structure_to_structure"
     assert by_id["log53"]["seam_shape"] == "two_sheet_matchline_endpoint"
     assert by_id["log71"]["seam_shape"] == "two_sheet_structure_to_structure_route_context"
-    # log59 is single-sheet but ordered_chain_path (discontinuous corridor); log64 is continuous
+    # log59 + log66 are single-sheet but ordered_chain_path (discontinuous corridor); log64 is continuous
     assert by_id["log59"]["render_mode"] == ["ordered_chain_path"]
+    assert by_id["log66"]["render_mode"] == ["ordered_chain_path"]
     assert by_id["log64"]["render_mode"] == ["continuous_corridor"]
     assert by_id["log71"]["render_mode"] == ["continuous_corridor", "ordered_chain_path"]
     for e in ELIG:
@@ -81,7 +83,7 @@ def test_blanket_is_eligible_only_not_all_production():
     assert eligible_ids == set(ELIGIBLE_EXEMPLARS)
     assert eligible_ids.isdisjoint(refused_ids)
     assert eligible_ids | refused_ids == {r["log_id"] for r in DOC["logs"]}
-    assert len(ELIG) == 4 and len(REF) == len(DOC["logs"]) - 4
+    assert len(ELIG) == 5 and len(REF) == len(DOC["logs"]) - 5
 
 
 def test_output_dir_is_gitignored_data_outputs():

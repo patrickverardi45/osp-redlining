@@ -312,14 +312,14 @@ def _emit(gates, result, ev, artifacts, rec) -> int:
                   list(REDLINE_STROKE_RGB)))
     # scope / safety gates (always run): no promotion, no eligibility expansion, near-misses untouched
     l59 = rec.get("log59") or {}
-    gates.append(("G10 log59 corrected_sheets == [21]; seam-PROMOTED (ELIGIBLE_EXEMPLARS == 4; seam builds log59)",
+    gates.append(("G10 log59 corrected_sheets == [21]; seam-PROMOTED (ELIGIBLE_EXEMPLARS == 5 incl log66; seam builds log59)",
                   l59.get("corrected_sheets") == [21]
-                  and tuple(ELIGIBLE_EXEMPLARS) == ("log53", "log64", "log71", "log59")
+                  and tuple(ELIGIBLE_EXEMPLARS) == ("log53", "log64", "log71", "log59", "log66")
                   and not _refuses_seam("log59", rec), None))
-    gates.append(("G11 log36 un-anchored + blank; log66 source-bound but NOT seam-promoted (anchors, corrected_sheets [10], seam refuses)",
+    gates.append(("G11 log36 un-anchored + blank; log66 PROMOTED (anchors, corrected_sheets [10], seam builds log66)",
                   not rec["log36"].get("endpoint_anchors") and rec["log36"].get("corrected_sheets") == []
                   and rec["log66"].get("endpoint_anchors") and rec["log66"].get("corrected_sheets") == [10]
-                  and _refuses_seam("log66", rec), None))
+                  and not _refuses_seam("log66", rec), None))
     gates.append(("G12 result in allowed enum", result in ALLOWED, result))
     created = result == R_CREATED
     all_pass = all(x for _, x, _ in gates) and created

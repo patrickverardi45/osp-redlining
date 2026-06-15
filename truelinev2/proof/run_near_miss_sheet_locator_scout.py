@@ -2,9 +2,9 @@ r"""OWNER-PACKET-2 -- near-miss SHEET-LOCATOR scout (PROOF/REPORT ONLY; no encod
 
 The next-eligibility scout reported NO_SAFE_NEXT_ELIGIBILITY_CANDIDATE with three near-misses blocked
 by a missing recorded sheet: log59 (installer_hh -> flower_pot), log66 (installer_hh <-> nextlink_hh),
-log36 (installer_hh <-> installer_hh). log59 (sheet 21, owner-confirmed + promoted) and log66 (sheet 10,
-source-recovered bridge) have since been bridged -> both SOURCE_BINDABLE_NOW, so this scout inspects the
-REMAINING near-miss (log36) and RECOVERS its source sheet from committed/source evidence via a CONTAINED,
+log36 (installer_hh <-> installer_hh). log59 (sheet 21) and log66 (sheet 10) have since been
+owner-confirmed + PROMOTED into the seam -> both SOURCE_BINDABLE_NOW + seam exemplars, so this scout
+inspects the REMAINING near-miss (log36) and RECOVERS its source sheet from committed/source evidence via a CONTAINED,
 read-only PDF probe -- it encodes NO endpoint_anchors, promotes NO log, changes NO seam contract/adapter/
 driver, draws nothing, and writes no PNG. (Current recommendation: log36 -> sheet 17.)
 
@@ -64,9 +64,9 @@ TRUTH = _REPO_ROOT / "data" / "outputs" / "final_engine_truth_table" / \
 FROZEN_BUCKETS = {"DRAWABLE_REVIEW": 31, "HUMAN_ADJUSTABLE_REVIEW": 6,
                   "OUT_OF_CLASS": 1, "PICK_CARD_REVIEW": 17, "SOURCE_OR_KMZ_REQUIRED": 3}
 ABSTAIN_4 = ("log5", "log31", "log38", "log43")
-# log59 + log66 have been bridged (their slices: log59 sheet 21 owner-confirmed + promoted; log66 sheet
-# 10 source-recovered bridge) -> both are SOURCE_BINDABLE_NOW and no longer NO_RECORDED_SHEET near-misses.
-# The scout inspects the REMAINING near-miss (log36); the bridged recoveries live in their bridge slices.
+# log59 + log66 have been owner-confirmed + PROMOTED (their slices: log59 sheet 21; log66 sheet 10) ->
+# both are SOURCE_BINDABLE_NOW + seam exemplars and no longer NO_RECORDED_SHEET near-misses. The scout
+# inspects the REMAINING near-miss (log36); the promoted recoveries live in their own slices.
 BRIDGED_OUT = ("log59", "log66")
 NEAR_MISSES = ("log36",)
 SPAN_TOL = 0.5
@@ -194,12 +194,12 @@ def main() -> int:
     gates.append(("G0 engine census frozen (OFF 31/6/1/17/3, ON 22/1/4, log44+abstains held)",
                   _census_frozen(doc), None))
 
-    # G1 seam eligible == cohort SOURCE_BINDABLE_NOW (4): log59 owner-confirmed + promoted
+    # G1 seam eligible == cohort SOURCE_BINDABLE_NOW (5): log59 + log66 owner-confirmed + promoted
     source_bindable_now = sorted(c["log_id"] for c in (classify_record(r) for r in doc["logs"])
                                  if c["classification"] == "SOURCE_BINDABLE_NOW")
-    gates.append(("G1 seam eligible == 4 (log53/64/71/59); cohort SOURCE_BINDABLE_NOW == 5 (+log66 bridged, not promoted)",
+    gates.append(("G1 seam eligible == cohort SOURCE_BINDABLE_NOW == 5 (log53/59/64/66/71; log66 promoted)",
                   source_bindable_now == ["log53", "log59", "log64", "log66", "log71"]
-                  and tuple(ELIGIBLE_EXEMPLARS) == ("log53", "log64", "log71", "log59"), source_bindable_now))
+                  and tuple(ELIGIBLE_EXEMPLARS) == ("log53", "log64", "log71", "log59", "log66"), source_bindable_now))
 
     # G2 inspects the REMAINING NO_RECORDED_SHEET near-miss (log59 + log66 already bridged out)
     canonical_near = sorted(
@@ -210,16 +210,16 @@ def main() -> int:
     gates.append(("G2 scout inspects the remaining NO_RECORDED_SHEET near-miss (log36; log59+log66 bridged out)",
                   canonical_near == sorted(NEAR_MISSES) == ["log36"] and bridged_ok, canonical_near))
 
-    # G3 no promotion HERE: the seam contract refuses log36 + the bridged-not-promoted log66; log59 is
-    # seam-eligible (owner-confirmed + promoted in its own slice -- this scout promotes nothing).
-    gates.append(("G3 scout promotes no log (seam refuses log36 + bridged-not-promoted log66; log59 promoted; eligible == 4)",
-                  all(_refuses(l, rec) for l in (*NEAR_MISSES, "log66"))
-                  and not _refuses("log59", rec)
-                  and len(ELIGIBLE_EXEMPLARS) == 4, None))
+    # G3 no promotion HERE: the seam contract refuses log36 (the remaining un-anchored near-miss); log59
+    # + log66 are seam-eligible (promoted in their own slices -- this scout promotes nothing).
+    gates.append(("G3 scout promotes no log (seam refuses log36; log59 + log66 promoted; eligible == 5)",
+                  all(_refuses(l, rec) for l in NEAR_MISSES)
+                  and not _refuses("log59", rec) and not _refuses("log66", rec)
+                  and len(ELIGIBLE_EXEMPLARS) == 5, None))
 
-    # G4 the inspected near-miss (log36) is still un-anchored + blank sheet; the bridged-out logs
-    # (log59 owner-confirmed sheet 21; log66 source-recovered sheet 10) carry endpoint_anchors.
-    gates.append(("G4 inspected near-miss (log36) still un-anchored + blank sheet; bridged-out logs (log59/log66) anchored",
+    # G4 the inspected near-miss (log36) is still un-anchored + blank sheet; the promoted logs
+    # (log59 owner-confirmed sheet 21; log66 owner-confirmed sheet 10) carry endpoint_anchors.
+    gates.append(("G4 inspected near-miss (log36) still un-anchored + blank sheet; promoted logs (log59/log66) anchored",
                   all(not rec[l].get("endpoint_anchors") and not rec[l].get("corrected_sheets")
                       for l in NEAR_MISSES)
                   and all(rec[l].get("endpoint_anchors") for l in BRIDGED_OUT), None))

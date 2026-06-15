@@ -1,10 +1,10 @@
 """OWNER-PACKET-2 near-miss sheet-locator scout -- offline tests.
 
 Locks the scout's pure logic (the heavy read-only PDF recovery is verified by running the proof):
-the result enum; the near-miss set is exactly the canonical NO_RECORDED_SHEET trio (log59/log66/
-log36); the same-frame span<->footage consistency check; both endpoints of every near-miss are
-owner-named modeled classes; the safety ranking puts log59 (the log64 shape) first; the eligible set
-is unchanged and the seam contract refuses every near-miss; no endpoint_anchors are encoded and the
+the result enum; the near-miss set is exactly the remaining canonical NO_RECORDED_SHEET log (log36,
+after log59/log66 promoted out); the same-frame span<->footage consistency check; both endpoints of every near-miss are
+owner-named modeled classes; the safety ranking puts log36 (the remaining near-miss) first; the eligible
+set matches the cohort (5) and the seam contract refuses the remaining near-miss; no endpoint_anchors are encoded and the
 owner-review sheet stays blank; the reject-reason helper always names a category; and the scout
 reuses the canonical classifier rather than defining a new one. No PDF parse here.
 """
@@ -77,9 +77,9 @@ def test_safety_rank_is_log36_after_log59_and_log66_bridged():
 def test_eligible_set_matches_cohort_and_seam_refuses_near_misses():
     source_bindable_now = sorted(c["log_id"] for c in (classify_record(r) for r in DOC["logs"])
                                  if c["classification"] == "SOURCE_BINDABLE_NOW")
-    # log66 bridged into the cohort (not promoted): cohort SOURCE_BINDABLE_NOW (5) > seam eligible (4)
+    # log66 promoted: cohort SOURCE_BINDABLE_NOW (5) == seam eligible (5)
     assert source_bindable_now == ["log53", "log59", "log64", "log66", "log71"]
-    assert tuple(ELIGIBLE_EXEMPLARS) == ("log53", "log64", "log71", "log59")
+    assert tuple(ELIGIBLE_EXEMPLARS) == ("log53", "log64", "log71", "log59", "log66")
     for lid in NEAR_MISSES:
         try:
             build_seam_payload(lid, REC[lid])

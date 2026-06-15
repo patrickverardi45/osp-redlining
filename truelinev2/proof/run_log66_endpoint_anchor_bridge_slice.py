@@ -14,17 +14,16 @@ DIFFERENT reset frames, so there is NO same-frame station-span arithmetic -- the
 by the printed 'HH - HH = 55'' annotation + the owner span_ft, not by subtracting plan stations.
 
 Sheet 10 was SOURCE-RECOVERED bridge evidence and has since been OWNER-CONFIRMED (2026-06-15): it is now
-recorded in corrected_sheets=[10] and cited in the anchor owner_note_text. log66 has also been
-source-bound on sheet 10 (run_log66_sheet10_source_bind_slice), but it is STILL held back from the seam
-contract eligible set in this arc (the log59-bridge precedent: bridge -> owner-confirm + source-bind ->
-[render -> promote], the last two separately authorized). This bridge slice still only validates the
-identity encoding.
+recorded in corrected_sheets=[10] and cited in the anchor owner_note_text. log66 has since been
+source-bound + rendered on sheet 10 and PROMOTED into the seam contract eligible set (the log59
+precedent: bridge -> owner-confirm + source-bind + render + promote, all complete). This bridge slice
+still only validates the identity encoding.
 
 Proves: anchors present + schema-valid + owner/source-backed + modeled + machine-consumable; the cohort
 classifier moves log66 REPRESENTATIVE_ROUTE_CANDIDATE (NO_RECORDED_SHEET) -> SOURCE_BINDABLE_NOW (the
 explicit, deterministic, log66-LIMITED cohort delta); the frozen ENGINE census is unchanged (identity-
 only addition; flag-OFF 31/6/1/17/3, flag-ON 22/1/4); log36 stays un-anchored; the seam
-ELIGIBLE_EXEMPLARS stays log53/log64/log71/log59 (log66 refused by build_seam_payload); no renderer.
+ELIGIBLE_EXEMPLARS now includes log66 (build_seam_payload builds it; log36 refused); no renderer.
 
 Proof-only; the JSON report is written under the gitignored data/outputs path.
 Run (repo root):
@@ -67,7 +66,7 @@ EXPECTED_ANCHOR_LOGS = ("log53", "log59", "log64", "log66", "log71")
 NOT_ANCHORED_NEAR_MISSES = ("log36",)   # this slice encodes log66 ONLY; log36 stays the un-anchored near-miss
 SHEET = 10
 SPAN_FT = 55.0
-SEAM_ELIGIBLE = ("log53", "log64", "log71", "log59")   # log66 NOT promoted into the seam this slice
+SEAM_ELIGIBLE = ("log53", "log64", "log71", "log59", "log66")   # log66 since promoted into the seam
 _HH_55 = re.compile(r"HH\s*[-_]?\s*HH\s*=\s*55(?!\d)", re.I)
 _COORD_KEYS = {"x", "y", "z", "xc", "yc", "x0", "y0", "x1", "y1", "cx", "cy", "xy",
                "lat", "lon", "lng", "coord", "coords", "coordinate", "coordinates",
@@ -175,10 +174,10 @@ def main() -> int:
                   and l59s.get("structure_class") == "installer_hh" and no_other_anchors,
                   sorted(with_anchors)))
 
-    # NOT silently promoted: log66 stays OUT of the seam contract eligible set; build_seam_payload refuses it
-    gates.append(("G13 log66 NOT promoted to seam eligibility (ELIGIBLE_EXEMPLARS == log53/64/71/59; seam refuses log66)",
+    # log66 has since been PROMOTED into the seam contract eligible set; build_seam_payload now builds it
+    gates.append(("G13 log66 PROMOTED to seam eligibility (ELIGIBLE_EXEMPLARS == log53/64/71/59/66; seam builds log66; log36 refused)",
                   tuple(ELIGIBLE_EXEMPLARS) == SEAM_ELIGIBLE
-                  and _refuses_seam("log66", rec)
+                  and not _refuses_seam("log66", rec)
                   and all(_refuses_seam(l, rec) for l in NOT_ANCHORED_NEAR_MISSES), None))
 
     if TRUTH.is_file():
@@ -223,8 +222,8 @@ def _emit(gates, result, l66, cls) -> int:
         "shape": "single_sheet_structure_to_structure (log64 family; installer-to-nextlink variant)",
         "anchor_bridge": {"start": ea.get("start"), "end": ea.get("end")},
         "sheet_10_provenance": ("SOURCE-RECOVERED by the near-miss sheet-locator scout; since OWNER-CONFIRMED "
-                                "(2026-06-15) -> recorded in corrected_sheets=[10]; log66 source-bound but "
-                                "NOT promoted to seam eligibility (held back)"),
+                                "(2026-06-15) -> recorded in corrected_sheets=[10]; log66 source-bound, "
+                                "rendered, and PROMOTED into the seam (5th exemplar)"),
         "span_evidence": ("HH-HH=55' annotation + owner span_ft=55; both ends reset to 0+00 in DIFFERENT "
                           "frames, so NO same-frame station-span arithmetic was performed"),
         "cohort_delta": {"log66": {"from": REPRESENTATIVE_ROUTE_CANDIDATE, "to": cls},
@@ -233,10 +232,10 @@ def _emit(gates, result, l66, cls) -> int:
         "log36_anchored": False,
         "no_pdf_parse": True, "no_render": True, "no_invented_coordinates": True,
         "no_source_bind": True, "no_seam_promotion": True, "engine_census_frozen": True,
-        "next_slice": ("log66 source-bind is COMPLETE (run_log66_sheet10_source_bind_slice: installer HH "
-                       "0+55 -> nextlink HH 45+33 on sheet 10, owner-confirmed); render + seam promotion "
-                       "follow only when separately authorized. (log36 is the remaining un-anchored "
-                       "near-miss for a later bridge.)"),
+        "next_slice": ("log66 source-bind + render + seam promotion are COMPLETE (log66 is the 5th seam "
+                       "exemplar via run_log66_sheet10_source_bind_slice + run_log66_render_artifact_slice); "
+                       "next growth is the next endpoint-anchor bridge (log36, the remaining un-anchored "
+                       "near-miss)."),
         "gates": [{"name": n, "pass": bool(x), "detail": d} for n, x, d in gates],
     }
     OUT_DIR.mkdir(parents=True, exist_ok=True)

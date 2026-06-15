@@ -33,16 +33,17 @@ def _d(log_id):
     return build_dispatch(log_id, REC[log_id])
 
 
-def test_proof_family_registry_is_frozen_to_four():
-    assert tuple(PROOF_FAMILY) == ELIGIBLE_EXEMPLARS == ("log53", "log64", "log71", "log59")
+def test_proof_family_registry_is_frozen_to_five():
+    assert tuple(PROOF_FAMILY) == ELIGIBLE_EXEMPLARS == ("log53", "log64", "log71", "log59", "log66")
     assert {f.value for f in ProofFamily} == {
         "log53_two_sheet_matchline_endpoint",
         "log64_single_sheet_structure_to_structure",
         "log71_two_sheet_structure_to_structure_route_context",
-        "log59_single_sheet_structure_to_structure"}
+        "log59_single_sheet_structure_to_structure",
+        "log66_single_sheet_structure_to_structure"}
 
 
-def test_builds_dispatch_for_exactly_four():
+def test_builds_dispatch_for_exactly_five():
     dispatches = eligible_dispatches(DOC)
     assert tuple(dispatches) == ELIGIBLE_EXEMPLARS
     assert all(isinstance(d, ProofDispatch) for d in dispatches.values())
@@ -50,6 +51,7 @@ def test_builds_dispatch_for_exactly_four():
     assert len(_d("log53").legs) == 2
     assert len(_d("log71").legs) == 2
     assert len(_d("log59").legs) == 1
+    assert len(_d("log66").legs) == 1
 
 
 def test_refuses_non_eligible_no_silent_promotion():
@@ -103,6 +105,7 @@ def test_each_leg_maps_to_correct_family_and_existing_proofs():
         "log64": "log64_single_sheet_structure_to_structure",
         "log71": "log71_two_sheet_structure_to_structure_route_context",
         "log59": "log59_single_sheet_structure_to_structure",
+        "log66": "log66_single_sheet_structure_to_structure",
     }
     bind_suffixes = ("_source_bind_slice", "_bindability_slice", "_boundary_slice")
     for lid in ELIGIBLE_EXEMPLARS:

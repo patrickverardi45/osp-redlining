@@ -25,9 +25,9 @@ What it proves on sheet 10 (single sheet; no cross-sheet solving):
      annotation + span_ft, never a station subtraction.
 
 Sheet 10 was SOURCE-RECOVERED bridge evidence (the near-miss sheet-locator scout) and is now
-OWNER-CONFIRMED -- log66's corrected_sheets == [10]. It is NOT seam-promoted: the seam contract
-eligible set stays log53/log64/log71/log59 and build_seam_payload refuses log66 (source-bound but
-held back; render + seam promotion are separately authorized). The direct corridor's strict continuity
+OWNER-CONFIRMED -- log66's corrected_sheets == [10]. log66 has since been rendered and PROMOTED into
+the seam contract eligible set (log53/log64/log71/log59/log66; build_seam_payload now builds it). The
+direct corridor's strict continuity
 is REPORTED as render-mode (continuous_corridor vs ordered_chain_path); the source-backed bind is the
 connected chain reaching both termini, exactly as log59/log64/log71 proved.
 
@@ -86,7 +86,7 @@ BASE_CONDUIT = set(BRENHAM_CONDUIT_LAYERS.values())   # BORE - VACANT PIPE / BOR
 FROZEN_BUCKETS = {"DRAWABLE_REVIEW": 31, "HUMAN_ADJUSTABLE_REVIEW": 6,
                   "OUT_OF_CLASS": 1, "PICK_CARD_REVIEW": 17, "SOURCE_OR_KMZ_REQUIRED": 3}
 ABSTAIN_4 = ("log5", "log31", "log38", "log43")
-SEAM_ELIGIBLE = ("log53", "log64", "log71", "log59")   # log66 NOT promoted into the seam this slice
+SEAM_ELIGIBLE = ("log53", "log64", "log71", "log59", "log66")   # log66 since promoted into the seam
 _HH_55 = re.compile(r"HH\s*[-_]?\s*HH\s*=\s*55(?!\d)", re.I)
 
 R_CONFIRMED = "LOG66_SHEET10_SOURCE_BIND_CONFIRMED"
@@ -270,9 +270,9 @@ def main() -> int:
 
 def _emit(gates, result, ev, rec) -> int:
     # ---- scope / safety gates (always run) -------------------------------------
-    gates.append(("G9 log36 un-anchored; log66 source-bound but NOT seam-promoted (seam refuses); log59 PROMOTED (builds)",
+    gates.append(("G9 log36 un-anchored; log66 PROMOTED into the seam (seam builds log66; ELIGIBLE includes it); log59 PROMOTED",
                   not rec["log36"].get("endpoint_anchors")
-                  and rec["log66"].get("endpoint_anchors") and _refuses_seam("log66", rec)
+                  and rec["log66"].get("endpoint_anchors") and not _refuses_seam("log66", rec)
                   and tuple(ELIGIBLE_EXEMPLARS) == SEAM_ELIGIBLE
                   and not _refuses_seam("log59", rec), None))
     pngs = sorted(p.name for p in OUT_DIR.glob("*.png"))
@@ -303,19 +303,18 @@ def _emit(gates, result, ev, rec) -> int:
                      "log64 single-sheet shape (installer-to-nextlink variant)?"),
         "source_bind_payload": payload,
         "sheet_10_provenance": ("SOURCE-RECOVERED by the near-miss scout, now OWNER-CONFIRMED; "
-                                "corrected_sheets == [10]; log66 source-bound but HELD BACK from the "
-                                "seam (NOT seam-promoted)"),
+                                "corrected_sheets == [10]; log66 source-bound, rendered, and PROMOTED "
+                                "into the seam (5th exemplar)"),
         "span_evidence": ("HH-HH=55' annotation + owner span_ft=55; both ends reset to 0+00 in DIFFERENT "
                           "frames, so NO same-frame station-span arithmetic was performed"),
         "render_ready": confirmed,
         "no_render": True, "no_invented_coordinates": True, "no_screenshot_pixels": True,
         "no_cross_sheet": True, "no_seam_promotion": True, "corrected_sheets_owner_confirmed": True,
         "coords_are_extractor_derived": True,
-        "seam_eligible_unchanged": list(ELIGIBLE_EXEMPLARS),
-        "next_slice": ("log66 RENDER artifact + seam promotion are the separately-authorized next steps "
-                       f"(render via the proven {ev.get('render_mode') or 'ordered_chain_path'}); the seam "
-                       "eligible set stays log53/log64/log71/log59 until then. (log36 is the remaining "
-                       "un-anchored near-miss for a later bridge.)"),
+        "seam_eligible": list(ELIGIBLE_EXEMPLARS),
+        "next_slice": ("log66 RENDER + seam promotion are COMPLETE (log66 is the 5th seam exemplar via "
+                       "run_log66_render_artifact_slice + the contract/adapter/driver); next growth is the "
+                       "next endpoint-anchor bridge (log36, the remaining un-anchored near-miss)."),
         "evidence": ev,
         "gates": [{"name": n, "pass": bool(x), "detail": d} for n, x, d in gates],
     }

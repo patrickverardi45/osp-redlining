@@ -1,12 +1,13 @@
 r"""Coordinate-free exemplar -> pipeline SEAM contract (PURE; no PDF / render / product imports).
 
 Formalizes the normalized payload the exemplar-pipeline seam scout (444beb5) proposed into a typed,
-reusable internal schema for the FOUR eligible exemplars only:
+reusable internal schema for the FIVE eligible exemplars only:
 
   log53 -- two_sheet_matchline_endpoint                       (STA 24+11 modeled AS a matchline endpoint)
   log64 -- single_sheet_structure_to_structure
   log71 -- two_sheet_structure_to_structure_route_context     (STA 5+45 is route context, NOT an endpoint)
   log59 -- single_sheet_structure_to_structure                (ordered_chain_path: direct corridor discontinuous)
+  log66 -- single_sheet_structure_to_structure                (installer_hh -> nextlink_hh; ordered_chain_path)
 
 The payload carries endpoint IDENTITY + BOUNDARY semantics + route MODE + source-evidence DESCRIPTORS.
 It is deliberately COORDINATE-FREE: it never carries a position, and never reconciles two sheet
@@ -16,8 +17,8 @@ frames -- the deterministic engine still computes every coordinate from PDF prim
 This module does NOT wire into product/runtime, render anything, batch-place anything, aggregate
 parent/child runs, resolve a representative route, or solve a cross-sheet frame. Eligibility never
 expands silently here: ``build_seam_payload`` REFUSES any log that is not one of the proven eligible
-exemplars with committed endpoint_anchors. log59 was added only after its owner-confirmed sheet 21
-(corrected_sheets=[21]) + source-bind + render proofs all passed (no silent promotion).
+exemplars with committed endpoint_anchors. log59 then log66 were each added only after their
+owner-confirmed sheet (corrected_sheets) + source-bind + render proofs all passed (no silent promotion).
 """
 from __future__ import annotations
 
@@ -43,7 +44,7 @@ class SeamShape(str, Enum):
     TWO_SHEET_STRUCTURE_TO_STRUCTURE_ROUTE_CONTEXT = "two_sheet_structure_to_structure_route_context"
 
 
-ELIGIBLE_EXEMPLARS: Tuple[str, ...] = ("log53", "log64", "log71", "log59")
+ELIGIBLE_EXEMPLARS: Tuple[str, ...] = ("log53", "log64", "log71", "log59", "log66")
 
 # Coordinate-style keys the seam payload must NEVER carry (it is identity/contract only).
 _COORD_KEYS = frozenset({
@@ -114,7 +115,8 @@ class SeamPayload:
 # render_mode is what each committed source-bind + render proof established: a leg whose direct
 # corridor is discontinuous (direct_corridor_continuous == False) -> ordered_chain_path (log71 sheet
 # 24 bends; log59 sheet 21's direct corridor has a 35.64 pt gap > MAX_DASH_GAP); every other proven
-# leg is a continuous corridor. log59 shares log64's SINGLE_SHEET shape but its OWN ordered route mode.
+# leg is a continuous corridor. log59 + log66 share log64's SINGLE_SHEET shape but their OWN ordered
+# route mode (log66 is installer_hh -> nextlink_hh; sheet 10's direct corridor has a 36.36 pt gap).
 _AnchorRef = Tuple[str, ...]
 EXEMPLAR_TOPOLOGY: Dict[str, dict] = {
     "log64": {"shape": SeamShape.SINGLE_SHEET_STRUCTURE_TO_STRUCTURE, "sheets": (21,),
@@ -127,6 +129,8 @@ EXEMPLAR_TOPOLOGY: Dict[str, dict] = {
                        (23, ("matchline", "5+45"), ("anchor", "end"), RenderMode.CONTINUOUS_CORRIDOR))},
     "log59": {"shape": SeamShape.SINGLE_SHEET_STRUCTURE_TO_STRUCTURE, "sheets": (21,),
               "legs": ((21, ("anchor", "start"), ("anchor", "end"), RenderMode.ORDERED_CHAIN_PATH),)},
+    "log66": {"shape": SeamShape.SINGLE_SHEET_STRUCTURE_TO_STRUCTURE, "sheets": (10,),
+              "legs": ((10, ("anchor", "start"), ("anchor", "end"), RenderMode.ORDERED_CHAIN_PATH),)},
 }
 
 

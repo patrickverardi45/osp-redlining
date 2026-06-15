@@ -26,12 +26,13 @@ REC = {r["log_id"]: r for r in DOC["logs"]}
 PLAN = build_drive_plan(DOC)
 
 
-def test_drive_plan_for_exactly_four():
-    assert tuple(PLAN) == ELIGIBLE_EXEMPLARS == ("log53", "log64", "log71", "log59")
+def test_drive_plan_for_exactly_five():
+    assert tuple(PLAN) == ELIGIBLE_EXEMPLARS == ("log53", "log64", "log71", "log59", "log66")
     assert PLAN["log53"]["shape"] == "two_sheet_matchline_endpoint"
     assert PLAN["log64"]["shape"] == "single_sheet_structure_to_structure"
     assert PLAN["log71"]["shape"] == "two_sheet_structure_to_structure_route_context"
     assert PLAN["log59"]["shape"] == "single_sheet_structure_to_structure"
+    assert PLAN["log66"]["shape"] == "single_sheet_structure_to_structure"
 
 
 def test_drive_one_refuses_non_eligible():
@@ -60,6 +61,8 @@ def test_correct_source_bind_and_render_families():
     assert PLAN["log71"]["render_module"] == "truelinev2.proof.run_log71_render_artifact_slice"
     assert set(PLAN["log59"]["source_bind_modules"]) == {"truelinev2.proof.run_log59_sheet21_source_bind_slice"}
     assert PLAN["log59"]["render_module"] == "truelinev2.proof.run_log59_render_artifact_slice"
+    assert set(PLAN["log66"]["source_bind_modules"]) == {"truelinev2.proof.run_log66_sheet10_source_bind_slice"}
+    assert PLAN["log66"]["render_module"] == "truelinev2.proof.run_log66_render_artifact_slice"
     for lid in ELIGIBLE_EXEMPLARS:
         assert PLAN[lid]["render_module"].endswith("_render_artifact_slice")
 

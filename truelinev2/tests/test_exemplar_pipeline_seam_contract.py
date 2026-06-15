@@ -40,18 +40,20 @@ def test_enum_values():
     assert {s.value for s in SeamShape} == {
         "single_sheet_structure_to_structure", "two_sheet_matchline_endpoint",
         "two_sheet_structure_to_structure_route_context"}
-    assert ELIGIBLE_EXEMPLARS == ("log53", "log64", "log71", "log59")
+    assert ELIGIBLE_EXEMPLARS == ("log53", "log64", "log71", "log59", "log66")
 
 
-def test_builds_exactly_four_eligible_exemplars():
+def test_builds_exactly_five_eligible_exemplars():
     payloads = eligible_seam_payloads(DOC)
     assert tuple(payloads) == ELIGIBLE_EXEMPLARS
     assert _p("log64").shape == SeamShape.SINGLE_SHEET_STRUCTURE_TO_STRUCTURE and len(_p("log64").legs) == 1
     assert _p("log53").shape == SeamShape.TWO_SHEET_MATCHLINE_ENDPOINT and len(_p("log53").legs) == 2
     assert _p("log71").shape == SeamShape.TWO_SHEET_STRUCTURE_TO_STRUCTURE_ROUTE_CONTEXT and len(_p("log71").legs) == 2
-    # log59 shares log64's single-sheet shape but renders ordered_chain_path (discontinuous corridor)
+    # log59 + log66 share log64's single-sheet shape but render ordered_chain_path (discontinuous corridor)
     assert _p("log59").shape == SeamShape.SINGLE_SHEET_STRUCTURE_TO_STRUCTURE and len(_p("log59").legs) == 1
     assert _p("log59").legs[0].render_mode == RenderMode.ORDERED_CHAIN_PATH
+    assert _p("log66").shape == SeamShape.SINGLE_SHEET_STRUCTURE_TO_STRUCTURE and len(_p("log66").legs) == 1
+    assert _p("log66").legs[0].render_mode == RenderMode.ORDERED_CHAIN_PATH
 
 
 def test_refuses_non_eligible_logs_no_silent_promotion():

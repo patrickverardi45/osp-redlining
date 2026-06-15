@@ -5,7 +5,7 @@ real drawn conduit dash endpoint (no invented coordinate), and every route EDGE 
 drawn dash or a <= MAX_DASH_GAP gap hop -- so no edge fabricates a straight jump across log66's
 36.36 pt direct-corridor gap. Also locks the result enum, the canonical red color, that MAX_DASH_GAP
 is NOT loosened, log66-only output naming, that the slice consumes log66's encoded identity AND that
-sheet 10 is owner-confirmed (corrected_sheets == [10]) while log66 stays HELD BACK from the seam, and
+sheet 10 is owner-confirmed (corrected_sheets == [10]) and log66 is PROMOTED into the seam, and
 that the proof is a contained artifact (no product/API/match wiring). The PNG render itself is run by
 the proof against the real PDF; no artifact is asserted/committed here.
 """
@@ -78,7 +78,7 @@ def test_output_dir_is_gitignored_data_outputs():
     assert "/data/outputs/log66_render_artifact" in p
 
 
-def test_slice_consumes_log66_identity_and_owner_confirmed_held_back():
+def test_slice_consumes_log66_identity_owner_confirmed_and_promoted():
     doc = load_adjudication()
     rec = {r["log_id"]: r for r in doc["logs"]}
     l66 = rec["log66"]
@@ -89,10 +89,9 @@ def test_slice_consumes_log66_identity_and_owner_confirmed_held_back():
     assert "nextlink_hh" not in BRENHAM_STRUCTURE_LAYERS
     # sheet 10 is owner-confirmed -> recorded in corrected_sheets
     assert list(l66["corrected_sheets"]) == [10]
-    # but log66 is still HELD BACK from the seam (eligible set unchanged; seam refuses it)
-    assert tuple(ELIGIBLE_EXEMPLARS) == ("log53", "log64", "log71", "log59")
-    with pytest.raises(ValueError):
-        build_seam_payload("log66", l66)
+    # log66 is now PROMOTED into the seam (eligible set includes it; build_seam_payload builds it)
+    assert tuple(ELIGIBLE_EXEMPLARS) == ("log53", "log64", "log71", "log59", "log66")
+    build_seam_payload("log66", l66)
 
 
 def test_span_is_owner_evidence_not_cross_frame_math():

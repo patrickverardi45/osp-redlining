@@ -254,10 +254,10 @@ def main() -> int:
 
 def _emit(gates, result, ev, rec) -> int:
     # ---- scope / safety gates (always run) -------------------------------------
-    gates.append(("G9 log36 un-anchored; log66 bridged-not-promoted (seam refuses); log59 PROMOTED (builds)",
+    gates.append(("G9 log36 un-anchored; log66 PROMOTED (seam builds); log59 PROMOTED (builds)",
                   not rec["log36"].get("endpoint_anchors")
-                  and rec["log66"].get("endpoint_anchors") and _refuses_seam("log66", rec)
-                  and tuple(ELIGIBLE_EXEMPLARS) == ("log53", "log64", "log71", "log59")
+                  and rec["log66"].get("endpoint_anchors") and not _refuses_seam("log66", rec)
+                  and tuple(ELIGIBLE_EXEMPLARS) == ("log53", "log64", "log71", "log59", "log66")
                   and not _refuses_seam("log59", rec), None))
     pngs = sorted(p.name for p in OUT_DIR.glob("*.png"))
     gates.append(("G10 zero PNG / zero stroke (no render lane)", len(pngs) == 0, {"pngs": pngs}))

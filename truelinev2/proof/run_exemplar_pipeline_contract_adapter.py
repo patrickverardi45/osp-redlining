@@ -53,6 +53,7 @@ EXEMPLAR_FAMILY = {
     "log64": "log64_single_sheet_structure_to_structure",
     "log71": "log71_two_sheet_structure_to_structure_route_context",
     "log59": "log59_single_sheet_structure_to_structure",
+    "log66": "log66_single_sheet_structure_to_structure",
 }
 
 R_PASS = "EXEMPLAR_PIPELINE_CONTRACT_ADAPTER_PASS"
@@ -125,8 +126,8 @@ def main() -> int:
     gates.append(("G1 adapter consumes canonical seam contract (no duplicate topology; eligibility+shape sourced from it)",
                   sourced_from_contract, None))
 
-    gates.append(("G2 adapter accepts EXACTLY log53/log64/log71/log59",
-                  tuple(dispatches) == ELIGIBLE_EXEMPLARS == ("log53", "log64", "log71", "log59"),
+    gates.append(("G2 adapter accepts EXACTLY log53/log64/log71/log59/log66",
+                  tuple(dispatches) == ELIGIBLE_EXEMPLARS == ("log53", "log64", "log71", "log59", "log66"),
                   sorted(dispatches)))
 
     refusals = {lid: _refuses(lid, rec) for lid in REFUSAL_PROBES}

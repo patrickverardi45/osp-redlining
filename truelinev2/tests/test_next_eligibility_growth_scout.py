@@ -1,8 +1,8 @@
 """OWNER-PACKET-2 next eligibility-growth scout -- offline tests.
 
 Locks the scout's pure logic: it classifies exactly the 19 pending no-anchor logs (reusing the
-CANONICAL cohort classifier, not a new one); the existing eligible set stays exactly log53/log64/
-log71 and the seam contract refuses every pending log (no promotion); the honest verdict is
+CANONICAL cohort classifier, not a new one); the existing eligible set is exactly log53/log64/log71/
+log59/log66 and the seam contract refuses every pending log (no promotion); the honest verdict is
 NO_SAFE_NEXT_ELIGIBILITY_CANDIDATE because every recorded-sheet modeled-terminus log is multi-sheet
 (cross-sheet) and every clean single-area structure-to-structure log with named endpoints has no
 recorded sheet; and -- the key NEGATIVE CONTROL -- is_eligibility_ready returns True for a synthetic
@@ -61,9 +61,9 @@ def test_no_safe_candidate_over_real_data():
 def test_eligible_set_matches_cohort_and_seam_refuses_pending():
     source_bindable_now = sorted(c["log_id"] for c in (classify_record(r) for r in DOC["logs"])
                                  if c["classification"] == "SOURCE_BINDABLE_NOW")
-    # log66 bridged into the cohort (not promoted): cohort SOURCE_BINDABLE_NOW (5) > seam eligible (4)
+    # log66 promoted: cohort SOURCE_BINDABLE_NOW (5) == seam eligible (5)
     assert source_bindable_now == ["log53", "log59", "log64", "log66", "log71"]
-    assert tuple(ELIGIBLE_EXEMPLARS) == ("log53", "log64", "log71", "log59")
+    assert tuple(ELIGIBLE_EXEMPLARS) == ("log53", "log64", "log71", "log59", "log66")
     # the seam contract still refuses every pending no-anchor log -> no further promotion here
     for r in PENDING:
         try:

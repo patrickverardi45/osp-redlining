@@ -16,8 +16,8 @@ later, separately-authorized slice). This bridge slice still only validates the 
 Proves: anchors present + schema-valid + owner/source-backed + modeled + machine-consumable; the
 cohort classifier moves log59 REPRESENTATIVE_ROUTE_CANDIDATE (NO_RECORDED_SHEET) -> SOURCE_BINDABLE_NOW
 (the explicit, deterministic, log59-LIMITED cohort delta); the frozen ENGINE census is unchanged
-(identity-only addition; flag-OFF 31/6/1/17/3, flag-ON 22/1/4); no log66/log36 anchors; the seam
-ELIGIBLE_EXEMPLARS stays log53/log64/log71 (log59 refused by build_seam_payload); no renderer.
+(identity-only addition; flag-OFF 31/6/1/17/3, flag-ON 22/1/4); log36 stays un-anchored (log66 since
+promoted); the seam ELIGIBLE_EXEMPLARS now includes log59 + log66 (build_seam_payload builds them); no renderer.
 
 Proof-only; the JSON report is written under the gitignored data/outputs path.
 Run (repo root):
@@ -157,8 +157,8 @@ def main() -> int:
                   sorted(with_anchors)))
 
     # NOT silently promoted: log59 stays OUT of the seam contract eligible set; build_seam_payload refuses it
-    gates.append(("G13 log59 PROMOTED to seam eligibility (ELIGIBLE_EXEMPLARS == 4; seam builds log59; log66/log36 refused)",
-                  tuple(ELIGIBLE_EXEMPLARS) == ("log53", "log64", "log71", "log59")
+    gates.append(("G13 log59 PROMOTED to seam eligibility (ELIGIBLE_EXEMPLARS == 5 incl log66; seam builds log59; log36 refused)",
+                  tuple(ELIGIBLE_EXEMPLARS) == ("log53", "log64", "log71", "log59", "log66")
                   and not _refuses_seam("log59", rec)
                   and all(_refuses_seam(l, rec) for l in NOT_ANCHORED_NEAR_MISSES), None))
 

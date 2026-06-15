@@ -2,9 +2,9 @@ r"""OWNER-PACKET-2 -- seam-eligible BLANKET proof (PROOF ONLY; not product/runti
 
 The first "blanket lane" proof: it shows the v2 seam can blanket-process EVERY currently seam-eligible
 log -- and ONLY currently eligible logs -- in one contained pass, WITHOUT becoming product/runtime
-wiring. The blanket covers EXACTLY the four proven exemplars:
+wiring. The blanket covers EXACTLY the five proven exemplars:
 
-  log53  log64  log71  log59
+  log53  log64  log71  log59  log66
 
 For each eligible log it builds the canonical coordinate-free seam payload (truelinev2/seam/contract.py)
 and the proof-dispatch (truelinev2/seam/proof_adapter.py), then invokes that log's named source-bind +
@@ -44,7 +44,7 @@ TRUTH = _REPO_ROOT / "data" / "outputs" / "final_engine_truth_table" / \
 FROZEN_BUCKETS = {"DRAWABLE_REVIEW": 31, "HUMAN_ADJUSTABLE_REVIEW": 6,
                   "OUT_OF_CLASS": 1, "PICK_CARD_REVIEW": 17, "SOURCE_OR_KMZ_REQUIRED": 3}
 ABSTAIN_4 = ("log5", "log31", "log38", "log43")
-EXPECTED_ELIGIBLE = ("log53", "log64", "log71", "log59")
+EXPECTED_ELIGIBLE = ("log53", "log64", "log71", "log59", "log66")
 UNKNOWN_PROBE = "log999_unknown"
 
 R_PASS = "SEAM_ELIGIBLE_BLANKET_PASS"
@@ -82,7 +82,8 @@ def _module_exists(modname: str) -> bool:
 
 # the two NAMED "held back" stages for an anchored cohort log that is SOURCE_BINDABLE_NOW yet refused
 # by the seam: anchored-only (corrected_sheets still []) vs owner-confirmed + source-bound
-# (corrected_sheets set, e.g. log66's sheet 10). BOTH stay refused until render + seam promotion.
+# (corrected_sheets set). BOTH stay refused until render + seam promotion. (Currently empty: log66, the
+# most recent such log, completed render + was promoted into the seam.)
 HELD_BACK_CATEGORIES = ("anchored_not_yet_seam_promoted", "source_bound_not_yet_seam_promoted")
 
 
@@ -173,7 +174,7 @@ def main() -> int:
     gates.append(("G0 engine census frozen (OFF 31/6/1/17/3, ON 22/1/4, log44+abstains held)",
                   _census_frozen(doc), None))
 
-    gates.append(("G1 seam eligible set is EXACTLY log53/log64/log71/log59",
+    gates.append(("G1 seam eligible set is EXACTLY log53/log64/log71/log59/log66",
                   tuple(ELIGIBLE_EXEMPLARS) == EXPECTED_ELIGIBLE, list(ELIGIBLE_EXEMPLARS)))
 
     plan = build_blanket_plan(doc)
@@ -222,9 +223,9 @@ def main() -> int:
                   {"non_eligible": len(refused), "all_named": non_elig_refused, "unknown_refused": unknown_refused}))
 
     # G8: ONLY the seam-eligible logs process -- contract-eligible == the frozen ELIGIBLE_EXEMPLARS (no
-    #     dataset-wide auto-promotion). Anchored logs that are NOT seam-promoted (cohort SOURCE_BINDABLE_NOW
-    #     but held back, e.g. log66 -- owner-confirmed + source-bound on sheet 10) are classifier-eligible
-    #     yet correctly REFUSED by the contract -- each is named a held-back category.
+    #     dataset-wide auto-promotion). Any anchored log that is NOT seam-promoted (cohort SOURCE_BINDABLE_NOW
+    #     but held back) would be classifier-eligible yet correctly REFUSED by the contract -- each named a
+    #     held-back category. (Currently none: log66 was promoted, so the held-back set is empty.)
     contract_eligible = {r["log_id"] for r in doc["logs"] if not _refuses_payload(r["log_id"], rec)}
     classifier_eligible = {r["log_id"] for r in doc["logs"] if seam_classify(r)[0]}
     held_back = {r["bore_id"] for r in refused if set(r["categories"]) & set(HELD_BACK_CATEGORIES)}

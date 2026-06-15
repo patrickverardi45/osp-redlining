@@ -6,8 +6,8 @@ identity; the start label is a RESET token '0+55=0+00' (the log64 reset-start, u
 '2+76'); the end is a nextlink_hh that has NO BRENHAM_STRUCTURE_LAYERS entry (it binds ONLY via the
 callout locator); sheet 10 was SOURCE-RECOVERED and is now OWNER-CONFIRMED -> corrected_sheets == [10];
 the span is 55' from the owner annotation + span_ft (both ends reset to 0+00 in DIFFERENT frames, so a
-station subtraction is WRONG); log36 stays un-anchored, log66 is source-bound but HELD BACK from the
-seam (seam refuses it), log59 stays seam-promoted; and the proof reuses the proven corridor laws and
+station subtraction is WRONG); log36 stays un-anchored, log66 is PROMOTED into the seam (build_seam_payload
+builds it), log59 stays seam-promoted; and the proof reuses the proven corridor laws and
 has no render lane. No PDF parse here (the proof runs the real sheet-10 bind at verification).
 """
 from pathlib import Path
@@ -78,13 +78,14 @@ def test_span_is_55_from_owner_evidence_not_cross_frame_math():
     assert abs(parse_station(e) - parse_station(s)) != 55.0   # the naive cross-frame subtraction is WRONG
 
 
-def test_log36_un_anchored_log66_source_bound_held_back_log59_promoted():
+def test_log36_un_anchored_log66_promoted_log59_promoted():
     assert not REC["log36"].get("endpoint_anchors")
     assert REC["log66"].get("endpoint_anchors") and REC["log66"]["corrected_sheets"] == [10]
-    assert tuple(ELIGIBLE_EXEMPLARS) == ("log53", "log64", "log71", "log59")
-    build_seam_payload("log59", REC["log59"])            # owner-confirmed + source-bound + promoted -> builds
+    assert tuple(ELIGIBLE_EXEMPLARS) == ("log53", "log64", "log71", "log59", "log66")
+    build_seam_payload("log59", REC["log59"])            # promoted -> builds
+    build_seam_payload("log66", L66)                     # owner-confirmed + source-bound + rendered + promoted -> builds
     with pytest.raises(ValueError):
-        build_seam_payload("log66", L66)                 # source-bound but HELD BACK from the seam
+        build_seam_payload("log36", REC["log36"])        # log36 still un-anchored -> refused
 
 
 def test_proof_reuses_proven_corridor_laws_and_has_no_render_lane():
