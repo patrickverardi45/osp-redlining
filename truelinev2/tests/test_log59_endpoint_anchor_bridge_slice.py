@@ -2,10 +2,10 @@
 
 Locks the bridge's pure facts: log59's endpoint_anchors are schema-valid and identity-only
 (installer_hh @ 2+76 -> flower_pot @ 4+46, both structure_terminus, no matchline = the log64 shape);
-the station span is 170'; sheet 21 is cited as SOURCE-RECOVERED bridge evidence (NOT product
-promotion) and is kept OUT of corrected_sheets; the cohort classifier moves log59 to
-SOURCE_BINDABLE_NOW (the explicit log59-limited delta); log66/log36 stay un-anchored; and log59 is
-NOT promoted to the seam contract eligible set. No PDF parse here.
+the station span is 170'; sheet 21 is cited as SOURCE-RECOVERED + OWNER-CONFIRMED and recorded in
+corrected_sheets=[21]; the cohort classifier moves log59 to SOURCE_BINDABLE_NOW (the explicit
+log59-limited delta); log66/log36 stay un-anchored; and log59 is PROMOTED into the seam contract
+eligible set. No PDF parse here.
 """
 from pathlib import Path
 
@@ -56,14 +56,13 @@ def test_station_span_is_170():
     assert abs(span - 170.0) <= 0.5
 
 
-def test_sheet_21_is_source_recovered_bridge_evidence_not_promoted():
+def test_sheet_21_source_recovered_then_owner_confirmed_and_promoted():
     ea = L59["endpoint_anchors"]
     for side in ("start", "end"):
         note = ea[side]["owner_note_text"].upper()
-        assert "21" in note and "SOURCE-RECOVERED" in note
-    assert "NOT PRODUCT PROMOTION" in ea["start"]["owner_note_text"].upper()
-    # sheet 21 is kept OUT of the owner-confirmed production field (bridge evidence only)
-    assert L59["corrected_sheets"] == []
+        assert "21" in note and "SOURCE-RECOVERED" in note and "OWNER-CONFIRMED" in note
+    # sheet 21 is now owner-confirmed -> recorded in corrected_sheets
+    assert L59["corrected_sheets"] == [21]
 
 
 def test_anchors_carry_no_coordinate_fields():
@@ -79,9 +78,10 @@ def test_cohort_delta_log59_source_bindable_now_only():
     assert not REC["log36"].get("endpoint_anchors")
 
 
-def test_log59_not_promoted_to_seam_eligibility():
-    assert tuple(ELIGIBLE_EXEMPLARS) == ("log53", "log64", "log71")   # seam set unchanged
-    for lid in ("log59", "log66", "log36"):
+def test_log59_promoted_to_seam_eligibility_log66_log36_not():
+    assert tuple(ELIGIBLE_EXEMPLARS) == ("log53", "log64", "log71", "log59")
+    build_seam_payload("log59", REC["log59"])            # owner-confirmed + promoted -> builds
+    for lid in ("log66", "log36"):
         with pytest.raises(ValueError):
             build_seam_payload(lid, REC[lid])
 

@@ -126,8 +126,9 @@ def main() -> int:
 
     # ---- build the three payloads via the module --------------------------------
     payloads = eligible_seam_payloads(doc)
-    gates.append(("G1 module builds payloads for EXACTLY log53/log64/log71",
-                  tuple(payloads) == ELIGIBLE_EXEMPLARS == ("log53", "log64", "log71"), sorted(payloads)))
+    gates.append(("G1 module builds payloads for EXACTLY log53/log64/log71/log59",
+                  tuple(payloads) == ELIGIBLE_EXEMPLARS == ("log53", "log64", "log71", "log59"),
+                  sorted(payloads)))
 
     # G2: no other log is silently promoted -- the module REFUSES non-eligible logs
     refusals = {lid: _refuses(lid, rec) for lid in REFUSAL_PROBES}
@@ -141,13 +142,15 @@ def main() -> int:
                   all(is_coordinate_free(d) for d in dicts.values()), None))
 
     # G4: endpoint anchors preserved
-    p64, p71, p53 = payloads["log64"], payloads["log71"], payloads["log53"]
+    p64, p71, p53, p59 = payloads["log64"], payloads["log71"], payloads["log53"], payloads["log59"]
     anchors_ok = (
         p64.legs[0].start_anchor.structure_class == "installer_hh" and p64.legs[0].start_anchor.station == "3+69"
         and p64.legs[0].end_anchor.structure_class == "flower_pot" and p64.legs[0].end_anchor.station == "1+00"
         and p71.legs[0].start_anchor.structure_class == "nextlink_hh" and p71.legs[0].start_anchor.station == "7+50"
         and p71.legs[-1].end_anchor.structure_class == "flower_pot" and p71.legs[-1].end_anchor.station == "6+95"
-        and p53.legs[0].start_anchor.structure_class == "nextlink_hh" and p53.legs[0].start_anchor.station == "21+63")
+        and p53.legs[0].start_anchor.structure_class == "nextlink_hh" and p53.legs[0].start_anchor.station == "21+63"
+        and p59.legs[0].start_anchor.structure_class == "installer_hh" and p59.legs[0].start_anchor.station == "2+76"
+        and p59.legs[0].end_anchor.structure_class == "flower_pot" and p59.legs[0].end_anchor.station == "4+46")
     gates.append(("G4 endpoint anchors preserved (identity + station from committed anchors)", anchors_ok, None))
 
     # G5: matchline endpoint (log53) vs matchline route-context (log71), derived from anchors
@@ -164,10 +167,11 @@ def main() -> int:
     s24 = next(l for l in p71.legs if l.sheet == 24)
     all_modes = {l.render_mode for p in payloads.values() for l in p.legs}
     bend_ok = (s24.render_mode == RenderMode.ORDERED_CHAIN_PATH
+               and p59.legs[0].render_mode == RenderMode.ORDERED_CHAIN_PATH   # log59 single-sheet, discontinuous direct corridor
                and all_modes <= {RenderMode.CONTINUOUS_CORRIDOR, RenderMode.ORDERED_CHAIN_PATH}
                and not any("straight" in m.value or "diagonal" in m.value for m in all_modes))
-    gates.append(("G6 log71 sheet 24 = ordered_chain_path (bends; no straight corridor mode exists)",
-                  bend_ok, s24.render_mode.value))
+    gates.append(("G6 ordered_chain_path preserved (log71 s24 bends; log59 s21 discontinuous corridor); no straight mode exists",
+                  bend_ok, {"log71_s24": s24.render_mode.value, "log59_s21": p59.legs[0].render_mode.value}))
 
     # G7: cross-sheet join deferred (two-sheet) / None (single-sheet)
     join_ok = (p53.cross_sheet_join == "deferred" and p71.cross_sheet_join == "deferred"

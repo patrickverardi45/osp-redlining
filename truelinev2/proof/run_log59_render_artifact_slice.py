@@ -25,10 +25,9 @@ evidence colors are never touched; only TrueLine's own drawn REVIEW stroke is go
 red. Source-backed REVIEW/proof artifact, NOT a broad renderer and NOT wired into product/UI/API. PNG
 + JSON are written under the gitignored data/outputs path and are NOT committed.
 
-Sheet 21 stays SOURCE-RECOVERED bridge evidence: log59's corrected_sheets stays [] (NOT promoted to
-owner-confirmed production truth) and log59 is NOT added to the seam contract eligible set. Census
-stays frozen (the only cohort delta is the already-known log59 bridge). A seam promotion is a separate,
-later, owner-confirmed step -- NOT done here.
+Sheet 21 is OWNER-CONFIRMED (2026-06-15): log59's corrected_sheets == [21] and log59 has been promoted
+into the seam contract eligible set (a later, separately-authorized slice). Census stays frozen (the
+corrected_sheets confirmation changes only log59's placement-readiness reasons, not any bucket/count).
 
 Run (repo root):
   $env:PYTHONPATH="."; .\venv\Scripts\python.exe -m truelinev2.proof.run_log59_render_artifact_slice
@@ -182,8 +181,8 @@ def main() -> int:
                   and start_a.get("structure_class") == "installer_hh" and start_a.get("station") == "2+76"
                   and end_a.get("structure_class") == "flower_pot" and end_a.get("station") == "4+46", None))
     # sheet 21 is SOURCE-RECOVERED bridge evidence ONLY: corrected_sheets stays [] (NOT promoted)
-    gates.append(("G0c sheet 21 stays SOURCE-RECOVERED bridge evidence; corrected_sheets stays [] (not promoted)",
-                  l59.get("corrected_sheets") == [], {"corrected_sheets": l59.get("corrected_sheets")}))
+    gates.append(("G0c sheet 21 OWNER-CONFIRMED; corrected_sheets == [21]",
+                  l59.get("corrected_sheets") == [21], {"corrected_sheets": l59.get("corrected_sheets")}))
 
     if not os.path.isfile(PDF):
         gates.append(("G1 plan PDF present", False, f"missing {PDF}"))
@@ -313,10 +312,10 @@ def _emit(gates, result, ev, artifacts, rec) -> int:
                   list(REDLINE_STROKE_RGB)))
     # scope / safety gates (always run): no promotion, no eligibility expansion, near-misses untouched
     l59 = rec.get("log59") or {}
-    gates.append(("G10 log59 corrected_sheets stays []; NOT seam-promoted (ELIGIBLE_EXEMPLARS == 3; seam refuses log59)",
-                  l59.get("corrected_sheets") == []
-                  and tuple(ELIGIBLE_EXEMPLARS) == ("log53", "log64", "log71")
-                  and _refuses_seam("log59", rec), None))
+    gates.append(("G10 log59 corrected_sheets == [21]; seam-PROMOTED (ELIGIBLE_EXEMPLARS == 4; seam builds log59)",
+                  l59.get("corrected_sheets") == [21]
+                  and tuple(ELIGIBLE_EXEMPLARS) == ("log53", "log64", "log71", "log59")
+                  and not _refuses_seam("log59", rec), None))
     gates.append(("G11 log66/log36 untouched (no anchors); near-misses not promoted",
                   not rec["log66"].get("endpoint_anchors") and not rec["log36"].get("endpoint_anchors")
                   and rec["log66"].get("corrected_sheets") == [] and rec["log36"].get("corrected_sheets") == [],
@@ -341,18 +340,17 @@ def _emit(gates, result, ev, artifacts, rec) -> int:
                   "reach_to_end_pt": ev.get("chain_to_end_symbol_pt")},
         "artifacts": artifacts,
         "red_stroke_rgb": list(REDLINE_STROKE_RGB),
-        "sheet_21_provenance": ("SOURCE-RECOVERED bridge evidence (near-miss scout); corrected_sheets stays [] "
-                                "(NOT promoted); log59 NOT seam-eligible -- owner confirm + seam promotion is a "
-                                "separate later step"),
+        "sheet_21_provenance": ("SOURCE-RECOVERED by the near-miss scout, now OWNER-CONFIRMED 2026-06-15; "
+                                "corrected_sheets == [21]; log59 promoted into the seam contract eligible set"),
         "sheet_local_only": True, "log59_only": True, "single_sheet": True,
         "source_corridor_layers": sorted(BASE_CONDUIT),
         "max_dash_gap_not_loosened": MAX_DASH_GAP == 35.0,
         "coords_are_extractor_derived": True, "no_invented_coordinates": True,
         "no_screenshot_pixels": True, "no_cross_sheet": True, "no_fake_straight_corridor": True,
-        "no_corrected_sheets_promotion": True, "no_seam_promotion": True,
+        "corrected_sheets_owner_confirmed": True, "seam_promoted": True,
         "broad_renderer": False, "product_wired": False,
-        "next_slice": ("owner-confirm sheet 21 for log59, THEN consider seam promotion (seam contract + adapter "
-                       "+ end-to-end driver) -- neither done here."),
+        "next_slice": ("log59 owner-confirmation + seam promotion now COMPLETE; next growth is the next "
+                       "owner-confirmed endpoint-anchor bridge (log66/log36)."),
         "evidence": ev,
         "gates": [{"name": n, "pass": bool(x), "detail": d} for n, x, d in gates],
     }

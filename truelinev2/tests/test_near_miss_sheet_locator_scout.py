@@ -75,12 +75,12 @@ def test_safety_rank_prefers_log66_after_log59_bridged():
     assert ranked == ["log66", "log36"]
 
 
-def test_eligible_set_unchanged_and_seam_refuses_near_misses():
+def test_eligible_set_matches_cohort_and_seam_refuses_near_misses():
     source_bindable_now = sorted(c["log_id"] for c in (classify_record(r) for r in DOC["logs"])
                                  if c["classification"] == "SOURCE_BINDABLE_NOW")
-    # cohort SOURCE_BINDABLE_NOW grew by log59's bridge; the SEAM eligible set stays at 3
+    # log59 owner-confirmed + promoted: the SEAM eligible set now matches the cohort SOURCE_BINDABLE_NOW set
     assert source_bindable_now == ["log53", "log59", "log64", "log71"]
-    assert tuple(ELIGIBLE_EXEMPLARS) == ("log53", "log64", "log71")
+    assert tuple(ELIGIBLE_EXEMPLARS) == ("log53", "log64", "log71", "log59")
     for lid in NEAR_MISSES:
         try:
             build_seam_payload(lid, REC[lid])

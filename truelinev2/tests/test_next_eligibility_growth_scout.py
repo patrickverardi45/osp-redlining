@@ -58,13 +58,13 @@ def test_no_safe_candidate_over_real_data():
     assert not any(is_eligibility_ready(r, DOC) for r in PENDING)
 
 
-def test_eligible_set_unchanged_and_seam_refuses_pending():
+def test_eligible_set_matches_cohort_and_seam_refuses_pending():
     source_bindable_now = sorted(c["log_id"] for c in (classify_record(r) for r in DOC["logs"])
                                  if c["classification"] == "SOURCE_BINDABLE_NOW")
-    # cohort SOURCE_BINDABLE_NOW grew by log59's bridge; the SEAM eligible set stays frozen at 3
+    # log59 owner-confirmed + promoted: the SEAM eligible set now matches the cohort SOURCE_BINDABLE_NOW set
     assert source_bindable_now == ["log53", "log59", "log64", "log71"]
-    assert tuple(ELIGIBLE_EXEMPLARS) == ("log53", "log64", "log71")
-    # the seam contract refuses every pending log -> no code promotion
+    assert tuple(ELIGIBLE_EXEMPLARS) == ("log53", "log64", "log71", "log59")
+    # the seam contract still refuses every pending no-anchor log -> no further promotion here
     for r in PENDING:
         try:
             build_seam_payload(r["log_id"], r)

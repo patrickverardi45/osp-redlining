@@ -8,10 +8,10 @@ and solves no cross-sheet frame. Identity + boundary semantics ONLY, never coord
 
 log59 is the log64 shape (clean single-sheet structure-to-structure): start STA 2+76 INSTALLER HH
 (structure_terminus, installer_hh), end STA 4+46 FLOWER POT (structure_terminus, flower_pot), both
-on sheet 21. NO matchline (distinct from log53/log71). Sheet 21 is SOURCE-RECOVERED bridge evidence,
-NOT owner-recorded production truth: it is kept OUT of corrected_sheets and lives in the anchor
-owner_note_text; an owner confirmation of sheet 21 is required before any product use, and log59 is
-NOT added to the seam contract eligible set in this slice.
+on sheet 21. NO matchline (distinct from log53/log71). Sheet 21 was SOURCE-RECOVERED bridge evidence
+and has since been OWNER-CONFIRMED (2026-06-15): it is now recorded in corrected_sheets=[21] and cited
+in the anchor owner_note_text, and log59 has been promoted into the seam contract eligible set (a
+later, separately-authorized slice). This bridge slice still only validates the identity encoding.
 
 Proves: anchors present + schema-valid + owner/source-backed + modeled + machine-consumable; the
 cohort classifier moves log59 REPRESENTATIVE_ROUTE_CANDIDATE (NO_RECORDED_SHEET) -> SOURCE_BINDABLE_NOW
@@ -124,10 +124,10 @@ def main() -> int:
                   and end.get("boundary_kind") == "structure_terminus"
                   and set(ea) <= {"start", "end"}, sorted(ea)))
     # sheet 21 = SOURCE-RECOVERED bridge evidence cited in BOTH anchor notes, explicitly NOT promoted
-    gates.append(("G8 sheet 21 cited as SOURCE-RECOVERED bridge evidence in both anchor notes (not promoted)",
+    gates.append(("G8 sheet 21 cited as SOURCE-RECOVERED + OWNER-CONFIRMED in both anchor notes (promoted)",
                   str(SHEET) in start_note_up and str(SHEET) in end_note_up
                   and "SOURCE-RECOVERED" in start_note_up and "SOURCE-RECOVERED" in end_note_up
-                  and "NOT PRODUCT PROMOTION" in start_note_up, None))
+                  and "OWNER-CONFIRMED" in start_note_up and "OWNER-CONFIRMED" in end_note_up, None))
     span = parse_station(end.get("station") or "0+00") - parse_station(start.get("station") or "0+00")
     gates.append(("G9 station span 4+46 - 2+76 = 170' (matches HH-HH=170' annotation)",
                   abs(span - SPAN_FT) <= 0.5, {"span_ft": span}))
@@ -157,9 +157,9 @@ def main() -> int:
                   sorted(with_anchors)))
 
     # NOT silently promoted: log59 stays OUT of the seam contract eligible set; build_seam_payload refuses it
-    gates.append(("G13 log59 NOT promoted to seam eligibility (ELIGIBLE_EXEMPLARS == 3; seam refuses log59)",
-                  tuple(ELIGIBLE_EXEMPLARS) == ("log53", "log64", "log71")
-                  and _refuses_seam("log59", rec)
+    gates.append(("G13 log59 PROMOTED to seam eligibility (ELIGIBLE_EXEMPLARS == 4; seam builds log59; log66/log36 refused)",
+                  tuple(ELIGIBLE_EXEMPLARS) == ("log53", "log64", "log71", "log59")
+                  and not _refuses_seam("log59", rec)
                   and all(_refuses_seam(l, rec) for l in NOT_ANCHORED_NEAR_MISSES), None))
 
     if TRUTH.is_file():
@@ -202,9 +202,9 @@ def _emit(gates, result, l59, cls) -> int:
         "result": result if all_pass else "BLOCKED",
         "target": "log59", "sheet": SHEET, "shape": "single_sheet_structure_to_structure (log64 family)",
         "anchor_bridge": {"start": ea.get("start"), "end": ea.get("end")},
-        "sheet_21_provenance": ("SOURCE-RECOVERED by the near-miss sheet-locator scout (88d9f96); BRIDGE "
-                                "evidence in anchor notes, kept OUT of corrected_sheets; owner confirmation "
-                                "required before product use; log59 NOT promoted to seam eligibility"),
+        "sheet_21_provenance": ("SOURCE-RECOVERED by the near-miss sheet-locator scout (88d9f96); "
+                                "OWNER-CONFIRMED 2026-06-15 -> recorded in corrected_sheets=[21]; log59 "
+                                "promoted to seam eligibility"),
         "cohort_delta": {"log59": {"from": REPRESENTATIVE_ROUTE_CANDIDATE, "to": cls},
                          "explicit": True, "deterministic": True, "limited_to": "log59"},
         "seam_eligible_unchanged": list(ELIGIBLE_EXEMPLARS),

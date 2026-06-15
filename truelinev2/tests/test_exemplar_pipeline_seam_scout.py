@@ -38,7 +38,7 @@ def test_result_enum_exact():
         "BLOCKED_SEAM_CONTRADICTED_BY_PROOF_OUTPUT",
     }
     assert R_PASS == "EXEMPLAR_PIPELINE_SEAM_SCOUT_PASS"
-    assert EXEMPLARS == ("log53", "log64", "log71")
+    assert EXEMPLARS == ("log53", "log64", "log71", "log59")
 
 
 def test_payload_represents_all_three_shapes():
@@ -104,10 +104,10 @@ def test_no_cross_sheet_reconciliation():
 
 def test_classification_is_honest_no_silent_upgrade():
     eligible = {r["log_id"] for r in DOC["logs"] if classify_record(r)[0]}
-    # the 3 proven seam exemplars are anchor-eligible; log59 was given a source-recovered bridge so it
-    # is anchor-eligible too, but is held back from the seam (no source-bind/render yet) -- not upgraded
+    # every anchor-eligible log is now a seam exemplar: log59 completed the path (owner-confirmed sheet
+    # 21 + source-bind + render) and was promoted, so nothing is left anchored-but-held-back
     assert set(EXEMPLARS) <= eligible
-    assert eligible - set(EXEMPLARS) == {"log59"}                  # only the log59 bridge was added
+    assert eligible - set(EXEMPLARS) == set()                      # no anchored log held back (log59 promoted)
     # abstains stay blocked
     for lid in ("log5", "log31", "log38", "log43"):
         ok, _, cats = classify_record(REC[lid])

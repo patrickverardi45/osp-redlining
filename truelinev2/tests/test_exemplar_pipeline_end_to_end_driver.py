@@ -26,11 +26,12 @@ REC = {r["log_id"]: r for r in DOC["logs"]}
 PLAN = build_drive_plan(DOC)
 
 
-def test_drive_plan_for_exactly_three():
-    assert tuple(PLAN) == ELIGIBLE_EXEMPLARS == ("log53", "log64", "log71")
+def test_drive_plan_for_exactly_four():
+    assert tuple(PLAN) == ELIGIBLE_EXEMPLARS == ("log53", "log64", "log71", "log59")
     assert PLAN["log53"]["shape"] == "two_sheet_matchline_endpoint"
     assert PLAN["log64"]["shape"] == "single_sheet_structure_to_structure"
     assert PLAN["log71"]["shape"] == "two_sheet_structure_to_structure_route_context"
+    assert PLAN["log59"]["shape"] == "single_sheet_structure_to_structure"
 
 
 def test_drive_one_refuses_non_eligible():
@@ -57,6 +58,8 @@ def test_correct_source_bind_and_render_families():
     assert PLAN["log64"]["render_module"] == "truelinev2.proof.run_log64_render_artifact_slice"
     assert set(PLAN["log71"]["source_bind_modules"]) == {"truelinev2.proof.run_log71_two_leg_source_bind_slice"}
     assert PLAN["log71"]["render_module"] == "truelinev2.proof.run_log71_render_artifact_slice"
+    assert set(PLAN["log59"]["source_bind_modules"]) == {"truelinev2.proof.run_log59_sheet21_source_bind_slice"}
+    assert PLAN["log59"]["render_module"] == "truelinev2.proof.run_log59_render_artifact_slice"
     for lid in ELIGIBLE_EXEMPLARS:
         assert PLAN[lid]["render_module"].endswith("_render_artifact_slice")
 
@@ -77,6 +80,8 @@ def test_log71_render_modes_preserved():
     modes = PLAN["log71"]["doctrine"]["render_modes"]
     assert modes[24] == "ordered_chain_path"
     assert modes[23] == "continuous_corridor"
+    # log59 single-sheet leg is ordered_chain_path (discontinuous direct corridor)
+    assert PLAN["log59"]["doctrine"]["render_modes"][21] == "ordered_chain_path"
 
 
 def test_cross_sheet_join_and_reconciliation():

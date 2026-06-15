@@ -4,10 +4,10 @@ Locks the pure honesty helpers for log59's ordered-chain render: every INTERIOR 
 real drawn conduit dash endpoint (no invented coordinate), and every route EDGE is either a real
 drawn dash or a <= MAX_DASH_GAP gap hop -- so no edge fabricates a straight jump across log59's
 35.64 pt direct-corridor gap. Also locks the result enum, the canonical red color, that MAX_DASH_GAP
-is NOT loosened, log59-only output naming, that the slice consumes log59's encoded identity AND keeps
-corrected_sheets == [] (sheet 21 stays SOURCE-RECOVERED bridge evidence, NOT promoted), and that the
-proof is a contained artifact (no product/API/match wiring). The PNG render itself is run by the proof
-against the real PDF; no artifact is asserted/committed here.
+is NOT loosened, log59-only output naming, that the slice consumes log59's encoded identity AND that
+sheet 21 is owner-confirmed (corrected_sheets == [21]), and that the proof is a contained artifact (no
+product/API/match wiring). The PNG render itself is run by the proof against the real PDF; no artifact
+is asserted/committed here.
 """
 from pathlib import Path
 
@@ -78,14 +78,14 @@ def test_output_dir_is_gitignored_data_outputs():
     assert "/data/outputs/log59_render_artifact" in p
 
 
-def test_slice_consumes_log59_identity_and_does_not_promote():
+def test_slice_consumes_log59_identity_and_owner_confirmed():
     doc = load_adjudication()
     l59 = next(r for r in doc["logs"] if r["log_id"] == "log59")
     s, e = l59["endpoint_anchors"]["start"], l59["endpoint_anchors"]["end"]
     assert (s["structure_class"], s["station"]) == ("installer_hh", "2+76")
     assert (e["structure_class"], e["station"]) == ("flower_pot", "4+46")
-    # sheet 21 stays SOURCE-RECOVERED bridge evidence -- NOT promoted to corrected_sheets
-    assert list(l59["corrected_sheets"]) == []
+    # sheet 21 is owner-confirmed -> recorded in corrected_sheets
+    assert list(l59["corrected_sheets"]) == [21]
 
 
 def test_proof_is_contained_no_product_wiring():

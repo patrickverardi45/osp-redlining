@@ -3,8 +3,8 @@
 Locks the proof's pure laws + committed-data facts: the result/blocker enum (R_PARTIAL is a passing
 confirm, like log64); the slice consumes log59's encoded installer_hh @2+76 -> flower_pot @4+46
 identity; the start label is a PLAIN station '2+76' (non-reset, unlike log64's '3+69=0+00'); sheet 21
-is consumed as SOURCE-RECOVERED bridge evidence with corrected_sheets kept [] (not promoted); the
-span is 170'; log66/log36 stay un-anchored and log59 is not seam-eligible; and the proof reuses the
+was SOURCE-RECOVERED and is now OWNER-CONFIRMED -> corrected_sheets == [21]; the
+span is 170'; log66/log36 stay un-anchored and log59 is now seam-promoted; and the proof reuses the
 proven corridor laws (orientation-aware leg_corridor_band + axis-agnostic corridor_is_continuous) and
 has no render lane. No PDF parse here (the proof runs the real sheet-21 bind at verification).
 """
@@ -52,11 +52,11 @@ def test_start_label_is_a_plain_station_not_a_reset_token():
     assert L59["endpoint_anchors"]["start"]["station"] == "2+76"
 
 
-def test_sheet21_is_bridge_evidence_corrected_sheets_not_promoted():
-    assert L59["corrected_sheets"] == []                 # NOT promoted to owner-confirmed production truth
+def test_sheet21_source_recovered_then_owner_confirmed():
+    assert L59["corrected_sheets"] == [21]               # owner-confirmed -> recorded
     for side in ("start", "end"):
         note = L59["endpoint_anchors"][side]["owner_note_text"].upper()
-        assert "21" in note and "SOURCE-RECOVERED" in note
+        assert "21" in note and "SOURCE-RECOVERED" in note and "OWNER-CONFIRMED" in note
 
 
 def test_station_span_is_170():
@@ -64,12 +64,11 @@ def test_station_span_is_170():
     assert abs((parse_station(e) - parse_station(s)) - 170.0) <= 0.5
 
 
-def test_log66_log36_untouched_and_log59_not_seam_eligible():
+def test_log66_log36_untouched_and_log59_seam_promoted():
     assert not REC["log66"].get("endpoint_anchors")
     assert not REC["log36"].get("endpoint_anchors")
-    assert tuple(ELIGIBLE_EXEMPLARS) == ("log53", "log64", "log71")
-    with pytest.raises(ValueError):
-        build_seam_payload("log59", L59)               # bridged + source-bound, but NOT seam-promoted
+    assert tuple(ELIGIBLE_EXEMPLARS) == ("log53", "log64", "log71", "log59")
+    build_seam_payload("log59", L59)                   # owner-confirmed + source-bound + promoted -> builds
 
 
 def test_proof_reuses_proven_corridor_laws_and_has_no_render_lane():

@@ -33,21 +33,23 @@ def _d(log_id):
     return build_dispatch(log_id, REC[log_id])
 
 
-def test_proof_family_registry_is_frozen_to_three():
-    assert tuple(PROOF_FAMILY) == ELIGIBLE_EXEMPLARS == ("log53", "log64", "log71")
+def test_proof_family_registry_is_frozen_to_four():
+    assert tuple(PROOF_FAMILY) == ELIGIBLE_EXEMPLARS == ("log53", "log64", "log71", "log59")
     assert {f.value for f in ProofFamily} == {
         "log53_two_sheet_matchline_endpoint",
         "log64_single_sheet_structure_to_structure",
-        "log71_two_sheet_structure_to_structure_route_context"}
+        "log71_two_sheet_structure_to_structure_route_context",
+        "log59_single_sheet_structure_to_structure"}
 
 
-def test_builds_dispatch_for_exactly_three():
+def test_builds_dispatch_for_exactly_four():
     dispatches = eligible_dispatches(DOC)
     assert tuple(dispatches) == ELIGIBLE_EXEMPLARS
     assert all(isinstance(d, ProofDispatch) for d in dispatches.values())
     assert len(_d("log64").legs) == 1
     assert len(_d("log53").legs) == 2
     assert len(_d("log71").legs) == 2
+    assert len(_d("log59").legs) == 1
 
 
 def test_refuses_non_eligible_no_silent_promotion():
@@ -94,16 +96,19 @@ def test_log71_sheet24_ordered_chain_path_not_downgraded():
 
 
 def test_each_leg_maps_to_correct_family_and_existing_proofs():
-    shape_family = {
-        "single_sheet_structure_to_structure": "log64_single_sheet_structure_to_structure",
-        "two_sheet_matchline_endpoint": "log53_two_sheet_matchline_endpoint",
-        "two_sheet_structure_to_structure_route_context": "log71_two_sheet_structure_to_structure_route_context",
+    # per-EXEMPLAR family (not shape-keyed): log59 and log64 share the single_sheet shape but each has
+    # its OWN proof family + proof modules
+    exemplar_family = {
+        "log53": "log53_two_sheet_matchline_endpoint",
+        "log64": "log64_single_sheet_structure_to_structure",
+        "log71": "log71_two_sheet_structure_to_structure_route_context",
+        "log59": "log59_single_sheet_structure_to_structure",
     }
     bind_suffixes = ("_source_bind_slice", "_bindability_slice", "_boundary_slice")
     for lid in ELIGIBLE_EXEMPLARS:
         d = _d(lid)
         for leg in d.legs:
-            assert leg.expected_proof_family == shape_family[d.shape]
+            assert leg.expected_proof_family == exemplar_family[lid]
             # role-named so a swapped registry entry is caught: render vs source-bind
             assert leg.expected_render_proof.endswith("_render_artifact_slice")
             assert all(m.endswith(bind_suffixes) for m in leg.expected_source_bind_proofs)

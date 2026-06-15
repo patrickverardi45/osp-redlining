@@ -1,10 +1,12 @@
 r"""OWNER-PACKET-2 -- exemplar -> pipeline SEAM scout (PROOF/SCOUT ONLY; no product, no render).
 
-Three v2 exemplars now have full source-bind + render proof coverage:
+Four v2 exemplars now have full source-bind + render proof coverage:
   log53 -- hard TWO-sheet MATCHLINE-ENDPOINT run (NEXTLINK HH -> 24+11 matchline -> 26+38 FLOWER POT);
   log64 -- clean SINGLE-sheet STRUCTURE-to-STRUCTURE run (INSTALLER HH 3+69 -> 1+00 FLOWER POT);
   log71 -- TWO-sheet STRUCTURE-to-STRUCTURE run with an INTERMEDIATE 5+45 matchline as ROUTE CONTEXT
-           and a BENDING ordered source route on sheet 24.
+           and a BENDING ordered source route on sheet 24;
+  log59 -- SINGLE-sheet STRUCTURE-to-STRUCTURE run (INSTALLER HH 2+76 -> 4+46 FLOWER POT, HH-HH=170')
+           whose direct corridor is discontinuous (35.64 pt gap) -> ordered_chain_path route.
 
 This scout determines the SMALLEST reusable seam that could consume the proven exemplar patterns and
 produce a generalized, render-ready payload for ELIGIBLE logs -- WITHOUT wiring anything into
@@ -42,7 +44,7 @@ FROZEN_BUCKETS = {"DRAWABLE_REVIEW": 31, "HUMAN_ADJUSTABLE_REVIEW": 6,
                   "OUT_OF_CLASS": 1, "PICK_CARD_REVIEW": 17, "SOURCE_OR_KMZ_REQUIRED": 3}
 ABSTAIN_4 = ("log5", "log31", "log38", "log43")
 
-EXEMPLARS = ("log53", "log64", "log71")
+EXEMPLARS = ("log53", "log64", "log71", "log59")
 RENDER_MODES = {"continuous_corridor", "ordered_chain_path"}
 
 # Proven exemplar topology -- the parts NOT carried by endpoint_anchors: per-leg (sheet, render_mode)
@@ -60,6 +62,8 @@ EXEMPLAR_TOPOLOGY = {
     "log71": {"shape": "two_sheet_structure_to_structure_route_context", "sheets": [24, 23],
               "legs": [(24, ("anchor", "start"), ("matchline", "5+45"), "ordered_chain_path"),
                        (23, ("matchline", "5+45"), ("anchor", "end"), "continuous_corridor")]},
+    "log59": {"shape": "single_sheet_structure_to_structure", "sheets": [21],
+              "legs": [(21, ("anchor", "start"), ("anchor", "end"), "ordered_chain_path")]},
 }
 
 SHARED_PRIMITIVES = {
@@ -84,6 +88,7 @@ EXEMPLAR_SPECIFIC = {
     "log53": "matchline-as-ENDPOINT (boundary_kind matchline_continuation); reverse chain trace; the 24+11 boundary typeset on both sheets",
     "log64": "single-sheet 100' DIRECT-BORE callout grammar (_SEG_RE / _FOOTAGE_RE)",
     "log71": "BENDING chain-path route (order_chain_route); owner-confirmed NEXTLINK start identity; per-sheet 5+45 chain-reach dedup",
+    "log59": "single-sheet ordered_chain_path (direct corridor 35.64 pt gap > MAX_DASH_GAP); owner-confirmed sheet 21",
     "deferred_for_all": ("cross-sheet FRAME solving (legs stay sheet-local; the two matchline points "
                          "are never reconciled); representative-route resolution; parent/child run "
                          "aggregation; broad batch rendering"),
@@ -303,8 +308,8 @@ def main() -> int:
 
     shapes = {payloads[lid]["shape"] for lid in EXEMPLARS}
     leg_counts = {lid: len(payloads[lid]["legs"]) for lid in EXEMPLARS}
-    gates.append(("G2 normalized payload represents all 3 exemplar shapes (1 / 2 / 2 legs; distinct shapes)",
-                  len(shapes) == 3 and leg_counts == {"log64": 1, "log53": 2, "log71": 2}, leg_counts))
+    gates.append(("G2 normalized payload represents all 3 exemplar shapes (log64/log59 single; log53/log71 two-leg)",
+                  len(shapes) == 3 and leg_counts == {"log64": 1, "log53": 2, "log71": 2, "log59": 1}, leg_counts))
 
     coord_free = not any(has_coord_keys(p) for p in payloads.values())
     anchors_preserved = (
@@ -348,16 +353,16 @@ def main() -> int:
         ok, reason, cats = classify_record(r)
         (eligible if ok else blocked)[r["log_id"]] = {"reason": reason, "categories": cats}
     classified = len(eligible) + len(blocked)
-    # The 3 PROVEN seam exemplars (EXEMPLARS) carry owner-reviewed anchors AND a full source-bind+render
-    # proof. log59 was given a SOURCE-RECOVERED endpoint-anchor bridge (its slice) so it is anchor-
-    # eligible too, but it is held back from the seam (no source-bind/render yet) -- so it must NOT be
-    # silently upgraded into the seam exemplar set. Hence anchor-eligible == the 3 exemplars + log59.
-    honest = (set(EXEMPLARS) <= set(eligible)            # the 3 seam exemplars are all anchor-eligible
-              and set(eligible) - set(EXEMPLARS) == {"log59"}   # the only added anchor is log59's bridge
+    # The PROVEN seam exemplars (EXEMPLARS) each carry owner-reviewed anchors AND a full source-bind+
+    # render proof. log59 completed that path (owner-confirmed sheet 21 + source-bind + render) and was
+    # promoted, so it is now the 4th seam exemplar -- anchor-eligible == the seam exemplar set exactly
+    # (no anchored log is left held back, and nothing was silently upgraded).
+    honest = (set(EXEMPLARS) <= set(eligible)            # the seam exemplars are all anchor-eligible
+              and set(eligible) - set(EXEMPLARS) == set()  # every anchor-eligible log is a seam exemplar
               and classified == len(doc["logs"])         # every cohort log classified
               and not (set(eligible) & set(blocked))     # never both
               and all(blocked[l]["categories"] for l in blocked))  # every block has a named category
-    gates.append(("G8 eligibility honest: 3 seam exemplars + log59 anchored-but-held-back; abstains/needs-verify blocked",
+    gates.append(("G8 eligibility honest: 4 seam exemplars (incl owner-confirmed + promoted log59); abstains/needs-verify blocked",
                   honest, {"eligible": sorted(eligible), "seam_exemplars": list(EXEMPLARS),
                            "anchored_not_in_seam": sorted(set(eligible) - set(EXEMPLARS)),
                            "blocked": len(blocked), "classified": classified}))

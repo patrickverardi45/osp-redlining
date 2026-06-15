@@ -10,6 +10,7 @@ MODULES that would derive coordinates downstream.
   log53 -> log53_two_sheet_matchline_endpoint            (STA 24+11 modeled matchline endpoint)
   log64 -> log64_single_sheet_structure_to_structure
   log71 -> log71_two_sheet_structure_to_structure_route_context  (STA 5+45 route context; s24 bends)
+  log59 -> log59_single_sheet_structure_to_structure     (log64's shape but its OWN ordered_chain_path proofs)
 
 Eligibility never expands here: the dispatch is frozen to the three proven exemplars and inherits the
 contract's refusal of any other log (no silent promotion). The descriptor stays coordinate-free; only
@@ -35,6 +36,7 @@ class ProofFamily(str, Enum):
     LOG53_TWO_SHEET_MATCHLINE_ENDPOINT = "log53_two_sheet_matchline_endpoint"
     LOG64_SINGLE_SHEET_STRUCTURE_TO_STRUCTURE = "log64_single_sheet_structure_to_structure"
     LOG71_TWO_SHEET_STRUCTURE_TO_STRUCTURE_ROUTE_CONTEXT = "log71_two_sheet_structure_to_structure_route_context"
+    LOG59_SINGLE_SHEET_STRUCTURE_TO_STRUCTURE = "log59_single_sheet_structure_to_structure"
 
 
 # canonical proof-family registry: the EXISTING proven modules each eligible exemplar hands off to.
@@ -50,6 +52,9 @@ PROOF_FAMILY: Dict[str, dict] = {
     "log71": {"family": ProofFamily.LOG71_TWO_SHEET_STRUCTURE_TO_STRUCTURE_ROUTE_CONTEXT,
               "source_bind_proofs": ("truelinev2.proof.run_log71_two_leg_source_bind_slice",),
               "render_proof": "truelinev2.proof.run_log71_render_artifact_slice"},
+    "log59": {"family": ProofFamily.LOG59_SINGLE_SHEET_STRUCTURE_TO_STRUCTURE,
+              "source_bind_proofs": ("truelinev2.proof.run_log59_sheet21_source_bind_slice",),
+              "render_proof": "truelinev2.proof.run_log59_render_artifact_slice"},
 }
 
 

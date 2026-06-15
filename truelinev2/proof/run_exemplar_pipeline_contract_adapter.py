@@ -45,10 +45,14 @@ FROZEN_BUCKETS = {"DRAWABLE_REVIEW": 31, "HUMAN_ADJUSTABLE_REVIEW": 6,
                   "OUT_OF_CLASS": 1, "PICK_CARD_REVIEW": 17, "SOURCE_OR_KMZ_REQUIRED": 3}
 ABSTAIN_4 = ("log5", "log31", "log38", "log43")
 REFUSAL_PROBES = ("log6", "log63", "log5", "log44")
-SHAPE_FAMILY = {
-    "single_sheet_structure_to_structure": "log64_single_sheet_structure_to_structure",
-    "two_sheet_matchline_endpoint": "log53_two_sheet_matchline_endpoint",
-    "two_sheet_structure_to_structure_route_context": "log71_two_sheet_structure_to_structure_route_context",
+# Per-EXEMPLAR proof family (NOT shape-keyed): log59 and log64 share the single_sheet shape but each
+# hands off to its OWN source-bind/render proofs (log59 renders ordered_chain_path, log64 continuous),
+# so the expected family is keyed by exemplar, not by shape.
+EXEMPLAR_FAMILY = {
+    "log53": "log53_two_sheet_matchline_endpoint",
+    "log64": "log64_single_sheet_structure_to_structure",
+    "log71": "log71_two_sheet_structure_to_structure_route_context",
+    "log59": "log59_single_sheet_structure_to_structure",
 }
 
 R_PASS = "EXEMPLAR_PIPELINE_CONTRACT_ADAPTER_PASS"
@@ -121,8 +125,9 @@ def main() -> int:
     gates.append(("G1 adapter consumes canonical seam contract (no duplicate topology; eligibility+shape sourced from it)",
                   sourced_from_contract, None))
 
-    gates.append(("G2 adapter accepts EXACTLY log53/log64/log71",
-                  tuple(dispatches) == ELIGIBLE_EXEMPLARS == ("log53", "log64", "log71"), sorted(dispatches)))
+    gates.append(("G2 adapter accepts EXACTLY log53/log64/log71/log59",
+                  tuple(dispatches) == ELIGIBLE_EXEMPLARS == ("log53", "log64", "log71", "log59"),
+                  sorted(dispatches)))
 
     refusals = {lid: _refuses(lid, rec) for lid in REFUSAL_PROBES}
     refusals["log999_unknown"] = _refuses("log999", rec)
@@ -173,7 +178,7 @@ def main() -> int:
     family_ok, modules_ok, role_ok, missing = True, True, True, []
     for lid in ELIGIBLE_EXEMPLARS:
         for leg in dispatches[lid].legs:
-            if leg.expected_proof_family != SHAPE_FAMILY[dispatches[lid].shape]:
+            if leg.expected_proof_family != EXEMPLAR_FAMILY[lid]:
                 family_ok = False
             if not leg.expected_render_proof.endswith("_render_artifact_slice"):
                 role_ok = False

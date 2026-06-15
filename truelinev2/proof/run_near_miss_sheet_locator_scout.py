@@ -198,12 +198,12 @@ def main() -> int:
     gates.append(("G0 engine census frozen (OFF 31/6/1/17/3, ON 22/1/4, log44+abstains held)",
                   _census_frozen(doc), None))
 
-    # G1 eligible set unchanged
+    # G1 seam eligible == cohort SOURCE_BINDABLE_NOW (4): log59 owner-confirmed + promoted
     source_bindable_now = sorted(c["log_id"] for c in (classify_record(r) for r in doc["logs"])
                                  if c["classification"] == "SOURCE_BINDABLE_NOW")
-    gates.append(("G1 seam eligible == log53/log64/log71 (unchanged); log59 bridge added to cohort SOURCE_BINDABLE_NOW",
+    gates.append(("G1 seam eligible == cohort SOURCE_BINDABLE_NOW == log53/log59/log64/log71 (log59 promoted)",
                   source_bindable_now == ["log53", "log59", "log64", "log71"]
-                  and tuple(ELIGIBLE_EXEMPLARS) == ("log53", "log64", "log71"), source_bindable_now))
+                  and tuple(ELIGIBLE_EXEMPLARS) == ("log53", "log64", "log71", "log59"), source_bindable_now))
 
     # G2 inspects the REMAINING NO_RECORDED_SHEET near-misses (log59 already bridged out)
     canonical_near = sorted(
@@ -214,17 +214,20 @@ def main() -> int:
     gates.append(("G2 scout inspects the remaining NO_RECORDED_SHEET near-misses (log66/log36; log59 bridged out)",
                   canonical_near == sorted(NEAR_MISSES) == ["log36", "log66"] and bridged_ok, canonical_near))
 
-    # G3 no promotion: the seam contract still refuses every near-miss (and the bridged-out log59)
-    gates.append(("G3 scout promotes no log (seam contract refuses each near-miss + log59; eligible set == 3)",
-                  all(_refuses(l, rec) for l in (*NEAR_MISSES, *BRIDGED_OUT))
-                  and len(ELIGIBLE_EXEMPLARS) == 3, None))
+    # G3 no promotion HERE: the seam contract still refuses each inspected near-miss (log66/log36);
+    # log59 is now seam-eligible (owner-confirmed + promoted in its own slice -- this scout promotes nothing).
+    gates.append(("G3 scout promotes no log (seam contract refuses each near-miss; log59 already promoted; eligible == 4)",
+                  all(_refuses(l, rec) for l in NEAR_MISSES)
+                  and not _refuses("log59", rec)
+                  and len(ELIGIBLE_EXEMPLARS) == 4, None))
 
     # G4 no endpoint_anchors encoded + owner sheet still blank for the INSPECTED near-misses
-    # (log59, the bridged-out one, now legitimately carries a source-recovered bridge)
-    gates.append(("G4 inspected near-misses (log66/log36) still un-anchored + blank sheet; log59 bridged",
+    # (log59, the bridged-out one, now carries owner-confirmed anchors + sheet 21)
+    gates.append(("G4 inspected near-misses (log66/log36) still un-anchored + blank sheet; log59 owner-confirmed",
                   all(not rec[l].get("endpoint_anchors") and not rec[l].get("corrected_sheets")
                       for l in NEAR_MISSES)
-                  and all(rec[l].get("endpoint_anchors") for l in BRIDGED_OUT), None))
+                  and all(rec[l].get("endpoint_anchors") and rec[l].get("corrected_sheets")
+                          for l in BRIDGED_OUT), None))
 
     # ---- the contained, read-only PDF recovery probe ---------------------------
     recoveries = {}

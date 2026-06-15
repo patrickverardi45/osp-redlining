@@ -18,11 +18,11 @@ What it proves on sheet 21 (single sheet; no cross-sheet solving):
   4. the printed 'HH - HH = 170'' annotation is present on sheet 21 and the station span
      4+46 - 2+76 = 170' corroborates it.
 
-Sheet 21 is SOURCE-RECOVERED bridge evidence (the near-miss sheet-locator scout); it is consumed here
-as proof-first bridge evidence ONLY -- log59's corrected_sheets stays [] (NOT promoted to owner-
-confirmed production truth), and log59 is NOT added to the seam contract eligible set. The direct
-corridor's strict continuity is REPORTED as render-mode (continuous_corridor vs ordered_chain_path);
-the source-backed bind is the connected chain reaching both termini, exactly as log64/log71 proved.
+Sheet 21 was SOURCE-RECOVERED bridge evidence (the near-miss sheet-locator scout) and is now
+OWNER-CONFIRMED -- log59's corrected_sheets == [21] and log59 is promoted into the seam contract
+eligible set. The direct corridor's strict continuity is REPORTED as render-mode (continuous_corridor
+vs ordered_chain_path); the source-backed bind is the connected chain reaching both termini, exactly
+as log64/log71 proved.
 
 All endpoint coordinates are produced by the EXISTING extractor (resolve_structure_position); this
 slice synthesizes none. Census stays frozen (the only cohort delta is the already-known log59 bridge:
@@ -153,8 +153,8 @@ def main() -> int:
     # sheet 21 is BRIDGE evidence ONLY: corrected_sheets stays [] (not promoted), and the source-
     # recovered sheet is cited in the anchor owner_note_text.
     note_up = (str(start_a.get("owner_note_text") or "") + str(end_a.get("owner_note_text") or "")).upper()
-    gates.append(("G2 sheet 21 consumed as SOURCE-RECOVERED bridge evidence; corrected_sheets stays [] (not promoted)",
-                  l59.get("corrected_sheets") == [] and str(SHEET) in note_up and "SOURCE-RECOVERED" in note_up, None))
+    gates.append(("G2 sheet 21 consumed as source; OWNER-CONFIRMED -> corrected_sheets == [21]",
+                  l59.get("corrected_sheets") == [21] and str(SHEET) in note_up and "SOURCE-RECOVERED" in note_up, None))
 
     result = B_ROUTE
     if not os.path.isfile(PDF):
@@ -254,10 +254,10 @@ def main() -> int:
 
 def _emit(gates, result, ev, rec) -> int:
     # ---- scope / safety gates (always run) -------------------------------------
-    gates.append(("G9 log66/log36 untouched (no anchors); log59 NOT in seam eligibility (refused)",
+    gates.append(("G9 log66/log36 untouched (no anchors); log59 PROMOTED in seam eligibility (builds)",
                   not rec["log66"].get("endpoint_anchors") and not rec["log36"].get("endpoint_anchors")
-                  and tuple(ELIGIBLE_EXEMPLARS) == ("log53", "log64", "log71")
-                  and _refuses_seam("log59", rec), None))
+                  and tuple(ELIGIBLE_EXEMPLARS) == ("log53", "log64", "log71", "log59")
+                  and not _refuses_seam("log59", rec), None))
     pngs = sorted(p.name for p in OUT_DIR.glob("*.png"))
     gates.append(("G10 zero PNG / zero stroke (no render lane)", len(pngs) == 0, {"pngs": pngs}))
     gates.append(("G11 result in allowed enum", result in ALLOWED, result))
@@ -283,15 +283,14 @@ def _emit(gates, result, ev, rec) -> int:
                      "flower pot @4+46, a connected modeled conduit chain between them, and the "
                      "HH-HH=170' span -- as the proven log64 single-sheet shape?"),
         "source_bind_payload": payload,
-        "sheet_21_provenance": ("SOURCE-RECOVERED bridge evidence (near-miss scout); consumed proof-first "
-                                "only; corrected_sheets stays [] (NOT promoted); log59 NOT seam-eligible"),
+        "sheet_21_provenance": ("SOURCE-RECOVERED by the near-miss scout, now OWNER-CONFIRMED; "
+                                "corrected_sheets == [21]; log59 promoted to seam eligibility"),
         "render_ready": confirmed,
         "no_render": True, "no_invented_coordinates": True, "no_screenshot_pixels": True,
         "no_cross_sheet": True, "no_corrected_sheets_promotion": True, "coords_are_extractor_derived": True,
-        "next_slice": ("contained log59 RENDER artifact: ONE red REVIEW stroke on sheet 21 (installer HH "
-                       "2+76 -> flower pot 4+46), endpoints re-derived + gated to this bind, route via the "
-                       f"proven {ev.get('render_mode') or 'ordered_chain_path'}; THEN owner-confirm sheet 21 "
-                       "and consider seam promotion -- neither done here."),
+        "next_slice": ("log59 RENDER artifact + owner-confirmation + seam promotion are now COMPLETE "
+                       f"(render via the proven {ev.get('render_mode') or 'ordered_chain_path'}); next "
+                       "growth is the next owner-confirmed endpoint-anchor bridge (log66/log36)."),
         "evidence": ev,
         "gates": [{"name": n, "pass": bool(x), "detail": d} for n, x, d in gates],
     }
