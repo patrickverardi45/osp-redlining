@@ -51,5 +51,15 @@ def test_route_excludes_points_at_or_beyond_endpoints():
     assert route.count(start) == 1 and route.count(end) == 1
 
 
+def test_route_picks_mainline_over_side_stub():
+    """OWNER-PACKET-2 sheet-5 jog fix: within a y-band, the vertex nearest the start->end
+    spine (the mainline conduit) is chosen; a lateral/pothole stub that veers off is rejected."""
+    start, end = (680.0, 441.0), (667.0, 84.0)
+    corridor = [(680.0, 435.0), (688.0, 434.0)]  # mainline (dx~0) + side stub (dx~+8), same band
+    interior = order_route(start, end, corridor, step=35.0)[1:-1]
+    assert (680.0, 435.0) in interior      # mainline kept
+    assert (688.0, 434.0) not in interior  # stub rejected
+
+
 def test_canonical_red_only():
     assert REDLINE_STROKE_RGB == (220, 25, 25)

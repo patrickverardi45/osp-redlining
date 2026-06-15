@@ -54,18 +54,36 @@ MATCH_TOL = 4.0   # re-derived endpoints must match the proven values within thi
 
 
 def order_route(start_xy, end_xy, corridor_pts, step=35.0):
-    """Build a route polyline start -> down-sampled corridor spine -> end, ordered by
-    descending y (start is the higher-y anchor). Pure: every vertex is a passed-in real
-    point; no coordinate is invented."""
-    interior = sorted({(round(p[0], 2), round(p[1], 2)) for p in corridor_pts},
-                      key=lambda p: -p[1])
-    spine, last_y = [], None
+    """Build a route polyline start -> MAINLINE-hugging spine -> end, ordered by descending
+    y (start is the higher-y anchor). Within each y-band the vertex NEAREST the straight
+    start->end spine is chosen, so the route follows the mainline conduit and REJECTS lateral
+    /pothole/driveway stubs that veer off the corridor (the OWNER-PACKET-2 sheet-5 jog fix).
+    Pure: every vertex is a passed-in real corridor point; no coordinate is invented; the
+    proven endpoints are never moved."""
+    sx, sy = start_xy
+    ex, ey = end_xy
+
+    def spine_x(y):
+        if ey == sy:
+            return sx
+        return sx + (ex - sx) * ((y - sy) / (ey - sy))
+
+    interior = sorted({(round(p[0], 2), round(p[1], 2)) for p in corridor_pts
+                       if ey + 2 < p[1] < sy - 2}, key=lambda p: -p[1])
+    spine, band, band_top = [], [], None
+
+    def flush():
+        if band:  # nearest to the spine; ties -> highest y (deterministic)
+            spine.append(min(band, key=lambda p: (abs(p[0] - spine_x(p[1])), -p[1])))
+
     for p in interior:
-        if not (end_xy[1] + 2 < p[1] < start_xy[1] - 2):
-            continue
-        if last_y is None or abs(p[1] - last_y) >= step:
-            spine.append(p)
-            last_y = p[1]
+        if band_top is None or (band_top - p[1]) < step:
+            band_top = band_top if band_top is not None else p[1]
+            band.append(p)
+        else:
+            flush()
+            band, band_top = [p], p[1]
+    flush()
     return [tuple(start_xy)] + spine + [tuple(end_xy)]
 
 
