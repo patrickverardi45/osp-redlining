@@ -54,6 +54,23 @@ def test_chain_reach_disambiguation_ambiguous_or_unreached():
     assert MATCHLINE_REACH_SEP == 10.0
 
 
+def test_locate_matchline_boundary_dedups_same_matchline_tokens():
+    # sheet-24 shape: TWO '5+45' tokens (the matchline label + a far route-ladder tick carrying the
+    # same number) both sit on the SAME drawn boundary -> ONE matchline, not rivals. Candidates are
+    # keyed by DISTINCT matchline bbox, so the chain-reach separation rule sees a single reachable
+    # boundary and resolves uniquely. (The pre-fix per-token keying saw [0.0, 0.0] and false-refused
+    # as ambiguous, which blocked the log71 START leg on sheet 24.)
+    from truelinev2.proof.run_log71_sheet_local_bind_scout import locate_matchline_boundary
+    ml = {"layer": "MATCHLINE", "x0": 90.0, "y0": 83.5, "x1": 378.0, "y1": 85.0}
+    words = [{"text": "5+45", "xc": 233.0, "yc": 76.6},    # label on the matchline
+             {"text": "5+45", "xc": 450.0, "yc": 351.1}]    # far route-ladder tick (same number)
+    chain = [{"lines": [(198.0, 84.0, 198.0, 140.0)]}]       # a dash endpoint lands on the boundary
+    bnd, reach, uniq = locate_matchline_boundary(words, [ml], "5+45", chain)
+    assert uniq is True
+    assert reach == 0.0
+    assert bnd is not None and abs(bnd[0] - 198.0) < 1.0 and abs(bnd[1] - 84.25) < 1.0
+
+
 def test_owner_named_classes_distinguishes_source_resolved_from_owner_named():
     # doctrine honesty: the owner named the END flower pot, but NOT the start class ("Lawndale
     # reset"). nextlink_hh is SOURCE-resolved by the extractor, never owner-named -> must be

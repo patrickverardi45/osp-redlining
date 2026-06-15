@@ -110,18 +110,26 @@ def locate_matchline_boundary(words, draw, sta, chain):
     """Resolve the ``sta`` matchline boundary point the conduit ``chain`` terminates at. The bare
     ``sta`` label is not sheet-unique, so candidates are disambiguated by CHAIN REACH (the matchline
     the chain actually reaches, uniquely). Returns (boundary_xy, reach_gap, unique) or
-    (None, reach_or_None, unique). No invented coordinate."""
+    (None, reach_or_None, unique). No invented coordinate.
+
+    Candidates are keyed by DISTINCT matchline bbox, not by token: a sheet may print the same
+    boundary station more than once for ONE matchline (e.g. the matchline label plus a route-ladder
+    tick carrying the same '5+45'), and on sheet 24 both 5+45 tokens sit on the single drawn boundary
+    at y~84. Those are one boundary, not rivals -- collapsing them to their best (min) reach keeps the
+    chain-reach separation rule operating across DISTINCT matchlines only, where a same-numbered tick
+    near a DIFFERENT matchline (the sheet-23 case) is still correctly rejected."""
     toks = [w for w in words if re.match(rf"^{re.escape(sta)}", str(w.get("text", "")))]
     mls = matchline_bboxes(draw, "MATCHLINE")
     eps = dash_endpoints(chain)
     if not toks or not mls or not eps:
         return None, None, False
-    cands = []
+    by_ml = {}
     for t in toks:
         mlb = min(mls, key=lambda bb: nearest_gap([(t["xc"], t["yc"])], bb))
         reach = min(nearest_gap([p], mlb) for p in eps)
-        cands.append((reach, mlb))
-    cands.sort(key=lambda c: c[0])
+        if mlb not in by_ml or reach < by_ml[mlb]:
+            by_ml[mlb] = reach
+    cands = sorted(((reach, mlb) for mlb, reach in by_ml.items()), key=lambda c: c[0])
     unique = select_matchline_by_chain_reach([r for r, _ in cands])
     if not unique:
         return None, (cands[0][0] if cands else None), False
