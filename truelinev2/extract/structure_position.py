@@ -77,6 +77,19 @@ BRENHAM_CONDUIT_LAYERS: Dict[str, str] = {
     "TERMINAL TAIL": "BORE - PORT",
 }
 
+# OWNER-PACKET-2 -- ADDITIVE lateral/drop conduit coverage (proof / opt-in only).
+# SEPARATE from BRENHAM_CONDUIT_LAYERS, which stays FROZEN so the engine census is
+# byte-identical. A drop bore whose drawn path is the HH-HH LATERAL conduit (not the
+# mainline VACANT PIPE / PORT) needs this layer to seed a conduit chain. Source-proven
+# for log53 (the 'BORE - LATERAL' run is graph-connected to the bound start NEXTLINK HH
+# symbol and spans toward its 24+11 matchline). NOT wired into BRENHAM_LANE_DIALECT; a
+# lane that wants drop-lateral coverage composes base | this set EXPLICITLY. 'BORE - PATH'
+# is deliberately EXCLUDED here: for log53 it is NOT connected to the start symbol
+# (proof-measured > MAX_DASH_GAP), so adding it would be unproven over-coverage.
+BRENHAM_LATERAL_CONDUIT_LAYERS: Dict[str, str] = {
+    "LATERAL HDPE": "BORE - LATERAL",
+}
+
 
 @dataclass(frozen=True)
 class LaneDialect:
