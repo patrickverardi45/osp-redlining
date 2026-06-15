@@ -169,6 +169,24 @@
       "corrected_prints": null, "corrected_start": "0+00", "corrected_end": "6+95", "corrected_sheets": [23, 24], "span_ft": null,
       "evidence_notes": "Starts at Lawndale, reset 'STA 7+50 = 0+00'; crosses sheets 23 -> 24 via matchline 'STA 5+45 - SEE SHEET 24'; ends at STA 6+95 FLOWER POT.",
       "evidence_refs": [],
+      "endpoint_anchors": {
+        "start": {
+          "station": "7+50",
+          "boundary_kind": "structure_terminus",
+          "structure_class": "nextlink_hh",
+          "structure_label": "NEXTLINK HH",
+          "owner_note_text": "Lawndale reset 'STA 7+50 = 0+00' on sheet 24; owner-confirmed (2026-06-15) NEXTLINK HH / handhole; source-binds via the committed nextlink-callout locator",
+          "clarity": "CLEAR"
+        },
+        "end": {
+          "station": "6+95",
+          "boundary_kind": "structure_terminus",
+          "structure_class": "flower_pot",
+          "structure_label": "FLOWER POT",
+          "owner_note_text": "STA 6+95 FLOWER POT on sheet 23 (owner-named), reached across the 'STA 5+45 - SEE SHEET 24' matchline (sheet 24 -> 23); the intermediate 5+45 matchline is a sheet-local-leg join resolved at bind/render time, not an endpoint identity",
+          "clarity": "CLEAR"
+        }
+      },
       "allowed_to_draw": true, "must_remain_abstained": false, "needs_review": false, "needs_source_verification": false, "review_reason": null
     },
     {

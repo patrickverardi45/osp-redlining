@@ -162,10 +162,13 @@ def main() -> int:
                   _census_frozen(doc), None))
     l53s = (rec["log53"].get("endpoint_anchors") or {}).get("start") or {}
     l64s = (rec["log64"].get("endpoint_anchors") or {}).get("start") or {}
-    gates.append(("G0b log53 + log64 prior behavior preserved; log71 has NO anchors yet",
+    # NOTE: this scout RESOLVES log71's start identity from source independently of whether the
+    # owner-confirmed bridge has since been encoded -- so it asserts only that log53/log64 prior
+    # behavior is preserved (the original "log71 has no anchors yet" clause was a point-in-time
+    # snapshot, now superseded once the log71 bridge was encoded in a later slice).
+    gates.append(("G0b log53 + log64 prior behavior preserved (anchors intact)",
                   l53s.get("structure_class") == "nextlink_hh"
-                  and l64s.get("structure_class") == "installer_hh"
-                  and "endpoint_anchors" not in rec["log71"], None))
+                  and l64s.get("structure_class") == "installer_hh", None))
 
     if not os.path.isfile(PDF):
         gates.append(("G1 plan PDF present", False, f"missing {PDF}"))

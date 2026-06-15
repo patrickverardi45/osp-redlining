@@ -43,7 +43,10 @@ TRUTH = _REPO_ROOT / "data" / "outputs" / "final_engine_truth_table" / \
 FROZEN_BUCKETS = {"DRAWABLE_REVIEW": 31, "HUMAN_ADJUSTABLE_REVIEW": 6,
                   "OUT_OF_CLASS": 1, "PICK_CARD_REVIEW": 17, "SOURCE_OR_KMZ_REQUIRED": 3}
 ABSTAIN_4 = ("log5", "log31", "log38", "log43")
-EXPECTED_PARTIAL = ("log11", "log47", "log48", "log52", "log58", "log67", "log69", "log70", "log71")
+# the live PARTIAL set shrinks as bridges are encoded: log64 (47f36b1) then log71 (owner-confirmed
+# nextlink_hh start) were promoted to SOURCE_BINDABLE_NOW, leaving these 8.
+EXPECTED_PARTIAL = ("log11", "log47", "log48", "log52", "log58", "log67", "log69", "log70")
+PROMOTED_OUT = ("log64", "log71")   # bridges encoded -> now SOURCE_BINDABLE_NOW, no longer PARTIAL
 
 RISK_LOW, RISK_MEDIUM, RISK_HIGH = "LOW", "MEDIUM", "HIGH"
 _RANK = {RISK_LOW: 0, RISK_MEDIUM: 1, RISK_HIGH: 2}
@@ -168,13 +171,14 @@ def main() -> int:
     gates.append(("G2 log53 + log64 prior behavior preserved (anchors unchanged)",
                   l53s.get("structure_class") == "nextlink_hh"
                   and l64s.get("structure_class") == "installer_hh", None))
-    gates.append(("G3 PARTIAL cohort is the expected 9 (consumed from cohort classifier)",
-                  tuple(sorted(r["log_id"] for r in rows)) == EXPECTED_PARTIAL, len(rows)))
-    gates.append(("G4 exactly one LOW-risk candidate; it ranks #1",
-                  len(low) == 1 and recommended is not None and recommended["risk"] == RISK_LOW
-                  and recommended["rank"] == 1, [r["log_id"] for r in low]))
-    gates.append(("G5 recommended next candidate is log71",
-                  recommended is not None and recommended["log_id"] == "log71", None))
+    partial_ids = {r["log_id"] for r in rows}
+    safest_remaining = rows[0] if rows else None   # top-ranked even when not LOW (informational)
+    gates.append(("G3 PARTIAL cohort is the expected 8 (log64+log71 promoted out)",
+                  tuple(sorted(partial_ids)) == EXPECTED_PARTIAL, len(rows)))
+    gates.append(("G4 no LOW-risk candidate remains (the two clean wins log64+log71 are encoded)",
+                  len(low) == 0 and recommended is None, [r["log_id"] for r in low]))
+    gates.append(("G5 result NO_SAFE_CANDIDATE; promoted log64+log71 are no longer PARTIAL",
+                  result == R_NONE and not (set(PROMOTED_OUT) & partial_ids), sorted(partial_ids)))
     gates.append(("G6 log69/log70 flagged HIGH for sibling-endpoint overlap (not picked)",
                   all(next(r for r in rows if r["log_id"] == l)["risk"] == RISK_HIGH
                       and next(r for r in rows if r["log_id"] == l)["sibling_overlap"]
@@ -185,16 +189,22 @@ def main() -> int:
     gates.append(("G8 zero PNG / zero stroke (no render lane)", len(pngs) == 0, {"pngs": pngs}))
     all_pass = all(x for _, x, _ in gates)
 
-    next_slice = ("Run a sheet-local source-bind scout for log71 -- confirm the end FLOWER POT "
-                  "(STA 6+95) + the 'STA 5+45 - SEE SHEET 24' matchline boundary bind sheet-locally, "
-                  "AND resolve the Lawndale reset (STA 7+50=0+00) START identity; defer encoding "
-                  "endpoint_anchors until the start identity is owner-confirmed (do not invent a class)."
-                  ) if recommended else "none"
+    next_slice = (
+        f"NO LOW-risk PARTIAL remains after the log64 + log71 wins. The safest REMAINING is "
+        f"{safest_remaining['log_id']} ({safest_remaining['risk']}: {safest_remaining['main_blocker']}), "
+        f"but it -- and the rest -- need a MEDIUM+-risk decision (OCR / 3-sheet / sibling-overlap), "
+        f"not an automatic safe pick. Re-scope before picking the next candidate."
+        if (recommended is None and safest_remaining) else
+        (f"Implement {recommended['log_id']} via the controlled path." if recommended else "none"))
     report = {
         "milestone": "OWNER-PACKET-2 -- PARTIAL cohort next-candidate scout (proof only; ranking)",
         "verdict": "PASS" if all_pass else "FAIL",
         "result": result,
         "recommended_candidate": recommended["log_id"] if recommended else None,
+        "safest_remaining": (
+            {"log_id": safest_remaining["log_id"], "risk": safest_remaining["risk"],
+             "main_blocker": safest_remaining["main_blocker"]} if safest_remaining else None),
+        "promoted_out_since_first_scout": list(PROMOTED_OUT),
         "recommended_next_slice": next_slice,
         "ranked": rows,
         "risk_tiers": {t: [r["log_id"] for r in rows if r["risk"] == t]

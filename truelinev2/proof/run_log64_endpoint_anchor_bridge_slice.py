@@ -53,7 +53,7 @@ TRUTH = _REPO_ROOT / "data" / "outputs" / "final_engine_truth_table" / \
 FROZEN_BUCKETS = {"DRAWABLE_REVIEW": 31, "HUMAN_ADJUSTABLE_REVIEW": 6,
                   "OUT_OF_CLASS": 1, "PICK_CARD_REVIEW": 17, "SOURCE_OR_KMZ_REQUIRED": 3}
 ABSTAIN_4 = ("log5", "log31", "log38", "log43")
-EXPECTED_ANCHOR_LOGS = ("log53", "log64")  # the only two carrying the bridge after this slice
+EXPECTED_ANCHOR_LOGS = ("log53", "log64")  # bridges this slice guarantees present (subset; later slices add more)
 _COORD_KEYS = {"x", "y", "z", "xc", "yc", "x0", "y0", "x1", "y1", "cx", "cy", "xy",
                "lat", "lon", "lng", "coord", "coords", "coordinate", "coordinates",
                "px", "py", "pixel", "pixels", "point", "points", "symbol_xy", "anchor_xy",
@@ -139,14 +139,17 @@ def main() -> int:
     gates.append(("G9 cohort classifier now buckets log64 SOURCE_BINDABLE_NOW (was PARTIAL)",
                   cls == SOURCE_BINDABLE_NOW, {"now": cls, "was": PARTIAL_SOURCE_BINDABLE}))
 
-    # --- no broad cohort change: only log53 + log64 carry the bridge --------------
-    with_anchors = tuple(sorted(r["log_id"] for r in doc["logs"] if r.get("endpoint_anchors")))
+    # --- no broad cohort change: log53 + log64 bridges present + intact ----------
+    # (subset check, not exact: LATER slices legitimately add more bridges e.g. log71 -- this
+    # proof must not break when the cohort grows; the exact global count is locked by the cohort
+    # replay's SOURCE_BINDABLE_NOW count.)
+    with_anchors = {r["log_id"] for r in doc["logs"] if r.get("endpoint_anchors")}
     l53s = (rec["log53"].get("endpoint_anchors") or {}).get("start") or {}
     l53e = (rec["log53"].get("endpoint_anchors") or {}).get("end") or {}
-    gates.append(("G10 exactly log53 + log64 carry anchors; log53 bridge untouched",
-                  with_anchors == EXPECTED_ANCHOR_LOGS
+    gates.append(("G10 log53 + log64 bridges present + intact (log53 matchline-continuation kept)",
+                  set(EXPECTED_ANCHOR_LOGS) <= with_anchors
                   and l53s.get("structure_class") == "nextlink_hh"
-                  and l53e.get("boundary_kind") == "matchline_continuation", with_anchors))
+                  and l53e.get("boundary_kind") == "matchline_continuation", sorted(with_anchors)))
 
     # --- frozen ENGINE census (identity-only addition changes no bucket) ----------
     if TRUTH.is_file():

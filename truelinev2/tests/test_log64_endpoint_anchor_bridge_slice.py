@@ -118,9 +118,12 @@ def test_log64_moves_to_source_bindable_now(l64):
     assert r["blockers"] == []
 
 
-def test_only_log53_and_log64_carry_the_bridge(doc):
-    with_anchors = tuple(sorted(r["log_id"] for r in doc["logs"] if r.get("endpoint_anchors")))
-    assert with_anchors == EXPECTED_ANCHOR_LOGS == ("log53", "log64")
+def test_log53_and_log64_bridges_present(doc):
+    # subset, not exact: later slices legitimately add bridges (e.g. log71), so this must not
+    # break as the cohort grows -- it only guarantees log53 + log64 remain bridged.
+    with_anchors = {r["log_id"] for r in doc["logs"] if r.get("endpoint_anchors")}
+    assert set(EXPECTED_ANCHOR_LOGS) <= with_anchors
+    assert EXPECTED_ANCHOR_LOGS == ("log53", "log64")
 
 
 def test_log53_bridge_untouched(doc):

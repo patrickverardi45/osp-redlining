@@ -161,16 +161,17 @@ def test_log53_is_source_bindable_now():
 
 def test_full_cohort_census_counts():
     """The headline census is deterministic against the reviewed artifact. Intentional gated
-    delta: encoding log64's endpoint-anchor bridge moved it PARTIAL -> SOURCE_BINDABLE_NOW
-    (see test_log64_endpoint_anchor_bridge_slice), so SOURCE_BINDABLE_NOW=2 / PARTIAL=9."""
+    deltas as endpoint-anchor bridges are encoded: log64 (47f36b1) moved PARTIAL ->
+    SOURCE_BINDABLE_NOW, then log71 (this slice, owner-confirmed nextlink_hh start) moved PARTIAL
+    -> SOURCE_BINDABLE_NOW -- so SOURCE_BINDABLE_NOW=3 (log53, log64, log71) / PARTIAL=8."""
     rows = classify_cohort(load_adjudication())
     assert len(rows) == 27
     counts = {}
     for r in rows:
         counts[r["classification"]] = counts.get(r["classification"], 0) + 1
     assert counts == {
-        SOURCE_BINDABLE_NOW: 2,          # log53 (rendered) + log64 (identity bridge encoded)
-        PARTIAL_SOURCE_BINDABLE: 9,
+        SOURCE_BINDABLE_NOW: 3,          # log53 (rendered) + log64 + log71 (bridges encoded)
+        PARTIAL_SOURCE_BINDABLE: 8,
         REPRESENTATIVE_ROUTE_CANDIDATE: 9,
         HUMAN_REVIEW_REQUIRED: 3,
         STILL_BLOCKED: 4,
@@ -184,7 +185,8 @@ def test_largest_repeated_blocker_is_cross_sheet_frame():
         for b in r["blockers"]:
             blocker_counts[b] = blocker_counts.get(b, 0) + 1
     top = max(blocker_counts.items(), key=lambda kv: kv[1])
-    assert top == (FRAME_CONTESTED, 12)
+    # 11 (was 12): log71's PARTIAL FRAME_CONTESTED cleared when its bridge was encoded this slice
+    assert top == (FRAME_CONTESTED, 11)
 
 
 def test_real_cohort_enums_and_consistency():

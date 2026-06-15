@@ -77,17 +77,21 @@ def test_sibling_overlap_flags_log69_log70():
     assert sibling_overlap(rec["log64"], doc) == []
 
 
-def test_partial_cohort_is_the_expected_nine():
+def test_partial_cohort_is_the_expected_eight():
+    # intentional gated delta: log64 (47f36b1) then log71 (this cycle) were promoted to
+    # SOURCE_BINDABLE_NOW once their bridges were encoded, so PARTIAL shrank 9 -> 8.
     rows = rank_partial_cohort(load_adjudication())
     assert tuple(sorted(r["log_id"] for r in rows)) == EXPECTED_PARTIAL
-    assert len(rows) == 9
+    assert len(rows) == 8
+    assert "log71" not in {r["log_id"] for r in rows}   # promoted out
 
 
-def test_log71_is_sole_low_and_recommended():
+def test_no_low_candidate_remains_after_log71():
+    # log71 was the sole LOW; with its bridge encoded, no LOW-risk PARTIAL remains -> the next
+    # candidate needs a MEDIUM+-risk decision (the safest remaining is log67, MEDIUM print-OCR).
     rows = rank_partial_cohort(load_adjudication())
-    low = [r for r in rows if r["risk"] == RISK_LOW]
-    assert [r["log_id"] for r in low] == ["log71"]
-    assert rows[0]["log_id"] == "log71" and rows[0]["rank"] == 1
+    assert [r["log_id"] for r in rows if r["risk"] == RISK_LOW] == []
+    assert rows[0]["log_id"] == "log67" and rows[0]["risk"] == RISK_MEDIUM and rows[0]["rank"] == 1
 
 
 def test_log69_log70_are_high_for_overlap():

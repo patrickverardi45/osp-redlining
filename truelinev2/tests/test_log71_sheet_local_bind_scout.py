@@ -68,15 +68,16 @@ def test_owner_named_classes_distinguishes_source_resolved_from_owner_named():
     assert owner_named_classes(l64["evidence_notes"]) == {"installer_hh", "flower_pot"}
 
 
-def test_scout_consumes_log71_without_encoding_anchors():
+def test_scout_consumes_log71_record():
+    # the scout resolves identity from the record's reviewed fields; it does not itself encode
+    # anchors (the owner-confirmed bridge was encoded in a LATER slice, so we no longer assert
+    # their absence here -- the scout's resolution is independent of the later encode).
     doc = load_adjudication()
     l71 = next(r for r in doc["logs"] if r["log_id"] == "log71")
     assert l71["corrected_end"] == "6+95"
     assert list(l71["corrected_sheets"]) == [23, 24]
     assert "MATCHLINE_CHAIN" in l71["correction_types"]
     assert "STATION_RESET_SEGMENT_BOUNDARY" in l71["correction_types"]
-    # this slice resolves identity only -- it must NOT have encoded endpoint_anchors
-    assert "endpoint_anchors" not in l71
 
 
 def test_proof_has_no_render_lane():
