@@ -254,8 +254,9 @@ def main() -> int:
 
 def _emit(gates, result, ev, rec) -> int:
     # ---- scope / safety gates (always run) -------------------------------------
-    gates.append(("G9 log66/log36 untouched (no anchors); log59 PROMOTED in seam eligibility (builds)",
-                  not rec["log66"].get("endpoint_anchors") and not rec["log36"].get("endpoint_anchors")
+    gates.append(("G9 log36 un-anchored; log66 bridged-not-promoted (seam refuses); log59 PROMOTED (builds)",
+                  not rec["log36"].get("endpoint_anchors")
+                  and rec["log66"].get("endpoint_anchors") and _refuses_seam("log66", rec)
                   and tuple(ELIGIBLE_EXEMPLARS) == ("log53", "log64", "log71", "log59")
                   and not _refuses_seam("log59", rec), None))
     pngs = sorted(p.name for p in OUT_DIR.glob("*.png"))
@@ -290,7 +291,7 @@ def _emit(gates, result, ev, rec) -> int:
         "no_cross_sheet": True, "no_corrected_sheets_promotion": True, "coords_are_extractor_derived": True,
         "next_slice": ("log59 RENDER artifact + owner-confirmation + seam promotion are now COMPLETE "
                        f"(render via the proven {ev.get('render_mode') or 'ordered_chain_path'}); next "
-                       "growth is the next owner-confirmed endpoint-anchor bridge (log66/log36)."),
+                       "growth is the next endpoint-anchor bridge (log36; log66 since bridged)."),
         "evidence": ev,
         "gates": [{"name": n, "pass": bool(x), "detail": d} for n, x, d in gates],
     }

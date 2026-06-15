@@ -1,8 +1,9 @@
 r"""OWNER-PACKET-2 -- NEXT eligibility-growth scout (PROOF/REPORT ONLY; no promotion, no encoding).
 
 The seam pipeline (contract + adapter + end-to-end driver) is eligibility-frozen to the four proven
-exemplars (log53, log64, log71, log59 -- log59 owner-confirmed + promoted). This scout classifies the
-18 PENDING no-endpoint-anchors logs (19 minus log59, now SOURCE_BINDABLE_NOW + seam-promoted) and
+exemplars (log53, log64, log71, log59). log66 has since been bridged (sheet 10 source-recovered) into
+the cohort SOURCE_BINDABLE_NOW set but is NOT yet seam-promoted. This scout classifies the 17 PENDING
+no-endpoint-anchors logs (19 minus log59 + log66, both now SOURCE_BINDABLE_NOW) and
 identifies the SINGLE safest next log to promote into the seam -- OR honestly reports that none is
 safe yet. It encodes NO endpoint_anchors, changes NO seam contract/adapter/driver, parses NO PDF,
 draws nothing, and promotes nothing. It only reads owner-AUTHORITATIVE adjudication facts via the
@@ -185,14 +186,14 @@ def main() -> int:
     gates.append(("G0 engine census frozen (OFF 31/6/1/17/3, ON 22/1/4, log44+abstains held)",
                   _census_frozen(doc), None))
 
-    # G1 the SEAM eligible set now matches the cohort SOURCE_BINDABLE_NOW set exactly (4): log59 was
-    # owner-confirmed + promoted, so the cohort-vs-seam gap closed (every source-bindable log is in the
-    # seam). No PENDING (no-anchor) log is source-bindable yet.
+    # G1 the cohort SOURCE_BINDABLE_NOW set is 5 (log53/59/64/66/71) while the SEAM eligible set is 4:
+    # log66 was bridged (sheet 10 source-recovered) into the cohort but is NOT yet seam-promoted, so the
+    # cohort-vs-seam gap is exactly {log66}. No PENDING (no-anchor) log is source-bindable yet.
     source_bindable_now = sorted(a["log_id"] for a in
                                  (classify_record(r) for r in doc["logs"])
                                  if a["classification"] == SOURCE_BINDABLE_NOW)
-    gates.append(("G1 seam eligible == cohort SOURCE_BINDABLE_NOW == log53/log59/log64/log71 (log59 promoted)",
-                  source_bindable_now == ["log53", "log59", "log64", "log71"]
+    gates.append(("G1 cohort SOURCE_BINDABLE_NOW == log53/59/64/66/71 (5); seam eligible == 4 (log66 bridged, not promoted)",
+                  source_bindable_now == ["log53", "log59", "log64", "log66", "log71"]
                   and tuple(ELIGIBLE_EXEMPLARS) == ("log53", "log64", "log71", "log59"), source_bindable_now))
 
     # G2 no code path promotes a new log here: the seam contract still REFUSES every pending no-anchor log
@@ -200,8 +201,8 @@ def main() -> int:
     gates.append(("G2 no further promotion: seam contract refuses every pending no-anchor log; eligible set == 4",
                   refused and len(ELIGIBLE_EXEMPLARS) == 4, None))
 
-    gates.append(("G3 all pending no-anchor logs classified (18 after log59's bridge moved out of pending)",
-                  len(analyzed) == 18 and len({a["log_id"] for a in analyzed}) == 18, len(analyzed)))
+    gates.append(("G3 all pending no-anchor logs classified (17 after log59 + log66 bridges moved out of pending)",
+                  len(analyzed) == 17 and len({a["log_id"] for a in analyzed}) == 17, len(analyzed)))
 
     # G4 candidate determination correct: recommended satisfies all 8 (or NO_SAFE and none does)
     g4 = (is_eligibility_ready(rec[recommended["log_id"]], doc) if recommended
@@ -225,9 +226,9 @@ def main() -> int:
     gates.append(("G9 every rejected candidate has >= 1 named blocker category",
                   all(a["blocker_categories"] for a in rejected), None))
 
-    # G10 contract/adapter/driver eligibility == cohort source-bindable (4); no PENDING log added one
-    gates.append(("G10 seam eligibility == 4 (log59 promoted); cohort source-bindable == 4 (seam == cohort)",
-                  len(ELIGIBLE_EXEMPLARS) == 4 and len(source_bindable_now) == 4, None))
+    # G10 seam eligibility == 4; cohort source-bindable == 5 (log66 bridged, not promoted); no PENDING log added one
+    gates.append(("G10 seam eligibility == 4; cohort source-bindable == 5 (log66 bridged into cohort, not seam-promoted)",
+                  len(ELIGIBLE_EXEMPLARS) == 4 and len(source_bindable_now) == 5, None))
 
     gates.append(("G11 result in allowed enum", result in ALLOWED, result))
     pngs = sorted(p.name for p in OUT_DIR.glob("*.png"))
@@ -294,11 +295,10 @@ def _emit(gates, result, recommended, near_misses, analyzed, rejected) -> int:
             f"promote {recommended['log_id']} via the controlled path (encode endpoint_anchors -> "
             f"log64-style single-sheet source-bind + render -> add to contract/adapter/driver)"
             if recommended else
-            "a FOCUSED sheet-locator scout for the remaining NO_RECORDED_SHEET near-misses (log66/log36; "
-            "log59 already source-recovered + bridged): "
-            "recover which sheet carries each already-named installer-HH/flower-pot/nextlink-HH pair "
-            "(via the parent bore row / a contained PDF probe), WITHOUT encoding or promoting; that "
-            "single recovered sheet is the only thing between them and the log64 shape."),
+            "the next bridge is the remaining NO_RECORDED_SHEET near-miss log36 (log59 + log66 already "
+            "bridged; the near-miss sheet-locator scout recovered log36 -> sheet 17): encode log36's "
+            "endpoint_anchors (installer-HH <-> installer-HH) as a source-recovered bridge, WITHOUT "
+            "owner-confirming the sheet or promoting into the seam; that is the log59/log66 bridge precedent."),
         "gates": [{"name": n, "pass": bool(x), "detail": d} for n, x, d in gates],
     }
     OUT_DIR.mkdir(parents=True, exist_ok=True)

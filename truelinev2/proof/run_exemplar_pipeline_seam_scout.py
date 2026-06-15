@@ -354,15 +354,16 @@ def main() -> int:
         (eligible if ok else blocked)[r["log_id"]] = {"reason": reason, "categories": cats}
     classified = len(eligible) + len(blocked)
     # The PROVEN seam exemplars (EXEMPLARS) each carry owner-reviewed anchors AND a full source-bind+
-    # render proof. log59 completed that path (owner-confirmed sheet 21 + source-bind + render) and was
-    # promoted, so it is now the 4th seam exemplar -- anchor-eligible == the seam exemplar set exactly
-    # (no anchored log is left held back, and nothing was silently upgraded).
-    honest = (set(EXEMPLARS) <= set(eligible)            # the seam exemplars are all anchor-eligible
-              and set(eligible) - set(EXEMPLARS) == set()  # every anchor-eligible log is a seam exemplar
+    # render proof. log59 completed that path and was promoted (the 4th seam exemplar). log66 has since
+    # been given a SOURCE-RECOVERED endpoint-anchor bridge so it is anchor-eligible too, but it is held
+    # back from the seam (no owner-confirmed source-bind/render yet) -- NOT silently upgraded. Hence
+    # anchor-eligible == the 4 seam exemplars + log66.
+    honest = (set(EXEMPLARS) <= set(eligible)            # the 4 seam exemplars are all anchor-eligible
+              and set(eligible) - set(EXEMPLARS) == {"log66"}  # the only added anchor is log66's bridge (held back)
               and classified == len(doc["logs"])         # every cohort log classified
               and not (set(eligible) & set(blocked))     # never both
               and all(blocked[l]["categories"] for l in blocked))  # every block has a named category
-    gates.append(("G8 eligibility honest: 4 seam exemplars (incl owner-confirmed + promoted log59); abstains/needs-verify blocked",
+    gates.append(("G8 eligibility honest: 4 seam exemplars (incl promoted log59) + log66 anchored-but-held-back; abstains/needs-verify blocked",
                   honest, {"eligible": sorted(eligible), "seam_exemplars": list(EXEMPLARS),
                            "anchored_not_in_seam": sorted(set(eligible) - set(EXEMPLARS)),
                            "blocked": len(blocked), "classified": classified}))

@@ -80,6 +80,22 @@ def _module_exists(modname: str) -> bool:
         return False
 
 
+def _seam_refusal(rec: dict) -> tuple:
+    """Why this log is NOT seam-eligible -- a named (category, reason). Distinct from the scout's
+    ANCHOR-eligibility: an anchored log that is not yet seam-promoted (cohort SOURCE_BINDABLE_NOW but
+    held back, e.g. log66's source-recovered bridge) is a NAMED 'held back' reason, never silently
+    eligible."""
+    if rec.get("must_remain_abstained"):
+        return ("owner_abstain", "owner-reviewed ABSTAIN (no safe source)")
+    if rec.get("needs_source_verification"):
+        return ("needs_source_verification", "needs source verification before geometry")
+    if rec.get("endpoint_anchors"):
+        return ("anchored_not_yet_seam_promoted",
+                "anchored (cohort SOURCE_BINDABLE_NOW) but NOT yet seam-promoted -- held back pending "
+                "owner-confirmed source-bind + render")
+    return ("no_endpoint_anchors_bridge", "no owner-reviewed endpoint_anchors bridge yet")
+
+
 def build_blanket_plan(doc: dict) -> dict:
     """Pure blanket PLAN over EXACTLY the seam-eligible set (no invocation). Per eligible log: its
     canonical seam payload (shape + render mode) + adapter dispatch (source-bind/render proof families).
@@ -106,9 +122,9 @@ def build_blanket_plan(doc: dict) -> dict:
         lid = r["log_id"]
         if lid in ELIGIBLE_EXEMPLARS:
             continue
-        ok, reason, cats = seam_classify(r)
+        cat, reason = _seam_refusal(r)   # named SEAM-eligibility reason (anchored-but-held-back is named)
         refused.append({
-            "bore_id": lid, "reason": reason, "categories": cats,
+            "bore_id": lid, "reason": reason, "categories": [cat],
             "contract_refuses": _refuses_payload(lid, rec),
             "adapter_refuses": _refuses_dispatch(lid, rec),
         })
@@ -194,12 +210,18 @@ def main() -> int:
                   non_elig_refused and unknown_refused,
                   {"non_eligible": len(refused), "all_named": non_elig_refused, "unknown_refused": unknown_refused}))
 
-    # G8: ONLY eligible logs process -- the contract-eligible set == the seam-classifier-eligible set ==
-    #     the frozen ELIGIBLE_EXEMPLARS; no dataset-wide auto-promotion (doc unchanged).
+    # G8: ONLY the seam-eligible logs process -- contract-eligible == the frozen ELIGIBLE_EXEMPLARS (no
+    #     dataset-wide auto-promotion). Anchored logs that are NOT seam-promoted (cohort SOURCE_BINDABLE_NOW
+    #     but held back, e.g. log66's source-recovered bridge) are classifier-eligible yet correctly
+    #     REFUSED by the contract -- each is named 'anchored_not_yet_seam_promoted'.
     contract_eligible = {r["log_id"] for r in doc["logs"] if not _refuses_payload(r["log_id"], rec)}
     classifier_eligible = {r["log_id"] for r in doc["logs"] if seam_classify(r)[0]}
-    gates.append(("G8 only eligible logs process: contract-eligible == classifier-eligible == ELIGIBLE_EXEMPLARS (no auto-promotion)",
-                  contract_eligible == classifier_eligible == set(ELIGIBLE_EXEMPLARS), sorted(contract_eligible)))
+    held_back = {r["bore_id"] for r in refused if "anchored_not_yet_seam_promoted" in r["categories"]}
+    gates.append(("G8 only seam-eligible process: contract-eligible == ELIGIBLE_EXEMPLARS; anchored-but-held-back named + refused (no auto-promotion)",
+                  contract_eligible == set(ELIGIBLE_EXEMPLARS)
+                  and classifier_eligible == contract_eligible | held_back
+                  and held_back == classifier_eligible - contract_eligible,
+                  {"contract_eligible": sorted(contract_eligible), "held_back": sorted(held_back)}))
 
     pngs = sorted(p.name for p in OUT_DIR.glob("*.png"))
     gates.append(("G9 blanket proof emits NO render artifact of its own (zero PNG in its dir)",

@@ -4,8 +4,8 @@ Locks the bridge's pure facts: log59's endpoint_anchors are schema-valid and ide
 (installer_hh @ 2+76 -> flower_pot @ 4+46, both structure_terminus, no matchline = the log64 shape);
 the station span is 170'; sheet 21 is cited as SOURCE-RECOVERED + OWNER-CONFIRMED and recorded in
 corrected_sheets=[21]; the cohort classifier moves log59 to SOURCE_BINDABLE_NOW (the explicit
-log59-limited delta); log66/log36 stay un-anchored; and log59 is PROMOTED into the seam contract
-eligible set. No PDF parse here.
+log59-limited delta); log36 stays un-anchored (log66 since bridged); and log59 is PROMOTED into the
+seam contract eligible set. No PDF parse here.
 """
 from pathlib import Path
 
@@ -71,10 +71,9 @@ def test_anchors_carry_no_coordinate_fields():
         assert not (set(L59["endpoint_anchors"][side]) & coord_keys)
 
 
-def test_cohort_delta_log59_source_bindable_now_only():
+def test_cohort_delta_log59_source_bindable_now():
     assert classify_record(L59)["classification"] == SOURCE_BINDABLE_NOW
-    # the delta is limited to log59: log66/log36 stay un-anchored (not source-bindable via a bridge)
-    assert not REC["log66"].get("endpoint_anchors")
+    # log36 stays un-anchored (the remaining near-miss); log66 has since been bridged in its own slice
     assert not REC["log36"].get("endpoint_anchors")
 
 

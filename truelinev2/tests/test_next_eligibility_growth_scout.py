@@ -43,10 +43,10 @@ def test_result_enum():
     assert R_NONE == "NO_SAFE_NEXT_ELIGIBILITY_CANDIDATE"
 
 
-def test_pending_is_eighteen_no_anchor_logs():
-    # 19 minus log59 (its source-recovered endpoint-anchor bridge moved it to SOURCE_BINDABLE_NOW)
-    assert len(PENDING) == 18
-    assert "log59" not in {r["log_id"] for r in PENDING}
+def test_pending_is_seventeen_no_anchor_logs():
+    # 19 minus log59 + log66 (both bridged -> SOURCE_BINDABLE_NOW, out of the no-anchor pending set)
+    assert len(PENDING) == 17
+    assert {"log59", "log66"}.isdisjoint({r["log_id"] for r in PENDING})
     for r in PENDING:
         assert not r.get("endpoint_anchors")
         assert not r.get("must_remain_abstained")
@@ -61,8 +61,8 @@ def test_no_safe_candidate_over_real_data():
 def test_eligible_set_matches_cohort_and_seam_refuses_pending():
     source_bindable_now = sorted(c["log_id"] for c in (classify_record(r) for r in DOC["logs"])
                                  if c["classification"] == "SOURCE_BINDABLE_NOW")
-    # log59 owner-confirmed + promoted: the SEAM eligible set now matches the cohort SOURCE_BINDABLE_NOW set
-    assert source_bindable_now == ["log53", "log59", "log64", "log71"]
+    # log66 bridged into the cohort (not promoted): cohort SOURCE_BINDABLE_NOW (5) > seam eligible (4)
+    assert source_bindable_now == ["log53", "log59", "log64", "log66", "log71"]
     assert tuple(ELIGIBLE_EXEMPLARS) == ("log53", "log64", "log71", "log59")
     # the seam contract still refuses every pending no-anchor log -> no further promotion here
     for r in PENDING:
@@ -85,8 +85,8 @@ def test_near_misses_are_named_endpoints_missing_only_a_sheet():
     near = [r["log_id"] for r in PENDING
             if classify_record(r)["classification"] == REPRESENTATIVE_ROUTE_CANDIDATE
             and CAT_NO_SHEET in blocker_categories(r, classify_record(r), DOC)]
-    # log59 left the trio (its bridge moved it to SOURCE_BINDABLE_NOW); log66/log36 remain
-    assert set(near) == {"log66", "log36"}
+    # log59 + log66 left (their bridges moved them to SOURCE_BINDABLE_NOW); only log36 remains
+    assert set(near) == {"log36"}
     for lid in near:
         sig = classify_record(REC[lid])["signals"]
         assert sig["modeled_terminus_classes"]          # endpoints are modeled/named

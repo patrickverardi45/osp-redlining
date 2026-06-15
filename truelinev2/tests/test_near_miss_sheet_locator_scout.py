@@ -41,14 +41,14 @@ def test_result_enum():
     assert R_NONE == "NO_SAFE_SHEET_LOCATOR_CANDIDATE"
 
 
-def test_near_miss_set_is_the_remaining_no_recorded_sheet_logs():
-    # log59 was bridged out (its source-recovered anchors moved it to SOURCE_BINDABLE_NOW); the
-    # remaining NO_RECORDED_SHEET near-misses are log66/log36.
+def test_near_miss_set_is_the_remaining_no_recorded_sheet_log():
+    # log59 + log66 were bridged out (their anchors moved them to SOURCE_BINDABLE_NOW); the remaining
+    # NO_RECORDED_SHEET near-miss is log36.
     canonical = sorted(
         r["log_id"] for r in DOC["logs"]
         if classify_record(r)["classification"] == REPRESENTATIVE_ROUTE_CANDIDATE
         and NO_RECORDED_SHEET in classify_record(r)["blockers"])
-    assert canonical == sorted(NEAR_MISSES) == ["log36", "log66"]
+    assert canonical == sorted(NEAR_MISSES) == ["log36"]
     assert set(NEAR_MISS_SIG) == set(NEAR_MISSES)
 
 
@@ -65,21 +65,20 @@ def test_near_miss_endpoints_are_owner_named_modeled_classes():
         sig = NEAR_MISS_SIG[lid]
         assert sig["start"]["cls"] in MODELED
         assert sig["end"]["cls"] in MODELED
-    # log66 (the next pick after log59 bridged out) is installer_hh <-> nextlink_hh
-    assert (NEAR_MISS_SIG["log66"]["start"]["cls"], NEAR_MISS_SIG["log66"]["end"]["cls"]) == ("installer_hh", "nextlink_hh")
+    # log36 (the remaining near-miss after log59 + log66 bridged out) is installer_hh <-> installer_hh
+    assert (NEAR_MISS_SIG["log36"]["start"]["cls"], NEAR_MISS_SIG["log36"]["end"]["cls"]) == ("installer_hh", "installer_hh")
 
 
-def test_safety_rank_prefers_log66_after_log59_bridged():
+def test_safety_rank_is_log36_after_log59_and_log66_bridged():
     ranked = sorted(NEAR_MISSES, key=lambda l: _safety_rank(l, REC))
-    assert ranked[0] == "log66"                              # log59 bridged out; log66 is next (no reset collision)
-    assert ranked == ["log66", "log36"]
+    assert ranked == ["log36"]                               # log59 + log66 bridged out; log36 is the last near-miss
 
 
 def test_eligible_set_matches_cohort_and_seam_refuses_near_misses():
     source_bindable_now = sorted(c["log_id"] for c in (classify_record(r) for r in DOC["logs"])
                                  if c["classification"] == "SOURCE_BINDABLE_NOW")
-    # log59 owner-confirmed + promoted: the SEAM eligible set now matches the cohort SOURCE_BINDABLE_NOW set
-    assert source_bindable_now == ["log53", "log59", "log64", "log71"]
+    # log66 bridged into the cohort (not promoted): cohort SOURCE_BINDABLE_NOW (5) > seam eligible (4)
+    assert source_bindable_now == ["log53", "log59", "log64", "log66", "log71"]
     assert tuple(ELIGIBLE_EXEMPLARS) == ("log53", "log64", "log71", "log59")
     for lid in NEAR_MISSES:
         try:
@@ -96,11 +95,9 @@ def test_no_anchors_and_owner_sheet_still_blank():
 
 
 def test_reject_reason_always_names_a_category():
-    # a recoverable-but-deferred near-miss
-    r = _reject_reason("log66", {"uniquely_recovered": True, "recovered_sheet": 10}, REC["log66"])
-    assert r["blocker_category"] == "recoverable_but_deferred_lower_priority_variant"
-    # log36 deferred reason calls out the reset-station number collision
+    # log36 recoverable-but-deferred reason names the category + calls out the reset-station collision
     r36 = _reject_reason("log36", {"uniquely_recovered": True, "recovered_sheet": 17}, REC["log36"])
+    assert r36["blocker_category"] == "recoverable_but_deferred_lower_priority_variant"
     assert "collision" in r36["reason"]
     # a (hypothetical) non-recoverable near-miss -> named blocker category
     nr = _reject_reason("log36", {"uniquely_recovered": False, "recovered_sheet": None,

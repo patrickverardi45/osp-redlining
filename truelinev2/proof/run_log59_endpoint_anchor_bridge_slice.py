@@ -55,8 +55,8 @@ TRUTH = _REPO_ROOT / "data" / "outputs" / "final_engine_truth_table" / \
 FROZEN_BUCKETS = {"DRAWABLE_REVIEW": 31, "HUMAN_ADJUSTABLE_REVIEW": 6,
                   "OUT_OF_CLASS": 1, "PICK_CARD_REVIEW": 17, "SOURCE_OR_KMZ_REQUIRED": 3}
 ABSTAIN_4 = ("log5", "log31", "log38", "log43")
-EXPECTED_ANCHOR_LOGS = ("log53", "log59", "log64", "log71")
-NOT_ANCHORED_NEAR_MISSES = ("log66", "log36")   # this slice encodes log59 ONLY
+EXPECTED_ANCHOR_LOGS = ("log53", "log59", "log64", "log66", "log71")
+NOT_ANCHORED_NEAR_MISSES = ("log36",)   # log66 has since been bridged; log36 is the remaining un-anchored near-miss
 SHEET = 21
 SPAN_FT = 170.0
 _COORD_KEYS = {"x", "y", "z", "xc", "yc", "x0", "y0", "x1", "y1", "cx", "cy", "xy",
@@ -149,7 +149,7 @@ def main() -> int:
     l64s = (rec["log64"].get("endpoint_anchors") or {}).get("start") or {}
     l71s = (rec["log71"].get("endpoint_anchors") or {}).get("start") or {}
     no_other_anchors = all(not rec[l].get("endpoint_anchors") for l in NOT_ANCHORED_NEAR_MISSES)
-    gates.append(("G12 prior bridges intact (log53/log64/log71); log66/log36 NOT anchored",
+    gates.append(("G12 prior bridges intact (log53/log64/log71/log66); log36 NOT anchored",
                   set(EXPECTED_ANCHOR_LOGS) == with_anchors
                   and l53e.get("boundary_kind") == "matchline_continuation"
                   and l64s.get("structure_class") == "installer_hh"

@@ -161,21 +161,21 @@ def test_log53_is_source_bindable_now():
 
 def test_full_cohort_census_counts():
     """The headline census is deterministic against the reviewed artifact. Intentional gated
-    deltas as endpoint-anchor bridges are encoded: log64 (47f36b1) moved PARTIAL ->
-    SOURCE_BINDABLE_NOW, then log71 (owner-confirmed nextlink_hh start) moved PARTIAL ->
-    SOURCE_BINDABLE_NOW, then log59 (this slice, source-recovered sheet 21) moved
-    REPRESENTATIVE_ROUTE_CANDIDATE -> SOURCE_BINDABLE_NOW -- so SOURCE_BINDABLE_NOW=4
-    (log53, log64, log71, log59) / REPRESENTATIVE_ROUTE_CANDIDATE=8. (log59 is source-bindable in the
-    COHORT classifier; it is NOT in the seam contract eligible set, which stays at 3.)"""
+    deltas as endpoint-anchor bridges are encoded: log64 then log71 moved PARTIAL ->
+    SOURCE_BINDABLE_NOW, then log59 (source-recovered sheet 21, since owner-confirmed + seam-promoted)
+    and log66 (source-recovered sheet 10 bridge, held back from the seam) each moved
+    REPRESENTATIVE_ROUTE_CANDIDATE -> SOURCE_BINDABLE_NOW -- so SOURCE_BINDABLE_NOW=5
+    (log53, log64, log71, log59, log66) / REPRESENTATIVE_ROUTE_CANDIDATE=7. (log66 is source-bindable in
+    the COHORT classifier; it is NOT in the seam contract eligible set, which stays at 4.)"""
     rows = classify_cohort(load_adjudication())
     assert len(rows) == 27
     counts = {}
     for r in rows:
         counts[r["classification"]] = counts.get(r["classification"], 0) + 1
     assert counts == {
-        SOURCE_BINDABLE_NOW: 4,          # log53 (rendered) + log64 + log71 + log59 (bridges encoded)
+        SOURCE_BINDABLE_NOW: 5,          # log53 + log64 + log71 + log59 + log66 (bridges encoded)
         PARTIAL_SOURCE_BINDABLE: 8,
-        REPRESENTATIVE_ROUTE_CANDIDATE: 8,   # log59 moved out (source-recovered sheet 21 bridge)
+        REPRESENTATIVE_ROUTE_CANDIDATE: 7,   # log59 + log66 moved out (source-recovered sheet bridges)
         HUMAN_REVIEW_REQUIRED: 3,
         STILL_BLOCKED: 4,
     }

@@ -303,8 +303,26 @@
       "status": "RECOVERED",
       "correction_types": ["STATION_RESET_SEGMENT_BOUNDARY", "HH_HH_ANNOTATION", "DIRECT_BORE_CALLOUT"],
       "corrected_prints": null, "corrected_start": "0+00", "corrected_end": "0+55", "corrected_sheets": [], "span_ft": 55.0,
-      "evidence_notes": "Endpoint 'STA 0+55 = 0+00 INSTALLER HH'; opposite endpoint 'STA 45+33 = 0+00 NEXTLINK HH'. Direct segment; annotation 'HH - HH = 55''. Both ends being station-change/reset points is NOT a blocker.",
+      "evidence_notes": "Endpoint 'STA 0+55 = 0+00 INSTALLER HH'; opposite endpoint 'STA 45+33 = 0+00 NEXTLINK HH'. Direct segment; annotation 'HH - HH = 55''. Both ends being station-change/reset points is NOT a blocker. Sheet 10 SOURCE-RECOVERED by the near-miss sheet-locator scout as endpoint-anchor bridge evidence (kept out of corrected_sheets, which records OWNER-confirmed sheets only): installer_hh @ 0+55=0+00 and nextlink_hh @ 45+33=0+00 bind uniquely on sheet 10, and sheet 10 prints the 'HH - HH = 55'' annotation.",
       "evidence_refs": [],
+      "endpoint_anchors": {
+        "start": {
+          "station": "0+55",
+          "boundary_kind": "structure_terminus",
+          "structure_class": "installer_hh",
+          "structure_label": "INSTALLER HH",
+          "owner_note_text": "STA 0+55 = 0+00 INSTALLER HH on sheet 10 (sheet SOURCE-RECOVERED by the near-miss sheet-locator scout, not owner-recorded: binds uniquely on sheet 10; HH-HH=55' annotation corroborates). Bridge evidence for proof-first source-bind, NOT product promotion -- log66 is NOT in the seam contract eligible set; an owner confirmation of sheet 10 is required before any product use.",
+          "clarity": "CLEAR"
+        },
+        "end": {
+          "station": "45+33",
+          "boundary_kind": "structure_terminus",
+          "structure_class": "nextlink_hh",
+          "structure_label": "NEXTLINK HH",
+          "owner_note_text": "STA 45+33 = 0+00 NEXTLINK HH on sheet 10 (sheet SOURCE-RECOVERED by the near-miss sheet-locator scout, not owner-recorded: nextlink-callout binds uniquely on sheet 10; the two termini print 'HH - HH = 55''). Bridge evidence for proof-first source-bind, NOT product promotion.",
+          "clarity": "CLEAR"
+        }
+      },
       "allowed_to_draw": true, "must_remain_abstained": false, "needs_review": false, "needs_source_verification": false, "review_reason": null
     },
     {

@@ -104,10 +104,10 @@ def test_no_cross_sheet_reconciliation():
 
 def test_classification_is_honest_no_silent_upgrade():
     eligible = {r["log_id"] for r in DOC["logs"] if classify_record(r)[0]}
-    # every anchor-eligible log is now a seam exemplar: log59 completed the path (owner-confirmed sheet
-    # 21 + source-bind + render) and was promoted, so nothing is left anchored-but-held-back
+    # log66 has since been given a source-recovered bridge so it is anchor-eligible too, but is held back
+    # from the seam (no owner-confirmed source-bind/render yet) -- not silently upgraded
     assert set(EXEMPLARS) <= eligible
-    assert eligible - set(EXEMPLARS) == set()                      # no anchored log held back (log59 promoted)
+    assert eligible - set(EXEMPLARS) == {"log66"}                  # log66 anchored (bridged) but held back from the seam
     # abstains stay blocked
     for lid in ("log5", "log31", "log38", "log43"):
         ok, _, cats = classify_record(REC[lid])
