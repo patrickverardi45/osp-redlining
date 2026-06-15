@@ -19,9 +19,21 @@ from truelinev2.seam.contract import (
     eligible_seam_payloads,
     is_coordinate_free,
 )
+from truelinev2.seam.proof_adapter import (
+    PROOF_FAMILY,
+    LegDispatch,
+    ProofDispatch,
+    ProofFamily,
+    build_dispatch,
+    dispatch_for,
+    dispatch_is_coordinate_free,
+    eligible_dispatches,
+)
 
 __all__ = [
     "ELIGIBLE_EXEMPLARS", "EXEMPLAR_TOPOLOGY", "BoundaryKind", "LegBoundary", "RenderMode",
     "RouteContext", "SeamLeg", "SeamPayload", "SeamShape", "SourceEvidence",
     "build_seam_payload", "eligible_seam_payloads", "is_coordinate_free",
+    "PROOF_FAMILY", "LegDispatch", "ProofDispatch", "ProofFamily", "build_dispatch",
+    "dispatch_for", "dispatch_is_coordinate_free", "eligible_dispatches",
 ]
