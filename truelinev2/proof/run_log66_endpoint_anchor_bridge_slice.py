@@ -13,10 +13,12 @@ termini; there is no interior route context). Both ends are STATION RESET points
 DIFFERENT reset frames, so there is NO same-frame station-span arithmetic -- the 55' run is corroborated
 by the printed 'HH - HH = 55'' annotation + the owner span_ft, not by subtracting plan stations.
 
-Sheet 10 is SOURCE-RECOVERED bridge evidence, NOT owner-recorded production truth: it is kept OUT of
-corrected_sheets and lives in the anchor owner_note_text; an owner confirmation of sheet 10 is required
-before any product use, and log66 is NOT added to the seam contract eligible set in this slice (the
-log59-bridge precedent: bridge first, then owner-confirm + source-bind + render, then promote).
+Sheet 10 was SOURCE-RECOVERED bridge evidence and has since been OWNER-CONFIRMED (2026-06-15): it is now
+recorded in corrected_sheets=[10] and cited in the anchor owner_note_text. log66 has also been
+source-bound on sheet 10 (run_log66_sheet10_source_bind_slice), but it is STILL held back from the seam
+contract eligible set in this arc (the log59-bridge precedent: bridge -> owner-confirm + source-bind ->
+[render -> promote], the last two separately authorized). This bridge slice still only validates the
+identity encoding.
 
 Proves: anchors present + schema-valid + owner/source-backed + modeled + machine-consumable; the cohort
 classifier moves log66 REPRESENTATIVE_ROUTE_CANDIDATE (NO_RECORDED_SHEET) -> SOURCE_BINDABLE_NOW (the
@@ -134,12 +136,13 @@ def main() -> int:
                   start.get("boundary_kind") == "structure_terminus"
                   and end.get("boundary_kind") == "structure_terminus"
                   and set(ea) <= {"start", "end"}, sorted(ea)))
-    # sheet 10 = SOURCE-RECOVERED bridge evidence cited in BOTH anchor notes, explicitly NOT promoted
-    gates.append(("G8 sheet 10 cited as SOURCE-RECOVERED bridge evidence in both anchor notes (not promoted)",
+    # sheet 10 = SOURCE-RECOVERED bridge evidence, since OWNER-CONFIRMED -> recorded in corrected_sheets;
+    # log66 is still NOT seam-promoted (held back), enforced by G13 below.
+    gates.append(("G8 sheet 10 cited as SOURCE-RECOVERED + OWNER-CONFIRMED in both anchor notes (corrected_sheets=[10])",
                   str(SHEET) in start_note_up and str(SHEET) in end_note_up
                   and "SOURCE-RECOVERED" in start_note_up and "SOURCE-RECOVERED" in end_note_up
-                  and "NOT PRODUCT PROMOTION" in start_note_up
-                  and l66.get("corrected_sheets") == [], l66.get("corrected_sheets")))
+                  and "OWNER-CONFIRMED" in start_note_up and "OWNER-CONFIRMED" in end_note_up
+                  and l66.get("corrected_sheets") == [SHEET], l66.get("corrected_sheets")))
     # both ends reset to 0+00 in DIFFERENT frames -> NO same-frame station arithmetic; the 55' run is
     # corroborated by the printed HH-HH=55' annotation + the owner span_ft (never by subtracting stations)
     gates.append(("G9 HH-HH=55' annotation present (owner-recorded) + span_ft == 55 (no cross-frame station math)",
@@ -219,9 +222,9 @@ def _emit(gates, result, l66, cls) -> int:
         "target": "log66", "sheet": SHEET,
         "shape": "single_sheet_structure_to_structure (log64 family; installer-to-nextlink variant)",
         "anchor_bridge": {"start": ea.get("start"), "end": ea.get("end")},
-        "sheet_10_provenance": ("SOURCE-RECOVERED by the near-miss sheet-locator scout; BRIDGE evidence in "
-                                "anchor notes, kept OUT of corrected_sheets; owner confirmation required "
-                                "before product use; log66 NOT promoted to seam eligibility"),
+        "sheet_10_provenance": ("SOURCE-RECOVERED by the near-miss sheet-locator scout; since OWNER-CONFIRMED "
+                                "(2026-06-15) -> recorded in corrected_sheets=[10]; log66 source-bound but "
+                                "NOT promoted to seam eligibility (held back)"),
         "span_evidence": ("HH-HH=55' annotation + owner span_ft=55; both ends reset to 0+00 in DIFFERENT "
                           "frames, so NO same-frame station-span arithmetic was performed"),
         "cohort_delta": {"log66": {"from": REPRESENTATIVE_ROUTE_CANDIDATE, "to": cls},
@@ -230,10 +233,10 @@ def _emit(gates, result, l66, cls) -> int:
         "log36_anchored": False,
         "no_pdf_parse": True, "no_render": True, "no_invented_coordinates": True,
         "no_source_bind": True, "no_seam_promotion": True, "engine_census_frozen": True,
-        "next_slice": ("log66 source-bind: PRESENT recovered sheet 10 for OWNER confirmation, then a "
-                       "log64-style single-sheet source-bind (installer HH 0+55 -> nextlink HH 45+33 on "
-                       "sheet 10); render + seam promotion follow only after that is green. (log36 is the "
-                       "remaining near-miss for a later bridge.)"),
+        "next_slice": ("log66 source-bind is COMPLETE (run_log66_sheet10_source_bind_slice: installer HH "
+                       "0+55 -> nextlink HH 45+33 on sheet 10, owner-confirmed); render + seam promotion "
+                       "follow only when separately authorized. (log36 is the remaining un-anchored "
+                       "near-miss for a later bridge.)"),
         "gates": [{"name": n, "pass": bool(x), "detail": d} for n, x, d in gates],
     }
     OUT_DIR.mkdir(parents=True, exist_ok=True)

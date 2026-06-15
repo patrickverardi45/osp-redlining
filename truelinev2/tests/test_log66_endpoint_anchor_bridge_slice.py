@@ -3,9 +3,9 @@
 Locks the bridge's pure facts: log66's endpoint_anchors are schema-valid and identity-only
 (installer_hh @ 0+55 -> nextlink_hh @ 45+33, both structure_terminus, no matchline = the log64 family,
 installer-to-nextlink variant); the HH-HH=55' annotation + owner span_ft corroborate (both ends reset
-to 0+00 in different frames, so NO cross-frame station arithmetic); sheet 10 is cited as SOURCE-RECOVERED
-bridge evidence (NOT product promotion) and is kept OUT of corrected_sheets; the cohort classifier moves
-log66 to SOURCE_BINDABLE_NOW (the explicit log66-limited delta); log36 stays un-anchored; and log66 is
+to 0+00 in different frames, so NO cross-frame station arithmetic); sheet 10 was SOURCE-RECOVERED and is
+now OWNER-CONFIRMED (recorded in corrected_sheets=[10]); the cohort classifier moves log66 to
+SOURCE_BINDABLE_NOW (the explicit log66-limited delta); log36 stays un-anchored; and log66 is still
 NOT promoted to the seam contract eligible set (it stays log53/log64/log71/log59). No PDF parse here.
 """
 from pathlib import Path
@@ -58,14 +58,13 @@ def test_hh_hh_55_annotation_and_span_no_cross_frame_math():
     assert abs(float(L66["span_ft"]) - 55.0) <= 0.5
 
 
-def test_sheet_10_is_source_recovered_bridge_evidence_not_promoted():
+def test_sheet_10_source_recovered_then_owner_confirmed_held_back_from_seam():
     ea = L66["endpoint_anchors"]
     for side in ("start", "end"):
         note = ea[side]["owner_note_text"].upper()
-        assert "10" in note and "SOURCE-RECOVERED" in note
-    assert "NOT PRODUCT PROMOTION" in ea["start"]["owner_note_text"].upper()
-    # sheet 10 is kept OUT of the owner-confirmed production field (bridge evidence only)
-    assert L66["corrected_sheets"] == []
+        assert "10" in note and "SOURCE-RECOVERED" in note and "OWNER-CONFIRMED" in note
+    # sheet 10 is now owner-confirmed -> recorded in corrected_sheets (still NOT seam-promoted)
+    assert L66["corrected_sheets"] == [10]
 
 
 def test_anchors_carry_no_coordinate_fields():

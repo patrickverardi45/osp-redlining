@@ -302,8 +302,8 @@
       "original_completion_bucket": "PICK_CARD_REVIEW", "original_recon3_classification": "REVIEW_BY_DESIGN",
       "status": "RECOVERED",
       "correction_types": ["STATION_RESET_SEGMENT_BOUNDARY", "HH_HH_ANNOTATION", "DIRECT_BORE_CALLOUT"],
-      "corrected_prints": null, "corrected_start": "0+00", "corrected_end": "0+55", "corrected_sheets": [], "span_ft": 55.0,
-      "evidence_notes": "Endpoint 'STA 0+55 = 0+00 INSTALLER HH'; opposite endpoint 'STA 45+33 = 0+00 NEXTLINK HH'. Direct segment; annotation 'HH - HH = 55''. Both ends being station-change/reset points is NOT a blocker. Sheet 10 SOURCE-RECOVERED by the near-miss sheet-locator scout as endpoint-anchor bridge evidence (kept out of corrected_sheets, which records OWNER-confirmed sheets only): installer_hh @ 0+55=0+00 and nextlink_hh @ 45+33=0+00 bind uniquely on sheet 10, and sheet 10 prints the 'HH - HH = 55'' annotation.",
+      "corrected_prints": null, "corrected_start": "0+00", "corrected_end": "0+55", "corrected_sheets": [10], "span_ft": 55.0,
+      "evidence_notes": "Endpoint 'STA 0+55 = 0+00 INSTALLER HH'; opposite endpoint 'STA 45+33 = 0+00 NEXTLINK HH'. Direct segment; annotation 'HH - HH = 55''. Both ends being station-change/reset points is NOT a blocker. Sheet 10 SOURCE-RECOVERED by the near-miss sheet-locator scout and OWNER-CONFIRMED 2026-06-15 (now recorded in corrected_sheets): installer_hh @ 0+55=0+00 and nextlink_hh @ 45+33=0+00 bind uniquely on sheet 10, and sheet 10 prints the 'HH - HH = 55'' annotation. log66 is source-bound but HELD BACK from the seam contract eligible set (NOT seam-promoted; render + seam promotion are separately authorized).",
       "evidence_refs": [],
       "endpoint_anchors": {
         "start": {
@@ -311,7 +311,7 @@
           "boundary_kind": "structure_terminus",
           "structure_class": "installer_hh",
           "structure_label": "INSTALLER HH",
-          "owner_note_text": "STA 0+55 = 0+00 INSTALLER HH on sheet 10 (sheet SOURCE-RECOVERED by the near-miss sheet-locator scout, not owner-recorded: binds uniquely on sheet 10; HH-HH=55' annotation corroborates). Bridge evidence for proof-first source-bind, NOT product promotion -- log66 is NOT in the seam contract eligible set; an owner confirmation of sheet 10 is required before any product use.",
+          "owner_note_text": "STA 0+55 = 0+00 INSTALLER HH on sheet 10 (sheet SOURCE-RECOVERED by the near-miss sheet-locator scout and OWNER-CONFIRMED 2026-06-15, now recorded in corrected_sheets: binds uniquely on sheet 10; HH-HH=55' annotation corroborates). Owner-confirmed source for proof-first source-bind -- log66 is HELD BACK from the seam contract eligible set (NOT seam-promoted); render + seam promotion are separately authorized.",
           "clarity": "CLEAR"
         },
         "end": {
@@ -319,7 +319,7 @@
           "boundary_kind": "structure_terminus",
           "structure_class": "nextlink_hh",
           "structure_label": "NEXTLINK HH",
-          "owner_note_text": "STA 45+33 = 0+00 NEXTLINK HH on sheet 10 (sheet SOURCE-RECOVERED by the near-miss sheet-locator scout, not owner-recorded: nextlink-callout binds uniquely on sheet 10; the two termini print 'HH - HH = 55''). Bridge evidence for proof-first source-bind, NOT product promotion.",
+          "owner_note_text": "STA 45+33 = 0+00 NEXTLINK HH on sheet 10 (sheet SOURCE-RECOVERED by the near-miss sheet-locator scout and OWNER-CONFIRMED 2026-06-15, now recorded in corrected_sheets: nextlink-callout binds uniquely on sheet 10; the two termini print 'HH - HH = 55''). Owner-confirmed source; log66 HELD BACK from the seam (NOT seam-promoted).",
           "clarity": "CLEAR"
         }
       },

@@ -80,7 +80,7 @@ def test_reset_origin_reason(rec):
 
 
 def test_no_sheet_reason(rec):
-    out = placement_geometry_readiness(rec["log66"])  # corrected_sheets [] (log59 is now owner-confirmed sheet 21)
+    out = placement_geometry_readiness(rec["log36"])  # corrected_sheets [] (log66 is now owner-confirmed sheet 10)
     assert any("no recorded sheet" in r for r in out["reasons"])
 
 

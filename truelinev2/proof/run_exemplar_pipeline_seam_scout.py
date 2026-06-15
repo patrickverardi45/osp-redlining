@@ -355,8 +355,8 @@ def main() -> int:
     classified = len(eligible) + len(blocked)
     # The PROVEN seam exemplars (EXEMPLARS) each carry owner-reviewed anchors AND a full source-bind+
     # render proof. log59 completed that path and was promoted (the 4th seam exemplar). log66 has since
-    # been given a SOURCE-RECOVERED endpoint-anchor bridge so it is anchor-eligible too, but it is held
-    # back from the seam (no owner-confirmed source-bind/render yet) -- NOT silently upgraded. Hence
+    # been owner-confirmed (sheet 10) and source-bound so it is anchor-eligible too, but it is held
+    # back from the seam (no render / seam promotion yet) -- NOT silently upgraded. Hence
     # anchor-eligible == the 4 seam exemplars + log66.
     honest = (set(EXEMPLARS) <= set(eligible)            # the 4 seam exemplars are all anchor-eligible
               and set(eligible) - set(EXEMPLARS) == {"log66"}  # the only added anchor is log66's bridge (held back)
