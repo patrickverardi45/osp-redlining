@@ -34,6 +34,15 @@ LEADER_NOT_UNIQUE = "LEADER_NOT_UNIQUE"
 SYMBOL_NOT_UNIQUE = "SYMBOL_NOT_UNIQUE"
 SYMBOL_CLASS_MISMATCH = "SYMBOL_CLASS_MISMATCH"
 
+# Typed refusals for the ANNOTATION callout-grammar locator (resolve_nextlink_hh_callout).
+CALLOUT_NOT_FOUND = "BLOCKED_CALLOUT_NOT_FOUND"
+CALLOUT_NOT_UNIQUE = "BLOCKED_CALLOUT_NOT_UNIQUE"
+CALLOUT_LEADER_NOT_FOUND = "BLOCKED_LEADER_NOT_FOUND"
+CALLOUT_LEADER_NOT_UNIQUE = "BLOCKED_LEADER_NOT_UNIQUE"
+CALLOUT_SYMBOL_NOT_FOUND = "BLOCKED_SYMBOL_NOT_FOUND"
+CALLOUT_SYMBOL_NOT_UNIQUE = "BLOCKED_SYMBOL_NOT_UNIQUE"
+CALLOUT_SYMBOL_DISCONNECTED = "BLOCKED_CALLOUT_SYMBOL_DISCONNECTED"
+
 # Probe-calibrated geometry constants (2026-06-10 sheet-10 probe). Widening is
 # forbidden; tightening is a future named decision.
 BOX_MIN_W = 10.0        # label boxes are ~51x15 pt; glyph fills are ~3x4 pt
@@ -344,6 +353,121 @@ def resolve_structure_position(*, label_text: str, structure_class: str,
         label_box=box, leader=leader, rival_cluster_xys=rivals,
         detail={"cluster_drawings": sym.drawings,
                 "fills_found": [list(f) for f in sym.fills]})
+
+
+def resolve_nextlink_hh_callout(*, station_sta: str, words: Sequence[dict],
+                                drawings: Sequence[dict],
+                                callout_layer: str, symbol_layer: str,
+                                grammar_words: Tuple[str, ...] = ("NEXTLINK", "HH"),
+                                tip_tol: float = TIP_TOL) -> StructurePositionVerdict:
+    """Bind a reset-origin NEXTLINK HH structure printed as a GENERAL callout.
+
+    ``resolve_structure_position`` assumes a clean single class-text-layer label box.
+    Some structures print identity as a general ANNOTATION callout instead (log53 start:
+    ``STA <sta>=0+00 ... NEXTLINK HH ... PROP. SPLICE POINT <id>``, drawn as overlapping
+    rects, with a leader to a ``symbol_layer`` square symbol). This bounded locator binds
+    THAT pattern only, with the same uniqueness-mandatory chain of custody:
+
+      * EXACTLY ONE ``<station>=0+00`` reset token (0 -> NOT_FOUND, >=2 -> NOT_UNIQUE);
+      * a ``callout_layer`` box enclosing it, whose union encloses ALL ``grammar_words``
+        (the callout boundary, robust to the multi-rect ANNOTATION callout);
+      * EXACTLY ONE leader off that box (0 -> LEADER_NOT_FOUND, >=2 -> LEADER_NOT_UNIQUE);
+      * EXACTLY ONE ``symbol_layer`` cluster within ``tip_tol`` of the leader tip
+        (0 with symbols present -> SYMBOL_DISCONNECTED; 0 with none -> SYMBOL_NOT_FOUND;
+        >=2 -> SYMBOL_NOT_UNIQUE). NEVER nearest-snaps without leader evidence.
+
+    ``symbol_xy`` is non-None ONLY for POSITION_BOUND. Convention strings (layer names)
+    are INJECTED -- this solver holds no plan-set defaults. Additive + unwired: nothing
+    in the live ingest/match/render pipeline imports it (the engine census is unchanged);
+    wiring it into a dialect is a separately-authorized step.
+    """
+    base = dict(label_text=f"{station_sta}=0+00", structure_class="nextlink_hh")
+    anchor_tok = f"{station_sta}=0+00"
+    anchors = [w for w in words if w.get("text") == anchor_tok]
+    if not anchors:
+        return StructurePositionVerdict(
+            **base, result=CALLOUT_NOT_FOUND,
+            named_missing_relationship=(
+                f"no {anchor_tok!r} reset-origin callout token on the sheet text layer -- "
+                f"the start-structure callout is absent"))
+    if len(anchors) > 1:
+        return StructurePositionVerdict(
+            **base, result=CALLOUT_NOT_UNIQUE,
+            named_missing_relationship=(
+                f"{len(anchors)} {anchor_tok!r} reset tokens on the sheet -- the start "
+                f"callout is not unique; never chosen between"),
+            detail={"anchor_hits": len(anchors)})
+    a = anchors[0]
+    ax, ay = float(a["xc"]), float(a["yc"])
+    boxes = find_label_box(drawings, callout_layer, (ax, ay))
+    if not boxes:
+        return StructurePositionVerdict(
+            **base, result=CALLOUT_NOT_FOUND, word_xy=(ax, ay),
+            named_missing_relationship=(
+                f"no {callout_layer!r} box encloses the {anchor_tok!r} callout token -- the "
+                f"identity callout has no framing box to leader from"))
+    # collapse the overlapping callout rects (all contain the anchor) into ONE box
+    box = (min(b["x0"] for b in boxes), min(b["y0"] for b in boxes),
+           max(b["x1"] for b in boxes), max(b["y1"] for b in boxes))
+
+    def _in(bx, w):
+        return bx[0] <= float(w["xc"]) <= bx[2] and bx[1] <= float(w["yc"]) <= bx[3]
+
+    missing = [g for g in grammar_words
+               if not any(w.get("text") == g and _in(box, w) for w in words)]
+    if missing:
+        return StructurePositionVerdict(
+            **base, result=CALLOUT_NOT_FOUND, word_xy=(ax, ay), label_box=box,
+            named_missing_relationship=(
+                f"the {anchor_tok!r} token is present but callout grammar word(s) {missing} "
+                f"are not inside the {callout_layer!r} box -- not a NEXTLINK HH structure callout"))
+
+    leaders = find_leaders(drawings, callout_layer, box)
+    if len(leaders) == 0:
+        return StructurePositionVerdict(
+            **base, result=CALLOUT_LEADER_NOT_FOUND, word_xy=(ax, ay), label_box=box,
+            named_missing_relationship=(
+                f"no {callout_layer!r} leader exits the callout box toward a symbol"))
+    if len(leaders) > 1:
+        return StructurePositionVerdict(
+            **base, result=CALLOUT_LEADER_NOT_UNIQUE, word_xy=(ax, ay), label_box=box,
+            named_missing_relationship=(
+                f"{len(leaders)} leaders exit the callout box -- exactly one is required; "
+                f"never chosen between"),
+            detail={"leader_hits": len(leaders)})
+    leader = leaders[0]
+    tip = (leader[2], leader[3])
+
+    clusters = cluster_symbols(drawings, symbol_layer)
+    at_tip = [c for c in clusters
+              if math.hypot(c.x - tip[0], c.y - tip[1]) <= tip_tol]
+    if len(at_tip) == 0:
+        if not clusters:
+            return StructurePositionVerdict(
+                **base, result=CALLOUT_SYMBOL_NOT_FOUND, word_xy=(ax, ay), label_box=box,
+                leader=leader, named_missing_relationship=(
+                    f"no {symbol_layer!r} symbol clusters exist on the sheet"))
+        nearest = min(math.hypot(c.x - tip[0], c.y - tip[1]) for c in clusters)
+        return StructurePositionVerdict(
+            **base, result=CALLOUT_SYMBOL_DISCONNECTED, word_xy=(ax, ay), label_box=box,
+            leader=leader, named_missing_relationship=(
+                f"the nearest {symbol_layer!r} symbol is {round(nearest, 1)} pt from the leader "
+                f"tip (> {tip_tol}) -- the callout leader does not reach a symbol; nearest-snap "
+                f"is forbidden"),
+            detail={"nearest_symbol_gap_pt": round(nearest, 1)})
+    if len(at_tip) > 1:
+        return StructurePositionVerdict(
+            **base, result=CALLOUT_SYMBOL_NOT_UNIQUE, word_xy=(ax, ay), label_box=box,
+            leader=leader, named_missing_relationship=(
+                f"{len(at_tip)} {symbol_layer!r} clusters sit at the leader tip -- exactly one "
+                f"is required; never chosen between"),
+            detail={"clusters_at_tip": len(at_tip)})
+    sym = at_tip[0]
+    return StructurePositionVerdict(
+        **base, result=POSITION_BOUND, symbol_xy=(sym.x, sym.y), word_xy=(ax, ay),
+        label_box=box, leader=leader,
+        detail={"cluster_drawings": sym.drawings, "fills_found": [list(f) for f in sym.fills],
+                "callout_layer": callout_layer, "symbol_layer": symbol_layer})
 
 
 # The banked b.6/b.8 pair-scale corroboration band. M8.16 names it so the
