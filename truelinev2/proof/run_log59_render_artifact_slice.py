@@ -316,8 +316,9 @@ def _emit(gates, result, ev, artifacts, rec) -> int:
                   l59.get("corrected_sheets") == [21]
                   and tuple(ELIGIBLE_EXEMPLARS) == ("log53", "log64", "log71", "log59", "log66")
                   and not _refuses_seam("log59", rec), None))
-    gates.append(("G11 log36 un-anchored + blank; log66 PROMOTED (anchors, corrected_sheets [10], seam builds log66)",
-                  not rec["log36"].get("endpoint_anchors") and rec["log36"].get("corrected_sheets") == []
+    gates.append(("G11 log36 anchored-but-held-back (anchors, corrected_sheets [], seam-refused); log66 PROMOTED (anchors, corrected_sheets [10], seam builds log66)",
+                  rec["log36"].get("endpoint_anchors") and rec["log36"].get("corrected_sheets") == []
+                  and _refuses_seam("log36", rec)
                   and rec["log66"].get("endpoint_anchors") and rec["log66"].get("corrected_sheets") == [10]
                   and not _refuses_seam("log66", rec), None))
     gates.append(("G12 result in allowed enum", result in ALLOWED, result))
@@ -349,8 +350,8 @@ def _emit(gates, result, ev, artifacts, rec) -> int:
         "no_screenshot_pixels": True, "no_cross_sheet": True, "no_fake_straight_corridor": True,
         "corrected_sheets_owner_confirmed": True, "seam_promoted": True,
         "broad_renderer": False, "product_wired": False,
-        "next_slice": ("log59 owner-confirmation + seam promotion now COMPLETE; next growth is the next "
-                       "endpoint-anchor bridge (log36; log66 since bridged)."),
+        "next_slice": ("log59 owner-confirmation + seam promotion now COMPLETE; log36 has since been "
+                       "bridged (anchored-but-held-back); no un-anchored near-miss remains."),
         "evidence": ev,
         "gates": [{"name": n, "pass": bool(x), "detail": d} for n, x, d in gates],
     }

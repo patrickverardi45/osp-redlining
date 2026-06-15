@@ -22,8 +22,8 @@ still only validates the identity encoding.
 Proves: anchors present + schema-valid + owner/source-backed + modeled + machine-consumable; the cohort
 classifier moves log66 REPRESENTATIVE_ROUTE_CANDIDATE (NO_RECORDED_SHEET) -> SOURCE_BINDABLE_NOW (the
 explicit, deterministic, log66-LIMITED cohort delta); the frozen ENGINE census is unchanged (identity-
-only addition; flag-OFF 31/6/1/17/3, flag-ON 22/1/4); log36 stays un-anchored; the seam
-ELIGIBLE_EXEMPLARS now includes log66 (build_seam_payload builds it; log36 refused); no renderer.
+only addition; flag-OFF 31/6/1/17/3, flag-ON 22/1/4); log36 is now anchored-but-held-back (bridged;
+corrected_sheets []; still seam-refused); the seam ELIGIBLE_EXEMPLARS now includes log66 (build_seam_payload builds it; held-back log36 refused); no renderer.
 
 Proof-only; the JSON report is written under the gitignored data/outputs path.
 Run (repo root):
@@ -62,8 +62,8 @@ FROZEN_BUCKETS = {"DRAWABLE_REVIEW": 31, "HUMAN_ADJUSTABLE_REVIEW": 6,
                   "OUT_OF_CLASS": 1, "PICK_CARD_REVIEW": 17, "SOURCE_OR_KMZ_REQUIRED": 3}
 ABSTAIN_4 = ("log5", "log31", "log38", "log43")
 # the 5 logs now carrying an endpoint-anchor bridge (after this slice); log59 already promoted, log66 new
-EXPECTED_ANCHOR_LOGS = ("log53", "log59", "log64", "log66", "log71")
-NOT_ANCHORED_NEAR_MISSES = ("log36",)   # this slice encodes log66 ONLY; log36 stays the un-anchored near-miss
+EXPECTED_ANCHOR_LOGS = ("log36", "log53", "log59", "log64", "log66", "log71")
+HELD_BACK_BRIDGED = ("log36",)   # log36 now carries an endpoint-anchor bridge but is NOT promoted (held back; corrected_sheets [])
 SHEET = 10
 SPAN_FT = 55.0
 SEAM_ELIGIBLE = ("log53", "log64", "log71", "log59", "log66")   # log66 since promoted into the seam
@@ -165,20 +165,21 @@ def main() -> int:
     l64s = (rec["log64"].get("endpoint_anchors") or {}).get("start") or {}
     l71s = (rec["log71"].get("endpoint_anchors") or {}).get("start") or {}
     l59s = (rec["log59"].get("endpoint_anchors") or {}).get("start") or {}
-    no_other_anchors = all(not rec[l].get("endpoint_anchors") for l in NOT_ANCHORED_NEAR_MISSES)
-    gates.append(("G12 prior bridges intact (log53/log64/log71/log59 + new log66); log36 NOT anchored",
+    held_back_ok = all(rec[l].get("endpoint_anchors") and rec[l].get("corrected_sheets") == []
+                       for l in HELD_BACK_BRIDGED)
+    gates.append(("G12 prior bridges intact (log53/log64/log71/log59/log66 + log36 bridge); log36 anchored-but-held-back (corrected_sheets [])",
                   set(EXPECTED_ANCHOR_LOGS) == with_anchors
                   and l53e.get("boundary_kind") == "matchline_continuation"
                   and l64s.get("structure_class") == "installer_hh"
                   and l71s.get("structure_class") == "nextlink_hh"
-                  and l59s.get("structure_class") == "installer_hh" and no_other_anchors,
+                  and l59s.get("structure_class") == "installer_hh" and held_back_ok,
                   sorted(with_anchors)))
 
     # log66 has since been PROMOTED into the seam contract eligible set; build_seam_payload now builds it
-    gates.append(("G13 log66 PROMOTED to seam eligibility (ELIGIBLE_EXEMPLARS == log53/64/71/59/66; seam builds log66; log36 refused)",
+    gates.append(("G13 log66 PROMOTED to seam eligibility (ELIGIBLE_EXEMPLARS == log53/64/71/59/66; seam builds log66; held-back log36 refused)",
                   tuple(ELIGIBLE_EXEMPLARS) == SEAM_ELIGIBLE
                   and not _refuses_seam("log66", rec)
-                  and all(_refuses_seam(l, rec) for l in NOT_ANCHORED_NEAR_MISSES), None))
+                  and all(_refuses_seam(l, rec) for l in HELD_BACK_BRIDGED), None))
 
     if TRUTH.is_file():
         truth = json.loads(TRUTH.read_text(encoding="utf-8"))
@@ -229,13 +230,13 @@ def _emit(gates, result, l66, cls) -> int:
         "cohort_delta": {"log66": {"from": REPRESENTATIVE_ROUTE_CANDIDATE, "to": cls},
                          "explicit": True, "deterministic": True, "limited_to": "log66"},
         "seam_eligible_unchanged": list(ELIGIBLE_EXEMPLARS),
-        "log36_anchored": False,
+        "log36_anchored_not_promoted": True,
         "no_pdf_parse": True, "no_render": True, "no_invented_coordinates": True,
         "no_source_bind": True, "no_seam_promotion": True, "engine_census_frozen": True,
         "next_slice": ("log66 source-bind + render + seam promotion are COMPLETE (log66 is the 5th seam "
                        "exemplar via run_log66_sheet10_source_bind_slice + run_log66_render_artifact_slice); "
-                       "next growth is the next endpoint-anchor bridge (log36, the remaining un-anchored "
-                       "near-miss)."),
+                       "log36 has since been bridged (anchored-but-held-back); no un-anchored near-miss "
+                       "remains -- the near-miss sheet-locator scout now returns NO_SAFE_SHEET_LOCATOR_CANDIDATE)."),
         "gates": [{"name": n, "pass": bool(x), "detail": d} for n, x, d in gates],
     }
     OUT_DIR.mkdir(parents=True, exist_ok=True)

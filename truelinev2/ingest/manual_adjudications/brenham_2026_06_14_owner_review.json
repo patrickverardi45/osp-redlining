@@ -225,8 +225,26 @@
       "status": "RECOVERED",
       "correction_types": ["STATION_RESET_SEGMENT_BOUNDARY", "HH_HH_ANNOTATION", "DIRECT_BORE_CALLOUT"],
       "corrected_prints": null, "corrected_start": "0+00", "corrected_end": "0+89", "corrected_sheets": [], "span_ft": 89.0,
-      "evidence_notes": "Two station-reset structures: 'STA 0+56 = 0+00' and 'STA 1+45 = 0+00'. Direct segment between the two installer HHs; annotation 'HH - HH = 89''. Rule learned: 'STA X+XX = 0+00' can be a segment boundary -- the end of one segment and the start/reset of another.",
+      "evidence_notes": "Two station-reset structures: 'STA 0+56 = 0+00' and 'STA 1+45 = 0+00'. Direct segment between the two installer HHs; annotation 'HH - HH = 89''. Rule learned: 'STA X+XX = 0+00' can be a segment boundary -- the end of one segment and the start/reset of another. Sheet 17 SOURCE-RECOVERED by the near-miss sheet-locator scout as endpoint-anchor bridge evidence (kept out of corrected_sheets, which records OWNER-confirmed sheets only): installer_hh @ 0+56=0+00 and installer_hh @ 1+45=0+00 bind uniquely on sheet 17, and sheet 17 prints the 'HH - HH = 89'' annotation.",
       "evidence_refs": [],
+      "endpoint_anchors": {
+        "start": {
+          "station": "0+56",
+          "boundary_kind": "structure_terminus",
+          "structure_class": "installer_hh",
+          "structure_label": "INSTALLER HH",
+          "owner_note_text": "STA 0+56 = 0+00 INSTALLER HH on sheet 17 (sheet SOURCE-RECOVERED by the near-miss sheet-locator scout, not owner-recorded: binds uniquely on sheet 17; HH-HH=89' annotation corroborates). Bridge evidence for proof-first source-bind, NOT product promotion -- log36 is NOT in the seam contract eligible set; an owner confirmation of sheet 17 is required before any product use.",
+          "clarity": "CLEAR"
+        },
+        "end": {
+          "station": "1+45",
+          "boundary_kind": "structure_terminus",
+          "structure_class": "installer_hh",
+          "structure_label": "INSTALLER HH",
+          "owner_note_text": "STA 1+45 = 0+00 INSTALLER HH on sheet 17 (sheet SOURCE-RECOVERED by the near-miss sheet-locator scout, not owner-recorded: installer-callout binds uniquely on sheet 17; the two termini print 'HH - HH = 89''). Bridge evidence for proof-first source-bind, NOT product promotion.",
+          "clarity": "CLEAR"
+        }
+      },
       "allowed_to_draw": true, "must_remain_abstained": false, "needs_review": false, "needs_source_verification": false, "review_reason": null
     },
     {

@@ -1,12 +1,12 @@
 """OWNER-PACKET-2 near-miss sheet-locator scout -- offline tests.
 
 Locks the scout's pure logic (the heavy read-only PDF recovery is verified by running the proof):
-the result enum; the near-miss set is exactly the remaining canonical NO_RECORDED_SHEET log (log36,
-after log59/log66 promoted out); the same-frame span<->footage consistency check; both endpoints of every near-miss are
-owner-named modeled classes; the safety ranking puts log36 (the remaining near-miss) first; the eligible
-set matches the cohort (5) and the seam contract refuses the remaining near-miss; no endpoint_anchors are encoded and the
-owner-review sheet stays blank; the reject-reason helper always names a category; and the scout
-reuses the canonical classifier rather than defining a new one. No PDF parse here.
+the result enum; the near-miss set is now EMPTY (log59/log66 promoted, log36 bridged-but-held-back ->
+every NO_RECORDED_SHEET near-miss is bridged out); the same-frame span<->footage consistency check;
+the safety ranking over the empty near-miss set is empty; the cohort SOURCE_BINDABLE_NOW set (6) is a
+superset of the seam eligible set (5) with log36 the held-back gap; log36 now carries an endpoint-anchor
+bridge but corrected_sheets stays [] (held back); the reject-reason helper always names a category; and
+the scout reuses the canonical classifier rather than defining a new one. No PDF parse here.
 """
 from pathlib import Path
 
@@ -41,15 +41,15 @@ def test_result_enum():
     assert R_NONE == "NO_SAFE_SHEET_LOCATOR_CANDIDATE"
 
 
-def test_near_miss_set_is_the_remaining_no_recorded_sheet_log():
-    # log59 + log66 were bridged out (their anchors moved them to SOURCE_BINDABLE_NOW); the remaining
-    # NO_RECORDED_SHEET near-miss is log36.
+def test_near_miss_set_is_empty_all_bridged_out():
+    # log59 + log66 (promoted) + log36 (bridged-but-held-back) all moved to SOURCE_BINDABLE_NOW;
+    # no NO_RECORDED_SHEET REPRESENTATIVE_ROUTE_CANDIDATE near-miss remains.
     canonical = sorted(
         r["log_id"] for r in DOC["logs"]
         if classify_record(r)["classification"] == REPRESENTATIVE_ROUTE_CANDIDATE
         and NO_RECORDED_SHEET in classify_record(r)["blockers"])
-    assert canonical == sorted(NEAR_MISSES) == ["log36"]
-    assert set(NEAR_MISS_SIG) == set(NEAR_MISSES)
+    assert canonical == sorted(NEAR_MISSES) == []
+    assert set(NEAR_MISS_SIG) == set(NEAR_MISSES) == set()
 
 
 def test_span_footage_consistency_check():
@@ -60,38 +60,39 @@ def test_span_footage_consistency_check():
     assert span_consistent(("2+76", "4+46"), 999) is False   # inconsistent span is rejected
 
 
-def test_near_miss_endpoints_are_owner_named_modeled_classes():
+def test_near_miss_sigs_when_present_are_owner_named_modeled_classes():
+    # NEAR_MISS_SIG is empty now (all near-misses bridged); the loop locks the invariant for any
+    # FUTURE near-miss sig: both endpoints must be owner-named modeled classes.
+    assert NEAR_MISS_SIG == {}
     for lid in NEAR_MISSES:
         sig = NEAR_MISS_SIG[lid]
-        assert sig["start"]["cls"] in MODELED
-        assert sig["end"]["cls"] in MODELED
-    # log36 (the remaining near-miss after log59 + log66 bridged out) is installer_hh <-> installer_hh
-    assert (NEAR_MISS_SIG["log36"]["start"]["cls"], NEAR_MISS_SIG["log36"]["end"]["cls"]) == ("installer_hh", "installer_hh")
+        assert sig["start"]["cls"] in MODELED and sig["end"]["cls"] in MODELED
 
 
-def test_safety_rank_is_log36_after_log59_and_log66_bridged():
+def test_safety_rank_over_empty_near_miss_set_is_empty():
     ranked = sorted(NEAR_MISSES, key=lambda l: _safety_rank(l, REC))
-    assert ranked == ["log36"]                               # log59 + log66 bridged out; log36 is the last near-miss
+    assert ranked == []                                      # all near-misses bridged out -> nothing to rank
 
 
-def test_eligible_set_matches_cohort_and_seam_refuses_near_misses():
+def test_cohort_superset_of_seam_and_held_back_log36_refused():
     source_bindable_now = sorted(c["log_id"] for c in (classify_record(r) for r in DOC["logs"])
                                  if c["classification"] == "SOURCE_BINDABLE_NOW")
-    # log66 promoted: cohort SOURCE_BINDABLE_NOW (5) == seam eligible (5)
-    assert source_bindable_now == ["log53", "log59", "log64", "log66", "log71"]
+    # log36 bridged-but-held-back: cohort SOURCE_BINDABLE_NOW (6) > seam eligible (5); log36 is the gap
+    assert source_bindable_now == ["log36", "log53", "log59", "log64", "log66", "log71"]
     assert tuple(ELIGIBLE_EXEMPLARS) == ("log53", "log64", "log71", "log59", "log66")
-    for lid in NEAR_MISSES:
-        try:
-            build_seam_payload(lid, REC[lid])
-            assert False, f"{lid} must not be seam-eligible"
-        except ValueError:
-            pass
+    # the held-back log36 (anchored, corrected_sheets []) is still seam-REFUSED
+    try:
+        build_seam_payload("log36", REC["log36"])
+        assert False, "log36 (held back) must not be seam-eligible"
+    except ValueError:
+        pass
 
 
-def test_no_anchors_and_owner_sheet_still_blank():
-    for lid in NEAR_MISSES:
-        assert not REC[lid].get("endpoint_anchors")
-        assert not REC[lid].get("corrected_sheets")           # owner-review sheet stays blank (not encoded)
+def test_log36_bridged_but_owner_sheet_still_blank():
+    # log36 now carries an endpoint-anchor bridge (anchored) but the owner-review sheet stays blank
+    # (corrected_sheets [], NOT owner-confirmed) -> held back, still seam-refused
+    assert REC["log36"].get("endpoint_anchors")
+    assert REC["log36"].get("corrected_sheets") == []
 
 
 def test_reject_reason_always_names_a_category():

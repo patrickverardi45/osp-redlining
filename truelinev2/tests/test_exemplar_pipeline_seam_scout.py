@@ -104,10 +104,11 @@ def test_no_cross_sheet_reconciliation():
 
 def test_classification_is_honest_no_silent_upgrade():
     eligible = {r["log_id"] for r in DOC["logs"] if classify_record(r)[0]}
-    # log66 has since been owner-confirmed (sheet 10) + source-bound + rendered + PROMOTED, so it is now
-    # a seam exemplar -- anchor-eligible == the seam exemplar set exactly (nothing silently upgraded)
+    # log59 + log66 were owner-confirmed + source-bound + rendered + PROMOTED (the 4th + 5th seam
+    # exemplars). log36 then got an endpoint-anchor BRIDGE but is NOT promoted (corrected_sheets [],
+    # not owner-confirmed): it is anchor-eligible yet HELD BACK -- named, never silently upgraded.
     assert set(EXEMPLARS) <= eligible
-    assert eligible - set(EXEMPLARS) == set()                      # every anchor-eligible log is a seam exemplar
+    assert eligible - set(EXEMPLARS) == {"log36"}                  # the only extra anchor-eligible log is the held-back log36 bridge
     # abstains stay blocked
     for lid in ("log5", "log31", "log38", "log43"):
         ok, _, cats = classify_record(REC[lid])

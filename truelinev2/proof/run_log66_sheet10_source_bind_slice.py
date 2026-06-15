@@ -270,8 +270,8 @@ def main() -> int:
 
 def _emit(gates, result, ev, rec) -> int:
     # ---- scope / safety gates (always run) -------------------------------------
-    gates.append(("G9 log36 un-anchored; log66 PROMOTED into the seam (seam builds log66; ELIGIBLE includes it); log59 PROMOTED",
-                  not rec["log36"].get("endpoint_anchors")
+    gates.append(("G9 log36 anchored-but-held-back (seam-refused); log66 PROMOTED into the seam (seam builds log66; ELIGIBLE includes it); log59 PROMOTED",
+                  rec["log36"].get("endpoint_anchors") and _refuses_seam("log36", rec)
                   and rec["log66"].get("endpoint_anchors") and not _refuses_seam("log66", rec)
                   and tuple(ELIGIBLE_EXEMPLARS) == SEAM_ELIGIBLE
                   and not _refuses_seam("log59", rec), None))
@@ -313,8 +313,8 @@ def _emit(gates, result, ev, rec) -> int:
         "coords_are_extractor_derived": True,
         "seam_eligible": list(ELIGIBLE_EXEMPLARS),
         "next_slice": ("log66 RENDER + seam promotion are COMPLETE (log66 is the 5th seam exemplar via "
-                       "run_log66_render_artifact_slice + the contract/adapter/driver); next growth is the "
-                       "next endpoint-anchor bridge (log36, the remaining un-anchored near-miss)."),
+                       "run_log66_render_artifact_slice + the contract/adapter/driver); log36 has since been "
+                       "bridged (anchored-but-held-back); no un-anchored near-miss remains."),
         "evidence": ev,
         "gates": [{"name": n, "pass": bool(x), "detail": d} for n, x, d in gates],
     }

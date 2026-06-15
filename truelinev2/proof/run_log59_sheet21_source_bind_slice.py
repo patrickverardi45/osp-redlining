@@ -254,8 +254,8 @@ def main() -> int:
 
 def _emit(gates, result, ev, rec) -> int:
     # ---- scope / safety gates (always run) -------------------------------------
-    gates.append(("G9 log36 un-anchored; log66 PROMOTED (seam builds); log59 PROMOTED (builds)",
-                  not rec["log36"].get("endpoint_anchors")
+    gates.append(("G9 log36 anchored-but-held-back (seam-refused); log66 PROMOTED (seam builds); log59 PROMOTED (builds)",
+                  rec["log36"].get("endpoint_anchors") and _refuses_seam("log36", rec)
                   and rec["log66"].get("endpoint_anchors") and not _refuses_seam("log66", rec)
                   and tuple(ELIGIBLE_EXEMPLARS) == ("log53", "log64", "log71", "log59", "log66")
                   and not _refuses_seam("log59", rec), None))
@@ -290,8 +290,8 @@ def _emit(gates, result, ev, rec) -> int:
         "no_render": True, "no_invented_coordinates": True, "no_screenshot_pixels": True,
         "no_cross_sheet": True, "no_corrected_sheets_promotion": True, "coords_are_extractor_derived": True,
         "next_slice": ("log59 RENDER artifact + owner-confirmation + seam promotion are now COMPLETE "
-                       f"(render via the proven {ev.get('render_mode') or 'ordered_chain_path'}); next "
-                       "growth is the next endpoint-anchor bridge (log36; log66 since bridged)."),
+                       f"(render via the proven {ev.get('render_mode') or 'ordered_chain_path'}); log36 has "
+                       "since been bridged (anchored-but-held-back); no un-anchored near-miss remains."),
         "evidence": ev,
         "gates": [{"name": n, "pass": bool(x), "detail": d} for n, x, d in gates],
     }

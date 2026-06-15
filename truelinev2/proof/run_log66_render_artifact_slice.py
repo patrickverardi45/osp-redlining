@@ -295,8 +295,9 @@ def _emit(gates, result, ev, artifacts, rec) -> int:
                   l66.get("corrected_sheets") == [10]
                   and tuple(ELIGIBLE_EXEMPLARS) == SEAM_ELIGIBLE
                   and not _refuses_seam("log66", rec), None))
-    gates.append(("G11 log36 un-anchored + blank; log59 seam-promoted (builds); log53/log64/log71 bridges intact",
-                  not rec["log36"].get("endpoint_anchors") and rec["log36"].get("corrected_sheets") == []
+    gates.append(("G11 log36 anchored-but-held-back (corrected_sheets [], seam-refused); log59 seam-promoted (builds); log53/log64/log71 bridges intact",
+                  rec["log36"].get("endpoint_anchors") and rec["log36"].get("corrected_sheets") == []
+                  and _refuses_seam("log36", rec)
                   and not _refuses_seam("log59", rec)
                   and (rec["log53"].get("endpoint_anchors") or {}).get("end", {}).get("boundary_kind") == "matchline_continuation"
                   and (rec["log64"].get("endpoint_anchors") or {}).get("start", {}).get("structure_class") == "installer_hh"
@@ -337,8 +338,8 @@ def _emit(gates, result, ev, artifacts, rec) -> int:
         "seam_eligible": list(ELIGIBLE_EXEMPLARS),
         "broad_renderer": False, "product_wired": False,
         "next_slice": ("log66 seam promotion is COMPLETE (log66 is the 5th seam exemplar in the "
-                       "contract/adapter/end-to-end driver, the controlled path log59 walked); next growth "
-                       "is the next endpoint-anchor bridge (log36, the remaining un-anchored near-miss)."),
+                       "contract/adapter/end-to-end driver, the controlled path log59 walked); log36 has "
+                       "since been bridged (anchored-but-held-back); no un-anchored near-miss remains."),
         "evidence": ev,
         "gates": [{"name": n, "pass": bool(x), "detail": d} for n, x, d in gates],
     }

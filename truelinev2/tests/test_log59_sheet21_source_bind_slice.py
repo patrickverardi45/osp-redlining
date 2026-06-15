@@ -4,7 +4,7 @@ Locks the proof's pure laws + committed-data facts: the result/blocker enum (R_P
 confirm, like log64); the slice consumes log59's encoded installer_hh @2+76 -> flower_pot @4+46
 identity; the start label is a PLAIN station '2+76' (non-reset, unlike log64's '3+69=0+00'); sheet 21
 was SOURCE-RECOVERED and is now OWNER-CONFIRMED -> corrected_sheets == [21]; the
-span is 170'; log36 stays un-anchored, log66 is now seam-promoted, log59 is now seam-promoted; and the proof reuses the
+span is 170'; log36 is now anchored-but-held-back, log66 is now seam-promoted, log59 is now seam-promoted; and the proof reuses the
 proven corridor laws (orientation-aware leg_corridor_band + axis-agnostic corridor_is_continuous) and
 has no render lane. No PDF parse here (the proof runs the real sheet-21 bind at verification).
 """
@@ -64,14 +64,16 @@ def test_station_span_is_170():
     assert abs((parse_station(e) - parse_station(s)) - 170.0) <= 0.5
 
 
-def test_log36_un_anchored_log66_promoted_log59_promoted():
-    assert not REC["log36"].get("endpoint_anchors")
+def test_log36_anchored_held_back_log66_promoted_log59_promoted():
+    # log36 has since been bridged: anchored (endpoint_anchors) but held back (corrected_sheets [],
+    # NOT owner-confirmed) -> still seam-refused
+    assert REC["log36"].get("endpoint_anchors") and REC["log36"]["corrected_sheets"] == []
     assert REC["log66"].get("endpoint_anchors")        # log66 promoted into the seam (owner-confirmed sheet 10)
     assert tuple(ELIGIBLE_EXEMPLARS) == ("log53", "log64", "log71", "log59", "log66")
     build_seam_payload("log59", L59)                   # promoted -> builds
     build_seam_payload("log66", REC["log66"])          # promoted -> builds
     with pytest.raises(ValueError):
-        build_seam_payload("log36", REC["log36"])      # log36 still un-anchored -> refused
+        build_seam_payload("log36", REC["log36"])      # log36 anchored-but-held-back -> refused
 
 
 def test_proof_reuses_proven_corridor_laws_and_has_no_render_lane():

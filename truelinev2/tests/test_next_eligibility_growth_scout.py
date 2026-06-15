@@ -43,10 +43,10 @@ def test_result_enum():
     assert R_NONE == "NO_SAFE_NEXT_ELIGIBILITY_CANDIDATE"
 
 
-def test_pending_is_seventeen_no_anchor_logs():
-    # 19 minus log59 + log66 (both bridged -> SOURCE_BINDABLE_NOW, out of the no-anchor pending set)
-    assert len(PENDING) == 17
-    assert {"log59", "log66"}.isdisjoint({r["log_id"] for r in PENDING})
+def test_pending_is_sixteen_no_anchor_logs():
+    # 19 minus log59 + log66 + log36 (all bridged -> SOURCE_BINDABLE_NOW, out of the no-anchor pending set)
+    assert len(PENDING) == 16
+    assert {"log59", "log66", "log36"}.isdisjoint({r["log_id"] for r in PENDING})
     for r in PENDING:
         assert not r.get("endpoint_anchors")
         assert not r.get("must_remain_abstained")
@@ -61,8 +61,8 @@ def test_no_safe_candidate_over_real_data():
 def test_eligible_set_matches_cohort_and_seam_refuses_pending():
     source_bindable_now = sorted(c["log_id"] for c in (classify_record(r) for r in DOC["logs"])
                                  if c["classification"] == "SOURCE_BINDABLE_NOW")
-    # log66 promoted: cohort SOURCE_BINDABLE_NOW (5) == seam eligible (5)
-    assert source_bindable_now == ["log53", "log59", "log64", "log66", "log71"]
+    # log36 bridged-but-held-back: cohort SOURCE_BINDABLE_NOW (6) > seam eligible (5); log36 is the gap
+    assert source_bindable_now == ["log36", "log53", "log59", "log64", "log66", "log71"]
     assert tuple(ELIGIBLE_EXEMPLARS) == ("log53", "log64", "log71", "log59", "log66")
     # the seam contract still refuses every pending no-anchor log -> no further promotion here
     for r in PENDING:
@@ -81,16 +81,12 @@ def test_recorded_sheet_modeled_candidates_are_all_multi_sheet():
     assert all(c["signals"]["n_sheets"] >= 2 for c in partials)
 
 
-def test_near_misses_are_named_endpoints_missing_only_a_sheet():
+def test_no_remaining_no_recorded_sheet_near_miss():
     near = [r["log_id"] for r in PENDING
             if classify_record(r)["classification"] == REPRESENTATIVE_ROUTE_CANDIDATE
             and CAT_NO_SHEET in blocker_categories(r, classify_record(r), DOC)]
-    # log59 + log66 left (their bridges moved them to SOURCE_BINDABLE_NOW); only log36 remains
-    assert set(near) == {"log36"}
-    for lid in near:
-        sig = classify_record(REC[lid])["signals"]
-        assert sig["modeled_terminus_classes"]          # endpoints are modeled/named
-        assert sig["n_sheets"] == 0                      # but no recorded sheet to bind on
+    # log59 + log66 + log36 all bridged (moved to SOURCE_BINDABLE_NOW): no NO_RECORDED_SHEET near-miss remains
+    assert set(near) == set()
 
 
 def test_every_pending_has_a_named_blocker_category():

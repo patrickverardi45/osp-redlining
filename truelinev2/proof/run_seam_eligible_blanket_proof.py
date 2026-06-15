@@ -82,8 +82,8 @@ def _module_exists(modname: str) -> bool:
 
 # the two NAMED "held back" stages for an anchored cohort log that is SOURCE_BINDABLE_NOW yet refused
 # by the seam: anchored-only (corrected_sheets still []) vs owner-confirmed + source-bound
-# (corrected_sheets set). BOTH stay refused until render + seam promotion. (Currently empty: log66, the
-# most recent such log, completed render + was promoted into the seam.)
+# (corrected_sheets set). BOTH stay refused until render + seam promotion. (Currently: log36 is
+# anchored-only (corrected_sheets []) -> the held-back set is {log36}.)
 HELD_BACK_CATEGORIES = ("anchored_not_yet_seam_promoted", "source_bound_not_yet_seam_promoted")
 
 
@@ -225,7 +225,7 @@ def main() -> int:
     # G8: ONLY the seam-eligible logs process -- contract-eligible == the frozen ELIGIBLE_EXEMPLARS (no
     #     dataset-wide auto-promotion). Any anchored log that is NOT seam-promoted (cohort SOURCE_BINDABLE_NOW
     #     but held back) would be classifier-eligible yet correctly REFUSED by the contract -- each named a
-    #     held-back category. (Currently none: log66 was promoted, so the held-back set is empty.)
+    #     held-back category. (Currently: log36 is anchored-only (corrected_sheets []) -> held back.)
     contract_eligible = {r["log_id"] for r in doc["logs"] if not _refuses_payload(r["log_id"], rec)}
     classifier_eligible = {r["log_id"] for r in doc["logs"] if seam_classify(r)[0]}
     held_back = {r["bore_id"] for r in refused if set(r["categories"]) & set(HELD_BACK_CATEGORIES)}

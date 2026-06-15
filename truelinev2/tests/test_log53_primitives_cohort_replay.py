@@ -162,20 +162,20 @@ def test_log53_is_source_bindable_now():
 def test_full_cohort_census_counts():
     """The headline census is deterministic against the reviewed artifact. Intentional gated
     deltas as endpoint-anchor bridges are encoded: log64 then log71 moved PARTIAL ->
-    SOURCE_BINDABLE_NOW, then log59 (owner-confirmed sheet 21, since seam-promoted) and log66
-    (owner-confirmed sheet 10, since seam-promoted) each moved
-    REPRESENTATIVE_ROUTE_CANDIDATE -> SOURCE_BINDABLE_NOW -- so SOURCE_BINDABLE_NOW=5
-    (log53, log64, log71, log59, log66) / REPRESENTATIVE_ROUTE_CANDIDATE=7. (log66 is now in BOTH the
-    cohort classifier and the seam contract eligible set, which is 5.)"""
+    SOURCE_BINDABLE_NOW; then log59 (owner-confirmed sheet 21, seam-promoted), log66 (owner-confirmed
+    sheet 10, seam-promoted) and log36 (sheet 17 SOURCE-RECOVERED bridge, NOT owner-confirmed -> held
+    back, NOT seam-promoted) each moved REPRESENTATIVE_ROUTE_CANDIDATE -> SOURCE_BINDABLE_NOW -- so
+    SOURCE_BINDABLE_NOW=6 (log53, log64, log71, log59, log66, log36) / REPRESENTATIVE_ROUTE_CANDIDATE=6.
+    (The seam contract eligible set is still 5; log36 is the cohort-vs-seam held-back gap.)"""
     rows = classify_cohort(load_adjudication())
     assert len(rows) == 27
     counts = {}
     for r in rows:
         counts[r["classification"]] = counts.get(r["classification"], 0) + 1
     assert counts == {
-        SOURCE_BINDABLE_NOW: 5,          # log53 + log64 + log71 + log59 + log66 (bridges encoded)
+        SOURCE_BINDABLE_NOW: 6,          # log53 + log64 + log71 + log59 + log66 + log36 (bridges encoded)
         PARTIAL_SOURCE_BINDABLE: 8,
-        REPRESENTATIVE_ROUTE_CANDIDATE: 7,   # log59 + log66 moved out (source-recovered sheet bridges)
+        REPRESENTATIVE_ROUTE_CANDIDATE: 6,   # log59 + log66 + log36 moved out (source-recovered sheet bridges)
         HUMAN_REVIEW_REQUIRED: 3,
         STILL_BLOCKED: 4,
     }

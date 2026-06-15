@@ -16,8 +16,8 @@ later, separately-authorized slice). This bridge slice still only validates the 
 Proves: anchors present + schema-valid + owner/source-backed + modeled + machine-consumable; the
 cohort classifier moves log59 REPRESENTATIVE_ROUTE_CANDIDATE (NO_RECORDED_SHEET) -> SOURCE_BINDABLE_NOW
 (the explicit, deterministic, log59-LIMITED cohort delta); the frozen ENGINE census is unchanged
-(identity-only addition; flag-OFF 31/6/1/17/3, flag-ON 22/1/4); log36 stays un-anchored (log66 since
-promoted); the seam ELIGIBLE_EXEMPLARS now includes log59 + log66 (build_seam_payload builds them); no renderer.
+(identity-only addition; flag-OFF 31/6/1/17/3, flag-ON 22/1/4); log36 is now anchored-but-held-back
+(bridged; corrected_sheets []; still seam-refused); the seam ELIGIBLE_EXEMPLARS now includes log59 + log66 (build_seam_payload builds them); no renderer.
 
 Proof-only; the JSON report is written under the gitignored data/outputs path.
 Run (repo root):
@@ -55,8 +55,8 @@ TRUTH = _REPO_ROOT / "data" / "outputs" / "final_engine_truth_table" / \
 FROZEN_BUCKETS = {"DRAWABLE_REVIEW": 31, "HUMAN_ADJUSTABLE_REVIEW": 6,
                   "OUT_OF_CLASS": 1, "PICK_CARD_REVIEW": 17, "SOURCE_OR_KMZ_REQUIRED": 3}
 ABSTAIN_4 = ("log5", "log31", "log38", "log43")
-EXPECTED_ANCHOR_LOGS = ("log53", "log59", "log64", "log66", "log71")
-NOT_ANCHORED_NEAR_MISSES = ("log36",)   # log66 has since been bridged; log36 is the remaining un-anchored near-miss
+EXPECTED_ANCHOR_LOGS = ("log36", "log53", "log59", "log64", "log66", "log71")
+HELD_BACK_BRIDGED = ("log36",)   # log36 now carries an endpoint-anchor bridge but is NOT promoted (held back; corrected_sheets [])
 SHEET = 21
 SPAN_FT = 170.0
 _COORD_KEYS = {"x", "y", "z", "xc", "yc", "x0", "y0", "x1", "y1", "cx", "cy", "xy",
@@ -148,19 +148,20 @@ def main() -> int:
     l53e = (rec["log53"].get("endpoint_anchors") or {}).get("end") or {}
     l64s = (rec["log64"].get("endpoint_anchors") or {}).get("start") or {}
     l71s = (rec["log71"].get("endpoint_anchors") or {}).get("start") or {}
-    no_other_anchors = all(not rec[l].get("endpoint_anchors") for l in NOT_ANCHORED_NEAR_MISSES)
-    gates.append(("G12 prior bridges intact (log53/log64/log71/log66); log36 NOT anchored",
+    held_back_ok = all(rec[l].get("endpoint_anchors") and rec[l].get("corrected_sheets") == []
+                       for l in HELD_BACK_BRIDGED)
+    gates.append(("G12 prior bridges intact (log53/log64/log71/log66 + log36 bridge); log36 anchored-but-held-back (corrected_sheets [])",
                   set(EXPECTED_ANCHOR_LOGS) == with_anchors
                   and l53e.get("boundary_kind") == "matchline_continuation"
                   and l64s.get("structure_class") == "installer_hh"
-                  and l71s.get("structure_class") == "nextlink_hh" and no_other_anchors,
+                  and l71s.get("structure_class") == "nextlink_hh" and held_back_ok,
                   sorted(with_anchors)))
 
     # NOT silently promoted: log59 stays OUT of the seam contract eligible set; build_seam_payload refuses it
-    gates.append(("G13 log59 PROMOTED to seam eligibility (ELIGIBLE_EXEMPLARS == 5 incl log66; seam builds log59; log36 refused)",
+    gates.append(("G13 log59 PROMOTED to seam eligibility (ELIGIBLE_EXEMPLARS == 5 incl log66; seam builds log59; held-back log36 refused)",
                   tuple(ELIGIBLE_EXEMPLARS) == ("log53", "log64", "log71", "log59", "log66")
                   and not _refuses_seam("log59", rec)
-                  and all(_refuses_seam(l, rec) for l in NOT_ANCHORED_NEAR_MISSES), None))
+                  and all(_refuses_seam(l, rec) for l in HELD_BACK_BRIDGED), None))
 
     if TRUTH.is_file():
         truth = json.loads(TRUTH.read_text(encoding="utf-8"))
@@ -208,7 +209,7 @@ def _emit(gates, result, l59, cls) -> int:
         "cohort_delta": {"log59": {"from": REPRESENTATIVE_ROUTE_CANDIDATE, "to": cls},
                          "explicit": True, "deterministic": True, "limited_to": "log59"},
         "seam_eligible_unchanged": list(ELIGIBLE_EXEMPLARS),
-        "log66_log36_anchored": False,
+        "log36_anchored_not_promoted": True,
         "no_pdf_parse": True, "no_render": True, "no_invented_coordinates": True,
         "no_source_bind": True, "no_seam_promotion": True, "engine_census_frozen": True,
         "next_slice": ("log59 source-bind: PRESENT recovered sheet 21 for OWNER confirmation, then a "

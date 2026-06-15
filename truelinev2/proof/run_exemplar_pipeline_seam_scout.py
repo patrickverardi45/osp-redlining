@@ -47,6 +47,9 @@ FROZEN_BUCKETS = {"DRAWABLE_REVIEW": 31, "HUMAN_ADJUSTABLE_REVIEW": 6,
 ABSTAIN_4 = ("log5", "log31", "log38", "log43")
 
 EXEMPLARS = ("log53", "log64", "log71", "log59", "log66")
+# log36 carries an owner-reviewed endpoint-anchor BRIDGE but is NOT seam-promoted (corrected_sheets [],
+# not owner-confirmed): it is anchor-eligible yet held back -- named here, never silently upgraded.
+HELD_BACK_BRIDGED = ("log36",)
 RENDER_MODES = {"continuous_corridor", "ordered_chain_path"}
 
 # Proven exemplar topology -- the parts NOT carried by endpoint_anchors: per-leg (sheet, render_mode)
@@ -360,16 +363,17 @@ def main() -> int:
     classified = len(eligible) + len(blocked)
     # The PROVEN seam exemplars (EXEMPLARS) each carry owner-reviewed anchors AND a full source-bind+
     # render proof. log59 then log66 each completed that path (owner-confirmed sheet + source-bind +
-    # render) and were promoted, so they are now the 4th + 5th seam exemplars -- anchor-eligible == the
-    # seam exemplar set exactly (no anchored log is left held back, and nothing was silently upgraded).
+    # render) and were promoted (the 4th + 5th seam exemplars). log36 then got an owner-reviewed
+    # endpoint-anchor BRIDGE but is NOT promoted (corrected_sheets [], not owner-confirmed): it is
+    # anchor-eligible yet HELD BACK -- named explicitly here, never silently upgraded into the seam.
     honest = (set(EXEMPLARS) <= set(eligible)            # the seam exemplars are all anchor-eligible
-              and set(eligible) - set(EXEMPLARS) == set()  # every anchor-eligible log is a seam exemplar
+              and set(eligible) - set(EXEMPLARS) == set(HELD_BACK_BRIDGED)  # the only extra anchor-eligible logs are the NAMED held-back bridges
               and classified == len(doc["logs"])         # every cohort log classified
               and not (set(eligible) & set(blocked))     # never both
               and all(blocked[l]["categories"] for l in blocked))  # every block has a named category
-    gates.append(("G8 eligibility honest: 5 seam exemplars (incl owner-confirmed + promoted log59/log66); abstains/needs-verify blocked",
+    gates.append(("G8 eligibility honest: 5 seam exemplars + log36 anchored-but-held-back (named); abstains/needs-verify blocked",
                   honest, {"eligible": sorted(eligible), "seam_exemplars": list(EXEMPLARS),
-                           "anchored_not_in_seam": sorted(set(eligible) - set(EXEMPLARS)),
+                           "anchored_not_in_seam_held_back": sorted(set(eligible) - set(EXEMPLARS)),
                            "blocked": len(blocked), "classified": classified}))
 
     corr = corroborate()
