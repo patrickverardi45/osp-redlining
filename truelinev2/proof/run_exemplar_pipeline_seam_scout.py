@@ -348,12 +348,19 @@ def main() -> int:
         ok, reason, cats = classify_record(r)
         (eligible if ok else blocked)[r["log_id"]] = {"reason": reason, "categories": cats}
     classified = len(eligible) + len(blocked)
-    honest = (set(eligible) == set(EXEMPLARS)            # exactly the 3 anchor-encoded exemplars
+    # The 3 PROVEN seam exemplars (EXEMPLARS) carry owner-reviewed anchors AND a full source-bind+render
+    # proof. log59 was given a SOURCE-RECOVERED endpoint-anchor bridge (its slice) so it is anchor-
+    # eligible too, but it is held back from the seam (no source-bind/render yet) -- so it must NOT be
+    # silently upgraded into the seam exemplar set. Hence anchor-eligible == the 3 exemplars + log59.
+    honest = (set(EXEMPLARS) <= set(eligible)            # the 3 seam exemplars are all anchor-eligible
+              and set(eligible) - set(EXEMPLARS) == {"log59"}   # the only added anchor is log59's bridge
               and classified == len(doc["logs"])         # every cohort log classified
               and not (set(eligible) & set(blocked))     # never both
               and all(blocked[l]["categories"] for l in blocked))  # every block has a named category
-    gates.append(("G8 eligibility honest: eligible == 3 exemplars; abstains/needs-verify blocked; no silent upgrade",
-                  honest, {"eligible": sorted(eligible), "blocked": len(blocked), "classified": classified}))
+    gates.append(("G8 eligibility honest: 3 seam exemplars + log59 anchored-but-held-back; abstains/needs-verify blocked",
+                  honest, {"eligible": sorted(eligible), "seam_exemplars": list(EXEMPLARS),
+                           "anchored_not_in_seam": sorted(set(eligible) - set(EXEMPLARS)),
+                           "blocked": len(blocked), "classified": classified}))
 
     corr = corroborate()
     gates.append(("G9 not contradicted by any present proof output (read-only corroboration; absent is OK)",

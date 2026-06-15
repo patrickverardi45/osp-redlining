@@ -1,11 +1,12 @@
 r"""OWNER-PACKET-2 -- near-miss SHEET-LOCATOR scout (PROOF/REPORT ONLY; no encoding, no promotion).
 
 The next-eligibility scout reported NO_SAFE_NEXT_ELIGIBILITY_CANDIDATE with three near-misses blocked
-ONLY by a missing recorded sheet (owner-review corrected_sheets == []): log59 (installer_hh ->
-flower_pot), log66 (installer_hh <-> nextlink_hh), log36 (installer_hh <-> installer_hh). This scout
-attempts to RECOVER each log's source sheet from committed/source evidence via a CONTAINED, read-only
-PDF probe -- it encodes NO endpoint_anchors, promotes NO log, changes NO seam contract/adapter/driver,
-draws nothing, and writes no PNG.
+by a missing recorded sheet: log59 (installer_hh -> flower_pot), log66 (installer_hh <-> nextlink_hh),
+log36 (installer_hh <-> installer_hh). log59 has since been source-recovered + bridged (its slice ->
+SOURCE_BINDABLE_NOW), so this scout inspects the REMAINING near-misses (log66, log36) and RECOVERS
+each log's source sheet from committed/source evidence via a CONTAINED, read-only PDF probe -- it
+encodes NO endpoint_anchors, promotes NO log, changes NO seam contract/adapter/driver, draws nothing,
+and writes no PNG. (Current recommendation: log66 -> sheet 10.)
 
 Recovery method (source-backed, NOT length-only, NOT a guess): for each log, find the plan sheet(s)
 that print its owner-reviewed 'HH - HH = <span>' annotation, then RE-BIND BOTH owner-named modeled
@@ -50,6 +51,7 @@ from truelinev2.proof.run_brenham_corpus import EXPECTED_COUNT, PDF, enumerate_c
 from truelinev2.proof.run_log53_primitives_cohort_replay import (
     NO_RECORDED_SHEET,
     REPRESENTATIVE_ROUTE_CANDIDATE,
+    RESET_ORIGIN_FRAME_TRANSLATION,
     classify_record,
 )
 from truelinev2.proof.run_reviewer_service_contract import resolve_corpus
@@ -62,17 +64,17 @@ TRUTH = _REPO_ROOT / "data" / "outputs" / "final_engine_truth_table" / \
 FROZEN_BUCKETS = {"DRAWABLE_REVIEW": 31, "HUMAN_ADJUSTABLE_REVIEW": 6,
                   "OUT_OF_CLASS": 1, "PICK_CARD_REVIEW": 17, "SOURCE_OR_KMZ_REQUIRED": 3}
 ABSTAIN_4 = ("log5", "log31", "log38", "log43")
-NEAR_MISSES = ("log59", "log66", "log36")
+# log59's source-recovered endpoint-anchor bridge was encoded (its slice, commit after 88d9f96) -> it
+# is now SOURCE_BINDABLE_NOW and no longer a NO_RECORDED_SHEET near-miss. The scout inspects the
+# REMAINING near-misses; log59's prior recovery (sheet 21) is recorded in its bridge slice.
+BRIDGED_OUT = ("log59",)
+NEAR_MISSES = ("log66", "log36")
 SPAN_TOL = 0.5
 
 # near-miss endpoint signatures, read from the owner-reviewed evidence_notes (identity-level facts;
 # the scout CONFIRMS the tokens appear in owner_review, then probes the PDF to RECOVER the sheet).
 # 'struct' endpoints bind via resolve_structure_position; 'nextlink' via resolve_nextlink_hh_callout.
 NEAR_MISS_SIG = {
-    "log59": {"shape": "single_sheet_structure_to_structure",
-              "start": {"binder": "struct", "cls": "installer_hh", "label": "2+76", "ctx": ()},
-              "end": {"binder": "struct", "cls": "flower_pot", "label": "4+46", "ctx": ("FLOWER", "POT")},
-              "footage": 170, "span": ("2+76", "4+46")},
     "log66": {"shape": "single_sheet_structure_to_structure_variant_installer_to_nextlink",
               "start": {"binder": "struct", "cls": "installer_hh", "label": "0+55=0+00", "ctx": ()},
               "end": {"binder": "nextlink", "cls": "nextlink_hh", "sta": "45+33"},
@@ -199,26 +201,30 @@ def main() -> int:
     # G1 eligible set unchanged
     source_bindable_now = sorted(c["log_id"] for c in (classify_record(r) for r in doc["logs"])
                                  if c["classification"] == "SOURCE_BINDABLE_NOW")
-    gates.append(("G1 existing eligible set == log53/log64/log71",
-                  source_bindable_now == ["log53", "log64", "log71"]
+    gates.append(("G1 seam eligible == log53/log64/log71 (unchanged); log59 bridge added to cohort SOURCE_BINDABLE_NOW",
+                  source_bindable_now == ["log53", "log59", "log64", "log71"]
                   and tuple(ELIGIBLE_EXEMPLARS) == ("log53", "log64", "log71"), source_bindable_now))
 
-    # G2 inspects exactly the three NO_RECORDED_SHEET near-misses (canonical classifier)
+    # G2 inspects the REMAINING NO_RECORDED_SHEET near-misses (log59 already bridged out)
     canonical_near = sorted(
         r["log_id"] for r in doc["logs"]
         if classify_record(r)["classification"] == REPRESENTATIVE_ROUTE_CANDIDATE
         and NO_RECORDED_SHEET in classify_record(r)["blockers"])
-    gates.append(("G2 scout inspects exactly the 3 NO_RECORDED_SHEET near-misses (log59/log66/log36)",
-                  canonical_near == sorted(NEAR_MISSES) == ["log36", "log59", "log66"], canonical_near))
+    bridged_ok = all(classify_record(rec[l])["classification"] == "SOURCE_BINDABLE_NOW" for l in BRIDGED_OUT)
+    gates.append(("G2 scout inspects the remaining NO_RECORDED_SHEET near-misses (log66/log36; log59 bridged out)",
+                  canonical_near == sorted(NEAR_MISSES) == ["log36", "log66"] and bridged_ok, canonical_near))
 
-    # G3 no promotion: the seam contract still refuses every near-miss
-    gates.append(("G3 scout promotes no log (seam contract refuses each near-miss; eligible set == 3)",
-                  all(_refuses(l, rec) for l in NEAR_MISSES) and len(ELIGIBLE_EXEMPLARS) == 3, None))
+    # G3 no promotion: the seam contract still refuses every near-miss (and the bridged-out log59)
+    gates.append(("G3 scout promotes no log (seam contract refuses each near-miss + log59; eligible set == 3)",
+                  all(_refuses(l, rec) for l in (*NEAR_MISSES, *BRIDGED_OUT))
+                  and len(ELIGIBLE_EXEMPLARS) == 3, None))
 
-    # G4 no endpoint_anchors encoded + owner-review fixture sheet still blank for the near-misses
-    gates.append(("G4 no endpoint_anchors encoded; owner-review sheet still blank for the near-misses",
+    # G4 no endpoint_anchors encoded + owner sheet still blank for the INSPECTED near-misses
+    # (log59, the bridged-out one, now legitimately carries a source-recovered bridge)
+    gates.append(("G4 inspected near-misses (log66/log36) still un-anchored + blank sheet; log59 bridged",
                   all(not rec[l].get("endpoint_anchors") and not rec[l].get("corrected_sheets")
-                      for l in NEAR_MISSES), None))
+                      for l in NEAR_MISSES)
+                  and all(rec[l].get("endpoint_anchors") for l in BRIDGED_OUT), None))
 
     # ---- the contained, read-only PDF recovery probe ---------------------------
     recoveries = {}
@@ -239,7 +245,15 @@ def main() -> int:
     finally:
         plan.close()
 
-    recoverable = [lid for lid in NEAR_MISSES if recoveries[lid]["uniquely_recovered"]]
+    # A recommendable candidate uniquely recovers its sheet AND its remaining classifier blockers are
+    # all SURMOUNTABLE by the proven log64-style single-sheet bind: NO_RECORDED_SHEET (recovered here)
+    # and RESET_ORIGIN_FRAME_TRANSLATION (log64's own start was a reset origin '3+69=0+00' and bound
+    # via its reset-token label -- single-sheet, not cross-sheet, not a representative-route resolver).
+    # Anything else (identity-not-modeled, multiple-reverse-paths, ...) would need machinery we forbid.
+    surmountable = {NO_RECORDED_SHEET, RESET_ORIGIN_FRAME_TRANSLATION}
+    recoverable = [lid for lid in NEAR_MISSES
+                   if recoveries[lid]["uniquely_recovered"]
+                   and set(classify_record(rec[lid])["blockers"]) <= surmountable]
     recoverable.sort(key=lambda l: _safety_rank(l, rec))
     recommended = recoverable[0] if recoverable else None
     result = R_PASS if recommended else R_NONE
@@ -257,9 +271,10 @@ def main() -> int:
                   recommended is None or isinstance(recoveries[recommended]["recovered_sheet"], int), None))
     gates.append(("G9 recommended (if any) avoids parent/child aggregation (not a shared-print child)",
                   recommended is None or not rec[recommended].get("shared_print_child"), None))
-    gates.append(("G10 recommended (if any) avoids representative-route logic (only blocker was no-sheet)",
-                  recommended is None or classify_record(rec[recommended])["blockers"] == [NO_RECORDED_SHEET],
-                  None))
+    gates.append(("G10 recommended (if any) avoids representative-route logic (blockers surmountable: sheet + reset-origin)",
+                  recommended is None
+                  or set(classify_record(rec[recommended])["blockers"]) <= surmountable,
+                  (classify_record(rec[recommended])["blockers"] if recommended else None)))
     gates.append(("G11 recommended (if any) avoids unreviewed OCR",
                   recommended is None or not ({"STATION_OCR_CORRECTION", "PRINT_OCR_CORRECTION"}
                                               & set(rec[recommended].get("correction_types") or [])), None))

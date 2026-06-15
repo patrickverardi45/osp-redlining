@@ -275,8 +275,26 @@
       "status": "RECOVERED",
       "correction_types": ["HH_HH_ANNOTATION", "DIRECT_BORE_CALLOUT", "LEADER_LINE_TO_STRUCTURE"],
       "corrected_prints": null, "corrected_start": "2+76", "corrected_end": "4+46", "corrected_sheets": [], "span_ft": 170.0,
-      "evidence_notes": "Start at STA 2+76 INSTALLER HH; end at STA 4+46 FLOWER POT. Direct 'HH - HH = 170'' annotation; clean continuous segment. Resolves the prior 'parallel runs' review-by-design read.",
+      "evidence_notes": "Start at STA 2+76 INSTALLER HH; end at STA 4+46 FLOWER POT. Direct 'HH - HH = 170'' annotation; clean continuous segment. Resolves the prior 'parallel runs' review-by-design read. Sheet 21 SOURCE-RECOVERED by the near-miss sheet-locator scout (commit 88d9f96) as endpoint-anchor BRIDGE evidence (kept out of corrected_sheets, which records OWNER-confirmed sheets only): installer_hh @ 2+76 and flower_pot @ 4+46 bind uniquely on sheet 21 across all 43 pages, station span 4+46-2+76 = 170' matches the printed 'HH - HH = 170'' annotation.",
       "evidence_refs": [],
+      "endpoint_anchors": {
+        "start": {
+          "station": "2+76",
+          "boundary_kind": "structure_terminus",
+          "structure_class": "installer_hh",
+          "structure_label": "INSTALLER HH",
+          "owner_note_text": "STA 2+76 INSTALLER HH on sheet 21 (sheet SOURCE-RECOVERED by the near-miss sheet-locator scout, not owner-recorded: binds uniquely on sheet 21; HH-HH=170' span corroborates). Bridge evidence for proof-first source-bind, NOT product promotion -- log59 is NOT in the seam contract eligible set; an owner confirmation of sheet 21 is required before any product use.",
+          "clarity": "CLEAR"
+        },
+        "end": {
+          "station": "4+46",
+          "boundary_kind": "structure_terminus",
+          "structure_class": "flower_pot",
+          "structure_label": "FLOWER POT",
+          "owner_note_text": "STA 4+46 FLOWER POT on sheet 21 (sheet SOURCE-RECOVERED by the near-miss sheet-locator scout, not owner-recorded: label+FLOWER/POT context binds uniquely on sheet 21; the two termini are 170' apart matching 'HH - HH = 170''). Bridge evidence for proof-first source-bind, NOT product promotion.",
+          "clarity": "CLEAR"
+        }
+      },
       "allowed_to_draw": true, "must_remain_abstained": false, "needs_review": false, "needs_source_verification": false, "review_reason": null
     },
     {

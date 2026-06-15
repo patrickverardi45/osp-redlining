@@ -104,7 +104,10 @@ def test_no_cross_sheet_reconciliation():
 
 def test_classification_is_honest_no_silent_upgrade():
     eligible = {r["log_id"] for r in DOC["logs"] if classify_record(r)[0]}
-    assert eligible == set(EXEMPLARS)                              # exactly the 3 anchor-encoded logs
+    # the 3 proven seam exemplars are anchor-eligible; log59 was given a source-recovered bridge so it
+    # is anchor-eligible too, but is held back from the seam (no source-bind/render yet) -- not upgraded
+    assert set(EXEMPLARS) <= eligible
+    assert eligible - set(EXEMPLARS) == {"log59"}                  # only the log59 bridge was added
     # abstains stay blocked
     for lid in ("log5", "log31", "log38", "log43"):
         ok, _, cats = classify_record(REC[lid])

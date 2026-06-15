@@ -43,8 +43,10 @@ def test_result_enum():
     assert R_NONE == "NO_SAFE_NEXT_ELIGIBILITY_CANDIDATE"
 
 
-def test_pending_is_nineteen_no_anchor_logs():
-    assert len(PENDING) == 19
+def test_pending_is_eighteen_no_anchor_logs():
+    # 19 minus log59 (its source-recovered endpoint-anchor bridge moved it to SOURCE_BINDABLE_NOW)
+    assert len(PENDING) == 18
+    assert "log59" not in {r["log_id"] for r in PENDING}
     for r in PENDING:
         assert not r.get("endpoint_anchors")
         assert not r.get("must_remain_abstained")
@@ -59,7 +61,8 @@ def test_no_safe_candidate_over_real_data():
 def test_eligible_set_unchanged_and_seam_refuses_pending():
     source_bindable_now = sorted(c["log_id"] for c in (classify_record(r) for r in DOC["logs"])
                                  if c["classification"] == "SOURCE_BINDABLE_NOW")
-    assert source_bindable_now == ["log53", "log64", "log71"]
+    # cohort SOURCE_BINDABLE_NOW grew by log59's bridge; the SEAM eligible set stays frozen at 3
+    assert source_bindable_now == ["log53", "log59", "log64", "log71"]
     assert tuple(ELIGIBLE_EXEMPLARS) == ("log53", "log64", "log71")
     # the seam contract refuses every pending log -> no code promotion
     for r in PENDING:
@@ -82,7 +85,8 @@ def test_near_misses_are_named_endpoints_missing_only_a_sheet():
     near = [r["log_id"] for r in PENDING
             if classify_record(r)["classification"] == REPRESENTATIVE_ROUTE_CANDIDATE
             and CAT_NO_SHEET in blocker_categories(r, classify_record(r), DOC)]
-    assert set(near) == {"log59", "log66", "log36"}
+    # log59 left the trio (its bridge moved it to SOURCE_BINDABLE_NOW); log66/log36 remain
+    assert set(near) == {"log66", "log36"}
     for lid in near:
         sig = classify_record(REC[lid])["signals"]
         assert sig["modeled_terminus_classes"]          # endpoints are modeled/named

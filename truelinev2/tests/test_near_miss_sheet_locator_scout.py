@@ -41,12 +41,14 @@ def test_result_enum():
     assert R_NONE == "NO_SAFE_SHEET_LOCATOR_CANDIDATE"
 
 
-def test_near_miss_set_is_the_canonical_no_recorded_sheet_trio():
+def test_near_miss_set_is_the_remaining_no_recorded_sheet_logs():
+    # log59 was bridged out (its source-recovered anchors moved it to SOURCE_BINDABLE_NOW); the
+    # remaining NO_RECORDED_SHEET near-misses are log66/log36.
     canonical = sorted(
         r["log_id"] for r in DOC["logs"]
         if classify_record(r)["classification"] == REPRESENTATIVE_ROUTE_CANDIDATE
         and NO_RECORDED_SHEET in classify_record(r)["blockers"])
-    assert canonical == sorted(NEAR_MISSES) == ["log36", "log59", "log66"]
+    assert canonical == sorted(NEAR_MISSES) == ["log36", "log66"]
     assert set(NEAR_MISS_SIG) == set(NEAR_MISSES)
 
 
@@ -63,20 +65,21 @@ def test_near_miss_endpoints_are_owner_named_modeled_classes():
         sig = NEAR_MISS_SIG[lid]
         assert sig["start"]["cls"] in MODELED
         assert sig["end"]["cls"] in MODELED
-    # the recommended-shape log59 is the exact log64 family (installer_hh -> flower_pot)
-    assert (NEAR_MISS_SIG["log59"]["start"]["cls"], NEAR_MISS_SIG["log59"]["end"]["cls"]) == ("installer_hh", "flower_pot")
+    # log66 (the next pick after log59 bridged out) is installer_hh <-> nextlink_hh
+    assert (NEAR_MISS_SIG["log66"]["start"]["cls"], NEAR_MISS_SIG["log66"]["end"]["cls"]) == ("installer_hh", "nextlink_hh")
 
 
-def test_safety_rank_prefers_log59_log64_shape():
+def test_safety_rank_prefers_log66_after_log59_bridged():
     ranked = sorted(NEAR_MISSES, key=lambda l: _safety_rank(l, REC))
-    assert ranked[0] == "log59"                              # exact log64 shape, non-reset start, no collision
-    assert ranked == ["log59", "log66", "log36"]
+    assert ranked[0] == "log66"                              # log59 bridged out; log66 is next (no reset collision)
+    assert ranked == ["log66", "log36"]
 
 
 def test_eligible_set_unchanged_and_seam_refuses_near_misses():
     source_bindable_now = sorted(c["log_id"] for c in (classify_record(r) for r in DOC["logs"])
                                  if c["classification"] == "SOURCE_BINDABLE_NOW")
-    assert source_bindable_now == ["log53", "log64", "log71"]
+    # cohort SOURCE_BINDABLE_NOW grew by log59's bridge; the SEAM eligible set stays at 3
+    assert source_bindable_now == ["log53", "log59", "log64", "log71"]
     assert tuple(ELIGIBLE_EXEMPLARS) == ("log53", "log64", "log71")
     for lid in NEAR_MISSES:
         try:
@@ -99,9 +102,9 @@ def test_reject_reason_always_names_a_category():
     # log36 deferred reason calls out the reset-station number collision
     r36 = _reject_reason("log36", {"uniquely_recovered": True, "recovered_sheet": 17}, REC["log36"])
     assert "collision" in r36["reason"]
-    # a non-recoverable near-miss
-    nr = _reject_reason("log59", {"uniquely_recovered": False, "recovered_sheet": None,
-                                  "footage_sheets": [8, 21], "both_bound_sheets": []}, REC["log59"])
+    # a (hypothetical) non-recoverable near-miss -> named blocker category
+    nr = _reject_reason("log36", {"uniquely_recovered": False, "recovered_sheet": None,
+                                  "footage_sheets": [17], "both_bound_sheets": []}, REC["log36"])
     assert nr["blocker_category"] == "sheet_not_uniquely_recoverable"
 
 

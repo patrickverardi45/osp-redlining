@@ -1,7 +1,8 @@
 r"""OWNER-PACKET-2 -- NEXT eligibility-growth scout (PROOF/REPORT ONLY; no promotion, no encoding).
 
 The seam pipeline (contract + adapter + end-to-end driver) is eligibility-frozen to the three proven
-exemplars (log53, log64, log71). This scout classifies the 19 PENDING no-endpoint-anchors logs and
+exemplars (log53, log64, log71). This scout classifies the 18 PENDING no-endpoint-anchors logs (19
+minus log59, whose source-recovered endpoint-anchor bridge moved it to SOURCE_BINDABLE_NOW) and
 identifies the SINGLE safest next log to promote into the seam -- OR honestly reports that none is
 safe yet. It encodes NO endpoint_anchors, changes NO seam contract/adapter/driver, parses NO PDF,
 draws nothing, and promotes nothing. It only reads owner-AUTHORITATIVE adjudication facts via the
@@ -184,12 +185,14 @@ def main() -> int:
     gates.append(("G0 engine census frozen (OFF 31/6/1/17/3, ON 22/1/4, log44+abstains held)",
                   _census_frozen(doc), None))
 
-    # G1 existing eligible set is exactly the three proven exemplars (canonical SOURCE_BINDABLE_NOW)
+    # G1 the SEAM eligible set is unchanged (3 exemplars); the cohort SOURCE_BINDABLE_NOW grew by
+    # log59's source-recovered endpoint-anchor bridge (its slice) -- 4 now -- while the seam contract
+    # stays frozen at 3 (log59 is anchored in the cohort but NOT promoted into the seam).
     source_bindable_now = sorted(a["log_id"] for a in
                                  (classify_record(r) for r in doc["logs"])
                                  if a["classification"] == SOURCE_BINDABLE_NOW)
-    gates.append(("G1 existing eligible set == log53/log64/log71 (canonical SOURCE_BINDABLE_NOW)",
-                  source_bindable_now == ["log53", "log64", "log71"]
+    gates.append(("G1 seam eligible == log53/log64/log71 (unchanged); cohort SOURCE_BINDABLE_NOW adds log59 bridge",
+                  source_bindable_now == ["log53", "log59", "log64", "log71"]
                   and tuple(ELIGIBLE_EXEMPLARS) == ("log53", "log64", "log71"), source_bindable_now))
 
     # G2 no code path promotes a new log: the seam contract still REFUSES every pending log
@@ -197,8 +200,8 @@ def main() -> int:
     gates.append(("G2 no code promotion: seam contract refuses every pending log; eligible set unchanged",
                   refused and len(ELIGIBLE_EXEMPLARS) == 3, None))
 
-    gates.append(("G3 all pending no-anchor logs classified (expected 19)",
-                  len(analyzed) == 19 and len({a["log_id"] for a in analyzed}) == 19, len(analyzed)))
+    gates.append(("G3 all pending no-anchor logs classified (18 after log59's bridge moved out of pending)",
+                  len(analyzed) == 18 and len({a["log_id"] for a in analyzed}) == 18, len(analyzed)))
 
     # G4 candidate determination correct: recommended satisfies all 8 (or NO_SAFE and none does)
     g4 = (is_eligibility_ready(rec[recommended["log_id"]], doc) if recommended
@@ -223,8 +226,8 @@ def main() -> int:
                   all(a["blocker_categories"] for a in rejected), None))
 
     # G10 contract/adapter/driver eligibility invariant unchanged (no new SOURCE_BINDABLE_NOW)
-    gates.append(("G10 seam eligibility invariant unchanged (3 eligible; pending stay pending)",
-                  len(source_bindable_now) == 3 and len(ELIGIBLE_EXEMPLARS) == 3, None))
+    gates.append(("G10 seam eligibility frozen at 3; cohort source-bindable == 4 (log59 bridge, not seam-promoted)",
+                  len(ELIGIBLE_EXEMPLARS) == 3 and len(source_bindable_now) == 4, None))
 
     gates.append(("G11 result in allowed enum", result in ALLOWED, result))
     pngs = sorted(p.name for p in OUT_DIR.glob("*.png"))
@@ -291,7 +294,8 @@ def _emit(gates, result, recommended, near_misses, analyzed, rejected) -> int:
             f"promote {recommended['log_id']} via the controlled path (encode endpoint_anchors -> "
             f"log64-style single-sheet source-bind + render -> add to contract/adapter/driver)"
             if recommended else
-            "a FOCUSED sheet-locator scout for the NO_RECORDED_SHEET near-misses (log59/log66/log36): "
+            "a FOCUSED sheet-locator scout for the remaining NO_RECORDED_SHEET near-misses (log66/log36; "
+            "log59 already source-recovered + bridged): "
             "recover which sheet carries each already-named installer-HH/flower-pot/nextlink-HH pair "
             "(via the parent bore row / a contained PDF probe), WITHOUT encoding or promoting; that "
             "single recovered sheet is the only thing between them and the log64 shape."),
