@@ -68,10 +68,12 @@ FROZEN_BUCKETS = {"DRAWABLE_REVIEW": 31, "HUMAN_ADJUSTABLE_REVIEW": 6,
 ABSTAIN_4 = ("log5", "log31", "log38", "log43")
 SEAM_ELIGIBLE = ("log53", "log64", "log71", "log59", "log66")   # unchanged: this slice promotes nothing
 # the held-back (anchored, NOT seam-promoted) set after this slice
-HELD_BACK_BRIDGED = ("log36", "log52", "log58")
-# the 8 logs carrying an endpoint-anchor bridge after this slice
-EXPECTED_ANCHOR_LOGS = ("log36", "log52", "log53", "log58", "log59", "log64", "log66", "log71")
-HELD_NAMED_BLOCKER = ("log11", "log47")   # source-backed cross-sheet logs NOT bridged (named reasons)
+# after the owner-corrected cross-sheet bridges (log11/47/67/69/70, 2026-06-16) the held-back set is 8
+HELD_BACK_BRIDGED = ("log11", "log36", "log47", "log52", "log58", "log67", "log69", "log70")
+# the 13 logs carrying an endpoint-anchor bridge after the owner corrections
+EXPECTED_ANCHOR_LOGS = ("log11", "log36", "log47", "log52", "log53", "log58", "log59",
+                        "log64", "log66", "log67", "log69", "log70", "log71")
+HELD_NAMED_BLOCKER = ()   # log11 + log47 have SINCE been owner-confirmed + bridged (2026-06-16); none remain
 
 # per-log expected bridge identity (two-leg both-termini; the log71 schema)
 BRIDGED = {
@@ -173,13 +175,15 @@ def main() -> int:
     #    + log52/log58 (corrected_sheets owner-set) are all anchored-but-not-promoted.
     with_anchors = {r["log_id"] for r in doc["logs"] if r.get("endpoint_anchors")}
     held_back = tuple(sorted((l for l in with_anchors if _refuses_seam(l, rec)), key=lambda s: int(s[3:])))
-    gates.append(("G9 held-back (anchored + seam-refused) == {log36, log52, log58}; prior anchors intact",
+    gates.append(("G9 held-back (anchored + seam-refused) == the 8 bridged held-back logs; prior anchors intact",
                   held_back == HELD_BACK_BRIDGED
                   and set(EXPECTED_ANCHOR_LOGS) == with_anchors, {"held_back": list(held_back)}))
 
-    # G10 log11 + log47 NOT anchored (held with NAMED blockers): cross-log start identity / end bare station
-    gates.append(("G10 log11 + log47 NOT anchored (held with named blockers: cross-log identity / bare-station end)",
-                  all(not rec[l].get("endpoint_anchors") for l in HELD_NAMED_BLOCKER), None))
+    # G10 no source-backed cross-sheet log remains un-anchored: log11 + log47 have SINCE been owner-confirmed
+    #     + bridged (2026-06-16), so HELD_NAMED_BLOCKER is now empty
+    gates.append(("G10 no source-backed cross-sheet log held un-anchored (log11 + log47 since bridged 2026-06-16)",
+                  all(not rec[l].get("endpoint_anchors") for l in HELD_NAMED_BLOCKER)
+                  and rec["log11"].get("endpoint_anchors") and rec["log47"].get("endpoint_anchors"), None))
 
     if TRUTH.is_file():
         truth = json.loads(TRUTH.read_text(encoding="utf-8"))

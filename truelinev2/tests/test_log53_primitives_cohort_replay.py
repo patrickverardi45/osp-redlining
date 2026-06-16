@@ -173,23 +173,24 @@ def test_full_cohort_census_counts():
     for r in rows:
         counts[r["classification"]] = counts.get(r["classification"], 0) + 1
     assert counts == {
-        SOURCE_BINDABLE_NOW: 8,          # + log52 + log58 (cross-sheet two-leg bridges; flower/installer)
-        PARTIAL_SOURCE_BINDABLE: 6,
+        SOURCE_BINDABLE_NOW: 13,         # + log11/47/67/69/70 (owner-corrected endpoint anchors, 2026-06-16)
+        PARTIAL_SOURCE_BINDABLE: 1,      # only log48 (parent/child reconstruction pending)
         REPRESENTATIVE_ROUTE_CANDIDATE: 6,
         HUMAN_REVIEW_REQUIRED: 3,
         STILL_BLOCKED: 4,
     }
 
 
-def test_largest_repeated_blocker_is_cross_sheet_frame():
+def test_largest_repeated_blocker_is_unmodeled_terminus():
     rows = classify_cohort(load_adjudication())
     blocker_counts = {}
     for r in rows:
         for b in r["blockers"]:
             blocker_counts[b] = blocker_counts.get(b, 0) + 1
     top = max(blocker_counts.items(), key=lambda kv: kv[1])
-    # 9: log52 + log58's PARTIAL FRAME_CONTESTED cleared when their cross-sheet bridges were encoded
-    assert top == (FRAME_CONTESTED, 9)
+    # after the owner-corrected cross-sheet bridges (log11/47/67/69/70), FRAME_CONTESTED drops to 4 and
+    # the largest repeated blocker is now the UNMODELED_TERMINUS root gate ENDPOINT_IDENTITY_NOT_MODELED (6)
+    assert top == ("ENDPOINT_IDENTITY_NOT_MODELED", 6)
 
 
 def test_real_cohort_enums_and_consistency():

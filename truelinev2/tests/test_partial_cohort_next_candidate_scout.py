@@ -68,34 +68,29 @@ def test_three_sheets_is_medium():
 
 # --- real cohort ----------------------------------------------------------------
 
-def test_sibling_overlap_flags_log69_log70():
+def test_owner_correction_resolved_log69_log70_sibling_overlap():
+    # the owner correction (2026-06-16) RESOLVED the log69/log70 segment-ownership ambiguity: log69 now
+    # ends at STA 4+54 and log70 starts at STA 1+45=0+00 (no longer sharing the 4+54 endpoint), so the
+    # prior sibling-endpoint overlap is gone -- and both have bridged out of the PARTIAL cohort entirely.
     doc = load_adjudication()
     rec = {r["log_id"]: r for r in doc["logs"]}
-    assert "log70" in sibling_overlap(rec["log69"], doc)
-    assert "log69" in sibling_overlap(rec["log70"], doc)
+    assert sibling_overlap(rec["log69"], doc) == []
+    assert sibling_overlap(rec["log70"], doc) == []
     # a clean single-segment family member has no overlap
     assert sibling_overlap(rec["log64"], doc) == []
 
 
-def test_partial_cohort_is_the_expected_six():
-    # intentional gated delta: log64/log71, then the cross-sheet two-leg bridges log52 + log58 were
-    # promoted to SOURCE_BINDABLE_NOW once their bridges were encoded, so PARTIAL shrank 8 -> 6.
+def test_partial_cohort_is_only_log48():
+    # log64/log71, then the cross-sheet two-leg bridges (log52/58), then the owner-corrected log11/47/67/
+    # 69/70 (2026-06-16) all promoted to SOURCE_BINDABLE_NOW -> only log48 (parent/child) remains PARTIAL.
     rows = rank_partial_cohort(load_adjudication())
-    assert tuple(sorted(r["log_id"] for r in rows)) == EXPECTED_PARTIAL
-    assert len(rows) == 6
-    assert {"log71", "log52", "log58"}.isdisjoint({r["log_id"] for r in rows})   # promoted out
+    assert tuple(sorted(r["log_id"] for r in rows)) == EXPECTED_PARTIAL == ("log48",)
+    assert len(rows) == 1
+    assert {"log11", "log47", "log67", "log69", "log70"}.isdisjoint({r["log_id"] for r in rows})  # bridged out
 
 
-def test_no_low_candidate_remains_after_log71():
-    # log71 was the sole LOW; with its bridge encoded, no LOW-risk PARTIAL remains -> the next
-    # candidate needs a MEDIUM+-risk decision (the safest remaining is log67, MEDIUM print-OCR).
+def test_no_low_candidate_remains_only_log48():
+    # no LOW-risk PARTIAL remains; the sole remaining log48 is a 3-sheet parent/child reconstruction
     rows = rank_partial_cohort(load_adjudication())
     assert [r["log_id"] for r in rows if r["risk"] == RISK_LOW] == []
-    assert rows[0]["log_id"] == "log67" and rows[0]["risk"] == RISK_MEDIUM and rows[0]["rank"] == 1
-
-
-def test_log69_log70_are_high_for_overlap():
-    rows = {r["log_id"]: r for r in rank_partial_cohort(load_adjudication())}
-    for l in ("log69", "log70"):
-        assert rows[l]["risk"] == RISK_HIGH
-        assert rows[l]["sibling_overlap"]
+    assert rows[0]["log_id"] == "log48" and rows[0]["rank"] == 1

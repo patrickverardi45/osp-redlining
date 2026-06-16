@@ -71,18 +71,19 @@ def test_held_back_not_promoted():
     for lid in ("log52", "log58"):
         with pytest.raises(ValueError):
             build_seam_payload(lid, REC[lid])
-    # the held-back set is exactly {log36, log52, log58}
-    assert HELD_BACK_BRIDGED == ("log36", "log52", "log58")
+    # the held-back set is the 8 bridged logs (incl. the owner-corrected log11/47/67/69/70, 2026-06-16)
+    assert HELD_BACK_BRIDGED == ("log11", "log36", "log47", "log52", "log58", "log67", "log69", "log70")
     with_anchors = {r["log_id"] for r in DOC["logs"] if r.get("endpoint_anchors")}
     assert with_anchors == set(EXPECTED_ANCHOR_LOGS) == {
-        "log36", "log52", "log53", "log58", "log59", "log64", "log66", "log71"}
+        "log11", "log36", "log47", "log52", "log53", "log58", "log59",
+        "log64", "log66", "log67", "log69", "log70", "log71"}
 
 
-def test_log11_log47_held_with_named_blockers():
-    # log11 (cross-log start identity) + log47 (bare-station end) are NOT bridged in this pass
-    assert HELD_NAMED_BLOCKER == ("log11", "log47")
-    for lid in HELD_NAMED_BLOCKER:
-        assert not REC[lid].get("endpoint_anchors")
+def test_log11_log47_since_bridged_no_named_blocker_remains():
+    # log11 (shared log53 NEXTLINK HH start) + log47 (STA 4+94 INSTALLER HH end) have SINCE been
+    # owner-confirmed + bridged (2026-06-16); no source-backed cross-sheet log is held un-anchored
+    assert HELD_NAMED_BLOCKER == ()
+    assert REC["log11"].get("endpoint_anchors") and REC["log47"].get("endpoint_anchors")
 
 
 def test_bridge_proof_has_no_render_lane():

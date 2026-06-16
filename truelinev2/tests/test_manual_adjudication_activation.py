@@ -117,13 +117,20 @@ def test_on_log68_log69_not_mixed(baseline, doc):
     a68, a69 = out["log68"]["adjudication"], out["log69"]["adjudication"]
     assert (a68["corrected_start"], a68["corrected_end"]) == ("5+03", "6+79")
     assert "4+54" not in (a68["corrected_start"], a68["corrected_end"])
-    assert (a69["corrected_start"], a69["corrected_end"]) == ("2+15", "4+54")
+    # owner correction 2026-06-16: log69 start is the 1+45=0+00 reset (bore-frame 0+00), end 4+54 INSTALLER HH
+    assert (a69["corrected_start"], a69["corrected_end"]) == ("0+00", "4+54")
 
 
-@pytest.mark.parametrize("lid", ["log67", "log68", "log69", "log70"])
+@pytest.mark.parametrize("lid", ["log67", "log68", "log70"])
 def test_on_print_17_20(baseline, doc, lid):
     out = apply_adjudications(baseline, enabled=True, doc=doc)
     assert out[lid]["adjudication"]["corrected_prints"] == [17, 20]
+
+
+def test_on_log69_single_print_17(baseline, doc):
+    # owner correction 2026-06-16: log69 is single-sheet on print 17
+    out = apply_adjudications(baseline, enabled=True, doc=doc)
+    assert out["log69"]["adjudication"]["corrected_prints"] == [17]
 
 
 # --- movement summary computed from actual output -------------------------------

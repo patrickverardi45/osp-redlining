@@ -45,7 +45,8 @@ FROZEN_BUCKETS = {"DRAWABLE_REVIEW": 31, "HUMAN_ADJUSTABLE_REVIEW": 6,
 ABSTAIN_4 = ("log5", "log31", "log38", "log43")
 # the live PARTIAL set shrinks as bridges are encoded: log64/log71, then the cross-sheet two-leg bridges
 # log52 + log58 were promoted to SOURCE_BINDABLE_NOW, leaving these 6.
-EXPECTED_PARTIAL = ("log11", "log47", "log48", "log67", "log69", "log70")
+# after the owner-corrected cross-sheet bridges (log11/47/67/69/70, 2026-06-16) only log48 remains PARTIAL
+EXPECTED_PARTIAL = ("log48",)
 PROMOTED_OUT = ("log64", "log71", "log52", "log58")   # bridges encoded -> now SOURCE_BINDABLE_NOW, no longer PARTIAL
 
 RISK_LOW, RISK_MEDIUM, RISK_HIGH = "LOW", "MEDIUM", "HIGH"
@@ -173,16 +174,14 @@ def main() -> int:
                   and l64s.get("structure_class") == "installer_hh", None))
     partial_ids = {r["log_id"] for r in rows}
     safest_remaining = rows[0] if rows else None   # top-ranked even when not LOW (informational)
-    gates.append(("G3 PARTIAL cohort is the expected 8 (log64+log71 promoted out)",
+    gates.append(("G3 PARTIAL cohort is now the single log48 (log11/47/67/69/70 owner-bridged 2026-06-16)",
                   tuple(sorted(partial_ids)) == EXPECTED_PARTIAL, len(rows)))
-    gates.append(("G4 no LOW-risk candidate remains (the two clean wins log64+log71 are encoded)",
+    gates.append(("G4 no LOW-risk candidate remains (log48 is a 3-sheet parent/child reconstruction, not a clean pick)",
                   len(low) == 0 and recommended is None, [r["log_id"] for r in low]))
     gates.append(("G5 result NO_SAFE_CANDIDATE; promoted log64+log71 are no longer PARTIAL",
                   result == R_NONE and not (set(PROMOTED_OUT) & partial_ids), sorted(partial_ids)))
-    gates.append(("G6 log69/log70 flagged HIGH for sibling-endpoint overlap (not picked)",
-                  all(next(r for r in rows if r["log_id"] == l)["risk"] == RISK_HIGH
-                      and next(r for r in rows if r["log_id"] == l)["sibling_overlap"]
-                      for l in ("log69", "log70")), None))
+    gates.append(("G6 PARTIAL is the sole log48 (parent/child); the prior log69/log70 sibling-overlap pair owner-bridged 2026-06-16",
+                  partial_ids == {"log48"}, sorted(partial_ids)))
     gates.append(("G7 result in allowed enum", result in ALLOWED, result))
 
     pngs = sorted(p.name for p in OUT_DIR.glob("*.png"))

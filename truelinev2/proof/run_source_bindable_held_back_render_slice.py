@@ -102,7 +102,7 @@ FROZEN_BUCKETS = {"DRAWABLE_REVIEW": 31, "HUMAN_ADJUSTABLE_REVIEW": 6,
                   "OUT_OF_CLASS": 1, "PICK_CARD_REVIEW": 17, "SOURCE_OR_KMZ_REQUIRED": 3}
 ABSTAIN_4 = ("log5", "log31", "log38", "log43")
 SEAM_ELIGIBLE = ("log53", "log64", "log71", "log59", "log66")   # this slice promotes NOTHING
-HELD_BACK_SET = ("log36", "log52", "log58")
+HELD_BACK_SET = ("log11", "log36", "log47", "log52", "log58", "log67", "log69", "log70")
 _COORD_KEYS = {"x", "y", "z", "xc", "yc", "x0", "y0", "x1", "y1", "cx", "cy", "xy",
                "lat", "lon", "lng", "coord", "coords", "coordinate", "coordinates",
                "px", "py", "pixel", "pixels", "point", "points", "symbol_xy", "anchor_xy",

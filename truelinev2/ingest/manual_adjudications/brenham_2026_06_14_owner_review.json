@@ -86,8 +86,26 @@
       "status": "RECOVERED",
       "correction_types": ["STATION_OCR_CORRECTION", "MATCHLINE_CHAIN", "LEADER_LINE_TO_STRUCTURE"],
       "corrected_prints": null, "corrected_start": "3+23", "corrected_end": "4+94", "corrected_sheets": [10, 13, 14], "span_ft": null,
-      "evidence_notes": "bore_log18 right column. OCR/station correction 3+25 -> 3+23. Corrected STA 3+23 -> STA 4+94, opposite side of Woodson Ln. 'STA 3+23 FLOWER POT'; endpoint context at STA 4+94; matchline walk across sheets 10/13/14. Rule learned: a shared Print# can be a sheet-span set, not a per-column owner answer.",
+      "evidence_notes": "bore_log18 right column. OCR/station correction 3+25 -> 3+23. Corrected STA 3+23 -> STA 4+94, opposite side of Woodson Ln. 'STA 3+23 FLOWER POT'; endpoint context at STA 4+94; matchline walk across sheets 10/13/14. Rule learned: a shared Print# can be a sheet-span set, not a per-column owner answer. Owner correction (2026-06-16, source-verified): start FLOWER POT @ STA 3+23 binds on sheet 13 (not sheet 10); end STA 4+94 = INSTALLER HH (13\"x24\"x24\") on sheet 14. Both bind uniquely on-route; the 10->13->14 frame join is source-backed; identity-only endpoint_anchors encoded (per-endpoint sheets 13/14 within the [10,13,14] set).",
       "evidence_refs": [],
+      "endpoint_anchors": {
+        "start": {
+          "station": "3+23",
+          "boundary_kind": "structure_terminus",
+          "structure_class": "flower_pot",
+          "structure_label": "FLOWER POT",
+          "owner_note_text": "STA 3+23 FLOWER POT (owner-corrected log47 start, 2026-06-16; source-verified). Source-binds uniquely as a flower_pot on sheet 13 (POSITION_BOUND) -- a per-endpoint sheet attribution WITHIN the corrected_sheets [10,13,14] set (the set is unchanged). Cross-sheet run to the end on sheet 14 across the source-backed 10->13->14 frame join; the inter-sheet matchlines are route context, not an anchor.",
+          "clarity": "CLEAR"
+        },
+        "end": {
+          "station": "4+94",
+          "boundary_kind": "structure_terminus",
+          "structure_class": "installer_hh",
+          "structure_label": "INSTALLER HH",
+          "owner_note_text": "STA 4+94 INSTALLER HH (13\"x24\"x24\", near Carlee Dr / Woodson Ln; owner-corrected log47 end, 2026-06-16; source-verified -- answers the prior bare-station question). Source-binds uniquely as installer_hh on sheet 14 (resolve_structure_position -> POSITION_BOUND, unique). Reached from the sheet-13 start across the source-backed join.",
+          "clarity": "CLEAR"
+        }
+      },
       "allowed_to_draw": true, "must_remain_abstained": false, "needs_review": false, "needs_source_verification": false, "review_reason": null
     },
     {
@@ -183,8 +201,26 @@
       "status": "RECOVERED",
       "correction_types": ["PRINT_OCR_CORRECTION", "STATION_RESET_SEGMENT_BOUNDARY", "MATCHLINE_CHAIN", "LEADER_LINE_TO_STRUCTURE"],
       "corrected_prints": [17, 20], "corrected_start": "0+00", "corrected_end": "4+14", "corrected_sheets": [17, 20], "span_ft": null,
-      "evidence_notes": "Print OCR 19,20 -> 17,20 (the '7' in '17' was read as '9'). Start reset 'STA 1+45 = 0+00'; end STA 4+14 FLOWER POT; spans sheets 17 -> 20.",
+      "evidence_notes": "Print OCR 19,20 -> 17,20 (the '7' in '17' was read as '9'). Start reset 'STA 1+45 = 0+00'; end STA 4+14 FLOWER POT; spans sheets 17 -> 20. Owner correction (2026-06-16, source-verified): start INSTALLER HH @ STA 1+45=0+00 (sheet 17); end FLOWER POT @ STA 4+14 (sheet 20); identity-only endpoint_anchors encoded; the 17->20 crossing reconciliation is deferred to render.",
       "evidence_refs": [],
+      "endpoint_anchors": {
+        "start": {
+          "station": "1+45",
+          "boundary_kind": "structure_terminus",
+          "structure_class": "installer_hh",
+          "structure_label": "INSTALLER HH",
+          "owner_note_text": "STA 1+45=0+00 INSTALLER HH (owner-corrected log67 start, 2026-06-16; source-verified). Source-binds uniquely as installer_hh on sheet 17 (resolve_structure_position -> POSITION_BOUND, unique) -- the common reset HH shared by log67/log69/log70. Cross-sheet two-leg run to the end on sheet 20; the 17<->20 crossing reconciliation is a deferred render-time step, not an endpoint identity.",
+          "clarity": "CLEAR"
+        },
+        "end": {
+          "station": "4+14",
+          "boundary_kind": "structure_terminus",
+          "structure_class": "flower_pot",
+          "structure_label": "FLOWER POT",
+          "owner_note_text": "STA 4+14 FLOWER POT (owner-corrected log67 end, 2026-06-16; source-verified). Source-binds uniquely as a flower_pot on sheet 20 (POSITION_BOUND). Reached from the sheet-17 start across the [17,20] set; the inter-sheet matchline is route context, not an anchor.",
+          "clarity": "CLEAR"
+        }
+      },
       "allowed_to_draw": true, "must_remain_abstained": false, "needs_review": false, "needs_source_verification": false, "review_reason": null
     },
     {
@@ -193,8 +229,26 @@
       "status": "RECOVERED",
       "correction_types": ["PRINT_OCR_CORRECTION", "HH_HH_ANNOTATION", "MATCHLINE_CHAIN", "LEADER_LINE_TO_STRUCTURE"],
       "corrected_prints": [17, 20], "corrected_start": "0+00", "corrected_end": "2+15", "corrected_sheets": [17, 20], "span_ft": 215.0,
-      "evidence_notes": "Print OCR 19,20 -> 17,20 (same '17' read as '19'). Bore's own range 0+00 -> 2+15 (215'); start anchored at STA 4+54 INSTALLER HH on print/sheet 17; ends at STA 2+15 FLOWER POT on print/sheet 20. Yellow 'HH - HH = 215'' annotation. NOTE: STA 4+54 here is the start anchor of log70; do not confuse with log68 (which must NOT use STA 4+54).",
+      "evidence_notes": "Print OCR 19,20 -> 17,20 (same '17' read as '19'). Bore's own range 0+00 -> 2+15 (215'). Owner correction (2026-06-16, source-verified): start INSTALLER HH @ STA 1+45=0+00 (sheet 17, the common reset HH shared by log67/log69/log70); end FLOWER POT @ STA 2+15 (sheet 20). The prior 'start anchored at STA 4+54 INSTALLER HH' is SUPERSEDED -- STA 4+54 is log69's end, not log70's start. The yellow 'HH - HH = 215'' annotation referenced the prior HH-start read and is HELD pending owner reconciliation (the corrected start is INSTALLER HH but the end is FLOWER POT; span_ft 215' is the bore's own 0+00->2+15 length, retained). Identity-only endpoint_anchors encoded; the 17->20 crossing reconciliation is deferred to render.",
       "evidence_refs": [],
+      "endpoint_anchors": {
+        "start": {
+          "station": "1+45",
+          "boundary_kind": "structure_terminus",
+          "structure_class": "installer_hh",
+          "structure_label": "INSTALLER HH",
+          "owner_note_text": "STA 1+45=0+00 INSTALLER HH (owner-corrected log70 start, 2026-06-16; source-verified). Source-binds uniquely as installer_hh on sheet 17 (POSITION_BOUND, unique) -- the common reset HH shared by log67/log69/log70 (supersedes the prior STA 4+54 start, which is log69's end). Cross-sheet two-leg run to the end on sheet 20; the 17<->20 crossing reconciliation is a deferred render-time step, not an endpoint identity.",
+          "clarity": "CLEAR"
+        },
+        "end": {
+          "station": "2+15",
+          "boundary_kind": "structure_terminus",
+          "structure_class": "flower_pot",
+          "structure_label": "FLOWER POT",
+          "owner_note_text": "STA 2+15 FLOWER POT (owner-corrected log70 end, 2026-06-16; source-verified). Source-binds uniquely as a flower_pot on sheet 20 (POSITION_BOUND). The 'HH - HH = 215'' annotation label is HELD (the end is a FLOWER POT, not an HH); the 215' span is the bore's own 0+00->2+15 length. Reached from the sheet-17 start across the [17,20] set; the inter-sheet matchline is route context, not an anchor.",
+          "clarity": "CLEAR"
+        }
+      },
       "allowed_to_draw": true, "must_remain_abstained": false, "needs_review": false, "needs_source_verification": false, "review_reason": null
     },
     {
@@ -231,8 +285,26 @@
       "status": "RECOVERED",
       "correction_types": ["STATION_OCR_CORRECTION", "STATION_RESET_SEGMENT_BOUNDARY", "MATCHLINE_CHAIN", "LEADER_LINE_TO_STRUCTURE"],
       "corrected_prints": null, "corrected_start": "0+00", "corrected_end": "6+30", "corrected_sheets": [5, 17], "span_ft": null,
-      "evidence_notes": "OCR end correction 6+50 -> 6+30. Starts at reset 'STA 21+63 = 0+00' on print/sheet 5; ends at STA 6+30 FLOWER POT on print/sheet 17. Station reset + corrected endpoint + print/matchline span.",
+      "evidence_notes": "OCR end correction 6+50 -> 6+30. Starts at reset 'STA 21+63 = 0+00' on print/sheet 5; ends at STA 6+30 FLOWER POT on print/sheet 17. Station reset + corrected endpoint + print/matchline span. Owner confirmation (2026-06-16, source-verified): the start IS the shared log53 NEXTLINK HH reset @ STA 21+63=0+00 (sheet 5); end FLOWER POT @ STA 6+30 (sheet 17). The 5->17 frame join is source-backed; identity-only endpoint_anchors encoded.",
       "evidence_refs": [],
+      "endpoint_anchors": {
+        "start": {
+          "station": "21+63",
+          "boundary_kind": "structure_terminus",
+          "structure_class": "nextlink_hh",
+          "structure_label": "NEXTLINK HH",
+          "owner_note_text": "STA 21+63=0+00 NEXTLINK HH on sheet 5 (owner-confirmed 2026-06-16: the IDENTICAL reset log53 adjudicated as a NEXTLINK HH; the prior cross-log question is now answered). Source-binds uniquely via the committed nextlink-callout locator on sheet 5 (POSITION_BOUND). Cross-sheet run to the end on sheet 17 across the source-backed 5->17 frame join; the intermediate matchline is route context, not an anchor.",
+          "clarity": "CLEAR"
+        },
+        "end": {
+          "station": "6+30",
+          "boundary_kind": "structure_terminus",
+          "structure_class": "flower_pot",
+          "structure_label": "FLOWER POT",
+          "owner_note_text": "STA 6+30 FLOWER POT on sheet 17 (owner-corrected end, 2026-06-16; source-verified). Source-binds uniquely as a flower_pot on sheet 17 (POSITION_BOUND). Reached from the sheet-5 NEXTLINK HH start across the source-backed 5->17 frame join.",
+          "clarity": "CLEAR"
+        }
+      },
       "allowed_to_draw": true, "must_remain_abstained": false, "needs_review": false, "needs_source_verification": false, "review_reason": null
     },
     {
@@ -394,9 +466,27 @@
       "original_completion_bucket": "HUMAN_ADJUSTABLE_REVIEW", "original_recon3_classification": "CONFLICTING_SOURCE_EVIDENCE",
       "status": "RECOVERED",
       "correction_types": ["PRINT_OCR_CORRECTION", "LEADER_LINE_TO_STRUCTURE", "MATCHLINE_CHAIN"],
-      "corrected_prints": [17, 20], "corrected_start": "2+15", "corrected_end": "4+54", "corrected_sheets": [17, 20], "span_ft": null,
-      "evidence_notes": "Print OCR 19,20 -> 17,20. Start STA 2+15 FLOWER POT; end STA 4+54 INSTALLER HH on print/sheet 17. Corrected print resolves the prior off-print (sheet 21 vs 19,20) conflict. log69 = STA 2+15 -> STA 4+54 (do NOT mix with log68's STA 5+03 -> 6+79 / 176' on the opposite side).",
+      "corrected_prints": [17], "corrected_start": "0+00", "corrected_end": "4+54", "corrected_sheets": [17], "span_ft": null,
+      "evidence_notes": "Print OCR 19,20 -> 17,20. Owner correction (2026-06-16, source-verified): start INSTALLER HH @ STA 1+45=0+00 (sheet 17, the common reset HH shared by log67/log69/log70); runs straight to INSTALLER HH @ STA 4+54 (sheet 17). This is a SINGLE-SHEET run on print 17 -- the prior 'start STA 2+15 FLOWER POT' / span [17,20] read is SUPERSEDED (the 4+54 destination binds installer_hh on sheet 17, not sheet 20), so corrected_sheets is now [17] and the 17<->20 crossing question is moot. Do NOT mix with log68's STA 5+03 -> 6+79 / 176' on the opposite side. Identity-only endpoint_anchors encoded.",
       "evidence_refs": [],
+      "endpoint_anchors": {
+        "start": {
+          "station": "1+45",
+          "boundary_kind": "structure_terminus",
+          "structure_class": "installer_hh",
+          "structure_label": "INSTALLER HH",
+          "owner_note_text": "STA 1+45=0+00 INSTALLER HH (owner-corrected log69 start, 2026-06-16; source-verified). Source-binds uniquely as installer_hh on sheet 17 (POSITION_BOUND, unique) -- the common reset HH shared by log67/log69/log70 (supersedes the prior 'STA 2+15 FLOWER POT' start). Single-sheet structure-to-structure run on sheet 17 (no cross-sheet crossing).",
+          "clarity": "CLEAR"
+        },
+        "end": {
+          "station": "4+54",
+          "boundary_kind": "structure_terminus",
+          "structure_class": "installer_hh",
+          "structure_label": "INSTALLER HH",
+          "owner_note_text": "STA 4+54 INSTALLER HH (owner-corrected log69 end, 2026-06-16; source-verified). Source-binds uniquely as installer_hh on sheet 17 (POSITION_BOUND, single exact-word hit) -- NOT on sheet 20, which is why log69 is single-sheet [17]. Both termini are on sheet 17; the run is a single-sheet installer-to-installer segment.",
+          "clarity": "CLEAR"
+        }
+      },
       "allowed_to_draw": true, "must_remain_abstained": false, "needs_review": false, "needs_source_verification": false, "review_reason": null
     },
     {

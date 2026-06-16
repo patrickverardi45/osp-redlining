@@ -77,8 +77,9 @@ def test_safety_rank_over_empty_near_miss_set_is_empty():
 def test_cohort_superset_of_seam_and_held_back_log36_refused():
     source_bindable_now = sorted(c["log_id"] for c in (classify_record(r) for r in DOC["logs"])
                                  if c["classification"] == "SOURCE_BINDABLE_NOW")
-    # log36/log52/log58 bridged-but-held-back: cohort SOURCE_BINDABLE_NOW (8) > seam eligible (5)
-    assert source_bindable_now == ["log36", "log52", "log53", "log58", "log59", "log64", "log66", "log71"]
+    # 8 bridged-but-held-back (log11/36/47/52/58/67/69/70) + 5 seam = cohort SOURCE_BINDABLE_NOW (13) > seam (5)
+    assert source_bindable_now == ["log11", "log36", "log47", "log52", "log53", "log58", "log59",
+                                   "log64", "log66", "log67", "log69", "log70", "log71"]
     assert tuple(ELIGIBLE_EXEMPLARS) == ("log53", "log64", "log71", "log59", "log66")
     # the held-back log36 (anchored, corrected_sheets []) is still seam-REFUSED
     try:

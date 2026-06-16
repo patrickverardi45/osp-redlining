@@ -69,7 +69,8 @@ FROZEN_BUCKETS = {"DRAWABLE_REVIEW": 31, "HUMAN_ADJUSTABLE_REVIEW": 6,
 ABSTAIN_4 = ("log5", "log31", "log38", "log43")
 # the 6 logs carrying an endpoint-anchor bridge after this slice (log36 is the new one); log59/log66
 # were promoted in their own slices, log36 is bridged-but-held-back here
-EXPECTED_ANCHOR_LOGS = ("log36", "log52", "log53", "log58", "log59", "log64", "log66", "log71")
+EXPECTED_ANCHOR_LOGS = ("log11", "log36", "log47", "log52", "log53", "log58", "log59",
+                        "log64", "log66", "log67", "log69", "log70", "log71")
 NOT_ANCHORED_NEAR_MISSES = ()   # log36 was the last un-anchored near-miss; none remain after this slice
 SHEET = 17
 SPAN_FT = 89.0

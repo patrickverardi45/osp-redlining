@@ -104,9 +104,15 @@ def test_log68_corrected_range_not_4_54(disp):
     assert "4+54" not in (d.corrected_start, d.corrected_end)
 
 
-@pytest.mark.parametrize("lid", ["log67", "log68", "log69", "log70"])
+@pytest.mark.parametrize("lid", ["log67", "log68", "log70"])
 def test_print_ocr_corrected_to_17_20(disp, lid):
     assert disp[lid].corrected_prints == (17, 20)
+
+
+def test_log69_owner_corrected_to_single_print_17(disp):
+    # owner correction 2026-06-16: log69 is a single-sheet installer-to-installer run on print 17
+    # (its 4+54 destination binds installer_hh on sheet 17, not 20) -> corrected_prints/sheets are [17]
+    assert disp["log69"].corrected_prints == (17,)
 
 
 def test_log41_correct_as_drawn(disp):

@@ -50,12 +50,13 @@ def test_included_set_is_the_ledger_cross_sheet_class():
     rows = json.loads(TRUTH.read_text(encoding="utf-8"))["rows"]
     ledger_cross = {b for b, v in build_ledger(rows, DOC).items() if v["category"] == CROSS_SHEET}
     assert ledger_cross == set(INCLUDED)
-    assert INCLUDED == ("log11", "log47", "log48", "log67", "log69", "log70")
+    # log11/47/67/69/70 owner-bridged 2026-06-16 -> only log48 remains in the cross-sheet class
+    assert INCLUDED == ("log48",)
 
 
 def test_subcategories_are_disjoint_and_match_scout():
-    assert SOURCE_BLOCKED == EXPECTED_BLOCKED == ("log48", "log67", "log69", "log70")
-    assert IDENTITY_HELD == EXPECTED_SOURCE_BACKED == ("log11", "log47")
+    assert SOURCE_BLOCKED == EXPECTED_BLOCKED == ("log48",)   # only log48's source gap remains
+    assert IDENTITY_HELD == EXPECTED_SOURCE_BACKED == ()      # log11/47 since bridged
     assert set(SOURCE_BLOCKED).isdisjoint(IDENTITY_HELD)
     assert set(SOURCE_BLOCKED) | set(IDENTITY_HELD) == set(INCLUDED)
 

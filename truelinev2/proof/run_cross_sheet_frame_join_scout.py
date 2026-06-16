@@ -67,9 +67,12 @@ ABSTAIN_4 = ("log5", "log31", "log38", "log43")
 # the live CROSS_SHEET class shrinks as source-backed logs get bridged: log52 + log58 (two-leg flower/
 # installer cross-sheet bridges) moved to HELD_BACK, leaving these 6 (log11/log47 still source-backed but
 # held -- log11 cross-log start identity, log47 bare-station end; log48/67/69/70 source-blocked).
-EXPECTED_8 = ("log11", "log47", "log48", "log67", "log69", "log70")
-EXPECTED_SOURCE_BACKED = ("log11", "log47")
-EXPECTED_BLOCKED = ("log48", "log67", "log69", "log70")
+# After the owner-corrected cross-sheet bridges (log11/47/67/69/70, 2026-06-16) those 5 moved to
+# SOURCE_BINDABLE_HELD_BACK; the live ledger CROSS_SHEET class is now just log48 (the parent/child
+# original-run on the handwritten sheets 10/11/12 -- still NO_PAIRED_FRAME_EQUATION).
+EXPECTED_8 = ("log48",)
+EXPECTED_SOURCE_BACKED = ()
+EXPECTED_BLOCKED = ("log48",)
 
 # named, deterministic abstain reasons (derived from the shipped frame grammar, never guessed)
 ABSTAIN_NO_EQUATION = "NO_PAIRED_FRAME_EQUATION"           # one-sided / absent boundary equation

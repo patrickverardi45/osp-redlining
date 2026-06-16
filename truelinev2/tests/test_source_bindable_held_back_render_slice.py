@@ -54,8 +54,9 @@ def test_result_enum_exact():
     assert R_PROVEN in ALLOWED
 
 
-def test_held_back_class_is_exactly_the_three():
-    assert HELD_BACK_SET == ("log36", "log52", "log58")
+def test_held_back_class_is_exactly_the_eight():
+    # after the owner-corrected cross-sheet bridges (log11/47/67/69/70, 2026-06-16) the held-back set is 8
+    assert HELD_BACK_SET == ("log11", "log36", "log47", "log52", "log58", "log67", "log69", "log70")
     # the class is the closure ledger's HELD_BACK set: anchored AND seam-refused (not promoted)
     with_anchors = {b for b in REC if REC[b].get("endpoint_anchors")}
     held = tuple(sorted((l for l in with_anchors if _refuses_seam(l, REC)), key=lambda s: int(s[3:])))

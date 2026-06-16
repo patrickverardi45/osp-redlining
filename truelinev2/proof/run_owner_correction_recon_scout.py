@@ -61,6 +61,7 @@ from truelinev2.ingest.manual_adjudication import (
 from truelinev2.ingest.pdf import PlanPdf
 from truelinev2.proof.run_all_redlines_closure_ledger import CROSS_SHEET, build_ledger
 from truelinev2.proof.run_brenham_corpus import PDF
+from truelinev2.proof.run_log53_primitives_cohort_replay import classify_record
 from truelinev2.seam import ELIGIBLE_EXEMPLARS
 
 OUT_DIR = _REPO_ROOT / "data" / "outputs" / "owner_correction_recon_scout"
@@ -182,14 +183,16 @@ def main() -> int:
     gates.append(("G0 engine census frozen (OFF 31/6/1/17/3, ON 22/1/4, log44+abstains held)",
                   _census_frozen(doc), None))
 
-    # G1 the corrected logs are exactly the live cross-sheet evidence-packet set (6) (incl. log48)
+    # G1 the corrections have SINCE been applied (2026-06-16 bridge): the 5 source-verified logs are now
+    #    SOURCE_BINDABLE_NOW (bridged out of CROSS_SHEET); only log48 remains in the live CROSS_SHEET class.
     ledger_cross = set()
     if TRUTH.is_file():
         rows = json.loads(TRUTH.read_text(encoding="utf-8"))["rows"]
         ledger_cross = {b for b, v in build_ledger(rows, doc).items() if v["category"] == CROSS_SHEET}
     corrected = set(CORRECTIONS) | {"log48"}
-    gates.append(("G1 corrected logs (log11/47/48/67/69/70) == the live ledger CROSS_SHEET class (6)",
-                  ledger_cross == corrected, {"ledger_cross": sorted(ledger_cross)}))
+    now_bindable = all(classify_record(rec[l])["classification"] == "SOURCE_BINDABLE_NOW" for l in CORRECTIONS)
+    gates.append(("G1 corrections APPLIED: log11/47/67/69/70 now SOURCE_BINDABLE_NOW (bridged); only log48 remains CROSS_SHEET",
+                  now_bindable and ledger_cross == {"log48"}, {"ledger_cross": sorted(ledger_cross)}))
 
     if not os.path.isfile(PDF):
         gates.append(("G2 plan PDF present (read-only, to run the resolvers)", False, PDF))
@@ -234,12 +237,13 @@ def main() -> int:
                   {"parent": l48["parent_reset"]["xy"], "child_5+14_s11": l48["children"][0]["xy"],
                    "child_5+07_s12": l48["children"][1]["xy"]}))
 
-    # G6 ENCODES NOTHING + FIXTURE UNTOUCHED: the six carry no endpoint_anchors; still CROSS_SHEET in ledger
+    # G6 corrections APPLIED (2026-06-16 bridge): the 5 source-verified logs now carry identity-only
+    #    endpoint_anchors; log48 (parent/child reconstruction) stays UNENCODED pending owner segmentation.
     fresh = {r["log_id"]: r for r in load_adjudication()["logs"]}
-    encodes_nothing = (all(not fresh[l].get("endpoint_anchors") for l in corrected)
-                       and ledger_cross == corrected)
-    gates.append(("G6 ENCODES NOTHING + fixture untouched: the six carry no endpoint_anchors; still CROSS_SHEET",
-                  encodes_nothing, None))
+    applied = (all(fresh[l].get("endpoint_anchors") for l in CORRECTIONS)
+               and not fresh["log48"].get("endpoint_anchors"))
+    gates.append(("G6 corrections APPLIED: log11/47/67/69/70 now carry endpoint_anchors; log48 stays unencoded (parent/child)",
+                  applied, None))
 
     if all(x for _, x, _ in gates):
         result = R_COMPLETE

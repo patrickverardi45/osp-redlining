@@ -16,6 +16,7 @@ from truelinev2.config import _REPO_ROOT
 from truelinev2.ingest.manual_adjudication import load_adjudication
 from truelinev2.proof.run_all_redlines_closure_ledger import CROSS_SHEET, build_ledger
 from truelinev2.proof.run_brenham_corpus import PDF
+from truelinev2.proof.run_log53_primitives_cohort_replay import classify_record
 from truelinev2.seam import ELIGIBLE_EXEMPLARS
 from truelinev2.proof.run_owner_correction_recon_scout import (
     ALLOWED,
@@ -46,10 +47,15 @@ def test_result_enum_exact():
     assert R_COMPLETE in ALLOWED
 
 
-def test_corrected_set_is_the_ledger_cross_sheet_class():
+def test_corrections_applied_only_log48_remains_cross_sheet():
+    # after the 2026-06-16 bridge, the 5 source-verified corrections moved to SOURCE_BINDABLE_NOW;
+    # only log48 (parent/child reconstruction) remains in the live CROSS_SHEET class
     rows = json.loads(TRUTH.read_text(encoding="utf-8"))["rows"]
     ledger_cross = {b for b, v in build_ledger(rows, DOC).items() if v["category"] == CROSS_SHEET}
-    assert CORRECTED == ledger_cross == {"log11", "log47", "log48", "log67", "log69", "log70"}
+    assert ledger_cross == {"log48"}
+    assert CORRECTED == {"log11", "log47", "log48", "log67", "log69", "log70"}     # the documented set
+    for lid in CORRECTIONS:
+        assert classify_record(REC[lid])["classification"] == "SOURCE_BINDABLE_NOW"
 
 
 def test_partition_constants():
@@ -73,9 +79,12 @@ def test_owner_correction_classes_are_modeled():
         assert c["end"][0] in MODELED_TERMINUS_CLASSES
 
 
-def test_the_six_carry_no_endpoint_anchors_scout_encodes_nothing():
-    for lid in CORRECTED:
-        assert not REC[lid].get("endpoint_anchors")
+def test_recon_scout_itself_encodes_nothing_corrections_since_applied():
+    # the recon SCOUT writes no anchors (read-only); the corrections have SINCE been applied by the
+    # separate owner-corrected-anchors slice -> the 5 now carry anchors, log48 (parent/child) stays unencoded
+    for lid in CORRECTIONS:
+        assert REC[lid].get("endpoint_anchors")
+    assert not REC["log48"].get("endpoint_anchors")
     src = PROOF.read_text(encoding="utf-8")
     assert "endpoint_anchors\"] =" not in src and "endpoint_anchors'] =" not in src
     assert ".write_text" in src                         # writes only the gitignored report
