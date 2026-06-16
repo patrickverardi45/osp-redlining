@@ -62,6 +62,37 @@ def nearest_gap(points: Sequence[Tuple[float, float]],
     return best
 
 
+_SEE_SHEET = re.compile(r"SEE\s*SH(?:EE)?T\s*0*(\d+)", re.I)
+_STA_TOK = re.compile(r"\d+\+\d+")
+
+
+def see_sheet_crossings(lines: Sequence[str], partner_sheet: int,
+                        boundary_keyword: str) -> List[Tuple[str, ...]]:
+    """Every printed boundary cross-reference of the form ``<boundary_keyword> STA <a>[/<b>...] -
+    SEE SHEET <partner_sheet>`` on this sheet, as the tuple of its printed station tokens -- a printed
+    station-identity EQUATION between this sheet and ``partner_sheet`` (e.g. ``(a, b)`` means this
+    sheet's ``a`` boundary is the SAME physical crossing as the partner sheet's ``b``). A sheet pair
+    may print MORE THAN ONE such crossing (the cross-sheet "conflict" case); this reports ALL of them
+    in print order, deduped, and never chooses between them -- the caller disambiguates by which
+    crossing the bore's own conduit chain physically reaches on each leg. ``boundary_keyword`` is the
+    plan-set's drawn-boundary label word (INJECTED -- this law holds no convention default). Pure;
+    cross-reference grammar only, no frame-graph, no coordinate reconciliation."""
+    kw = boundary_keyword.upper()
+    out: List[Tuple[str, ...]] = []
+    seen = set()
+    for ln in lines:
+        if kw not in ln.upper():
+            continue
+        m = _SEE_SHEET.search(ln)
+        if not m or int(m.group(1)) != partner_sheet:
+            continue
+        stas = tuple(_STA_TOK.findall(ln))
+        if stas and stas not in seen:
+            seen.add(stas)
+            out.append(stas)
+    return out
+
+
 def matchline_bboxes(drawings: Sequence[dict], layer: str,
                      min_len: float = 100.0) -> List[Tuple[float, float, float, float]]:
     """The sheet's drawn boundary lines: long thin drawings on the matchline
