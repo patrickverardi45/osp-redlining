@@ -46,7 +46,9 @@ from truelinev2.config import _REPO_ROOT
 from truelinev2.extract.conduit_topology import (
     MAX_DASH_GAP, connected_chain, dash_endpoints, symbol_footprint,
 )
-from truelinev2.extract.matchline_join import see_sheet_crossings
+from truelinev2.extract.matchline_join import (
+    extend_dash_to_boundary, matchline_bboxes, nearest_gap, see_sheet_crossings,
+)
 from truelinev2.extract.registry import select_dialect
 from truelinev2.extract.structure_position import (
     BRENHAM_CONDUIT_LAYERS, BRENHAM_LATERAL_CONDUIT_LAYERS, BRENHAM_STRUCTURE_LAYERS,
@@ -209,6 +211,126 @@ def _ordered_leg(chain, a_xy, b_xy):
     return route, bool(ok)
 
 
+def _ml_bbox(words, draw, cross):
+    """The drawn matchline bbox carrying a printed crossing equation. Matches the COMBINED 'a/b' label token
+    (which sits ON the matchline line) -- NOT the individual 'a'/'b' tokens, which are the run-callout
+    stations printed mid-sheet and can be nearer a DIFFERENT matchline. Identity only; route geometry comes
+    from the bbox + chain-reach, never the token position."""
+    mls = matchline_bboxes(draw, "MATCHLINE")
+    if not mls:
+        return None
+    for sta in ["/".join(cross), *cross]:                    # combined label token first, then fallbacks
+        toks = [w for w in words if str(w.get("text", "")) == sta]
+        if toks:
+            t = toks[0]
+            return min(mls, key=lambda bb: nearest_gap([(float(t["xc"]), float(t["yc"]))], bb))
+    return None
+
+
+def _conduit_components(conduit):
+    """All connected components of the sheet's conduit dashes (orientation-free dash-gap connectivity).
+    Two PARALLEL runs more than MAX_DASH_GAP apart are DISTINCT components -- this is what lets the N-leg
+    solver SEE parallel printed runs between the same two matchlines (and refuse to pick between them)."""
+    n = len(conduit)
+    seen = [False] * n
+    comps = []
+    for i in range(n):
+        if seen[i]:
+            continue
+        seed = conduit[i]
+        comp = connected_chain(conduit, (seed["x0"], seed["y0"], seed["x1"], seed["y1"]))
+        ids = {id(c) for c in comp}
+        for j in range(n):
+            if id(conduit[j]) in ids:
+                seen[j] = True
+        comps.append(comp)
+    return comps
+
+
+def _solve_nleg(plan, offset, out, s0, smid, sn, s_xy, s_chain, s_words, s_draw,
+                e_xy, e_chain, e_words, e_draw, span):
+    """Three-sheet route s0 -> smid -> sn joined by TWO printed matchline crossings (the log46 shape).
+
+    The middle leg is a CONNECTED CONDUIT COMPONENT on smid that spans the entry (->s0) and exit (->sn)
+    matchlines. Every such component is enumerated as a candidate middle run; for each, the full 3-leg
+    route (start chain -> entry crossing, the component, exit crossing -> end chain) is built and gated by
+    source-backing + printed-span closure. The route renders ONLY if EXACTLY ONE middle run produces a
+    closing source-backed path. When smid prints PARALLEL runs between the SAME two matchlines (each
+    closing, and the start/end chains reach the shared matchline bboxes so neither leg discriminates), the
+    route is NOT unique -> defer with the parallel runs named. No nearest/length pick; middle sheet never
+    omitted; >=2 closing runs -> abstain (DO-NOT-WIDEN)."""
+    out["printed_crossings_start_mid"] = [list(c) for c in see_sheet_crossings(plan.lines(s0, offset), smid, "MATCHLINE")]
+    out["printed_crossings_mid_end"] = [list(c) for c in see_sheet_crossings(plan.lines(sn, offset), smid, "MATCHLINE")]
+    if not span:
+        out["blocker"] = "N-leg route needs a printed bore span for full-path closure"
+        return out
+    mid_words, mid_draw = plan.words(smid, offset), plan.line_items(smid, offset)
+    mid_conduit = [x for x in mid_draw if x.get("layer") in BASE_CONDUIT]
+    # the entry (->s0) and exit (->sn) matchline bboxes printed on smid (one per crossing equation)
+    entries = [(c, _ml_bbox(mid_words, mid_draw, c)) for c in see_sheet_crossings(plan.lines(smid, offset), s0, "MATCHLINE")]
+    exits = [(c, _ml_bbox(mid_words, mid_draw, c)) for c in see_sheet_crossings(plan.lines(smid, offset), sn, "MATCHLINE")]
+    entries = [(c, bb) for c, bb in entries if bb]
+    exits = [(c, bb) for c, bb in exits if bb]
+
+    def _reaches(eps, bb):
+        return bool(eps) and min(nearest_gap([p], bb) for p in eps) <= MAX_DASH_GAP
+
+    sols = []
+    for comp in _conduit_components(mid_conduit):
+        eps = dash_endpoints(comp)
+        ent = [(c, bb) for c, bb in entries if _reaches(eps, bb)]
+        ext = [(c, bb) for c, bb in exits if _reaches(eps, bb)]
+        if len(ent) != 1 or len(ext) != 1:
+            continue                                   # a middle run spans exactly one entry + one exit
+        (ec0, entry_bb), (ecn, exit_bb) = ent[0], ext[0]
+        a_mid = extend_dash_to_boundary(comp, entry_bb)
+        b_mid = extend_dash_to_boundary(comp, exit_bb)
+        a1 = _leg_matchline(s_words, s_draw, s_chain, ec0)         # start chain -> entry crossing (on s0)
+        bn = _leg_matchline(e_words, e_draw, e_chain, ecn)         # end chain   -> exit crossing (on sn)
+        if not (a_mid and b_mid and a1 and bn):
+            continue
+        r1, ok1 = _ordered_leg(s_chain, s_xy, a1[1])
+        r2, ok2 = _ordered_leg(comp, tuple(a_mid), tuple(b_mid))
+        r3, ok3 = _ordered_leg(e_chain, bn[1], e_xy)
+        if not (ok1 and ok2 and ok3):
+            continue
+        drawn = (route_length(r1) + route_length(r2) + route_length(r3)) / SCALE
+        if abs(drawn - span) > CLOSURE_REL_TOL * span:
+            continue
+        sols.append({"entry": list(ec0), "exit": list(ecn), "drawn_ft": round(drawn, 1),
+                     "mid_run": f"{ec0[0]}->{ecn[0]} @x~{round(a_mid[0])}",
+                     "legs": [
+                         {"sheet": s0, "route": r1, "a_xy": s_xy, "b_xy": a1[1],
+                          "len_pt": round(route_length(r1), 1), "kind": "start_leg",
+                          "start_label": out.get("_ss"), "matchline_sta": a1[0]},
+                         {"sheet": smid, "route": r2, "a_xy": tuple(a_mid), "b_xy": tuple(b_mid),
+                          "len_pt": round(route_length(r2), 1), "kind": "mid_leg",
+                          "matchline_in": a1[0], "matchline_out": bn[0]},
+                         {"sheet": sn, "route": r3, "a_xy": bn[1], "b_xy": e_xy,
+                          "len_pt": round(route_length(r3), 1), "kind": "end_leg",
+                          "end_label": out.get("_es"), "matchline_sta": bn[0]},
+                     ]})
+    out["nleg_closing_solutions"] = [{k: v for k, v in s.items() if k != "legs"} for s in sols]
+    if len(sols) == 1:
+        sol = sols[0]
+        out["closure"] = {"drawn_ft": sol["drawn_ft"], "span_ft": span, "closes": True}
+        out["crossing_chain"] = [sol["entry"], sol["exit"]]
+        out["legs"] = sol["legs"]
+        return out
+    if len(sols) >= 2:
+        runs = "; ".join(s["mid_run"] for s in sols)
+        out["blocker"] = (
+            f"N-leg route ({s0}->{smid}->{sn}) NOT unique: {len(sols)} PARALLEL source-backed middle runs on "
+            f"sheet {smid} cross the SAME printed matchlines and each closes the {span} ft span [{runs}]. The "
+            f"start/end chains reach the shared matchline bboxes (both station tokens), so no source-backed "
+            f"discriminator selects this bore's run -- render deferred (DO-NOT-WIDEN; needs a per-run "
+            f"discriminator such as a printed run-callout tie or a distinct start/end conduit lane)")
+        return out
+    out["blocker"] = (f"N-leg route ({s0}->{smid}->{sn}): no single source-backed middle conduit component "
+                      f"spans the entry and exit matchlines to closure on sheet {smid}")
+    return out
+
+
 def solve_log(plan, offset, lid, rec):
     """Attempt the full route sentence for one anchored bore. Returns a verdict dict with either a
     render plan (legs to draw) or a named blocker. Renders nothing (the caller draws)."""
@@ -278,12 +400,14 @@ def solve_log(plan, offset, lid, rec):
     out["printed_crossings_start_to_end"] = [list(c) for c in crossings]
     if not crossings:
         mids = [s for s in sheets if s not in (s_sheet, e_sheet)]
+        if len(mids) == 1:
+            # 3-sheet route: start -> intermediate -> end, joined by two printed matchline crossings
+            out["_ss"], out["_es"] = ss, es
+            return _solve_nleg(plan, offset, out, s_sheet, mids[0], e_sheet,
+                               s_xy, s_chain, s_words, s_draw, e_xy, e_chain, e_words, e_draw, span)
         if mids:
-            out["blocker"] = (f"multi-sheet (N-leg) route: no DIRECT printed matchline crossing between start "
-                              f"sheet {s_sheet} and end sheet {e_sheet}; corrected_sheets {sheets} implies "
-                              f"intermediate sheet(s) {mids} -- N-leg routing through an intermediate sheet is "
-                              f"not supported by this 2-leg solver (and the intermediate traversal must itself "
-                              f"be uniquely source-backed to closure)")
+            out["blocker"] = (f"N-leg route with {len(mids)} intermediate sheets {mids} not supported "
+                              f"(only a single intermediate sheet is implemented)")
         else:
             out["blocker"] = f"no printed SEE-SHEET matchline crossing between sheets {s_sheet} and {e_sheet}"
         return out
@@ -343,6 +467,10 @@ def _render(plan, offset, lid, v):
             reason = (f"{lid} sheet-{leg['sheet']} leg: start {leg['start_label']} -> MATCHLINE STA "
                       f"{leg['matchline_sta']} (SEE SHEET {v['end_sheet']}); cross-sheet bore joined by "
                       f"printed station identity, frames not reconciled")
+        elif leg["kind"] == "mid_leg":
+            reason = (f"{lid} sheet-{leg['sheet']} MIDDLE leg: MATCHLINE STA {leg['matchline_in']} -> "
+                      f"MATCHLINE STA {leg['matchline_out']} (conduit corridor traced between the two printed "
+                      f"crossings; 3-sheet route, middle sheet not omitted)")
         else:
             reason = (f"{lid} sheet-{leg['sheet']} leg: MATCHLINE STA {leg['matchline_sta']} -> end "
                       f"{leg['end_label']}; joined to sheet {v['start_sheet']} by printed station identity")

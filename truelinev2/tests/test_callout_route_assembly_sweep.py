@@ -27,6 +27,9 @@ SINGLE_SHEET_TARGETS = ("log36",)                            # single leg, sheet
 NEW_TARGETS = CROSS_SHEET_TARGETS + SINGLE_SHEET_TARGETS
 # log29 + log54 are reviewed-but-unanchored: class + (for log29) sheet derived from source, no anchors
 SOURCE_DERIVED_CLASS_TARGETS = ("log29", "log54")
+# log46 is a 3-sheet N-leg route (10->13->14) but sheet 13 prints TWO PARALLEL runs that BOTH close the
+# span; the N-leg solver enumerates them and DEFERS (no unique source-backed route) -- DO-NOT-WIDEN.
+NLEG_AMBIGUOUS_TARGET = "log46"
 
 
 # ---- offline laws (always run) ------------------------------------------------------
@@ -92,6 +95,23 @@ def test_duplicate_of_drawn_excludes_log48():
     assert "log48" in DUPLICATE_OF_DRAWN   # sibling of drawn log50; no parent/child overlap (DO-NOT-WIDEN)
 
 
+def test_conduit_components_splits_parallel_runs():
+    # the N-leg solver SEES parallel printed runs because they are distinct connected components
+    from truelinev2.proof.run_callout_route_assembly_sweep import _conduit_components
+
+    def d(x0, y0, x1, y1):
+        return {"x0": x0, "y0": y0, "x1": x1, "y1": y1, "xc": (x0 + x1) / 2, "yc": (y0 + y1) / 2,
+                "lines": [(x0, y0, x1, y1)], "layer": "BORE - PORT"}
+
+    # two parallel vertical runs 100 pt apart (> MAX_DASH_GAP 35) -> 2 components
+    far = _conduit_components([d(100, 0, 100, 10), d(100, 12, 100, 22),
+                               d(200, 0, 200, 10), d(200, 12, 200, 22)])
+    assert len(far) == 2
+    # dashes within a dash-gap -> a single component
+    near = _conduit_components([d(100, 0, 100, 10), d(100, 12, 100, 22)])
+    assert len(near) == 1
+
+
 # ---- heavy end-to-end (PDF + env gated) ---------------------------------------------
 
 @pytest.mark.skipif(not os.path.isfile(PDF), reason="Brenham plan PDF not present")
@@ -116,6 +136,14 @@ def test_sweep_renders_new_logs_end_to_end():
         assert len(pngs) == 1, (lid, [p.name for p in pngs])
         assert rep["verdicts"][lid]["closure"]["closes"] is True
         assert rep["verdicts"][lid]["sheet_source_derived"] is True
+    # the 3-sheet N-leg bore is DEFERRED: sheet 13 prints two parallel runs that both close the span, so
+    # the route is not unique. The N-leg path analysis surfaces the real ambiguity (>=2 closing runs) and
+    # renders NOTHING (DO-NOT-WIDEN) -- not a misleading "0 of 0 crossings" blocker.
+    assert NLEG_AMBIGUOUS_TARGET in rep["still_blocked"]
+    a46 = rep["verdicts"][NLEG_AMBIGUOUS_TARGET]
+    assert len(a46["nleg_closing_solutions"]) >= 2
+    assert "PARALLEL" in a46["blocker"]
+    assert not sorted(OUT_DIR.glob(f"{NLEG_AMBIGUOUS_TARGET}_*.png"))   # nothing rendered for log46
     # the reviewed-but-unanchored logs had their terminus CLASS derived from source (no owner naming)
     for lid in SOURCE_DERIVED_CLASS_TARGETS:
         assert rep["verdicts"][lid]["class_source_derived"] is True
