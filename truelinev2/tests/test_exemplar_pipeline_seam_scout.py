@@ -108,7 +108,7 @@ def test_classification_is_honest_no_silent_upgrade():
     # exemplars). log36 then got an endpoint-anchor BRIDGE but is NOT promoted (corrected_sheets [],
     # not owner-confirmed): it is anchor-eligible yet HELD BACK -- named, never silently upgraded.
     assert set(EXEMPLARS) <= eligible
-    assert eligible - set(EXEMPLARS) == {"log36"}                  # the only extra anchor-eligible log is the held-back log36 bridge
+    assert eligible - set(EXEMPLARS) == {"log36", "log52", "log58"}  # the extra anchor-eligible logs are the held-back bridges
     # abstains stay blocked
     for lid in ("log5", "log31", "log38", "log43"):
         ok, _, cats = classify_record(REC[lid])

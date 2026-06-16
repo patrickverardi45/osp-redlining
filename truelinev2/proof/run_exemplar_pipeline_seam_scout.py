@@ -47,9 +47,9 @@ FROZEN_BUCKETS = {"DRAWABLE_REVIEW": 31, "HUMAN_ADJUSTABLE_REVIEW": 6,
 ABSTAIN_4 = ("log5", "log31", "log38", "log43")
 
 EXEMPLARS = ("log53", "log64", "log71", "log59", "log66")
-# log36 carries an owner-reviewed endpoint-anchor BRIDGE but is NOT seam-promoted (corrected_sheets [],
-# not owner-confirmed): it is anchor-eligible yet held back -- named here, never silently upgraded.
-HELD_BACK_BRIDGED = ("log36",)
+# log36/log52/log58 each carry an owner-reviewed endpoint-anchor BRIDGE but are NOT seam-promoted: they
+# are anchor-eligible yet held back -- named here, never silently upgraded into the seam.
+HELD_BACK_BRIDGED = ("log36", "log52", "log58")
 RENDER_MODES = {"continuous_corridor", "ordered_chain_path"}
 
 # Proven exemplar topology -- the parts NOT carried by endpoint_anchors: per-leg (sheet, render_mode)
@@ -371,7 +371,7 @@ def main() -> int:
               and classified == len(doc["logs"])         # every cohort log classified
               and not (set(eligible) & set(blocked))     # never both
               and all(blocked[l]["categories"] for l in blocked))  # every block has a named category
-    gates.append(("G8 eligibility honest: 5 seam exemplars + log36 anchored-but-held-back (named); abstains/needs-verify blocked",
+    gates.append(("G8 eligibility honest: 5 seam exemplars + log36/log52/log58 anchored-but-held-back (named); abstains/needs-verify blocked",
                   honest, {"eligible": sorted(eligible), "seam_exemplars": list(EXEMPLARS),
                            "anchored_not_in_seam_held_back": sorted(set(eligible) - set(EXEMPLARS)),
                            "blocked": len(blocked), "classified": classified}))

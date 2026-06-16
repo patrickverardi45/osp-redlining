@@ -173,9 +173,9 @@ def test_full_cohort_census_counts():
     for r in rows:
         counts[r["classification"]] = counts.get(r["classification"], 0) + 1
     assert counts == {
-        SOURCE_BINDABLE_NOW: 6,          # log53 + log64 + log71 + log59 + log66 + log36 (bridges encoded)
-        PARTIAL_SOURCE_BINDABLE: 8,
-        REPRESENTATIVE_ROUTE_CANDIDATE: 6,   # log59 + log66 + log36 moved out (source-recovered sheet bridges)
+        SOURCE_BINDABLE_NOW: 8,          # + log52 + log58 (cross-sheet two-leg bridges; flower/installer)
+        PARTIAL_SOURCE_BINDABLE: 6,
+        REPRESENTATIVE_ROUTE_CANDIDATE: 6,
         HUMAN_REVIEW_REQUIRED: 3,
         STILL_BLOCKED: 4,
     }
@@ -188,8 +188,8 @@ def test_largest_repeated_blocker_is_cross_sheet_frame():
         for b in r["blockers"]:
             blocker_counts[b] = blocker_counts.get(b, 0) + 1
     top = max(blocker_counts.items(), key=lambda kv: kv[1])
-    # 11 (was 12): log71's PARTIAL FRAME_CONTESTED cleared when its bridge was encoded this slice
-    assert top == (FRAME_CONTESTED, 11)
+    # 9: log52 + log58's PARTIAL FRAME_CONTESTED cleared when their cross-sheet bridges were encoded
+    assert top == (FRAME_CONTESTED, 9)
 
 
 def test_real_cohort_enums_and_consistency():

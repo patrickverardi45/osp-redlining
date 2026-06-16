@@ -21,10 +21,11 @@ exact missing evidence per blocked log. It encodes NO endpoint_anchors, defines 
 (reuses match.frames), parses NO coordinate into a placement, draws NO stroke, writes NO PNG, promotes
 NOTHING, and never guesses an unprinted or conflicting join.
 
-Partition (from the shipped primitive, source-backed):
-  SOURCE_BACKED_NOW (4): log11 (5->17), log47 (10->13->14), log52 (8->7), log58 (10->13) -- every
-    consecutive boundary carries a UNIQUE HIGH-confidence printed matchline equation; the run is ready for
-    the (separately-authorized) endpoint_anchors bridge + the existing sheet-local-leg bind/render.
+Partition (from the shipped primitive, source-backed). log52 + log58 have since been BRIDGED (two-leg
+flower/installer cross-sheet endpoint_anchors -> HELD_BACK), so the live CROSS_SHEET class is now 6:
+  SOURCE_BACKED (2): log11 (5->17), log47 (10->13->14) -- every consecutive boundary carries a UNIQUE
+    HIGH-confidence printed matchline equation (the join is source-backed); both are HELD from the bridge
+    for endpoint-IDENTITY reasons (log11 cross-log start identity; log47 bare-station end), not the join.
   SOURCE_BLOCKED (4), each a NAMED, non-guessable source gap:
     log48  -- interior sheet 11 prints a ONE-SIDED matchline (single station, no paired b-side) -> no
               frame equation for the 10<->11 / 11<->12 boundary (NO_PAIRED_FRAME_EQUATION).
@@ -63,8 +64,11 @@ FROZEN_BUCKETS = {"DRAWABLE_REVIEW": 31, "HUMAN_ADJUSTABLE_REVIEW": 6,
                   "OUT_OF_CLASS": 1, "PICK_CARD_REVIEW": 17, "SOURCE_OR_KMZ_REQUIRED": 3}
 ABSTAIN_4 = ("log5", "log31", "log38", "log43")
 
-EXPECTED_8 = ("log11", "log47", "log48", "log52", "log58", "log67", "log69", "log70")
-EXPECTED_SOURCE_BACKED = ("log11", "log47", "log52", "log58")
+# the live CROSS_SHEET class shrinks as source-backed logs get bridged: log52 + log58 (two-leg flower/
+# installer cross-sheet bridges) moved to HELD_BACK, leaving these 6 (log11/log47 still source-backed but
+# held -- log11 cross-log start identity, log47 bare-station end; log48/67/69/70 source-blocked).
+EXPECTED_8 = ("log11", "log47", "log48", "log67", "log69", "log70")
+EXPECTED_SOURCE_BACKED = ("log11", "log47")
 EXPECTED_BLOCKED = ("log48", "log67", "log69", "log70")
 
 # named, deterministic abstain reasons (derived from the shipped frame grammar, never guessed)
@@ -164,7 +168,7 @@ def main() -> int:
     ledger = build_ledger(truth_rows, doc)
     ledger_cross = tuple(sorted((b for b, v in ledger.items() if v["category"] == CROSS_SHEET),
                                 key=lambda s: int(s[3:])))
-    gates.append(("G1 scouted set == the ledger CROSS_SHEET_FRAME_JOIN_NEEDED class (8 logs)",
+    gates.append(("G1 scouted set == the ledger CROSS_SHEET_FRAME_JOIN_NEEDED class (6 logs; log52/log58 bridged out)",
                   ledger_cross == EXPECTED_8, list(ledger_cross)))
 
     # G2 reuses the SHIPPED frame-join primitive; defines NO new join/frame math here
@@ -207,7 +211,7 @@ def main() -> int:
                   g5, None))
 
     # G6 deterministic partition matches the source-backed reality (4 ready / 4 blocked-named)
-    gates.append(("G6 partition: SOURCE_BACKED == log11/47/52/58 (4); BLOCKED == log48/67/69/70 (4)",
+    gates.append(("G6 partition: SOURCE_BACKED == log11/47 (2); BLOCKED == log48/67/69/70 (4)",
                   source_backed == EXPECTED_SOURCE_BACKED and blocked == EXPECTED_BLOCKED,
                   {"source_backed": list(source_backed), "blocked": list(blocked)}))
 
@@ -254,12 +258,14 @@ def _emit(gates, result, scout, ledger_cross, source_backed=(), blocked=()) -> i
         "no_pdf_coordinate_placement": True, "no_render": True, "no_guess": True,
         "engine_census_frozen": True,
         "next_slice": (
-            "encode endpoint_anchors for the 4 SOURCE-BACKED logs (log11/47/52/58) -- each presents its "
-            "source-recovered sheet for OWNER confirmation (the log71 precedent), then replays the existing "
-            "sheet-local-leg bind + the already-proven matchline join at bind/render (NO new primitive). The "
-            "4 BLOCKED logs carry NAMED source targets: log48 = recover sheet 11's paired matchline b-side "
-            "(or route 10->12 directly); log67/69/70 = per-bore disambiguation of the two printed 17<->20 "
-            "crossings. NONE of this is authorized here -- this scout only locks the partition."),
+            "log52 + log58 are now BRIDGED (two-leg flower/installer endpoint_anchors -> HELD_BACK); their "
+            "source-bind + render across the two sheets (the existing sheet-local-leg bind + the already-"
+            "proven matchline join) is the separately-authorized next step. The remaining SOURCE-BACKED "
+            "log11 + log47 are HELD for endpoint-identity reasons (log11 cross-log start identity needs owner "
+            "confirmation that it shares log53's NEXTLINK HH; log47's end is a bare station with no owner-"
+            "named structure). The 4 BLOCKED logs carry NAMED source targets: log48 = recover sheet 11's "
+            "paired matchline b-side (or route 10->12 directly); log67/69/70 = per-bore disambiguation of the "
+            "two printed 17<->20 crossings. NONE of this is authorized here -- this scout only locks the partition."),
         "gates": [{"name": n, "pass": bool(x), "detail": d} for n, x, d in gates],
     }
     OUT_DIR.mkdir(parents=True, exist_ok=True)

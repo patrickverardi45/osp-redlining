@@ -77,13 +77,13 @@ def test_sibling_overlap_flags_log69_log70():
     assert sibling_overlap(rec["log64"], doc) == []
 
 
-def test_partial_cohort_is_the_expected_eight():
-    # intentional gated delta: log64 (47f36b1) then log71 (this cycle) were promoted to
-    # SOURCE_BINDABLE_NOW once their bridges were encoded, so PARTIAL shrank 9 -> 8.
+def test_partial_cohort_is_the_expected_six():
+    # intentional gated delta: log64/log71, then the cross-sheet two-leg bridges log52 + log58 were
+    # promoted to SOURCE_BINDABLE_NOW once their bridges were encoded, so PARTIAL shrank 8 -> 6.
     rows = rank_partial_cohort(load_adjudication())
     assert tuple(sorted(r["log_id"] for r in rows)) == EXPECTED_PARTIAL
-    assert len(rows) == 8
-    assert "log71" not in {r["log_id"] for r in rows}   # promoted out
+    assert len(rows) == 6
+    assert {"log71", "log52", "log58"}.isdisjoint({r["log_id"] for r in rows})   # promoted out
 
 
 def test_no_low_candidate_remains_after_log71():

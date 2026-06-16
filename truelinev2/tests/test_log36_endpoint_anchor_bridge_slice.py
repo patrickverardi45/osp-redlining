@@ -83,7 +83,7 @@ def test_cohort_delta_log36_source_bindable_now_limited():
     # the delta is limited to log36: exactly the six expected logs carry endpoint_anchors
     with_anchors = {r["log_id"] for r in DOC["logs"] if r.get("endpoint_anchors")}
     assert with_anchors == set(EXPECTED_ANCHOR_LOGS) == {
-        "log36", "log53", "log59", "log64", "log66", "log71"}
+        "log36", "log52", "log53", "log58", "log59", "log64", "log66", "log71"}
 
 
 def test_log36_not_promoted_to_seam_eligibility():

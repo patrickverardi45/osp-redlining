@@ -43,10 +43,10 @@ def test_result_enum():
     assert R_NONE == "NO_SAFE_NEXT_ELIGIBILITY_CANDIDATE"
 
 
-def test_pending_is_sixteen_no_anchor_logs():
-    # 19 minus log59 + log66 + log36 (all bridged -> SOURCE_BINDABLE_NOW, out of the no-anchor pending set)
-    assert len(PENDING) == 16
-    assert {"log59", "log66", "log36"}.isdisjoint({r["log_id"] for r in PENDING})
+def test_pending_is_fourteen_no_anchor_logs():
+    # 19 minus log59/66/36 + log52/log58 (all bridged -> SOURCE_BINDABLE_NOW, out of the no-anchor pending set)
+    assert len(PENDING) == 14
+    assert {"log59", "log66", "log36", "log52", "log58"}.isdisjoint({r["log_id"] for r in PENDING})
     for r in PENDING:
         assert not r.get("endpoint_anchors")
         assert not r.get("must_remain_abstained")
@@ -61,8 +61,8 @@ def test_no_safe_candidate_over_real_data():
 def test_eligible_set_matches_cohort_and_seam_refuses_pending():
     source_bindable_now = sorted(c["log_id"] for c in (classify_record(r) for r in DOC["logs"])
                                  if c["classification"] == "SOURCE_BINDABLE_NOW")
-    # log36 bridged-but-held-back: cohort SOURCE_BINDABLE_NOW (6) > seam eligible (5); log36 is the gap
-    assert source_bindable_now == ["log36", "log53", "log59", "log64", "log66", "log71"]
+    # log36/log52/log58 bridged-but-held-back: cohort SOURCE_BINDABLE_NOW (8) > seam eligible (5)
+    assert source_bindable_now == ["log36", "log52", "log53", "log58", "log59", "log64", "log66", "log71"]
     assert tuple(ELIGIBLE_EXEMPLARS) == ("log53", "log64", "log71", "log59", "log66")
     # the seam contract still refuses every pending no-anchor log -> no further promotion here
     for r in PENDING:

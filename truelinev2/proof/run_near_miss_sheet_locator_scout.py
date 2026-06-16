@@ -195,10 +195,10 @@ def main() -> int:
     # G1 seam eligible == cohort SOURCE_BINDABLE_NOW (5): log59 + log66 owner-confirmed + promoted
     source_bindable_now = sorted(c["log_id"] for c in (classify_record(r) for r in doc["logs"])
                                  if c["classification"] == "SOURCE_BINDABLE_NOW")
-    gates.append(("G1 cohort SOURCE_BINDABLE_NOW (6, incl held-back log36) is a superset of seam eligible (5); log36 is the gap",
-                  source_bindable_now == ["log36", "log53", "log59", "log64", "log66", "log71"]
+    gates.append(("G1 cohort SOURCE_BINDABLE_NOW (8, incl held-back log36/log52/log58) is a superset of seam eligible (5)",
+                  source_bindable_now == ["log36", "log52", "log53", "log58", "log59", "log64", "log66", "log71"]
                   and tuple(ELIGIBLE_EXEMPLARS) == ("log53", "log64", "log71", "log59", "log66")
-                  and set(source_bindable_now) - set(ELIGIBLE_EXEMPLARS) == {"log36"}, source_bindable_now))
+                  and set(source_bindable_now) - set(ELIGIBLE_EXEMPLARS) == {"log36", "log52", "log58"}, source_bindable_now))
 
     # G2 inspects the REMAINING NO_RECORDED_SHEET near-miss (log59 + log66 already bridged out)
     canonical_near = sorted(

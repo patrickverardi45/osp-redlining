@@ -43,10 +43,10 @@ TRUTH = _REPO_ROOT / "data" / "outputs" / "final_engine_truth_table" / \
 FROZEN_BUCKETS = {"DRAWABLE_REVIEW": 31, "HUMAN_ADJUSTABLE_REVIEW": 6,
                   "OUT_OF_CLASS": 1, "PICK_CARD_REVIEW": 17, "SOURCE_OR_KMZ_REQUIRED": 3}
 ABSTAIN_4 = ("log5", "log31", "log38", "log43")
-# the live PARTIAL set shrinks as bridges are encoded: log64 (47f36b1) then log71 (owner-confirmed
-# nextlink_hh start) were promoted to SOURCE_BINDABLE_NOW, leaving these 8.
-EXPECTED_PARTIAL = ("log11", "log47", "log48", "log52", "log58", "log67", "log69", "log70")
-PROMOTED_OUT = ("log64", "log71")   # bridges encoded -> now SOURCE_BINDABLE_NOW, no longer PARTIAL
+# the live PARTIAL set shrinks as bridges are encoded: log64/log71, then the cross-sheet two-leg bridges
+# log52 + log58 were promoted to SOURCE_BINDABLE_NOW, leaving these 6.
+EXPECTED_PARTIAL = ("log11", "log47", "log48", "log67", "log69", "log70")
+PROMOTED_OUT = ("log64", "log71", "log52", "log58")   # bridges encoded -> now SOURCE_BINDABLE_NOW, no longer PARTIAL
 
 RISK_LOW, RISK_MEDIUM, RISK_HIGH = "LOW", "MEDIUM", "HIGH"
 _RANK = {RISK_LOW: 0, RISK_MEDIUM: 1, RISK_HIGH: 2}

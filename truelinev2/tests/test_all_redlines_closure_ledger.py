@@ -61,7 +61,8 @@ def test_placement_counts():
     assert counts[ENGINE_PLACED] == 31
     assert sum(counts[c] for c in PLACED_CATEGORIES) == 36
     assert sum(counts[c] for c in NONPLACED_CATEGORIES) == 22
-    assert counts[CROSS_SHEET] == 8                  # the highest-leverage non-placed class
+    assert counts[CROSS_SHEET] == 6                  # log52/log58 bridged out -> HELD_BACK
+    assert counts[HELD_BACK] == 3                    # log36 + log52 + log58 (anchored-but-held-back)
     assert counts[UNMODELED_TERMINUS] == 6           # ENDPOINT_IDENTITY_NOT_MODELED is the root gate
     assert counts[PARENT_CHILD] == 0                 # the owner review recorded all per-column sheets
 

@@ -39,7 +39,7 @@ def test_result_and_abstain_enums():
     assert R_COMPLETE == "CROSS_SHEET_FRAME_JOIN_SCOUT_COMPLETE"
     assert R_COMPLETE in ALLOWED
     assert {ABSTAIN_NO_EQUATION, ABSTAIN_CONFLICT} <= ABSTAIN_REASONS
-    assert EXPECTED_8 == ("log11", "log47", "log48", "log52", "log58", "log67", "log69", "log70")
+    assert EXPECTED_8 == ("log11", "log47", "log48", "log67", "log69", "log70")
     assert set(EXPECTED_SOURCE_BACKED).isdisjoint(EXPECTED_BLOCKED)
     assert set(EXPECTED_SOURCE_BACKED) | set(EXPECTED_BLOCKED) == set(EXPECTED_8)
 

@@ -96,8 +96,26 @@
       "status": "RECOVERED",
       "correction_types": ["PRINT_OCR_CORRECTION", "STATION_OCR_CORRECTION", "MATCHLINE_CHAIN", "LEADER_LINE_TO_STRUCTURE"],
       "corrected_prints": [8, 7], "corrected_start": "0+98", "corrected_end": "4+57", "corrected_sheets": [8, 7], "span_ft": null,
-      "evidence_notes": "Print OCR correction 8,9 -> 8,7; two station entries were missing from OCR. Starts at STA 0+98 FLOWER POT; spans print/sheet 8 -> 7; ends at STA 4+57 FLOWER POT. The prior recorded rival sheet 10 is moot under the corrected print set (8,7).",
+      "evidence_notes": "Print OCR correction 8,9 -> 8,7; two station entries were missing from OCR. Starts at STA 0+98 FLOWER POT; spans print/sheet 8 -> 7; ends at STA 4+57 FLOWER POT. The prior recorded rival sheet 10 is moot under the corrected print set (8,7). Source-recovered endpoint identities for the two-leg cross-sheet bridge (kept out of corrected_sheets, which records OWNER-confirmed sheets only): both endpoints are owner-named FLOWER POT modeled structures that bind uniquely (start 0+98 on sheet 7, end 4+57 on sheet 8 -- the source PDF corrects the owner per-endpoint sheet prose within the [8,7] set); the 8<->7 matchline frame join is source-backed (translate_between_sheets returns a concrete offset).",
       "evidence_refs": [],
+      "endpoint_anchors": {
+        "start": {
+          "station": "0+98",
+          "boundary_kind": "structure_terminus",
+          "structure_class": "flower_pot",
+          "structure_label": "FLOWER POT",
+          "owner_note_text": "STA 0+98 FLOWER POT (owner-named, log52 start). Source-binds uniquely as a flower-pot symbol on sheet 7 (resolve_structure_position + FLOWER/POT context -> POSITION_BOUND, unique). NOTE: owner prose attributed the start to sheet 8, but the source PDF prints '0+98' only on sheet 7 -- a per-endpoint sheet attribution WITHIN the corrected_sheets [8,7] set (the set is unchanged). Cross-sheet two-leg run to the end terminus on sheet 8; the intermediate matchline is route context resolved at bind/render time, not an endpoint identity.",
+          "clarity": "CLEAR"
+        },
+        "end": {
+          "station": "4+57",
+          "boundary_kind": "structure_terminus",
+          "structure_class": "flower_pot",
+          "structure_label": "FLOWER POT",
+          "owner_note_text": "STA 4+57 FLOWER POT (owner-named, log52 end). Source-binds uniquely as a flower-pot symbol on sheet 8 (POSITION_BOUND; rival sheet 17 carries '4+57' but does NOT bind as a flower_pot, so the flower-pot identity is sheet-discriminating to sheet 8). Reached from the start terminus on sheet 7 across the [8,7] sheet set; the inter-sheet matchline is route context, not an anchor.",
+          "clarity": "CLEAR"
+        }
+      },
       "allowed_to_draw": true, "must_remain_abstained": false, "needs_review": false, "needs_source_verification": false, "review_reason": null
     },
     {
@@ -137,8 +155,26 @@
       "status": "RECOVERED",
       "correction_types": ["STATION_OCR_CORRECTION", "HH_HH_ANNOTATION", "MATCHLINE_CHAIN"],
       "corrected_prints": null, "corrected_start": "0+00", "corrected_end": "2+36", "corrected_sheets": [10, 13], "span_ft": 236.0,
-      "evidence_notes": "End-station correction 2+36 (NOT 2+56), already known from prior manual review. Starts at STA 39+79 INSTALLER HH on sheet/print 10; ends at STA 2+36 on sheet/print 13. Highlighted annotation 'HH - HH = 236''; station/matchline continuation; two installer-HH endpoints.",
+      "evidence_notes": "End-station correction 2+36 (NOT 2+56), already known from prior manual review. Starts at STA 39+79 INSTALLER HH on sheet/print 10; ends at STA 2+36 on sheet/print 13. Highlighted annotation 'HH - HH = 236''; station/matchline continuation; two installer-HH endpoints. Source-recovered endpoint identities for the two-leg cross-sheet bridge (corrected_sheets [10,13] unchanged): both endpoints are owner-named INSTALLER HH modeled structures that bind uniquely (start 39+79 on sheet 10, end 2+36 on sheet 13); the 10<->13 matchline frame join is source-backed (translate_between_sheets returns a concrete offset).",
       "evidence_refs": [],
+      "endpoint_anchors": {
+        "start": {
+          "station": "39+79",
+          "boundary_kind": "structure_terminus",
+          "structure_class": "installer_hh",
+          "structure_label": "INSTALLER HH",
+          "owner_note_text": "STA 39+79 INSTALLER HH on sheet 10 (bore_log24 start; owner-named modeled installer HH; the bore resets to 0+00 here). Source-binds uniquely on sheet 10 (resolve_structure_position -> POSITION_BOUND, single exact-word hit). Cross-sheet two-leg run: sheet 10 -> matchline continuation -> sheet 13; the printed 'HH - HH = 236'' annotation (on sheets 10 and 13) corroborates the HH-to-HH bore length. The intermediate matchline is route context resolved at bind/render time, not an endpoint identity.",
+          "clarity": "CLEAR"
+        },
+        "end": {
+          "station": "2+36",
+          "boundary_kind": "structure_terminus",
+          "structure_class": "installer_hh",
+          "structure_label": "INSTALLER HH",
+          "owner_note_text": "STA 2+36 INSTALLER HH on sheet 13 (bore_log24 end; owner end-station correction 2+36 NOT 2+56; owner note 'two installer-HH endpoints'). Source-binds uniquely on sheet 13 (resolve_structure_position -> POSITION_BOUND, single exact-word hit). Reached from the sheet-10 start across the source-backed 10->13 matchline frame join; 'HH - HH = 236'' (span_ft 236') corroborates.",
+          "clarity": "CLEAR"
+        }
+      },
       "allowed_to_draw": true, "must_remain_abstained": false, "needs_review": false, "needs_source_verification": false, "review_reason": null
     },
     {

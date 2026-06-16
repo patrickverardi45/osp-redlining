@@ -55,7 +55,7 @@ TRUTH = _REPO_ROOT / "data" / "outputs" / "final_engine_truth_table" / \
 FROZEN_BUCKETS = {"DRAWABLE_REVIEW": 31, "HUMAN_ADJUSTABLE_REVIEW": 6,
                   "OUT_OF_CLASS": 1, "PICK_CARD_REVIEW": 17, "SOURCE_OR_KMZ_REQUIRED": 3}
 ABSTAIN_4 = ("log5", "log31", "log38", "log43")
-EXPECTED_ANCHOR_LOGS = ("log36", "log53", "log59", "log64", "log66", "log71")
+EXPECTED_ANCHOR_LOGS = ("log36", "log52", "log53", "log58", "log59", "log64", "log66", "log71")
 HELD_BACK_BRIDGED = ("log36",)   # log36 now carries an endpoint-anchor bridge but is NOT promoted (held back; corrected_sheets [])
 SHEET = 21
 SPAN_FT = 170.0
