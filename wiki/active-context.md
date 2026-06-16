@@ -1,7 +1,10 @@
-# Active Context (load this FIRST — keeps /start-session cheap)
+# Active Context (historical — superseded as the canonical bootstrap)
 
-> Compact session bootstrap. Read this before hot.md/current-sprint/log/current-bugs.
-> Those big logs are historical truth — open them only when a specific question needs them.
+> **⚠️ CANONICAL CURRENT TRUTH MOVED.** The compact, current bootstrap is now
+> [`wiki/START_HERE_TRUELINE_V2.md`](START_HERE_TRUELINE_V2.md) — read that first.
+> The checkpoint below is **historical** (M8.19 / 2026-06-11, engine HEAD `972b834`), preserved for
+> redline-engine lane detail and provenance. It is NOT current state (current = continued-23, `b72f033`).
+> Open the big logs (hot.md / current-sprint / log / current-bugs) only when a specific question needs them.
 
 ## Repo state
 - Branch: `feat/truelinev2`
