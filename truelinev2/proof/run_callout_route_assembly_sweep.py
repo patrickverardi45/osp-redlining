@@ -40,6 +40,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import re
 
 from truelinev2.config import _REPO_ROOT
 from truelinev2.extract.conduit_topology import (
@@ -78,9 +79,13 @@ ABSTAIN_4 = ("log5", "log31", "log38", "log43")
 SCALE = 1.44                # Brenham drawn pts/ft
 CLOSURE_REL_TOL = 0.10      # two legs' drawn length vs printed bore span (corroboration, span_ft known)
 
-# the anchored bores NOT yet drawn by a committed render proof (the held-back class this sweep attacks)
+# the bores already drawn by a committed render proof (the frontier this sweep extends past)
 ALREADY_DRAWN = ("log7", "log25", "log45", "log51", "log52", "log53", "log59",
                  "log64", "log65", "log66", "log69", "log71", "log50")
+# bores whose route would DUPLICATE an already-drawn sibling (DO-NOT-WIDEN: no parent/child overlap).
+# log48 (bore_log20) shares the STA 45+33=0+00 start + 5+14 flower-pot end with the drawn log50; the owner
+# flagged its sheet attribution as needing clarification -> not a clean independent redline.
+DUPLICATE_OF_DRAWN = ("log48",)
 SYMBOL_LAYER = {"flower_pot": "FLOWER POT", "installer_hh": "NEXTLINK",
                 "terminal_port_hh": "NEXTLINK", "nextlink_hh": "NEXTLINK"}
 CONTEXT = {"flower_pot": ("FLOWER", "POT")}
@@ -143,20 +148,46 @@ def _all_sheets(plan, offset):
     return [s for s in range(1, plan.page_count + 1) if 0 <= s + offset - 1 < plan.page_count]
 
 
-def _endpoint_sheet(plan, offset, sheets, cls, station):
-    """The UNIQUE sheet where the terminus POSITION_BOUNDs (per-endpoint sheet, derived from source, not
-    hardcoded). Searches the owner's corrected_sheets; when that set is EMPTY (owner sheet not recorded),
-    the sheet is EXTRACTED FROM SOURCE -- the unique sheet across ALL plan sheets where the terminus binds
-    (driving the abstain to zero by extracting the missing relationship, never owner-naming). Returns
-    (sheet|None, {sheet:result}). 0 or >=2 bound sheets -> None (abstain, never guessed)."""
+def _resolve_endpoint(plan, offset, sheets, cls, station):
+    """Resolve a terminus to a UNIQUE (sheet, class) bind, derived from source. The sheet comes from the
+    owner's corrected_sheets, or -- when that set is EMPTY -- is EXTRACTED FROM SOURCE across ALL plan
+    sheets (unique bind). The class is consumed when an owner anchor encoded it; when it is None (a
+    reviewed-but-unanchored log), it is DERIVED FROM SOURCE -- every modeled class is tried and the unique
+    leader-bound symbol wins (never owner-named, never nearest). 0 or >=2 binds -> (None, None, {})."""
+    if not station:
+        return None, None, {}
     search = list(sheets) if sheets else _all_sheets(plan, offset)
+    # cheap pre-filter: a terminus can only bind on a sheet whose text prints its station token (one
+    # get_text call vs a full words+line_items parse per class) -- necessary for any bind, so it narrows
+    # the all-sheets source-derivation search without changing the result.
+    search = [s for s in search if station in plan.text_by_index(s + offset - 1)]
+    classes = [cls] if cls else list(MODELED)
     bound, res = [], {}
     for sh in search:
-        xy, _, _, r = _bind(plan, offset, sh, cls, station)
-        if xy is not None:
-            bound.append(sh)
-            res[sh] = r
-    return (bound[0] if len(bound) == 1 else None), res
+        for c in classes:
+            xy, _, _, rr = _bind(plan, offset, sh, c, station)
+            if xy is not None:
+                bound.append((sh, c))
+                res[f"s{sh}:{c}"] = rr
+    if len(bound) == 1:
+        return bound[0][0], bound[0][1], res
+    return None, None, res
+
+
+def _resolve_endpoints(r):
+    """Per-endpoint (station, class) for a bore. From encoded endpoint_anchors when present; otherwise from
+    the owner-reviewed corrected stations -- the START reset 'STA x=0+00' parsed from evidence_notes (or
+    corrected_start if it is a non-zero station), the END = corrected_end -- with class None so it is
+    DERIVED from source. Returns (start_sta, start_cls, end_sta, end_cls, anchored)."""
+    ea = r.get("endpoint_anchors") or {}
+    if ea:
+        s, e = ea.get("start") or {}, ea.get("end") or {}
+        return s.get("station"), s.get("structure_class"), e.get("station"), e.get("structure_class"), True
+    notes = r.get("evidence_notes") or ""
+    resets = re.findall(r"STA\s*(\d+\+\d+)\s*=\s*0\+00", notes)
+    cs, ce = r.get("corrected_start"), r.get("corrected_end")
+    start_sta = resets[0] if resets else (cs if (cs and cs != "0+00") else None)
+    return start_sta, None, ce, None, False
 
 
 def _leg_matchline(words, draw, chain, cross):
@@ -182,8 +213,6 @@ def solve_log(plan, offset, lid, rec):
     """Attempt the full route sentence for one anchored bore. Returns a verdict dict with either a
     render plan (legs to draw) or a named blocker. Renders nothing (the caller draws)."""
     r = rec.get(lid, {})
-    ea = r.get("endpoint_anchors") or {}
-    start, end = ea.get("start") or {}, ea.get("end") or {}
     sheets = r.get("corrected_sheets") or []
     # printed bore span for the closure guard: span_ft if recorded, else the bore-local station delta
     # corrected_start -> corrected_end (the bore's own stationing IS its conduit length).
@@ -195,23 +224,27 @@ def solve_log(plan, offset, lid, rec):
     out = {"log": lid, "sheets_set": sheets, "span_ft": span, "span_source": span_src,
            "blocker": None, "legs": None, "single_sheet": None}
 
-    sc, ss = start.get("structure_class"), start.get("station")
-    ec, es = end.get("structure_class"), end.get("station")
-    if validate_endpoint_anchors(r) or sc not in MODELED or ec not in MODELED:
-        out["blocker"] = "anchors invalid / non-modeled terminus class"
+    ss, sc, es, ec, anchored = _resolve_endpoints(r)
+    out["anchored"] = anchored
+    out["endpoint_source"] = "endpoint_anchors" if anchored else "reviewed_corrected_stations"
+    if anchored and validate_endpoint_anchors(r):
+        out["blocker"] = "endpoint_anchors invalid"
+        return out
+    if not ss or not es:
+        out["blocker"] = "endpoints not resolvable (no anchors and no parseable reset/corrected stations)"
         return out
 
-    s_sheet, s_res = _endpoint_sheet(plan, offset, sheets, sc, ss)
-    e_sheet, e_res = _endpoint_sheet(plan, offset, sheets, ec, es)
-    # when corrected_sheets is empty, the sheet was EXTRACTED from source (unique bind across all sheets);
-    # the render is a PROOF artifact -- owner confirmation of the source-derived sheet is still required
-    # before any product promotion (census stays frozen; nothing placed/promoted here).
+    # sheet + class resolved from source (class derived for reviewed-but-unanchored logs)
+    s_sheet, sc, s_res = _resolve_endpoint(plan, offset, sheets, sc, ss)
+    e_sheet, ec, e_res = _resolve_endpoint(plan, offset, sheets, ec, es)
     out["sheet_source_derived"] = (not sheets) and s_sheet is not None and e_sheet is not None
+    out["class_source_derived"] = not anchored
     out["start_sheet"], out["end_sheet"] = s_sheet, e_sheet
+    out["start_class"], out["end_class"] = sc, ec
     out["bind_results"] = {"start": s_res, "end": e_res}
-    if s_sheet is None or e_sheet is None:
-        out["blocker"] = (f"terminus did not bind on a UNIQUE corrected sheet "
-                          f"(start->{s_sheet} {s_res}; end->{e_sheet} {e_res})")
+    if s_sheet is None or e_sheet is None or sc not in MODELED or ec not in MODELED:
+        out["blocker"] = (f"terminus did not resolve to a UNIQUE (sheet,class) source bind "
+                          f"(start->s{s_sheet}/{sc}; end->s{e_sheet}/{ec})")
         return out
 
     s_xy, s_words, s_draw, _ = _bind(plan, offset, s_sheet, sc, ss)
@@ -243,6 +276,17 @@ def solve_log(plan, offset, lid, rec):
     s_lines = plan.lines(s_sheet, offset)
     crossings = see_sheet_crossings(s_lines, e_sheet, "MATCHLINE")
     out["printed_crossings_start_to_end"] = [list(c) for c in crossings]
+    if not crossings:
+        mids = [s for s in sheets if s not in (s_sheet, e_sheet)]
+        if mids:
+            out["blocker"] = (f"multi-sheet (N-leg) route: no DIRECT printed matchline crossing between start "
+                              f"sheet {s_sheet} and end sheet {e_sheet}; corrected_sheets {sheets} implies "
+                              f"intermediate sheet(s) {mids} -- N-leg routing through an intermediate sheet is "
+                              f"not supported by this 2-leg solver (and the intermediate traversal must itself "
+                              f"be uniquely source-backed to closure)")
+        else:
+            out["blocker"] = f"no printed SEE-SHEET matchline crossing between sheets {s_sheet} and {e_sheet}"
+        return out
     viable = []
     for cross in crossings:
         a = _leg_matchline(s_words, s_draw, s_chain, cross)
@@ -329,10 +373,18 @@ def main() -> int:
     gates.append(("G1 plan PDF + corpus present", os.path.isfile(PDF) and len(corpus) == EXPECTED_COUNT,
                   {"pdf": os.path.isfile(PDF), "corpus": len(corpus)}))
 
-    targets = sorted((lid for lid, r in rec.items()
-                      if r.get("endpoint_anchors") and lid not in ALREADY_DRAWN
-                      and not r.get("must_remain_abstained")),
-                     key=lambda s: int(s[3:]))
+    def _is_target(lid, r):
+        if lid in ALREADY_DRAWN or lid in DUPLICATE_OF_DRAWN or r.get("must_remain_abstained"):
+            return False
+        if r.get("allowed_to_draw") is False:
+            return False
+        if r.get("endpoint_anchors"):
+            return True
+        # reviewed-but-unanchored: owner-reviewed corrected station endpoints (class derived from source)
+        return bool(r.get("corrected_start") and r.get("corrected_end")
+                    and r.get("status") in ("RECOVERED", "CORRECT_AS_DRAWN"))
+
+    targets = sorted((lid for lid, r in rec.items() if _is_target(lid, r)), key=lambda s: int(s[3:]))
     ev["targets"] = targets
 
     rendered_full, blocked = [], {}
