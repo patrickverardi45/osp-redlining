@@ -24,7 +24,10 @@ from truelinev2.extract.structure_position import (
 
 CROSS_SHEET_TARGETS = ("log11", "log12", "log29", "log47", "log54", "log58", "log67")  # two sheet-local legs
 SINGLE_SHEET_TARGETS = ("log36",)                            # single leg, sheet source-derived
-NEW_TARGETS = CROSS_SHEET_TARGETS + SINGLE_SHEET_TARGETS
+# log46 = 3-sheet route (10->13->14); sheet 13 has TWO parallel same-crew runs, but the bore's END (AP-161)
+# is through-continuous with only ONE -> selected uniquely (the other run belongs to a different bore).
+NLEG_TARGETS = ("log46",)
+NEW_TARGETS = CROSS_SHEET_TARGETS + SINGLE_SHEET_TARGETS + NLEG_TARGETS
 # log29 + log54 are reviewed-but-unanchored: class + (for log29) sheet derived from source, no anchors
 SOURCE_DERIVED_CLASS_TARGETS = ("log29", "log54")
 # log12's END is an AP TERMINAL PORT HH bound by its AP-id token (AP-121); the station 10+92 does not bind
@@ -138,14 +141,15 @@ def test_sweep_renders_new_logs_end_to_end():
         assert len(pngs) == 1, (lid, [p.name for p in pngs])
         assert rep["verdicts"][lid]["closure"]["closes"] is True
         assert rep["verdicts"][lid]["sheet_source_derived"] is True
-    # the 3-sheet N-leg bore is DEFERRED: sheet 13 prints two parallel runs that both close the span, so
-    # the route is not unique. The N-leg path analysis surfaces the real ambiguity (>=2 closing runs) and
-    # renders NOTHING (DO-NOT-WIDEN) -- not a misleading "0 of 0 crossings" blocker.
-    assert NLEG_AMBIGUOUS_TARGET in rep["still_blocked"]
-    a46 = rep["verdicts"][NLEG_AMBIGUOUS_TARGET]
-    assert len(a46["nleg_closing_solutions"]) >= 2
-    assert "PARALLEL" in a46["blocker"]
-    assert not sorted(OUT_DIR.glob(f"{NLEG_AMBIGUOUS_TARGET}_*.png"))   # nothing rendered for log46
+    # the 3-sheet N-leg bore RENDERS: sheet 13 has two parallel same-crew runs, but the bore's END is
+    # through-continuous (crosses each matchline at the run's x) with EXACTLY ONE run -> selected uniquely,
+    # 3 legs, middle sheet not omitted. The other parallel run belongs to a different bore.
+    for lid in NLEG_TARGETS:
+        pngs = sorted(OUT_DIR.glob(f"{lid}_*.png"))
+        assert len(pngs) == 3, (lid, [p.name for p in pngs])
+        assert rep["verdicts"][lid]["closure"]["closes"] is True
+        assert len(rep["verdicts"][lid]["nleg_closing_solutions"]) == 1   # through-continuity -> unique run
+        assert len(rep["verdicts"][lid]["crossing_chain"]) == 2
     # the reviewed-but-unanchored logs had their terminus CLASS derived from source (no owner naming)
     for lid in SOURCE_DERIVED_CLASS_TARGETS:
         assert rep["verdicts"][lid]["class_source_derived"] is True

@@ -262,6 +262,28 @@ def _conduit_components(conduit):
     return comps
 
 
+def _chain_boundary_near_x(chain, mlb, target_x, x_tol=14.0):
+    """The chain's boundary crossing of matchline ``mlb`` whose x aligns with ``target_x``. A physical
+    through-line crosses a matchline at ONE x, so this extends the chain's terminal dash that is both near
+    the matchline AND near ``target_x`` to the matchline centerline; None if the chain does not reach the
+    matchline near ``target_x``. This is the cross-sheet THROUGH-CONTINUITY test: it selects the parallel
+    run actually connected to a bore's own bound terminus (e.g. an end AP) and rejects a parallel run that
+    crosses the same matchline but belongs to a DIFFERENT bore."""
+    best = None
+    for seg in chain:
+        for ln in seg.get("lines") or ():
+            for p, q in (((ln[0], ln[1]), (ln[2], ln[3])), ((ln[2], ln[3]), (ln[0], ln[1]))):
+                if nearest_gap([p], mlb) > MAX_DASH_GAP or abs(p[0] - target_x) > x_tol:
+                    continue
+                ext = extend_dash_to_boundary([{"lines": [(p[0], p[1], q[0], q[1])]}], mlb)
+                if ext is None or abs(ext[0] - target_x) > x_tol:
+                    continue
+                d = abs(ext[0] - target_x)
+                if best is None or d < best[0]:
+                    best = (d, (ext[0], ext[1]))
+    return best[1] if best else None
+
+
 def _solve_nleg(plan, offset, out, s0, smid, sn, s_xy, s_chain, s_words, s_draw,
                 e_xy, e_chain, e_words, e_draw, span):
     """Three-sheet route s0 -> smid -> sn joined by TWO printed matchline crossings (the log46 shape).
@@ -300,13 +322,21 @@ def _solve_nleg(plan, offset, out, s0, smid, sn, s_xy, s_chain, s_words, s_draw,
         (ec0, entry_bb), (ecn, exit_bb) = ent[0], ext[0]
         a_mid = extend_dash_to_boundary(comp, entry_bb)
         b_mid = extend_dash_to_boundary(comp, exit_bb)
-        a1 = _leg_matchline(s_words, s_draw, s_chain, ec0)         # start chain -> entry crossing (on s0)
-        bn = _leg_matchline(e_words, e_draw, e_chain, ecn)         # end chain   -> exit crossing (on sn)
-        if not (a_mid and b_mid and a1 and bn):
+        if not (a_mid and b_mid):
             continue
-        r1, ok1 = _ordered_leg(s_chain, s_xy, a1[1])
+        # THROUGH-CONTINUITY: a physical bore crosses each matchline at ONE x, so the START chain must cross
+        # the entry matchline at this run's entry x, and the END chain at this run's exit x. This selects the
+        # parallel run actually connected to THIS bore's bound termini (e.g. the end AP) and rejects a
+        # parallel run that crosses the same matchlines but belongs to a DIFFERENT same-crew bore.
+        entry_bb_s0 = _ml_bbox(s_words, s_draw, ec0)
+        exit_bb_sn = _ml_bbox(e_words, e_draw, ecn)
+        start_bnd = _chain_boundary_near_x(s_chain, entry_bb_s0, a_mid[0]) if entry_bb_s0 else None
+        end_bnd = _chain_boundary_near_x(e_chain, exit_bb_sn, b_mid[0]) if exit_bb_sn else None
+        if not (start_bnd and end_bnd):
+            continue                       # run not through-continuous with this bore's start AND end
+        r1, ok1 = _ordered_leg(s_chain, s_xy, start_bnd)
         r2, ok2 = _ordered_leg(comp, tuple(a_mid), tuple(b_mid))
-        r3, ok3 = _ordered_leg(e_chain, bn[1], e_xy)
+        r3, ok3 = _ordered_leg(e_chain, end_bnd, e_xy)
         if not (ok1 and ok2 and ok3):
             continue
         drawn = (route_length(r1) + route_length(r2) + route_length(r3)) / SCALE
@@ -315,15 +345,15 @@ def _solve_nleg(plan, offset, out, s0, smid, sn, s_xy, s_chain, s_words, s_draw,
         sols.append({"entry": list(ec0), "exit": list(ecn), "drawn_ft": round(drawn, 1),
                      "mid_run": f"{ec0[0]}->{ecn[0]} @x~{round(a_mid[0])}",
                      "legs": [
-                         {"sheet": s0, "route": r1, "a_xy": s_xy, "b_xy": a1[1],
+                         {"sheet": s0, "route": r1, "a_xy": s_xy, "b_xy": start_bnd,
                           "len_pt": round(route_length(r1), 1), "kind": "start_leg",
-                          "start_label": out.get("_ss"), "matchline_sta": a1[0]},
+                          "start_label": out.get("_ss"), "matchline_sta": ec0[0]},
                          {"sheet": smid, "route": r2, "a_xy": tuple(a_mid), "b_xy": tuple(b_mid),
                           "len_pt": round(route_length(r2), 1), "kind": "mid_leg",
-                          "matchline_in": a1[0], "matchline_out": bn[0]},
-                         {"sheet": sn, "route": r3, "a_xy": bn[1], "b_xy": e_xy,
+                          "matchline_in": ec0[0], "matchline_out": ecn[0]},
+                         {"sheet": sn, "route": r3, "a_xy": end_bnd, "b_xy": e_xy,
                           "len_pt": round(route_length(r3), 1), "kind": "end_leg",
-                          "end_label": out.get("_es"), "matchline_sta": bn[0]},
+                          "end_label": out.get("_es"), "matchline_sta": ecn[0]},
                      ]})
     out["nleg_closing_solutions"] = [{k: v for k, v in s.items() if k != "legs"} for s in sols]
     if len(sols) == 1:
