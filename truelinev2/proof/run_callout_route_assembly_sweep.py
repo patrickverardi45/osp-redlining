@@ -100,8 +100,12 @@ OWNER_APPROVED_SPAN_PROMOTIONS = ("log10", "log37", "log39", "log72")
 # OWNER-CORRECTED logs (2026-06-17): a candidate leg went the WRONG direction and the owner identified the
 # correct branch. Span-seeded too, but they get STRICT direction routing -- the matchline boundary is taken
 # from the printed COMBINED 'SEE SHEET' label, not an ambiguous per-station token (the CRITICAL DIRECTION
-# RULE). (log70 was also owner-corrected but is DEFERRED, not promoted: its printed HH-HH=215' length and
-# its flower-pot terminus geometry conflict at source -- see the deferral note in the report/blockers.)
+# RULE). (log70 was ALSO owner-corrected but is NOT YET promotable. This is NOT a source conflict -- the
+# source is fully present. The blocker is MISSING SOLVER SUPPORT for the corrected route: an L-SHAPED
+# CORNER-TURN from the STA 4+54 (13"X24"X24") INSTALLER HH UP Eledra St, where the printed 'HH-HH=215''
+# (== the bore footage) IS the leg and must WIN over the adjudicated flower-pot terminus. Lacking that
+# primitive, the default solver traces the wrong corridor and fails closure (561.5' vs 215') -- a TRACING
+# gap, not a source gap.)
 OWNER_CORRECTED_SPAN_PROMOTIONS = ("log9", "log23")
 OWNER_DIRECTION_CORRECTED = ("log9", "log23")
 SPAN_SEEDED_PROMOTIONS = OWNER_APPROVED_SPAN_PROMOTIONS + OWNER_CORRECTED_SPAN_PROMOTIONS

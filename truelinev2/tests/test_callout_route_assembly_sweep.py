@@ -217,7 +217,9 @@ def test_promotion_constants_well_formed():
     assert set(OWNER_DIRECTION_CORRECTED) == set(OWNER_CORRECTED_SPAN_PROMOTIONS)   # log9/log23 get strict
     assert (set(SPAN_SEEDED_PROMOTIONS)
             == set(OWNER_APPROVED_SPAN_PROMOTIONS) | set(OWNER_CORRECTED_SPAN_PROMOTIONS))
-    assert "log70" not in SPAN_SEEDED_PROMOTIONS   # DEFERRED (HH-HH=215' vs flower-pot-terminus conflict)
+    # log70 is NOT YET promotable -- NOT a source conflict; the blocker is MISSING SOLVER SUPPORT for its
+    # corrected L-corner-turn route up Eledra St (printed HH-HH=215' footage annotation must win over the terminus)
+    assert "log70" not in SPAN_SEEDED_PROMOTIONS
 
 
 def test_span_seed_record_normalises_truth_span():
@@ -334,7 +336,9 @@ def test_sweep_renders_new_logs_end_to_end():
     # legacy per-token boundary went the wrong direction and either failed or mis-closed)
     for lid in DIRECTION_CORRECTED_TARGETS:
         assert len(rep["verdicts"][lid]["leg_summary"]) == 2, lid
-    # the correctly-withheld log (DO-NOT-WIDEN): log70 fails closure (the owner's flagged -504ft conflict;
-    # the printed HH-HH=215' length and the flower-pot terminus geometry conflict at source -> DEFERRED)
+    # the correctly-withheld log: log70 is NOT YET promotable -- NOT a source conflict (the source is present:
+    # STA 4+54 INSTALLER HH + printed 'HH-HH=215'' == bore footage). The blocker is MISSING SOLVER SUPPORT for
+    # the corrected L-shaped corner-turn route UP Eledra St (the HH-HH footage annotation must win over the
+    # adjudicated flower-pot terminus); lacking it, the default solver traces the wrong corridor and fails closure.
     assert "log70" in rep["still_blocked"]
     assert rep["engine_census_frozen"] is True and rep["no_fixture_mutation"] is True
