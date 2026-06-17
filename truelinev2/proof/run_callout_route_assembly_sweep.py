@@ -93,6 +93,35 @@ SYMBOL_LAYER = {"flower_pot": "FLOWER POT", "installer_hh": "NEXTLINK",
 CONTEXT = {"flower_pot": ("FLOWER", "POT")}
 MODELED = set(SYMBOL_LAYER)
 
+_AP_TOK = re.compile(r"AP-\d+")
+_STA_HEADER = re.compile(r"^STA\s*\d+\+\d+\s*$")
+
+
+def station_placement_ap_ids(lines, station):
+    """Source-derived AP splice-loc identity of the structure PLACED AT ``station``.
+
+    A terminal-port HH prints its placement as a note block headed by a BARE ``STA <station>`` line
+    (the header is just the station -- NOT a run callout ``STA a TO b``, which carries the bore, not the
+    structure) followed by ``PLACE ... / TERMINAL 8 PORT HH / AP-NNN SPLICE LOC ...`` up to the next
+    ``STA`` header. When a bore's start STATION label is not sheet-unique (so it will not bind directly),
+    the structure placed at that station still binds by its printed AP id (the dialect's id_token
+    locator) -- a SOURCE-derived identity, never an owner name. Uniqueness-gated (DO-NOT-WIDEN): returns
+    the single AP id ONLY when EXACTLY ONE bare ``STA <station>`` header exists AND its block carries
+    EXACTLY ONE AP id; otherwise ``[]`` (typed absence -> the caller stays abstained). Pure; printed-note
+    grammar only, no plan-set knowledge."""
+    headers = [i for i, ln in enumerate(lines)
+               if _STA_HEADER.match(ln.strip()) and ln.strip().replace(" ", "") == f"STA{station}"]
+    if len(headers) != 1:
+        return []
+    i = headers[0]
+    aps = []
+    for j in range(i + 1, len(lines)):
+        if re.match(r"^STA\s", lines[j].strip()):
+            break
+        aps.extend(_AP_TOK.findall(lines[j]))
+    aps = sorted(set(aps))
+    return aps if len(aps) == 1 else []
+
 R_COMPLETE = "CALLOUT_ROUTE_ASSEMBLY_SWEEP_COMPLETE"
 B_CENSUS = "BLOCKED_SWEEP_CENSUS_DRIFT"
 B_SCOPE = "BLOCKED_SWEEP_SCOPE_VIOLATION"
@@ -376,6 +405,45 @@ def _solve_nleg(plan, offset, out, s0, smid, sn, s_xy, s_chain, s_words, s_draw,
     return out
 
 
+def _solve_end_at_matchline(plan, offset, out, s_sheet, sc, s_lbl, ss, es, span):
+    """Single leg: bound start structure -> the printed matchline crossing station ``es`` boundary the
+    start's conduit chain reaches. The bore's far end IS the sheet boundary; the printed bore span
+    (start -> es) closes the ONE drawn leg. Same source-backed + closure guards as a cross-sheet start
+    leg, with no second structure required. ``span`` is MANDATORY -- without a second structure, printed
+    closure is the only false-positive guard (a leg short of the span = the bore continues past the
+    boundary = a partial -> defer)."""
+    out["single_sheet"] = True
+    out["end_at_matchline"] = True
+    if not span:
+        out["blocker"] = "end-at-matchline: no printed bore span for closure (only false-positive guard)"
+        return out
+    s_xy, s_words, s_draw, _ = _bind(plan, offset, s_sheet, sc, s_lbl)
+    s_chain = _chain_at(s_draw, sc, s_xy)
+    if not s_chain:
+        out["blocker"] = "end-at-matchline: no connected conduit chain at the start terminus"
+        return out
+    bnd, reach, uniq = locate_matchline_boundary(s_words, s_draw, es, s_chain)
+    if bnd is None or not uniq:
+        out["blocker"] = (f"end-at-matchline: matchline station {es} not uniquely reached by the start "
+                          f"chain (reach {reach}, unique {uniq})")
+        return out
+    route, ok = _ordered_leg(s_chain, s_xy, bnd)
+    if not ok:
+        out["blocker"] = "end-at-matchline: leg route not source-backed (start -> matchline)"
+        return out
+    drawn_ft = route_length(route) / SCALE
+    closes = abs(drawn_ft - span) <= CLOSURE_REL_TOL * span
+    out["closure"] = {"drawn_ft": round(drawn_ft, 1), "span_ft": span, "closes": closes}
+    if not closes:
+        out["blocker"] = (f"end-at-matchline closure failed: leg draws {round(drawn_ft, 1)} ft vs printed "
+                          f"bore span {span} ft (>{int(CLOSURE_REL_TOL*100)}% off -> partial/wrong run)")
+        return out
+    out["legs"] = [{"sheet": s_sheet, "route": route, "a_xy": s_xy, "b_xy": tuple(bnd),
+                    "len_pt": round(route_length(route), 1), "kind": "matchline_terminus",
+                    "start_label": s_lbl, "matchline_sta": es}]
+    return out
+
+
 def solve_log(plan, offset, lid, rec):
     """Attempt the full route sentence for one anchored bore. Returns a verdict dict with either a
     render plan (legs to draw) or a named blocker. Renders nothing (the caller draws)."""
@@ -405,7 +473,17 @@ def solve_log(plan, offset, lid, rec):
     # owner notes (the TERMINAL PORT HH AP-terminus fallback -- bind by AP-NNN when the station label is not
     # drawn at the symbol). AP ids only apply to reviewed-but-unanchored logs (anchored logs carry a class).
     ap_ids = re.findall(r"AP-\d+", r.get("evidence_notes") or "") if not anchored else []
-    s_sheet, sc, s_lbl, s_res = _resolve_endpoint(plan, offset, sheets, sc, [ss, *ap_ids])
+    # SOURCE-derived start AP id: when the start STATION label is not sheet-unique (will not bind directly),
+    # the structure PLACED at that station binds by the AP id printed in its placement note (source, not
+    # owner). Searched only on the corrected sheets, uniqueness-gated; tried AFTER the station, so it only
+    # fires when the station itself does not bind (never overrides a direct bind, never widens).
+    pdf_start_aps = []
+    if not anchored and sheets:
+        for sh in sheets:
+            pdf_start_aps += station_placement_ap_ids(plan.lines(sh, offset), ss)
+        pdf_start_aps = sorted(set(pdf_start_aps))
+    out["pdf_start_ap_ids"] = pdf_start_aps
+    s_sheet, sc, s_lbl, s_res = _resolve_endpoint(plan, offset, sheets, sc, [ss, *ap_ids, *pdf_start_aps])
     e_sheet, ec, e_lbl, e_res = _resolve_endpoint(plan, offset, sheets, ec, [es, *ap_ids])
     out["sheet_source_derived"] = (not sheets) and s_sheet is not None and e_sheet is not None
     out["class_source_derived"] = not anchored
@@ -413,6 +491,21 @@ def solve_log(plan, offset, lid, rec):
     out["start_class"], out["end_class"] = sc, ec
     out["bound_labels"] = {"start": s_lbl, "end": e_lbl}
     out["bind_results"] = {"start": s_res, "end": e_res}
+
+    # END-AT-MATCHLINE: a bore may TERMINATE at a printed matchline crossing station -- its far end is the
+    # sheet boundary (the conduit continues as a DIFFERENT bore on the partner sheet), not a second
+    # structure. When the start binds to a structure and the end station did NOT bind to any structure but
+    # IS a printed SEE-SHEET crossing on the start sheet to a corrected partner, draw ONE source-backed leg
+    # from the start structure to that matchline boundary, gated by printed-span closure (the only
+    # corroboration without a second structure -> span MANDATORY). This is the cross-sheet START-LEG shape
+    # with no reciprocal leg; it never fires for a bore whose end DOES bind (that takes the structure path).
+    if s_sheet is not None and sc in MODELED and e_sheet is None and es:
+        partners = [s for s in sheets if s != s_sheet]
+        end_is_crossing = any(es in cr for p in partners
+                              for cr in see_sheet_crossings(plan.lines(s_sheet, offset), p, "MATCHLINE"))
+        if partners and end_is_crossing:
+            return _solve_end_at_matchline(plan, offset, out, s_sheet, sc, s_lbl, ss, es, span)
+
     if s_sheet is None or e_sheet is None or sc not in MODELED or ec not in MODELED:
         out["blocker"] = (f"terminus did not resolve to a UNIQUE (sheet,class) source bind "
                           f"(start->s{s_sheet}/{sc}; end->s{e_sheet}/{ec})")
@@ -520,6 +613,10 @@ def _render(plan, offset, lid, v):
             reason = (f"{lid} sheet-{leg['sheet']} MIDDLE leg: MATCHLINE STA {leg['matchline_in']} -> "
                       f"MATCHLINE STA {leg['matchline_out']} (conduit corridor traced between the two printed "
                       f"crossings; 3-sheet route, middle sheet not omitted)")
+        elif leg["kind"] == "matchline_terminus":
+            reason = (f"{lid} sheet-{leg['sheet']} bore: start {leg['start_label']} -> MATCHLINE STA "
+                      f"{leg['matchline_sta']}; bore TERMINATES at the sheet boundary (continues as a "
+                      f"separate bore on the partner sheet); single leg, printed-span closure")
         else:
             reason = (f"{lid} sheet-{leg['sheet']} leg: MATCHLINE STA {leg['matchline_sta']} -> end "
                       f"{leg['end_label']}; joined to sheet {v['start_sheet']} by printed station identity")

@@ -27,7 +27,11 @@ SINGLE_SHEET_TARGETS = ("log36",)                            # single leg, sheet
 # log46 = 3-sheet route (10->13->14); sheet 13 has TWO parallel same-crew runs, but the bore's END (AP-161)
 # is through-continuous with only ONE -> selected uniquely (the other run belongs to a different bore).
 NLEG_TARGETS = ("log46",)
-NEW_TARGETS = CROSS_SHEET_TARGETS + SINGLE_SHEET_TARGETS + NLEG_TARGETS
+# log68 = a bore that TERMINATES at a printed matchline crossing (6+79): its start binds to a structure by
+# a SOURCE-derived AP id (AP-144, from the STA 5+03 placement note -- the bare station label is not unique),
+# its end is the sheet boundary (no second structure), one leg, printed-span closure (176').
+MATCHLINE_TERMINUS_TARGETS = ("log68",)
+NEW_TARGETS = CROSS_SHEET_TARGETS + SINGLE_SHEET_TARGETS + NLEG_TARGETS + MATCHLINE_TERMINUS_TARGETS
 # log29 + log54 are reviewed-but-unanchored: class + (for log29) sheet derived from source, no anchors
 SOURCE_DERIVED_CLASS_TARGETS = ("log29", "log54")
 # log12's END is an AP TERMINAL PORT HH bound by its AP-id token (AP-121); the station 10+92 does not bind
@@ -117,6 +121,29 @@ def test_conduit_components_splits_parallel_runs():
     assert len(near) == 1
 
 
+def test_station_placement_ap_ids_binds_unique_block():
+    from truelinev2.proof.run_callout_route_assembly_sweep import station_placement_ap_ids
+    lines = [
+        "STA 4+54", '13"X24"X24"', "INSTALLER HH",
+        "STA 5+03", 'PLACE 13"X24"X24"', "TERMINAL 8 PORT HH", "AP-144 SPLICE LOC 33",
+        "TERMINAL TAIL = 750'", '11"X11"X12"', "FLOWER POT",
+        "STA 6+30", '11"X11"X12"', "FLOWER POT",
+        "STA 5+03 TO STA 6+79", 'DIR. BORE (176\') 1-1.25" VACANT HDPE',  # run callout, NOT a placement header
+    ]
+    # the AP id in the STA 5+03 PLACEMENT block (bounded by the next STA header); the run callout is ignored
+    assert station_placement_ap_ids(lines, "5+03") == ["AP-144"]
+    assert station_placement_ap_ids(lines, "4+54") == []   # no AP in its block (typed absence, DO-NOT-WIDEN)
+    assert station_placement_ap_ids(lines, "9+99") == []   # no such placement header
+
+
+def test_station_placement_ap_ids_refuses_ambiguous():
+    from truelinev2.proof.run_callout_route_assembly_sweep import station_placement_ap_ids
+    two = ["STA 5+03", "TERMINAL 8 PORT HH", "AP-144 SPLICE LOC 33", "AP-145 SPLICE LOC 34", "STA 6+30"]
+    assert station_placement_ap_ids(two, "5+03") == []     # two AP ids in one block -> abstain
+    dup = ["STA 5+03", "AP-144 SPLICE LOC 33", "STA 6+30", "STA 5+03", "AP-200 SPLICE LOC 9", "STA 7+00"]
+    assert station_placement_ap_ids(dup, "5+03") == []     # two placement headers for one station -> abstain
+
+
 # ---- heavy end-to-end (PDF + env gated) ---------------------------------------------
 
 @pytest.mark.skipif(not os.path.isfile(PDF), reason="Brenham plan PDF not present")
@@ -157,6 +184,17 @@ def test_sweep_renders_new_logs_end_to_end():
     ap = rep["verdicts"][AP_TERMINUS_TARGET]
     assert ap["bound_labels"]["end"].startswith("AP-")
     assert ap["end_class"] == "terminal_port_hh"
+    # log68 = end-at-matchline single leg: SOURCE-derived AP-144 start bind (the bare 5+03 label is not
+    # unique), end is the printed 6+79 matchline crossing (no second structure), one PNG, closes to 176'
+    for lid in MATCHLINE_TERMINUS_TARGETS:
+        m = rep["verdicts"][lid]
+        pngs = sorted(OUT_DIR.glob(f"{lid}_*.png"))
+        assert len(pngs) == 1, (lid, [p.name for p in pngs])
+        assert m["end_at_matchline"] is True and m["single_sheet"] is True
+        assert m["pdf_start_ap_ids"] == ["AP-144"] and m["bound_labels"]["start"] == "AP-144"
+        assert m["start_class"] == "terminal_port_hh" and m["end_sheet"] is None
+        assert m["leg_summary"][0]["kind"] == "matchline_terminus"
+        assert m["closure"]["closes"] is True
     # the correctly-withheld log (DO-NOT-WIDEN): log70 fails closure (the owner's flagged -504ft conflict)
     assert "log70" in rep["still_blocked"]
     assert rep["engine_census_frozen"] is True and rep["no_fixture_mutation"] is True
