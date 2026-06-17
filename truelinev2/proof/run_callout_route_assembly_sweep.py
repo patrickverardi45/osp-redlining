@@ -102,17 +102,19 @@ DUPLICATE_OF_DRAWN = ()
 # route, and the UNIQUE-viable-crossing + closure guards reject the parallel 1+91/1+92 Ledbetter run -- so no
 # owner naming and no sibling theft. span_ft is the bore-LOCAL plan span (post-reset 0+00->5+07), NOT a
 # station delta across the reset.
-# log70 (2026-06-17, LOG70_L_TURN_EXACT_FOOTAGE_RENDER lane): an owner re-correction that SUPERSEDES the
-# stored 2026-06-16 anchor. log70 is the L-shaped corner-turn up Eledra St: log69 runs horizontally along
-# Niebuhr St (1+45->4+54); at the STA 4+54 INSTALLER HH corner log70 turns 90 deg and runs UP Eledra St --
-# 'STA 0+00 TO 1+75' (175') on sheet 17 -> MATCHLINE STA 1+75/6+79 SEE SHEET 20 -> 'STA 1+75 TO 2+15' (40')
-# on sheet 20 -> STA 2+15 FLOWER POT. 175+40 = 215 ft = the printed 'HH - HH = 215'' annotation (== footage),
-# which WINS. The stored anchor's only error was the START side (sheet 17): it bound 1+45 (the far-left start
-# of log69's Niebuhr run), so the solver traced the whole L (561.5' -- which the parent gate also rejects as
-# claiming sibling log69's 454' span). Re-anchor the start to the 4+54 INSTALLER HH (sheet 17 side fixed);
-# the end (FLOWER POT 2+15, sheet 20) and span (215') were already correct ("sheet 20 side was correct").
-# Identity-only anchors (NO coordinates); the existing cross-sheet 2-leg solver traces it and closure to 215
-# discriminates the 215' Eledra run from the parallel 218' run; parent gate passes 215 / rejects sibling 454.
+# log70 (2026-06-17, LOG70_L_TURN_EXACT_FOOTAGE_RENDER lane): the stored 2026-06-16 adjudication anchor is
+# WRONG (not merely superseded) -- its START binds the WRONG structure:
+#   * WRONG stored start = '1+45' (the far-left start of log69's horizontal Niebuhr run). With it the solver
+#     traced the whole L (561.5' -- which the parent gate also rejects as claiming sibling log69's 454' span).
+#   * CORRECT start = the 'STA 4+54 INSTALLER HH' at the Niebuhr/Eledra corner (= log69's end).
+# log70 is the L-shaped corner-turn UP Eledra St: STA 0+00 TO 1+75 (175') on sheet 17 -> MATCHLINE STA
+# 1+75/6+79 SEE SHEET 20 -> STA 1+75 TO 2+15 (40') on sheet 20 -> STA 2+15 FLOWER POT. 175+40 = 215 ft = the
+# printed 'HH - HH = 215'' annotation (== footage); the route's CLOSURE to 215 CONFIRMS it (and discriminates
+# the 215' Eledra run from the parallel 218' run). The end (FLOWER POT 2+15, sheet 20) and span (215') were
+# already correct ("sheet 20 side was correct"); only the WRONG sheet-17 start is fixed here.
+# Identity-only override (NO coordinates). It does NOT edit the stored adjudication/census: the WRONG '1+45'
+# record is intentionally LEFT IN PLACE in the adjudication data until a census re-baseline is SEPARATELY
+# AUTHORIZED -- this map only feeds the render the correct start. Parent gate passes 215 / rejects sibling 454.
 OWNER_CONFIRMED_PLAN_ROUTES = {
     "log48": {"log_id": "log48", "corrected_start": "0+00", "corrected_end": "5+07",
               "corrected_sheets": [10, 12], "span_ft": 507, "status": "RECOVERED",
