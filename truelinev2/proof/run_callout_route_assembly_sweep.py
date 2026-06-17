@@ -622,8 +622,19 @@ def solve_log(plan, offset, lid, rec):
             pdf_start_aps += station_placement_ap_ids(plan.lines(sh, offset), ss)
         pdf_start_aps = sorted(set(pdf_start_aps))
     out["pdf_start_ap_ids"] = pdf_start_aps
+    # RESET-TO-RESET bore: when the owner notes name a SECOND 'STA x=0+00' reset (the receiving structure
+    # across the street), the bore's corrected_end is its OWN measured length -- NOT the receiving
+    # structure's label, so the end never binds by corrected_end. The receiving structure binds by its OWN
+    # reset TOKEN '<sta>=0+00', which is sheet-unique where the bare station is not (the bare '0+46' also
+    # binds an installer HH on another sheet -> >=2 -> None; only the '0+46=0+00' token is globally unique).
+    # Appended as a TRAILING end candidate so it fires ONLY when corrected_end does not bind
+    # (first-binds-wins -> every existing render is byte-identical). Source-derived, never owner-named.
+    end_reset_tokens = ([f"{s}=0+00" for s in re.findall(r"STA\s*(\d+\+\d+)\s*=\s*0\+00",
+                                                          r.get("evidence_notes") or "") if s != ss]
+                        if not anchored else [])
+    out["end_reset_tokens"] = end_reset_tokens
     s_sheet, sc, s_lbl, s_res = _resolve_endpoint(plan, offset, sheets, sc, [ss, *ap_ids, *pdf_start_aps])
-    e_sheet, ec, e_lbl, e_res = _resolve_endpoint(plan, offset, sheets, ec, [es, *ap_ids])
+    e_sheet, ec, e_lbl, e_res = _resolve_endpoint(plan, offset, sheets, ec, [es, *ap_ids, *end_reset_tokens])
     out["sheet_source_derived"] = (not sheets) and s_sheet is not None and e_sheet is not None
     out["class_source_derived"] = not anchored
     out["start_sheet"], out["end_sheet"] = s_sheet, e_sheet
