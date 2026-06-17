@@ -86,12 +86,28 @@ CLOSURE_REL_TOL = 0.10      # two legs' drawn length vs printed bore span (corro
 ALREADY_DRAWN = ("log7", "log25", "log45", "log51", "log52", "log53", "log59",
                  "log64", "log65", "log66", "log69", "log71", "log50")
 # bores whose route would DUPLICATE an already-drawn sibling (DO-NOT-WIDEN: no parent/child overlap).
-# log48 (bore_log20) is a PARENT/CHILD SPLIT artifact, confirmed against the corpus + owner review
-# (2026-06-17): bore_log20 was split into segments, and the already-drawn log50 IS "Segment C (col3) split
-# from bore_log20" (0+00->5+14, sheets 10/11/12). log48's ACTUAL bore is the 0+00->5+07 segment, NOT 5+14 --
-# so span-binding log48 would seed the SAME 5+14 structures as log50 (a duplicate redline). HELD until the
-# bore_log20 source family is reassembled so each child segment (5+07 vs 5+14) owns its own route.
-DUPLICATE_OF_DRAWN = ("log48",)
+DUPLICATE_OF_DRAWN = ()
+# OWNER-CONFIRMED PLAN ROUTES (2026-06-17, LOG48_N_LEG_CALLOUT_ASSEMBLY_RENDER lane): a split child whose
+# STORED adjudication is CORRUPTED (carries a sibling's route) but whose OWN plan route the owner re-verified
+# against the plan PDF (read-only visual re-verify -- every token confirmed in text layer AND rendered crops).
+# The corrupted record (corrected_end 5+14 == sibling log50) cannot seed the render, so the owner-confirmed,
+# plan-PRINTED route SENTENCE is injected here -- LABELS ONLY; coordinates stay extractor-derived (the reset
+# HH + flower pot bind by their printed labels and the conduit is traced from real dashes), and the parent-
+# source gate + printed-span closure still gate every leg. NOT an adjudication record; census uses `doc`, not
+# this map, so the frozen census is untouched. log48 = bore_log20 Segment A: sheets 10+12, start reset HH
+# 'STA 45+33=0+00' (PROP. SPLICE POINT 46) -> 'STA 0+00 TO 1+90' (190') -> MATCHLINE STA 1+90/1+90 SEE SHEET
+# 12 -> 'STA 1+90 TO 3+50' (160') through the 8-PORT HH AP-167 SPLICE LOC 46 @3+50 -> 'STA 3+50 TO 5+07'
+# (157') -> FLOWER POT @5+07. 190+160+157 = 507 ft. DISTINCT from sibling log50 (sheets 10+11, matchline
+# 1+39, AP-168 6-port @1+89, FLOWER POT 5+14, span 514): the parent-source gate REJECTS log48 on the 514
+# route, and the UNIQUE-viable-crossing + closure guards reject the parallel 1+91/1+92 Ledbetter run -- so no
+# owner naming and no sibling theft. span_ft is the bore-LOCAL plan span (post-reset 0+00->5+07), NOT a
+# station delta across the reset.
+OWNER_CONFIRMED_PLAN_ROUTES = {
+    "log48": {"log_id": "log48", "corrected_start": "0+00", "corrected_end": "5+07",
+              "corrected_sheets": [10, 12], "span_ft": 507, "status": "RECOVERED",
+              "evidence_notes": "STA 45+33=0+00", "endpoint_anchors": None,
+              "allowed_to_draw": True, "must_remain_abstained": False},
+}
 # OWNER-REVIEWED REVIEW-CANDIDATE PROMOTIONS (2026-06-17 owner review of review_candidate_reasoning_sweep):
 # logs the owner CONFIRMED correct that carry NO owner adjudication route -- the engine truth-table SPAN
 # seeds the endpoints (source), and the owner review is the discriminator authorizing the deterministic
@@ -884,6 +900,11 @@ def main() -> int:
             _srec = _span_seed_record(_lid, truth_rows)
             if _srec:
                 rec[_lid] = _srec
+    # OWNER-CONFIRMED PLAN ROUTES: OVERRIDE the corrupted stored record with the owner+plan-verified route
+    # sentence so the solver seeds the child's OWN endpoints (not the sibling's corrupted ones). Census is
+    # computed from `doc` (untouched), never from `rec`.
+    for _lid, _orec in OWNER_CONFIRMED_PLAN_ROUTES.items():
+        rec[_lid] = dict(_orec)
     gates, ev = [], {"verdicts": {}}
 
     gates.append(("G0 engine census frozen (OFF 31/6/1/17/3, ON 22/1/4, log44+abstains held)",

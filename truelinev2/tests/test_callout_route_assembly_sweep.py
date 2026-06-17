@@ -16,7 +16,8 @@ import pytest
 from truelinev2.extract.matchline_join import see_sheet_crossings
 from truelinev2.proof.run_brenham_corpus import PDF
 from truelinev2.proof.run_callout_route_assembly_sweep import (
-    ALLOWED, ALREADY_DRAWN, BASE_CONDUIT, DUPLICATE_OF_DRAWN, R_COMPLETE, _resolve_endpoints,
+    ALLOWED, ALREADY_DRAWN, BASE_CONDUIT, DUPLICATE_OF_DRAWN, OWNER_CONFIRMED_PLAN_ROUTES, R_COMPLETE,
+    _resolve_endpoints,
 )
 from truelinev2.extract.structure_position import (
     BRENHAM_CONDUIT_LAYERS, BRENHAM_LATERAL_CONDUIT_LAYERS,
@@ -50,9 +51,15 @@ PROMOTED_CLEAN_TARGETS = ("log10", "log37", "log39", "log72")
 # OWNER-CORRECTED (direction-strict): a candidate leg went the WRONG direction; the boundary matchline is
 # taken from the printed COMBINED 'SEE SHEET' label, not an ambiguous per-station token (log9/log23).
 DIRECTION_CORRECTED_TARGETS = ("log9", "log23")
+# log48 = OWNER-CONFIRMED PLAN ROUTE (corrupted-adjudication override, LOG48_N_LEG_CALLOUT_ASSEMBLY_RENDER):
+# cross-sheet 2-leg (10->12) via the UNIQUE 1+90/1+90 matchline -- the parallel 1+91/1+92 Ledbetter crossing
+# is auto-excluded by the viable-crossing gate; reset HH 45+33=0+00 start, FLOWER POT 5+07 end; the parent
+# gate passes on its OWN 0+00->5+09 corpus span and REJECTS sibling log50's 5+14.
+LOG48_TARGETS = ("log48",)
 NEW_TARGETS = (CROSS_SHEET_TARGETS + SINGLE_SHEET_TARGETS + NLEG_TARGETS
                + MATCHLINE_TERMINUS_TARGETS + HH_BRIDGE_TARGETS + THROUGH_CONTINUITY_TARGETS
-               + RESET_TO_RESET_TARGETS + PROMOTED_CLEAN_TARGETS + DIRECTION_CORRECTED_TARGETS)
+               + RESET_TO_RESET_TARGETS + PROMOTED_CLEAN_TARGETS + DIRECTION_CORRECTED_TARGETS
+               + LOG48_TARGETS)
 # log29 + log54 are reviewed-but-unanchored: class + (for log29) sheet derived from source, no anchors
 SOURCE_DERIVED_CLASS_TARGETS = ("log29", "log54")
 # log12's END is an AP TERMINAL PORT HH bound by its AP-id token (AP-121); the station 10+92 does not bind
@@ -121,8 +128,15 @@ def test_resolve_endpoints_reviewed_unanchored_parses_reset_class_none():
     assert _resolve_endpoints({"corrected_start": "0+00", "corrected_end": None})[0] is None
 
 
-def test_duplicate_of_drawn_excludes_log48():
-    assert "log48" in DUPLICATE_OF_DRAWN   # sibling of drawn log50; no parent/child overlap (DO-NOT-WIDEN)
+def test_log48_promoted_from_hold_to_owner_confirmed_plan_route():
+    # log48 was HELD under DUPLICATE_OF_DRAWN because its CORRUPTED adjudication (corrected_end 5+14) made it
+    # look like sibling log50. The owner re-verified its OWN plan route from the PDF, so it is no longer a
+    # hold but an OWNER-CONFIRMED PLAN ROUTE: corpus identity 0+00->5+09, plan terminus 5+07, sheets 10+12.
+    assert "log48" not in DUPLICATE_OF_DRAWN
+    seed = OWNER_CONFIRMED_PLAN_ROUTES["log48"]
+    assert seed["corrected_end"] == "5+07" and seed["corrected_sheets"] == [10, 12] and seed["span_ft"] == 507
+    assert "45+33=0+00" in seed["evidence_notes"]      # start reset (SPLICE POINT 46) seeds the start bind
+    assert seed["status"] == "RECOVERED"
 
 
 def test_conduit_components_splits_parallel_runs():
@@ -342,7 +356,20 @@ def test_sweep_renders_new_logs_end_to_end():
     # adjudicated flower-pot terminus); lacking it, the default solver traces the wrong corridor and fails closure.
     assert "log70" in rep["still_blocked"]
     # PARENT-SOURCE GATE: every rendered child passed its parent-group ownership gate (a child cannot claim
-    # a sibling's route -- the log48<-log50 mixup). log48 is NOT rendered (held under DUPLICATE_OF_DRAWN).
+    # a sibling's route -- the log48<-log50 mixup).
     assert all(rep["verdicts"][l]["parent_source_gate"]["ok"] for l in rep["newly_rendered_full"])
-    assert "log48" not in rep["newly_rendered_full"]
+    # log48 NOW renders its OWN owner-confirmed plan route (corrupted-adjudication override), DISTINCT from
+    # sibling log50: cross-sheet 2-leg on sheets 10+12 (NOT log50's 10+11) via the UNIQUE 1+90/1+90 crossing
+    # (the parallel 1+91/1+92 Ledbetter run excluded), reset HH 45+33 -> FLOWER POT 5+07, closing the span.
+    assert "log48" in rep["newly_rendered_full"]
+    for lid in LOG48_TARGETS:
+        f = rep["verdicts"][lid]
+        assert len(sorted(OUT_DIR.glob(f"{lid}_*.png"))) == 2, lid          # cross-sheet 2-leg
+        assert f["start_sheet"] == 10 and f["end_sheet"] == 12              # NOT log50's 10+11
+        assert f["start_class"] == "nextlink_hh" and f["end_class"] == "flower_pot"
+        assert f["bound_labels"] == {"start": "45+33", "end": "5+07"}       # reset HH -> 5+07 flower pot
+        assert f["crossing_equation"] == ["1+90", "1+90"]                   # the UNIQUE crossing
+        assert len(f["viable_crossings"]) == 1                              # 1+91/1+92 Ledbetter excluded
+        assert f["closure"]["closes"] is True                              # ~504' vs 507'
+        assert f["parent_source_gate"]["ok"] is True                       # owns 0+00->5+09, not 5+14
     assert rep["engine_census_frozen"] is True and rep["no_fixture_mutation"] is True
