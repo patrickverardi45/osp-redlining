@@ -1,0 +1,3710 @@
+{
+  "model": "ORIGINAL_HANDWRITTEN_PARENT_SOURCE_MODEL",
+  "doctrine": "Original handwritten bore logs are the canonical PARENT truth. Split rows are children/siblings/segments grouped under their parent. A child entry may be placed/rendered ONLY through its parent group, which must disambiguate ownership (span + sheets) so a child cannot claim a sibling's route (the log48<-log50 failure). Additive grouping layer over the existing 58-child ingestion -- census frozen; corpus + loader unchanged.",
+  "corpus_dir": "C:\\Nova\\datasets\\trueline\\brenham",
+  "corpus_resolved": "env:TL2_BRENHAM_CORPUS override",
+  "counts": {
+    "parents_total": 39,
+    "split_families": 13,
+    "standalone_parents": 26,
+    "child_entries_total": 58
+  },
+  "parents": [
+    {
+      "source_parent_id": "bore_log2",
+      "source_file": null,
+      "source_page": null,
+      "is_split_family": false,
+      "sibling_group_id": "bore_log2",
+      "run_group_id": "bore_log2",
+      "entries": [
+        {
+          "source_entry_id": "bore_log2",
+          "log_id": "log2",
+          "entry_role": "standalone_bore",
+          "entry_span": "12+22->20+71",
+          "start_station": "12+22",
+          "end_station": "20+71",
+          "start_structure": null,
+          "end_structure": null,
+          "sheet_context": [
+            18,
+            19
+          ],
+          "truth_sheets": [
+            18,
+            19
+          ],
+          "corrected_sheets": null,
+          "matchline_context": [],
+          "prints": [
+            "18,19"
+          ],
+          "crews": [
+            "tx1-1"
+          ],
+          "dates": [
+            "2025-11-21"
+          ],
+          "truth_span": "12+22->20+71",
+          "adj_status": null,
+          "adj_corrected_span": null,
+          "placement_status": "BLOCKED_OR_UNATTEMPTED",
+          "provenance_note": "",
+          "segment_order": 0,
+          "sibling_group_id": "bore_log2",
+          "run_group_id": "bore_log2",
+          "ownership_disambiguation": {
+            "by_span": "12+22->20+71",
+            "by_sheets": [
+              18,
+              19
+            ],
+            "distinct_from_siblings": [],
+            "span_collision_with_sibling": []
+          }
+        }
+      ],
+      "renderable_child_entries": []
+    },
+    {
+      "source_parent_id": "bore_log3",
+      "source_file": null,
+      "source_page": null,
+      "is_split_family": false,
+      "sibling_group_id": "bore_log3",
+      "run_group_id": "bore_log3",
+      "entries": [
+        {
+          "source_entry_id": "bore_log3",
+          "log_id": "log3",
+          "entry_role": "standalone_bore",
+          "entry_span": "12+63->21+63",
+          "start_station": "12+63",
+          "end_station": "21+63",
+          "start_structure": null,
+          "end_structure": null,
+          "sheet_context": [
+            3,
+            4,
+            5
+          ],
+          "truth_sheets": [
+            3,
+            4,
+            5
+          ],
+          "corrected_sheets": null,
+          "matchline_context": [],
+          "prints": [
+            "2,3,4,5"
+          ],
+          "crews": [
+            "tx1-1"
+          ],
+          "dates": [
+            "2025-12-01"
+          ],
+          "truth_span": "12+63->21+63",
+          "adj_status": null,
+          "adj_corrected_span": null,
+          "placement_status": "BLOCKED_OR_UNATTEMPTED",
+          "provenance_note": "",
+          "segment_order": 0,
+          "sibling_group_id": "bore_log3",
+          "run_group_id": "bore_log3",
+          "ownership_disambiguation": {
+            "by_span": "12+63->21+63",
+            "by_sheets": [
+              3,
+              4,
+              5
+            ],
+            "distinct_from_siblings": [],
+            "span_collision_with_sibling": []
+          }
+        }
+      ],
+      "renderable_child_entries": []
+    },
+    {
+      "source_parent_id": "bore_log4",
+      "source_file": null,
+      "source_page": null,
+      "is_split_family": false,
+      "sibling_group_id": "bore_log4",
+      "run_group_id": "bore_log4",
+      "entries": [
+        {
+          "source_entry_id": "bore_log4",
+          "log_id": "log4",
+          "entry_role": "standalone_bore",
+          "entry_span": "15+13->21+63",
+          "start_station": "15+13",
+          "end_station": "21+63",
+          "start_structure": null,
+          "end_structure": null,
+          "sheet_context": [
+            3,
+            4,
+            5
+          ],
+          "truth_sheets": [
+            3,
+            4,
+            5
+          ],
+          "corrected_sheets": null,
+          "matchline_context": [],
+          "prints": [
+            "3,4,5"
+          ],
+          "crews": [
+            "tx1-1"
+          ],
+          "dates": [
+            "2025-12-01"
+          ],
+          "truth_span": "15+13->21+63",
+          "adj_status": null,
+          "adj_corrected_span": null,
+          "placement_status": "BLOCKED_OR_UNATTEMPTED",
+          "provenance_note": "",
+          "segment_order": 0,
+          "sibling_group_id": "bore_log4",
+          "run_group_id": "bore_log4",
+          "ownership_disambiguation": {
+            "by_span": "15+13->21+63",
+            "by_sheets": [
+              3,
+              4,
+              5
+            ],
+            "distinct_from_siblings": [],
+            "span_collision_with_sibling": []
+          }
+        }
+      ],
+      "renderable_child_entries": []
+    },
+    {
+      "source_parent_id": "bore_log5",
+      "source_file": null,
+      "source_page": null,
+      "is_split_family": false,
+      "sibling_group_id": "bore_log5",
+      "run_group_id": "bore_log5",
+      "entries": [
+        {
+          "source_entry_id": "bore_log5",
+          "log_id": "log5",
+          "entry_role": "standalone_bore",
+          "entry_span": "02+65->05+00",
+          "start_station": "02+65",
+          "end_station": "05+00",
+          "start_structure": null,
+          "end_structure": null,
+          "sheet_context": [
+            12
+          ],
+          "truth_sheets": [
+            12
+          ],
+          "corrected_sheets": [],
+          "matchline_context": [],
+          "prints": [
+            "12"
+          ],
+          "crews": [
+            "tx1-4"
+          ],
+          "dates": [
+            "2025-12-16"
+          ],
+          "truth_span": "02+65->05+00",
+          "adj_status": "ABSTAIN_NO_SAFE_SOURCE",
+          "adj_corrected_span": null,
+          "placement_status": "BLOCKED_OR_UNATTEMPTED",
+          "provenance_note": "",
+          "segment_order": 0,
+          "sibling_group_id": "bore_log5",
+          "run_group_id": "bore_log5",
+          "ownership_disambiguation": {
+            "by_span": "02+65->05+00",
+            "by_sheets": [
+              12
+            ],
+            "distinct_from_siblings": [],
+            "span_collision_with_sibling": []
+          }
+        }
+      ],
+      "renderable_child_entries": []
+    },
+    {
+      "source_parent_id": "bore_log6",
+      "source_file": null,
+      "source_page": null,
+      "is_split_family": false,
+      "sibling_group_id": "bore_log6",
+      "run_group_id": "bore_log6",
+      "entries": [
+        {
+          "source_entry_id": "bore_log6",
+          "log_id": "log6",
+          "entry_role": "standalone_bore",
+          "entry_span": "00+00->02+43",
+          "start_station": "00+00",
+          "end_station": "02+43",
+          "start_structure": null,
+          "end_structure": null,
+          "sheet_context": [
+            5,
+            17,
+            21
+          ],
+          "truth_sheets": [
+            5,
+            17,
+            21
+          ],
+          "corrected_sheets": [
+            5
+          ],
+          "matchline_context": [],
+          "prints": [
+            "5,17,21"
+          ],
+          "crews": [
+            "tx1-1"
+          ],
+          "dates": [
+            "2026-01-16"
+          ],
+          "truth_span": "00+00->02+43",
+          "adj_status": "RECOVERED",
+          "adj_corrected_span": "0+00->2+43",
+          "placement_status": "RENDERED",
+          "provenance_note": "",
+          "segment_order": 0,
+          "sibling_group_id": "bore_log6",
+          "run_group_id": "bore_log6",
+          "ownership_disambiguation": {
+            "by_span": "00+00->02+43",
+            "by_sheets": [
+              5,
+              17,
+              21
+            ],
+            "distinct_from_siblings": [],
+            "span_collision_with_sibling": []
+          }
+        }
+      ],
+      "renderable_child_entries": [
+        "bore_log6"
+      ]
+    },
+    {
+      "source_parent_id": "bore_log7",
+      "source_file": null,
+      "source_page": null,
+      "is_split_family": false,
+      "sibling_group_id": "bore_log7",
+      "run_group_id": "bore_log7",
+      "entries": [
+        {
+          "source_entry_id": "bore_log7",
+          "log_id": "log7",
+          "entry_role": "standalone_bore",
+          "entry_span": "00+55->04+51",
+          "start_station": "00+55",
+          "end_station": "04+51",
+          "start_structure": null,
+          "end_structure": null,
+          "sheet_context": [
+            10
+          ],
+          "truth_sheets": [
+            10
+          ],
+          "corrected_sheets": null,
+          "matchline_context": [],
+          "prints": [
+            "10"
+          ],
+          "crews": [
+            "tx1-4"
+          ],
+          "dates": [
+            "2026-01-06"
+          ],
+          "truth_span": "00+55->04+51",
+          "adj_status": null,
+          "adj_corrected_span": null,
+          "placement_status": "RENDERED",
+          "provenance_note": "",
+          "segment_order": 0,
+          "sibling_group_id": "bore_log7",
+          "run_group_id": "bore_log7",
+          "ownership_disambiguation": {
+            "by_span": "00+55->04+51",
+            "by_sheets": [
+              10
+            ],
+            "distinct_from_siblings": [],
+            "span_collision_with_sibling": []
+          }
+        }
+      ],
+      "renderable_child_entries": [
+        "bore_log7"
+      ]
+    },
+    {
+      "source_parent_id": "bore_log8",
+      "source_file": null,
+      "source_page": null,
+      "is_split_family": false,
+      "sibling_group_id": "bore_log8",
+      "run_group_id": "bore_log8",
+      "entries": [
+        {
+          "source_entry_id": "bore_log8",
+          "log_id": "log8",
+          "entry_role": "standalone_bore",
+          "entry_span": "00+00->03+90",
+          "start_station": "00+00",
+          "end_station": "03+90",
+          "start_structure": null,
+          "end_structure": null,
+          "sheet_context": [
+            18,
+            22
+          ],
+          "truth_sheets": [
+            18,
+            22
+          ],
+          "corrected_sheets": null,
+          "matchline_context": [],
+          "prints": [
+            "18,22"
+          ],
+          "crews": [
+            "tx1-4"
+          ],
+          "dates": [
+            "2026-01-14"
+          ],
+          "truth_span": "00+00->03+90",
+          "adj_status": null,
+          "adj_corrected_span": null,
+          "placement_status": "BLOCKED_OR_UNATTEMPTED",
+          "provenance_note": "",
+          "segment_order": 0,
+          "sibling_group_id": "bore_log8",
+          "run_group_id": "bore_log8",
+          "ownership_disambiguation": {
+            "by_span": "00+00->03+90",
+            "by_sheets": [
+              18,
+              22
+            ],
+            "distinct_from_siblings": [],
+            "span_collision_with_sibling": []
+          }
+        }
+      ],
+      "renderable_child_entries": []
+    },
+    {
+      "source_parent_id": "bore_log9",
+      "source_file": null,
+      "source_page": null,
+      "is_split_family": false,
+      "sibling_group_id": "bore_log9",
+      "run_group_id": "bore_log9",
+      "entries": [
+        {
+          "source_entry_id": "bore_log9",
+          "log_id": "log9",
+          "entry_role": "standalone_bore",
+          "entry_span": "04+94->11+69",
+          "start_station": "04+94",
+          "end_station": "11+69",
+          "start_structure": null,
+          "end_structure": null,
+          "sheet_context": [
+            14
+          ],
+          "truth_sheets": [
+            14
+          ],
+          "corrected_sheets": null,
+          "matchline_context": [],
+          "prints": [
+            "7,14"
+          ],
+          "crews": [
+            "tx1-1"
+          ],
+          "dates": [
+            "2025-12-17"
+          ],
+          "truth_span": "04+94->11+69",
+          "adj_status": null,
+          "adj_corrected_span": null,
+          "placement_status": "RENDERED",
+          "provenance_note": "",
+          "segment_order": 0,
+          "sibling_group_id": "bore_log9",
+          "run_group_id": "bore_log9",
+          "ownership_disambiguation": {
+            "by_span": "04+94->11+69",
+            "by_sheets": [
+              14
+            ],
+            "distinct_from_siblings": [],
+            "span_collision_with_sibling": []
+          }
+        }
+      ],
+      "renderable_child_entries": [
+        "bore_log9"
+      ]
+    },
+    {
+      "source_parent_id": "bore_log10",
+      "source_file": null,
+      "source_page": null,
+      "is_split_family": false,
+      "sibling_group_id": "bore_log10",
+      "run_group_id": "bore_log10",
+      "entries": [
+        {
+          "source_entry_id": "bore_log10",
+          "log_id": "log10",
+          "entry_role": "standalone_bore",
+          "entry_span": "00+58->07+30",
+          "start_station": "00+58",
+          "end_station": "07+30",
+          "start_structure": null,
+          "end_structure": null,
+          "sheet_context": [
+            15
+          ],
+          "truth_sheets": [
+            15
+          ],
+          "corrected_sheets": null,
+          "matchline_context": [],
+          "prints": [
+            "7,15"
+          ],
+          "crews": [
+            "tx1-1"
+          ],
+          "dates": [
+            "2025-12-04"
+          ],
+          "truth_span": "00+58->07+30",
+          "adj_status": null,
+          "adj_corrected_span": null,
+          "placement_status": "RENDERED",
+          "provenance_note": "",
+          "segment_order": 0,
+          "sibling_group_id": "bore_log10",
+          "run_group_id": "bore_log10",
+          "ownership_disambiguation": {
+            "by_span": "00+58->07+30",
+            "by_sheets": [
+              15
+            ],
+            "distinct_from_siblings": [],
+            "span_collision_with_sibling": []
+          }
+        }
+      ],
+      "renderable_child_entries": [
+        "bore_log10"
+      ]
+    },
+    {
+      "source_parent_id": "bore_log11",
+      "source_file": null,
+      "source_page": null,
+      "is_split_family": false,
+      "sibling_group_id": "bore_log11",
+      "run_group_id": "bore_log11",
+      "entries": [
+        {
+          "source_entry_id": "bore_log11",
+          "log_id": "log11",
+          "entry_role": "standalone_bore",
+          "entry_span": "0+00->6+50",
+          "start_station": "0+00",
+          "end_station": "6+50",
+          "start_structure": "nextlink_hh",
+          "end_structure": "flower_pot",
+          "sheet_context": [
+            5,
+            17
+          ],
+          "truth_sheets": [
+            5,
+            17
+          ],
+          "corrected_sheets": [
+            5,
+            17
+          ],
+          "matchline_context": [],
+          "prints": [
+            "5,17"
+          ],
+          "crews": [
+            "tx1-1"
+          ],
+          "dates": [
+            "2025-11-20"
+          ],
+          "truth_span": "0+00->6+50",
+          "adj_status": "RECOVERED",
+          "adj_corrected_span": "0+00->6+30",
+          "placement_status": "RENDERED",
+          "provenance_note": "",
+          "segment_order": 0,
+          "sibling_group_id": "bore_log11",
+          "run_group_id": "bore_log11",
+          "ownership_disambiguation": {
+            "by_span": "0+00->6+50",
+            "by_sheets": [
+              5,
+              17
+            ],
+            "distinct_from_siblings": [],
+            "span_collision_with_sibling": []
+          }
+        }
+      ],
+      "renderable_child_entries": [
+        "bore_log11"
+      ]
+    },
+    {
+      "source_parent_id": "bore_log12",
+      "source_file": null,
+      "source_page": null,
+      "is_split_family": false,
+      "sibling_group_id": "bore_log12",
+      "run_group_id": "bore_log12",
+      "entries": [
+        {
+          "source_entry_id": "bore_log12",
+          "log_id": "log12",
+          "entry_role": "standalone_bore",
+          "entry_span": "5+50->10+92",
+          "start_station": "5+50",
+          "end_station": "10+92",
+          "start_structure": null,
+          "end_structure": null,
+          "sheet_context": [
+            3,
+            23,
+            24
+          ],
+          "truth_sheets": [
+            3
+          ],
+          "corrected_sheets": [
+            23,
+            24,
+            3
+          ],
+          "matchline_context": [],
+          "prints": [
+            "3"
+          ],
+          "crews": [
+            "tx1-1"
+          ],
+          "dates": [
+            "2025-12-02"
+          ],
+          "truth_span": "5+50->10+92",
+          "adj_status": "RECOVERED",
+          "adj_corrected_span": "5+50->10+92",
+          "placement_status": "RENDERED",
+          "provenance_note": "",
+          "segment_order": 0,
+          "sibling_group_id": "bore_log12",
+          "run_group_id": "bore_log12",
+          "ownership_disambiguation": {
+            "by_span": "5+50->10+92",
+            "by_sheets": [
+              3,
+              23,
+              24
+            ],
+            "distinct_from_siblings": [],
+            "span_collision_with_sibling": []
+          }
+        }
+      ],
+      "renderable_child_entries": [
+        "bore_log12"
+      ]
+    },
+    {
+      "source_parent_id": "bore_log13",
+      "source_file": "2025-12-03_212755 - Jimenez",
+      "source_page": null,
+      "is_split_family": true,
+      "sibling_group_id": "bore_log13",
+      "run_group_id": "bore_log13",
+      "entries": [
+        {
+          "source_entry_id": "bore_log41",
+          "log_id": "log41",
+          "entry_role": "child_segment",
+          "entry_span": "0+00->0+44",
+          "start_station": "0+00",
+          "end_station": "0+44",
+          "start_structure": null,
+          "end_structure": null,
+          "sheet_context": [
+            1,
+            2
+          ],
+          "truth_sheets": [
+            1,
+            2
+          ],
+          "corrected_sheets": [
+            1
+          ],
+          "matchline_context": [],
+          "prints": [
+            "1,2"
+          ],
+          "crews": [
+            "tx1-1"
+          ],
+          "dates": [
+            "2025-12-03"
+          ],
+          "truth_span": "0+00->0+44",
+          "adj_status": "CORRECT_AS_DRAWN",
+          "adj_corrected_span": "0+00->0+44",
+          "placement_status": "RENDERED",
+          "provenance_note": "Segment A (col1) split from bore_log13.xlsx. Source: 2025-12-03_212755 - Jimenez. NEEDS REVIEW: row 2 station '0+44' ending digits unclear, possible 0+44 or 0+50. NEEDS REVIEW: print mapping uncertain \u2014 preserved full source print '1,2'.",
+          "segment_order": 0,
+          "sibling_group_id": "bore_log13",
+          "run_group_id": "bore_log13",
+          "ownership_disambiguation": {
+            "by_span": "0+00->0+44",
+            "by_sheets": [
+              1,
+              2
+            ],
+            "distinct_from_siblings": [
+              {
+                "sibling": "bore_log42",
+                "span": "0+00->2+87",
+                "sheets": [
+                  1,
+                  2
+                ]
+              }
+            ],
+            "span_collision_with_sibling": [
+              "bore_log42"
+            ]
+          }
+        },
+        {
+          "source_entry_id": "bore_log42",
+          "log_id": "log42",
+          "entry_role": "child_segment",
+          "entry_span": "0+00->2+87",
+          "start_station": "0+00",
+          "end_station": "2+87",
+          "start_structure": null,
+          "end_structure": null,
+          "sheet_context": [
+            1,
+            2
+          ],
+          "truth_sheets": [
+            1,
+            2
+          ],
+          "corrected_sheets": null,
+          "matchline_context": [],
+          "prints": [
+            "1,2"
+          ],
+          "crews": [
+            "tx1-1"
+          ],
+          "dates": [
+            "2025-12-03"
+          ],
+          "truth_span": "0+00->2+87",
+          "adj_status": null,
+          "adj_corrected_span": null,
+          "placement_status": "BLOCKED_OR_UNATTEMPTED",
+          "provenance_note": "Segment B (col2) split from bore_log13.xlsx. Source: 2025-12-03_212755 - Jimenez. NEEDS REVIEW: print mapping uncertain \u2014 preserved full source print '1,2'.",
+          "segment_order": 1,
+          "sibling_group_id": "bore_log13",
+          "run_group_id": "bore_log13",
+          "ownership_disambiguation": {
+            "by_span": "0+00->2+87",
+            "by_sheets": [
+              1,
+              2
+            ],
+            "distinct_from_siblings": [
+              {
+                "sibling": "bore_log41",
+                "span": "0+00->0+44",
+                "sheets": [
+                  1,
+                  2
+                ]
+              }
+            ],
+            "span_collision_with_sibling": [
+              "bore_log41"
+            ]
+          }
+        }
+      ],
+      "renderable_child_entries": [
+        "bore_log41"
+      ]
+    },
+    {
+      "source_parent_id": "bore_log14",
+      "source_file": null,
+      "source_page": null,
+      "is_split_family": false,
+      "sibling_group_id": "bore_log14",
+      "run_group_id": "bore_log14",
+      "entries": [
+        {
+          "source_entry_id": "bore_log14",
+          "log_id": "log14",
+          "entry_role": "standalone_bore",
+          "entry_span": "0+00->4+18",
+          "start_station": "0+00",
+          "end_station": "4+18",
+          "start_structure": null,
+          "end_structure": null,
+          "sheet_context": [
+            7
+          ],
+          "truth_sheets": [
+            7
+          ],
+          "corrected_sheets": null,
+          "matchline_context": [],
+          "prints": [
+            "7,15"
+          ],
+          "crews": [
+            "tx1-1"
+          ],
+          "dates": [
+            "2025-12-08"
+          ],
+          "truth_span": "0+00->4+18",
+          "adj_status": null,
+          "adj_corrected_span": null,
+          "placement_status": "BLOCKED_OR_UNATTEMPTED",
+          "provenance_note": "",
+          "segment_order": 0,
+          "sibling_group_id": "bore_log14",
+          "run_group_id": "bore_log14",
+          "ownership_disambiguation": {
+            "by_span": "0+00->4+18",
+            "by_sheets": [
+              7
+            ],
+            "distinct_from_siblings": [],
+            "span_collision_with_sibling": []
+          }
+        }
+      ],
+      "renderable_child_entries": []
+    },
+    {
+      "source_parent_id": "bore_log15",
+      "source_file": null,
+      "source_page": null,
+      "is_split_family": false,
+      "sibling_group_id": "bore_log15",
+      "run_group_id": "bore_log15",
+      "entries": [
+        {
+          "source_entry_id": "bore_log15",
+          "log_id": "log15",
+          "entry_role": "standalone_bore",
+          "entry_span": "24+07->31+00",
+          "start_station": "24+07",
+          "end_station": "31+00",
+          "start_structure": null,
+          "end_structure": null,
+          "sheet_context": [
+            6,
+            7,
+            8
+          ],
+          "truth_sheets": [
+            6,
+            7,
+            8
+          ],
+          "corrected_sheets": null,
+          "matchline_context": [],
+          "prints": [
+            "6,7,8"
+          ],
+          "crews": [
+            "tx1-1"
+          ],
+          "dates": [
+            "2025-12-09"
+          ],
+          "truth_span": "24+07->31+00",
+          "adj_status": null,
+          "adj_corrected_span": null,
+          "placement_status": "BLOCKED_OR_UNATTEMPTED",
+          "provenance_note": "",
+          "segment_order": 0,
+          "sibling_group_id": "bore_log15",
+          "run_group_id": "bore_log15",
+          "ownership_disambiguation": {
+            "by_span": "24+07->31+00",
+            "by_sheets": [
+              6,
+              7,
+              8
+            ],
+            "distinct_from_siblings": [],
+            "span_collision_with_sibling": []
+          }
+        }
+      ],
+      "renderable_child_entries": []
+    },
+    {
+      "source_parent_id": "bore_log16",
+      "source_file": null,
+      "source_page": null,
+      "is_split_family": false,
+      "sibling_group_id": "bore_log16",
+      "run_group_id": "bore_log16",
+      "entries": [
+        {
+          "source_entry_id": "bore_log16",
+          "log_id": "log16",
+          "entry_role": "standalone_bore",
+          "entry_span": "31+00->39+79",
+          "start_station": "31+00",
+          "end_station": "39+79",
+          "start_structure": null,
+          "end_structure": null,
+          "sheet_context": [
+            8,
+            9,
+            10
+          ],
+          "truth_sheets": [
+            8,
+            9,
+            10
+          ],
+          "corrected_sheets": null,
+          "matchline_context": [],
+          "prints": [
+            "8,9,10"
+          ],
+          "crews": [
+            "tx1-1"
+          ],
+          "dates": [
+            "2025-12-11"
+          ],
+          "truth_span": "31+00->39+79",
+          "adj_status": null,
+          "adj_corrected_span": null,
+          "placement_status": "BLOCKED_OR_UNATTEMPTED",
+          "provenance_note": "",
+          "segment_order": 0,
+          "sibling_group_id": "bore_log16",
+          "run_group_id": "bore_log16",
+          "ownership_disambiguation": {
+            "by_span": "31+00->39+79",
+            "by_sheets": [
+              8,
+              9,
+              10
+            ],
+            "distinct_from_siblings": [],
+            "span_collision_with_sibling": []
+          }
+        }
+      ],
+      "renderable_child_entries": []
+    },
+    {
+      "source_parent_id": "bore_log17",
+      "source_file": "2025-12-12_212851 - Jimenez",
+      "source_page": null,
+      "is_split_family": true,
+      "sibling_group_id": "bore_log17",
+      "run_group_id": "bore_log17",
+      "entries": [
+        {
+          "source_entry_id": "bore_log44",
+          "log_id": "log44",
+          "entry_role": "child_segment",
+          "entry_span": "0+00->3+25",
+          "start_station": "0+00",
+          "end_station": "3+25",
+          "start_structure": null,
+          "end_structure": null,
+          "sheet_context": [
+            18
+          ],
+          "truth_sheets": [
+            18
+          ],
+          "corrected_sheets": [],
+          "matchline_context": [],
+          "prints": [
+            "18"
+          ],
+          "crews": [
+            "tx1-1"
+          ],
+          "dates": [
+            "2025-12-12"
+          ],
+          "truth_span": "0+00->3+25",
+          "adj_status": "NEEDS_SOURCE_VERIFICATION",
+          "adj_corrected_span": "43+36->None",
+          "placement_status": "BLOCKED_OR_UNATTEMPTED",
+          "provenance_note": "Segment B (col2, print 18) split from bore_log17.xlsx. Source: 2025-12-12_212851 - Jimenez. Fresh bore segment on print 18 starting at 0+00.",
+          "segment_order": 0,
+          "sibling_group_id": "bore_log17",
+          "run_group_id": "bore_log17",
+          "ownership_disambiguation": {
+            "by_span": "0+00->3+25",
+            "by_sheets": [
+              18
+            ],
+            "distinct_from_siblings": [
+              {
+                "sibling": "bore_log43",
+                "span": "40+00->59+19",
+                "sheets": [
+                  10
+                ]
+              }
+            ],
+            "span_collision_with_sibling": []
+          }
+        },
+        {
+          "source_entry_id": "bore_log43",
+          "log_id": "log43",
+          "entry_role": "child_segment",
+          "entry_span": "40+00->59+19",
+          "start_station": "40+00",
+          "end_station": "59+19",
+          "start_structure": null,
+          "end_structure": null,
+          "sheet_context": [
+            10
+          ],
+          "truth_sheets": [
+            10
+          ],
+          "corrected_sheets": [
+            10
+          ],
+          "matchline_context": [],
+          "prints": [
+            "10"
+          ],
+          "crews": [
+            "tx1-1"
+          ],
+          "dates": [
+            "2025-12-12"
+          ],
+          "truth_span": "40+00->59+19",
+          "adj_status": "ABSTAIN_NO_SAFE_SOURCE",
+          "adj_corrected_span": null,
+          "placement_status": "BLOCKED_OR_UNATTEMPTED",
+          "provenance_note": "Segment A (col1, print 10) split from bore_log17.xlsx. Source: 2025-12-12_212851 - Jimenez. NEEDS REVIEW: gap 43+00 \u2192 45+86 may indicate missed intermediate rows; 59+19 may continue prior day's bore_log16 work.",
+          "segment_order": 1,
+          "sibling_group_id": "bore_log17",
+          "run_group_id": "bore_log17",
+          "ownership_disambiguation": {
+            "by_span": "40+00->59+19",
+            "by_sheets": [
+              10
+            ],
+            "distinct_from_siblings": [
+              {
+                "sibling": "bore_log44",
+                "span": "0+00->3+25",
+                "sheets": [
+                  18
+                ]
+              }
+            ],
+            "span_collision_with_sibling": []
+          }
+        }
+      ],
+      "renderable_child_entries": []
+    },
+    {
+      "source_parent_id": "bore_log18",
+      "source_file": "2025-12-15_214828 - Jimenez",
+      "source_page": null,
+      "is_split_family": true,
+      "sibling_group_id": "bore_log18",
+      "run_group_id": "bore_log18",
+      "entries": [
+        {
+          "source_entry_id": "bore_log46",
+          "log_id": "log46",
+          "entry_role": "child_segment",
+          "entry_span": "0+00->5+34",
+          "start_station": "0+00",
+          "end_station": "5+34",
+          "start_structure": null,
+          "end_structure": null,
+          "sheet_context": [
+            10,
+            13,
+            14
+          ],
+          "truth_sheets": [
+            10
+          ],
+          "corrected_sheets": [
+            10,
+            13,
+            14
+          ],
+          "matchline_context": [],
+          "prints": [
+            "10,13,14"
+          ],
+          "crews": [
+            "tx1-1"
+          ],
+          "dates": [
+            "2025-12-15"
+          ],
+          "truth_span": "0+00->5+34",
+          "adj_status": "RECOVERED",
+          "adj_corrected_span": "0+00->5+34",
+          "placement_status": "RENDERED",
+          "provenance_note": "Segment B (col2) split from bore_log18.xlsx. Source: 2025-12-15_214828 - Jimenez. NEEDS REVIEW: print mapping uncertain \u2014 preserved full source print '10,13,14'.",
+          "segment_order": 0,
+          "sibling_group_id": "bore_log18",
+          "run_group_id": "bore_log18",
+          "ownership_disambiguation": {
+            "by_span": "0+00->5+34",
+            "by_sheets": [
+              10,
+              13,
+              14
+            ],
+            "distinct_from_siblings": [
+              {
+                "sibling": "bore_log47",
+                "span": "3+25->4+94",
+                "sheets": [
+                  10,
+                  11,
+                  12,
+                  13,
+                  14,
+                  15
+                ]
+              },
+              {
+                "sibling": "bore_log45",
+                "span": "43+56->44+89",
+                "sheets": [
+                  10
+                ]
+              }
+            ],
+            "span_collision_with_sibling": []
+          }
+        },
+        {
+          "source_entry_id": "bore_log47",
+          "log_id": "log47",
+          "entry_role": "child_segment",
+          "entry_span": "3+25->4+94",
+          "start_station": "3+25",
+          "end_station": "4+94",
+          "start_structure": "flower_pot",
+          "end_structure": "installer_hh",
+          "sheet_context": [
+            10,
+            11,
+            12,
+            13,
+            14,
+            15
+          ],
+          "truth_sheets": [
+            10,
+            11,
+            12,
+            14,
+            15
+          ],
+          "corrected_sheets": [
+            10,
+            13,
+            14
+          ],
+          "matchline_context": [],
+          "prints": [
+            "10,13,14"
+          ],
+          "crews": [
+            "tx1-1"
+          ],
+          "dates": [
+            "2025-12-15"
+          ],
+          "truth_span": "3+25->4+94",
+          "adj_status": "RECOVERED",
+          "adj_corrected_span": "3+23->4+94",
+          "placement_status": "RENDERED",
+          "provenance_note": "Segment C (col3) split from bore_log18.xlsx. Source: 2025-12-15_214828 - Jimenez. NEEDS REVIEW: print mapping uncertain \u2014 preserved full source print '10,13,14'.",
+          "segment_order": 1,
+          "sibling_group_id": "bore_log18",
+          "run_group_id": "bore_log18",
+          "ownership_disambiguation": {
+            "by_span": "3+25->4+94",
+            "by_sheets": [
+              10,
+              11,
+              12,
+              13,
+              14,
+              15
+            ],
+            "distinct_from_siblings": [
+              {
+                "sibling": "bore_log46",
+                "span": "0+00->5+34",
+                "sheets": [
+                  10,
+                  13,
+                  14
+                ]
+              },
+              {
+                "sibling": "bore_log45",
+                "span": "43+56->44+89",
+                "sheets": [
+                  10
+                ]
+              }
+            ],
+            "span_collision_with_sibling": []
+          }
+        },
+        {
+          "source_entry_id": "bore_log45",
+          "log_id": "log45",
+          "entry_role": "child_segment",
+          "entry_span": "43+56->44+89",
+          "start_station": "43+56",
+          "end_station": "44+89",
+          "start_structure": null,
+          "end_structure": null,
+          "sheet_context": [
+            10
+          ],
+          "truth_sheets": [
+            10
+          ],
+          "corrected_sheets": null,
+          "matchline_context": [],
+          "prints": [
+            "10,13,14"
+          ],
+          "crews": [
+            "tx1-1"
+          ],
+          "dates": [
+            "2025-12-15"
+          ],
+          "truth_span": "43+50->44+89",
+          "adj_status": null,
+          "adj_corrected_span": null,
+          "placement_status": "RENDERED",
+          "provenance_note": "Segment A (col1) split from bore_log18.xlsx. Source: 2025-12-15_214828 - Jimenez. NEEDS REVIEW: row 2 first station digits unclear, possible '43+56' or '45+56'. NEEDS REVIEW: print mapping uncertain \u2014 preserved full source print '10,13,14'.",
+          "segment_order": 2,
+          "sibling_group_id": "bore_log18",
+          "run_group_id": "bore_log18",
+          "ownership_disambiguation": {
+            "by_span": "43+56->44+89",
+            "by_sheets": [
+              10
+            ],
+            "distinct_from_siblings": [
+              {
+                "sibling": "bore_log46",
+                "span": "0+00->5+34",
+                "sheets": [
+                  10,
+                  13,
+                  14
+                ]
+              },
+              {
+                "sibling": "bore_log47",
+                "span": "3+25->4+94",
+                "sheets": [
+                  10,
+                  11,
+                  12,
+                  13,
+                  14,
+                  15
+                ]
+              }
+            ],
+            "span_collision_with_sibling": []
+          }
+        }
+      ],
+      "renderable_child_entries": [
+        "bore_log46",
+        "bore_log47",
+        "bore_log45"
+      ]
+    },
+    {
+      "source_parent_id": "bore_log19",
+      "source_file": null,
+      "source_page": null,
+      "is_split_family": false,
+      "sibling_group_id": "bore_log19",
+      "run_group_id": "bore_log19",
+      "entries": [
+        {
+          "source_entry_id": "bore_log19",
+          "log_id": "log19",
+          "entry_role": "standalone_bore",
+          "entry_span": "4+94->11+50",
+          "start_station": "4+94",
+          "end_station": "11+50",
+          "start_structure": null,
+          "end_structure": null,
+          "sheet_context": [
+            14
+          ],
+          "truth_sheets": [
+            14
+          ],
+          "corrected_sheets": null,
+          "matchline_context": [],
+          "prints": [
+            "7,14"
+          ],
+          "crews": [
+            "tx1-1"
+          ],
+          "dates": [
+            "2025-12-16"
+          ],
+          "truth_span": "4+94->11+50",
+          "adj_status": null,
+          "adj_corrected_span": null,
+          "placement_status": "BLOCKED_OR_UNATTEMPTED",
+          "provenance_note": "NEEDS REVIEW: 11+19 appears in source between 11+00 and 11+50; may be an intermediate measurement point.",
+          "segment_order": 0,
+          "sibling_group_id": "bore_log19",
+          "run_group_id": "bore_log19",
+          "ownership_disambiguation": {
+            "by_span": "4+94->11+50",
+            "by_sheets": [
+              14
+            ],
+            "distinct_from_siblings": [],
+            "span_collision_with_sibling": []
+          }
+        }
+      ],
+      "renderable_child_entries": []
+    },
+    {
+      "source_parent_id": "bore_log20",
+      "source_file": "2025-12-18_222857 - Jimenez",
+      "source_page": null,
+      "is_split_family": true,
+      "sibling_group_id": "bore_log20",
+      "run_group_id": "bore_log20",
+      "entries": [
+        {
+          "source_entry_id": "bore_log48",
+          "log_id": "log48",
+          "entry_role": "child_segment",
+          "entry_span": "0+00->5+09",
+          "start_station": "0+00",
+          "end_station": "5+09",
+          "start_structure": null,
+          "end_structure": null,
+          "sheet_context": [
+            10,
+            11,
+            12
+          ],
+          "truth_sheets": [
+            10
+          ],
+          "corrected_sheets": [
+            10,
+            11,
+            12
+          ],
+          "matchline_context": [],
+          "prints": [
+            "10,11,12"
+          ],
+          "crews": [
+            "tx1-1"
+          ],
+          "dates": [
+            "2025-12-18"
+          ],
+          "truth_span": "0+00->5+09",
+          "adj_status": "RECOVERED",
+          "adj_corrected_span": "0+00->5+14",
+          "placement_status": "HELD_PARENT_CHILD",
+          "provenance_note": "Segment A (col1) split from bore_log20.xlsx. Source: 2025-12-18_222857 - Jimenez. NEEDS REVIEW: print mapping uncertain \u2014 preserved full source print '10,11,12'.",
+          "segment_order": 0,
+          "sibling_group_id": "bore_log20",
+          "run_group_id": "bore_log20",
+          "ownership_disambiguation": {
+            "by_span": "0+00->5+09",
+            "by_sheets": [
+              10,
+              11,
+              12
+            ],
+            "distinct_from_siblings": [
+              {
+                "sibling": "bore_log50",
+                "span": "0+00->5+14",
+                "sheets": [
+                  10,
+                  11
+                ]
+              },
+              {
+                "sibling": "bore_log49",
+                "span": "44+89->45+33",
+                "sheets": [
+                  10
+                ]
+              }
+            ],
+            "span_collision_with_sibling": [
+              "bore_log50"
+            ]
+          }
+        },
+        {
+          "source_entry_id": "bore_log50",
+          "log_id": "log50",
+          "entry_role": "child_segment",
+          "entry_span": "0+00->5+14",
+          "start_station": "0+00",
+          "end_station": "5+14",
+          "start_structure": null,
+          "end_structure": null,
+          "sheet_context": [
+            10,
+            11
+          ],
+          "truth_sheets": [
+            10,
+            11
+          ],
+          "corrected_sheets": null,
+          "matchline_context": [],
+          "prints": [
+            "10,11,12"
+          ],
+          "crews": [
+            "tx1-1"
+          ],
+          "dates": [
+            "2025-12-18"
+          ],
+          "truth_span": "0+00->5+14",
+          "adj_status": null,
+          "adj_corrected_span": null,
+          "placement_status": "RENDERED",
+          "provenance_note": "Segment C (col3) split from bore_log20.xlsx. Source: 2025-12-18_222857 - Jimenez. NEEDS REVIEW: print mapping uncertain \u2014 preserved full source print '10,11,12'.",
+          "segment_order": 1,
+          "sibling_group_id": "bore_log20",
+          "run_group_id": "bore_log20",
+          "ownership_disambiguation": {
+            "by_span": "0+00->5+14",
+            "by_sheets": [
+              10,
+              11
+            ],
+            "distinct_from_siblings": [
+              {
+                "sibling": "bore_log48",
+                "span": "0+00->5+09",
+                "sheets": [
+                  10,
+                  11,
+                  12
+                ]
+              },
+              {
+                "sibling": "bore_log49",
+                "span": "44+89->45+33",
+                "sheets": [
+                  10
+                ]
+              }
+            ],
+            "span_collision_with_sibling": [
+              "bore_log48"
+            ]
+          }
+        },
+        {
+          "source_entry_id": "bore_log49",
+          "log_id": "log49",
+          "entry_role": "child_segment",
+          "entry_span": "44+89->45+33",
+          "start_station": "44+89",
+          "end_station": "45+33",
+          "start_structure": null,
+          "end_structure": null,
+          "sheet_context": [
+            10
+          ],
+          "truth_sheets": [
+            10
+          ],
+          "corrected_sheets": null,
+          "matchline_context": [],
+          "prints": [
+            "10,11,12"
+          ],
+          "crews": [
+            "tx1-1"
+          ],
+          "dates": [
+            "2025-12-18"
+          ],
+          "truth_span": "44+89->45+33",
+          "adj_status": null,
+          "adj_corrected_span": null,
+          "placement_status": "BLOCKED_OR_UNATTEMPTED",
+          "provenance_note": "Segment B (col2, high-station continuation 44+89\u219245+33) split from bore_log20.xlsx. Source: 2025-12-18_222857 - Jimenez. NEEDS REVIEW: print mapping uncertain \u2014 preserved full source print '10,11,12'.",
+          "segment_order": 2,
+          "sibling_group_id": "bore_log20",
+          "run_group_id": "bore_log20",
+          "ownership_disambiguation": {
+            "by_span": "44+89->45+33",
+            "by_sheets": [
+              10
+            ],
+            "distinct_from_siblings": [
+              {
+                "sibling": "bore_log48",
+                "span": "0+00->5+09",
+                "sheets": [
+                  10,
+                  11,
+                  12
+                ]
+              },
+              {
+                "sibling": "bore_log50",
+                "span": "0+00->5+14",
+                "sheets": [
+                  10,
+                  11
+                ]
+              }
+            ],
+            "span_collision_with_sibling": []
+          }
+        }
+      ],
+      "renderable_child_entries": [
+        "bore_log50"
+      ]
+    },
+    {
+      "source_parent_id": "bore_log21",
+      "source_file": "Documento_2026-01-16_000547_4 - Jimenez",
+      "source_page": null,
+      "is_split_family": true,
+      "sibling_group_id": "bore_log21",
+      "run_group_id": "bore_log21",
+      "entries": [
+        {
+          "source_entry_id": "bore_log51",
+          "log_id": "log51",
+          "entry_role": "child_segment",
+          "entry_span": "0+00->2+99",
+          "start_station": "0+00",
+          "end_station": "2+99",
+          "start_structure": null,
+          "end_structure": null,
+          "sheet_context": [
+            8
+          ],
+          "truth_sheets": [
+            8
+          ],
+          "corrected_sheets": null,
+          "matchline_context": [],
+          "prints": [
+            "8,9"
+          ],
+          "crews": [
+            "tx1-1"
+          ],
+          "dates": [
+            "2026-01-14"
+          ],
+          "truth_span": "0+00->2+99",
+          "adj_status": null,
+          "adj_corrected_span": null,
+          "placement_status": "RENDERED",
+          "provenance_note": "Segment A (col1) split from bore_log21.xlsx. Source: Documento_2026-01-16_000547_4 - Jimenez. NEEDS REVIEW: print mapping uncertain \u2014 preserved full source print '8,9'.",
+          "segment_order": 0,
+          "sibling_group_id": "bore_log21",
+          "run_group_id": "bore_log21",
+          "ownership_disambiguation": {
+            "by_span": "0+00->2+99",
+            "by_sheets": [
+              8
+            ],
+            "distinct_from_siblings": [
+              {
+                "sibling": "bore_log52",
+                "span": "0+98->4+50",
+                "sheets": [
+                  7,
+                  8,
+                  9
+                ]
+              }
+            ],
+            "span_collision_with_sibling": []
+          }
+        },
+        {
+          "source_entry_id": "bore_log52",
+          "log_id": "log52",
+          "entry_role": "child_segment",
+          "entry_span": "0+98->4+50",
+          "start_station": "0+98",
+          "end_station": "4+50",
+          "start_structure": "flower_pot",
+          "end_structure": "flower_pot",
+          "sheet_context": [
+            7,
+            8,
+            9
+          ],
+          "truth_sheets": [
+            8,
+            9
+          ],
+          "corrected_sheets": [
+            8,
+            7
+          ],
+          "matchline_context": [],
+          "prints": [
+            "8,9"
+          ],
+          "crews": [
+            "tx1-1"
+          ],
+          "dates": [
+            "2026-01-14"
+          ],
+          "truth_span": "0+98->4+50",
+          "adj_status": "RECOVERED",
+          "adj_corrected_span": "0+98->4+57",
+          "placement_status": "RENDERED",
+          "provenance_note": "Segment B (col2) split from bore_log21.xlsx. Source: Documento_2026-01-16_000547_4 - Jimenez. NEEDS REVIEW: print mapping uncertain \u2014 preserved full source print '8,9'.",
+          "segment_order": 1,
+          "sibling_group_id": "bore_log21",
+          "run_group_id": "bore_log21",
+          "ownership_disambiguation": {
+            "by_span": "0+98->4+50",
+            "by_sheets": [
+              7,
+              8,
+              9
+            ],
+            "distinct_from_siblings": [
+              {
+                "sibling": "bore_log51",
+                "span": "0+00->2+99",
+                "sheets": [
+                  8
+                ]
+              }
+            ],
+            "span_collision_with_sibling": []
+          }
+        }
+      ],
+      "renderable_child_entries": [
+        "bore_log51",
+        "bore_log52"
+      ]
+    },
+    {
+      "source_parent_id": "bore_log22",
+      "source_file": "Documento_2026-01-16_000547_5 - Jimenez",
+      "source_page": null,
+      "is_split_family": true,
+      "sibling_group_id": "bore_log22",
+      "run_group_id": "bore_log22",
+      "entries": [
+        {
+          "source_entry_id": "bore_log54",
+          "log_id": "log54",
+          "entry_role": "child_segment",
+          "entry_span": "0+00->3+14",
+          "start_station": "0+00",
+          "end_station": "3+14",
+          "start_structure": null,
+          "end_structure": null,
+          "sheet_context": [
+            2,
+            5,
+            6,
+            17,
+            21
+          ],
+          "truth_sheets": [
+            2,
+            5,
+            6,
+            17,
+            21
+          ],
+          "corrected_sheets": [
+            17,
+            21
+          ],
+          "matchline_context": [],
+          "prints": [
+            "5,6,17,21,2"
+          ],
+          "crews": [
+            "tx1-1"
+          ],
+          "dates": [
+            "2026-01-15"
+          ],
+          "truth_span": "0+00->3+14",
+          "adj_status": "RECOVERED",
+          "adj_corrected_span": "0+00->3+14",
+          "placement_status": "RENDERED",
+          "provenance_note": "Segment B (col1 bottom, stations 0+00\u21923+14) split from bore_log22.xlsx. Source: Documento_2026-01-16_000547_5 - Jimenez. NEEDS REVIEW: 5-print form, print mapping uncertain. NEEDS REVIEW: BOC on rows 3-4 could be 12 or 13. Preserved full so",
+          "segment_order": 0,
+          "sibling_group_id": "bore_log22",
+          "run_group_id": "bore_log22",
+          "ownership_disambiguation": {
+            "by_span": "0+00->3+14",
+            "by_sheets": [
+              2,
+              5,
+              6,
+              17,
+              21
+            ],
+            "distinct_from_siblings": [
+              {
+                "sibling": "bore_log56",
+                "span": "0+00->2+76",
+                "sheets": [
+                  2
+                ]
+              },
+              {
+                "sibling": "bore_log55",
+                "span": "1+69->0+00",
+                "sheets": [
+                  17
+                ]
+              },
+              {
+                "sibling": "bore_log53",
+                "span": "21+45->24+11",
+                "sheets": [
+                  5,
+                  6
+                ]
+              }
+            ],
+            "span_collision_with_sibling": [
+              "bore_log56"
+            ]
+          }
+        },
+        {
+          "source_entry_id": "bore_log56",
+          "log_id": "log56",
+          "entry_role": "child_segment",
+          "entry_span": "0+00->2+76",
+          "start_station": "0+00",
+          "end_station": "2+76",
+          "start_structure": null,
+          "end_structure": null,
+          "sheet_context": [
+            2
+          ],
+          "truth_sheets": [
+            2
+          ],
+          "corrected_sheets": null,
+          "matchline_context": [],
+          "prints": [
+            "5,6,17,21,2"
+          ],
+          "crews": [
+            "tx1-1"
+          ],
+          "dates": [
+            "2026-01-15"
+          ],
+          "truth_span": "0+00->2+76",
+          "adj_status": null,
+          "adj_corrected_span": null,
+          "placement_status": "BLOCKED_OR_UNATTEMPTED",
+          "provenance_note": "Segment D (col3, 0+00\u21922+96) split from bore_log22.xlsx. Source: Documento_2026-01-16_000547_5 - Jimenez. NEEDS REVIEW: 5-print form, print mapping uncertain. Preserved full source print '5,6,17,21,2'.",
+          "segment_order": 1,
+          "sibling_group_id": "bore_log22",
+          "run_group_id": "bore_log22",
+          "ownership_disambiguation": {
+            "by_span": "0+00->2+76",
+            "by_sheets": [
+              2
+            ],
+            "distinct_from_siblings": [
+              {
+                "sibling": "bore_log54",
+                "span": "0+00->3+14",
+                "sheets": [
+                  2,
+                  5,
+                  6,
+                  17,
+                  21
+                ]
+              },
+              {
+                "sibling": "bore_log55",
+                "span": "1+69->0+00",
+                "sheets": [
+                  17
+                ]
+              },
+              {
+                "sibling": "bore_log53",
+                "span": "21+45->24+11",
+                "sheets": [
+                  5,
+                  6
+                ]
+              }
+            ],
+            "span_collision_with_sibling": [
+              "bore_log54"
+            ]
+          }
+        },
+        {
+          "source_entry_id": "bore_log55",
+          "log_id": "log55",
+          "entry_role": "child_segment",
+          "entry_span": "1+69->0+00",
+          "start_station": "1+69",
+          "end_station": "0+00",
+          "start_structure": null,
+          "end_structure": null,
+          "sheet_context": [
+            17
+          ],
+          "truth_sheets": [
+            17
+          ],
+          "corrected_sheets": null,
+          "matchline_context": [],
+          "prints": [
+            "5,6,17,21,2"
+          ],
+          "crews": [
+            "tx1-1"
+          ],
+          "dates": [
+            "2026-01-15"
+          ],
+          "truth_span": "0+00->1+69",
+          "adj_status": null,
+          "adj_corrected_span": null,
+          "placement_status": "BLOCKED_OR_UNATTEMPTED",
+          "provenance_note": "Segment C (col2, descending 1+69\u21920+00) split from bore_log22.xlsx. Source: Documento_2026-01-16_000547_5 - Jimenez. NEEDS REVIEW: row 1 BOC '19' unusually high vs other rows; verify. NEEDS REVIEW: 5-print form, print mapping uncertain. Pres",
+          "segment_order": 2,
+          "sibling_group_id": "bore_log22",
+          "run_group_id": "bore_log22",
+          "ownership_disambiguation": {
+            "by_span": "1+69->0+00",
+            "by_sheets": [
+              17
+            ],
+            "distinct_from_siblings": [
+              {
+                "sibling": "bore_log54",
+                "span": "0+00->3+14",
+                "sheets": [
+                  2,
+                  5,
+                  6,
+                  17,
+                  21
+                ]
+              },
+              {
+                "sibling": "bore_log56",
+                "span": "0+00->2+76",
+                "sheets": [
+                  2
+                ]
+              },
+              {
+                "sibling": "bore_log53",
+                "span": "21+45->24+11",
+                "sheets": [
+                  5,
+                  6
+                ]
+              }
+            ],
+            "span_collision_with_sibling": []
+          }
+        },
+        {
+          "source_entry_id": "bore_log53",
+          "log_id": "log53",
+          "entry_role": "child_segment",
+          "entry_span": "21+45->24+11",
+          "start_station": "21+45",
+          "end_station": "24+11",
+          "start_structure": "nextlink_hh",
+          "end_structure": null,
+          "sheet_context": [
+            5,
+            6
+          ],
+          "truth_sheets": [
+            5,
+            6
+          ],
+          "corrected_sheets": [
+            5
+          ],
+          "matchline_context": [],
+          "prints": [
+            "5,6,17,21,2"
+          ],
+          "crews": [
+            "tx1-1"
+          ],
+          "dates": [
+            "2026-01-15"
+          ],
+          "truth_span": "21+45->24+11",
+          "adj_status": "RECOVERED",
+          "adj_corrected_span": "21+63->24+11",
+          "placement_status": "RENDERED",
+          "provenance_note": "Segment A (col1 top, stations 21+45\u219224+11) split from bore_log22.xlsx. Source: Documento_2026-01-16_000547_5 - Jimenez. NEEDS REVIEW: 5-print form; precise print mapping for this segment requires source photo audit. Preserved full source pr",
+          "segment_order": 3,
+          "sibling_group_id": "bore_log22",
+          "run_group_id": "bore_log22",
+          "ownership_disambiguation": {
+            "by_span": "21+45->24+11",
+            "by_sheets": [
+              5,
+              6
+            ],
+            "distinct_from_siblings": [
+              {
+                "sibling": "bore_log54",
+                "span": "0+00->3+14",
+                "sheets": [
+                  2,
+                  5,
+                  6,
+                  17,
+                  21
+                ]
+              },
+              {
+                "sibling": "bore_log56",
+                "span": "0+00->2+76",
+                "sheets": [
+                  2
+                ]
+              },
+              {
+                "sibling": "bore_log55",
+                "span": "1+69->0+00",
+                "sheets": [
+                  17
+                ]
+              }
+            ],
+            "span_collision_with_sibling": []
+          }
+        }
+      ],
+      "renderable_child_entries": [
+        "bore_log54",
+        "bore_log53"
+      ]
+    },
+    {
+      "source_parent_id": "bore_log23",
+      "source_file": null,
+      "source_page": null,
+      "is_split_family": false,
+      "sibling_group_id": "bore_log23",
+      "run_group_id": "bore_log23",
+      "entries": [
+        {
+          "source_entry_id": "bore_log23",
+          "log_id": "log23",
+          "entry_role": "standalone_bore",
+          "entry_span": "2+36->5+57",
+          "start_station": "2+36",
+          "end_station": "5+57",
+          "start_structure": null,
+          "end_structure": null,
+          "sheet_context": [
+            8
+          ],
+          "truth_sheets": [
+            8
+          ],
+          "corrected_sheets": null,
+          "matchline_context": [],
+          "prints": [
+            "8,15"
+          ],
+          "crews": [
+            "tx1-1"
+          ],
+          "dates": [
+            "2026-01-12"
+          ],
+          "truth_span": "2+36->5+57",
+          "adj_status": null,
+          "adj_corrected_span": null,
+          "placement_status": "RENDERED",
+          "provenance_note": "",
+          "segment_order": 0,
+          "sibling_group_id": "bore_log23",
+          "run_group_id": "bore_log23",
+          "ownership_disambiguation": {
+            "by_span": "2+36->5+57",
+            "by_sheets": [
+              8
+            ],
+            "distinct_from_siblings": [],
+            "span_collision_with_sibling": []
+          }
+        }
+      ],
+      "renderable_child_entries": [
+        "bore_log23"
+      ]
+    },
+    {
+      "source_parent_id": "bore_log24",
+      "source_file": "2026-01-13_213036 - Jimenez",
+      "source_page": null,
+      "is_split_family": true,
+      "sibling_group_id": "bore_log24",
+      "run_group_id": "bore_log24",
+      "entries": [
+        {
+          "source_entry_id": "bore_log57",
+          "log_id": "log57",
+          "entry_role": "child_segment",
+          "entry_span": "0+00->4+13",
+          "start_station": "0+00",
+          "end_station": "4+13",
+          "start_structure": null,
+          "end_structure": null,
+          "sheet_context": [
+            8,
+            10,
+            13
+          ],
+          "truth_sheets": [
+            8,
+            10,
+            13
+          ],
+          "corrected_sheets": null,
+          "matchline_context": [],
+          "prints": [
+            "8,10,13"
+          ],
+          "crews": [
+            "tx1-1"
+          ],
+          "dates": [
+            "2026-01-13"
+          ],
+          "truth_span": "0+00->4+13",
+          "adj_status": null,
+          "adj_corrected_span": null,
+          "placement_status": "BLOCKED_OR_UNATTEMPTED",
+          "provenance_note": "Segment A (col1) split from bore_log24.xlsx. Source: 2026-01-13_213036 - Jimenez. NEEDS REVIEW: form DATE field reads '1/13/25' \u2014 interpreted as 2026-01-13 based on project context (Brenham PH5 active Dec 2025-Jan 2026); confirm intended ye",
+          "segment_order": 0,
+          "sibling_group_id": "bore_log24",
+          "run_group_id": "bore_log24",
+          "ownership_disambiguation": {
+            "by_span": "0+00->4+13",
+            "by_sheets": [
+              8,
+              10,
+              13
+            ],
+            "distinct_from_siblings": [
+              {
+                "sibling": "bore_log58",
+                "span": "0+00->2+36",
+                "sheets": [
+                  8,
+                  10,
+                  13
+                ]
+              }
+            ],
+            "span_collision_with_sibling": [
+              "bore_log58"
+            ]
+          }
+        },
+        {
+          "source_entry_id": "bore_log58",
+          "log_id": "log58",
+          "entry_role": "child_segment",
+          "entry_span": "0+00->2+36",
+          "start_station": "0+00",
+          "end_station": "2+36",
+          "start_structure": "installer_hh",
+          "end_structure": "installer_hh",
+          "sheet_context": [
+            8,
+            10,
+            13
+          ],
+          "truth_sheets": [
+            8,
+            10
+          ],
+          "corrected_sheets": [
+            10,
+            13
+          ],
+          "matchline_context": [],
+          "prints": [
+            "8,10,13"
+          ],
+          "crews": [
+            "tx1-1"
+          ],
+          "dates": [
+            "2026-01-13"
+          ],
+          "truth_span": "0+00->2+36",
+          "adj_status": "RECOVERED",
+          "adj_corrected_span": "0+00->2+36",
+          "placement_status": "RENDERED",
+          "provenance_note": "Segment B (col2) split from bore_log24.xlsx. Source: 2026-01-13_213036 - Jimenez. NEEDS REVIEW: form DATE field reads '1/13/25' \u2014 interpreted as 2026-01-13; confirm year (see bore_log57). NEEDS REVIEW: print mapping uncertain \u2014 preserved fu",
+          "segment_order": 1,
+          "sibling_group_id": "bore_log24",
+          "run_group_id": "bore_log24",
+          "ownership_disambiguation": {
+            "by_span": "0+00->2+36",
+            "by_sheets": [
+              8,
+              10,
+              13
+            ],
+            "distinct_from_siblings": [
+              {
+                "sibling": "bore_log57",
+                "span": "0+00->4+13",
+                "sheets": [
+                  8,
+                  10,
+                  13
+                ]
+              }
+            ],
+            "span_collision_with_sibling": [
+              "bore_log57"
+            ]
+          }
+        }
+      ],
+      "renderable_child_entries": [
+        "bore_log58"
+      ]
+    },
+    {
+      "source_parent_id": "bore_log25",
+      "source_file": null,
+      "source_page": null,
+      "is_split_family": false,
+      "sibling_group_id": "bore_log25",
+      "run_group_id": "bore_log25",
+      "entries": [
+        {
+          "source_entry_id": "bore_log25",
+          "log_id": "log25",
+          "entry_role": "standalone_bore",
+          "entry_span": "3+14->6+63",
+          "start_station": "3+14",
+          "end_station": "6+63",
+          "start_structure": null,
+          "end_structure": null,
+          "sheet_context": [
+            21
+          ],
+          "truth_sheets": [
+            21
+          ],
+          "corrected_sheets": null,
+          "matchline_context": [],
+          "prints": [
+            "21"
+          ],
+          "crews": [
+            "tx1-1"
+          ],
+          "dates": [
+            "2026-01-20"
+          ],
+          "truth_span": "3+14->6+63",
+          "adj_status": null,
+          "adj_corrected_span": null,
+          "placement_status": "RENDERED",
+          "provenance_note": "",
+          "segment_order": 0,
+          "sibling_group_id": "bore_log25",
+          "run_group_id": "bore_log25",
+          "ownership_disambiguation": {
+            "by_span": "3+14->6+63",
+            "by_sheets": [
+              21
+            ],
+            "distinct_from_siblings": [],
+            "span_collision_with_sibling": []
+          }
+        }
+      ],
+      "renderable_child_entries": [
+        "bore_log25"
+      ]
+    },
+    {
+      "source_parent_id": "bore_log26",
+      "source_file": "2026-01-27_211717 - Jimenez",
+      "source_page": null,
+      "is_split_family": true,
+      "sibling_group_id": "bore_log26",
+      "run_group_id": "bore_log26",
+      "entries": [
+        {
+          "source_entry_id": "bore_log60",
+          "log_id": "log60",
+          "entry_role": "child_segment",
+          "entry_span": "0+00->1+13",
+          "start_station": "0+00",
+          "end_station": "1+13",
+          "start_structure": null,
+          "end_structure": null,
+          "sheet_context": [
+            15
+          ],
+          "truth_sheets": [
+            15
+          ],
+          "corrected_sheets": null,
+          "matchline_context": [],
+          "prints": [
+            "21,15,6,5"
+          ],
+          "crews": [
+            "tx1-1"
+          ],
+          "dates": [
+            "2026-01-21"
+          ],
+          "truth_span": "0+00->1+13",
+          "adj_status": null,
+          "adj_corrected_span": null,
+          "placement_status": "BLOCKED_OR_UNATTEMPTED",
+          "provenance_note": "Segment B (col1 middle + bottom \u2014 two short sub-sections both starting at 0+00) split from bore_log26.xlsx. Source: 2026-01-27_211717 - Jimenez. NEEDS REVIEW: contains two short col1 sub-sections both starting at 0+00; may need further sub-",
+          "segment_order": 0,
+          "sibling_group_id": "bore_log26",
+          "run_group_id": "bore_log26",
+          "ownership_disambiguation": {
+            "by_span": "0+00->1+13",
+            "by_sheets": [
+              15
+            ],
+            "distinct_from_siblings": [
+              {
+                "sibling": "bore_log62",
+                "span": "0+00->2+01",
+                "sheets": [
+                  5,
+                  6
+                ]
+              },
+              {
+                "sibling": "bore_log61",
+                "span": "2+43->4+50",
+                "sheets": [
+                  6
+                ]
+              },
+              {
+                "sibling": "bore_log59",
+                "span": "2+76->4+46",
+                "sheets": [
+                  21
+                ]
+              }
+            ],
+            "span_collision_with_sibling": [
+              "bore_log62"
+            ]
+          }
+        },
+        {
+          "source_entry_id": "bore_log62",
+          "log_id": "log62",
+          "entry_role": "child_segment",
+          "entry_span": "0+00->2+01",
+          "start_station": "0+00",
+          "end_station": "2+01",
+          "start_structure": null,
+          "end_structure": null,
+          "sheet_context": [
+            5,
+            6
+          ],
+          "truth_sheets": [
+            5,
+            6
+          ],
+          "corrected_sheets": null,
+          "matchline_context": [],
+          "prints": [
+            "21,15,6,5"
+          ],
+          "crews": [
+            "tx1-1"
+          ],
+          "dates": [
+            "2026-01-21"
+          ],
+          "truth_span": "0+00->2+01",
+          "adj_status": null,
+          "adj_corrected_span": null,
+          "placement_status": "BLOCKED_OR_UNATTEMPTED",
+          "provenance_note": "Segment D (col3, 0+00\u21922+01) split from bore_log26.xlsx. Source: 2026-01-27_211717 - Jimenez. NEEDS REVIEW: print mapping uncertain \u2014 preserved full source print '21,15,6,5'.",
+          "segment_order": 1,
+          "sibling_group_id": "bore_log26",
+          "run_group_id": "bore_log26",
+          "ownership_disambiguation": {
+            "by_span": "0+00->2+01",
+            "by_sheets": [
+              5,
+              6
+            ],
+            "distinct_from_siblings": [
+              {
+                "sibling": "bore_log60",
+                "span": "0+00->1+13",
+                "sheets": [
+                  15
+                ]
+              },
+              {
+                "sibling": "bore_log61",
+                "span": "2+43->4+50",
+                "sheets": [
+                  6
+                ]
+              },
+              {
+                "sibling": "bore_log59",
+                "span": "2+76->4+46",
+                "sheets": [
+                  21
+                ]
+              }
+            ],
+            "span_collision_with_sibling": [
+              "bore_log60"
+            ]
+          }
+        },
+        {
+          "source_entry_id": "bore_log61",
+          "log_id": "log61",
+          "entry_role": "child_segment",
+          "entry_span": "2+43->4+50",
+          "start_station": "2+43",
+          "end_station": "4+50",
+          "start_structure": null,
+          "end_structure": null,
+          "sheet_context": [
+            6
+          ],
+          "truth_sheets": [
+            6
+          ],
+          "corrected_sheets": null,
+          "matchline_context": [],
+          "prints": [
+            "21,15,6,5"
+          ],
+          "crews": [
+            "tx1-1"
+          ],
+          "dates": [
+            "2026-01-21"
+          ],
+          "truth_span": "2+43->4+50",
+          "adj_status": null,
+          "adj_corrected_span": null,
+          "placement_status": "BLOCKED_OR_UNATTEMPTED",
+          "provenance_note": "Segment C (col2, 2+43\u21924+50) split from bore_log26.xlsx. Source: 2026-01-27_211717 - Jimenez. NEEDS REVIEW: print mapping uncertain \u2014 preserved full source print '21,15,6,5'.",
+          "segment_order": 2,
+          "sibling_group_id": "bore_log26",
+          "run_group_id": "bore_log26",
+          "ownership_disambiguation": {
+            "by_span": "2+43->4+50",
+            "by_sheets": [
+              6
+            ],
+            "distinct_from_siblings": [
+              {
+                "sibling": "bore_log60",
+                "span": "0+00->1+13",
+                "sheets": [
+                  15
+                ]
+              },
+              {
+                "sibling": "bore_log62",
+                "span": "0+00->2+01",
+                "sheets": [
+                  5,
+                  6
+                ]
+              },
+              {
+                "sibling": "bore_log59",
+                "span": "2+76->4+46",
+                "sheets": [
+                  21
+                ]
+              }
+            ],
+            "span_collision_with_sibling": []
+          }
+        },
+        {
+          "source_entry_id": "bore_log59",
+          "log_id": "log59",
+          "entry_role": "child_segment",
+          "entry_span": "2+76->4+46",
+          "start_station": "2+76",
+          "end_station": "4+46",
+          "start_structure": "installer_hh",
+          "end_structure": "flower_pot",
+          "sheet_context": [
+            21
+          ],
+          "truth_sheets": [
+            21
+          ],
+          "corrected_sheets": [
+            21
+          ],
+          "matchline_context": [],
+          "prints": [
+            "21,15,6,5"
+          ],
+          "crews": [
+            "tx1-1"
+          ],
+          "dates": [
+            "2026-01-21"
+          ],
+          "truth_span": "2+76->4+46",
+          "adj_status": "RECOVERED",
+          "adj_corrected_span": "2+76->4+46",
+          "placement_status": "RENDERED",
+          "provenance_note": "Segment A (col1 top, stations 2+76\u21924+46) split from bore_log26.xlsx. Source: 2026-01-27_211717 - Jimenez. NEEDS REVIEW: print mapping uncertain \u2014 preserved full source print '21,15,6,5'.",
+          "segment_order": 3,
+          "sibling_group_id": "bore_log26",
+          "run_group_id": "bore_log26",
+          "ownership_disambiguation": {
+            "by_span": "2+76->4+46",
+            "by_sheets": [
+              21
+            ],
+            "distinct_from_siblings": [
+              {
+                "sibling": "bore_log60",
+                "span": "0+00->1+13",
+                "sheets": [
+                  15
+                ]
+              },
+              {
+                "sibling": "bore_log62",
+                "span": "0+00->2+01",
+                "sheets": [
+                  5,
+                  6
+                ]
+              },
+              {
+                "sibling": "bore_log61",
+                "span": "2+43->4+50",
+                "sheets": [
+                  6
+                ]
+              }
+            ],
+            "span_collision_with_sibling": []
+          }
+        }
+      ],
+      "renderable_child_entries": [
+        "bore_log59"
+      ]
+    },
+    {
+      "source_parent_id": "bore_log27",
+      "source_file": null,
+      "source_page": null,
+      "is_split_family": false,
+      "sibling_group_id": "bore_log27",
+      "run_group_id": "bore_log27",
+      "entries": [
+        {
+          "source_entry_id": "bore_log27",
+          "log_id": "log27",
+          "entry_role": "standalone_bore",
+          "entry_span": "7+30->13+55",
+          "start_station": "7+30",
+          "end_station": "13+55",
+          "start_structure": null,
+          "end_structure": null,
+          "sheet_context": [
+            15,
+            16
+          ],
+          "truth_sheets": [
+            15,
+            16
+          ],
+          "corrected_sheets": null,
+          "matchline_context": [],
+          "prints": [
+            "16,15"
+          ],
+          "crews": [
+            "tx1-1"
+          ],
+          "dates": [
+            "2025-12-05"
+          ],
+          "truth_span": "7+30->13+55",
+          "adj_status": null,
+          "adj_corrected_span": null,
+          "placement_status": "BLOCKED_OR_UNATTEMPTED",
+          "provenance_note": "Source photo rotated 90 deg in storage; depth readings in 4.0-4.5 range.",
+          "segment_order": 0,
+          "sibling_group_id": "bore_log27",
+          "run_group_id": "bore_log27",
+          "ownership_disambiguation": {
+            "by_span": "7+30->13+55",
+            "by_sheets": [
+              15,
+              16
+            ],
+            "distinct_from_siblings": [],
+            "span_collision_with_sibling": []
+          }
+        }
+      ],
+      "renderable_child_entries": []
+    },
+    {
+      "source_parent_id": "bore_log28",
+      "source_file": null,
+      "source_page": null,
+      "is_split_family": true,
+      "sibling_group_id": "bore_log28",
+      "run_group_id": "bore_log28",
+      "entries": [
+        {
+          "source_entry_id": "bore_log63",
+          "log_id": "log63",
+          "entry_role": "child_segment",
+          "entry_span": "0+00->0+56",
+          "start_station": "0+00",
+          "end_station": "0+56",
+          "start_structure": null,
+          "end_structure": null,
+          "sheet_context": [
+            5,
+            17,
+            21
+          ],
+          "truth_sheets": [
+            5,
+            17,
+            21
+          ],
+          "corrected_sheets": [
+            17
+          ],
+          "matchline_context": [],
+          "prints": [
+            "5,17,21"
+          ],
+          "crews": [
+            "tx1-1"
+          ],
+          "dates": [
+            "2026-01-16"
+          ],
+          "truth_span": "0+00->0+56",
+          "adj_status": "RECOVERED",
+          "adj_corrected_span": "0+00->0+56",
+          "placement_status": "RENDERED",
+          "provenance_note": "Segment A (col2 of source 2026-01-20_215840_1) split from bore_log28.xlsx. NEEDS REVIEW: this and bore_log64 are col2/col3 of source 2026-01-20_215840_1; col1 of same source is captured in bore_log6.xlsx. NEEDS REVIEW: print mapping uncerta",
+          "segment_order": 0,
+          "sibling_group_id": "bore_log28",
+          "run_group_id": "bore_log28",
+          "ownership_disambiguation": {
+            "by_span": "0+00->0+56",
+            "by_sheets": [
+              5,
+              17,
+              21
+            ],
+            "distinct_from_siblings": [
+              {
+                "sibling": "bore_log64",
+                "span": "0+00->1+00",
+                "sheets": [
+                  5,
+                  17,
+                  21
+                ]
+              }
+            ],
+            "span_collision_with_sibling": [
+              "bore_log64"
+            ]
+          }
+        },
+        {
+          "source_entry_id": "bore_log64",
+          "log_id": "log64",
+          "entry_role": "child_segment",
+          "entry_span": "0+00->1+00",
+          "start_station": "0+00",
+          "end_station": "1+00",
+          "start_structure": "installer_hh",
+          "end_structure": "flower_pot",
+          "sheet_context": [
+            5,
+            17,
+            21
+          ],
+          "truth_sheets": [
+            5,
+            17,
+            21
+          ],
+          "corrected_sheets": [
+            21
+          ],
+          "matchline_context": [],
+          "prints": [
+            "5,17,21"
+          ],
+          "crews": [
+            "tx1-1"
+          ],
+          "dates": [
+            "2026-01-16"
+          ],
+          "truth_span": "0+00->1+00",
+          "adj_status": "RECOVERED",
+          "adj_corrected_span": "0+00->1+00",
+          "placement_status": "RENDERED",
+          "provenance_note": "Segment B (col3 of source 2026-01-20_215840_1) split from bore_log28.xlsx. NEEDS REVIEW: this and bore_log63 are col2/col3 of source 2026-01-20_215840_1; col1 of same source is captured in bore_log6.xlsx. NEEDS REVIEW: print mapping uncerta",
+          "segment_order": 1,
+          "sibling_group_id": "bore_log28",
+          "run_group_id": "bore_log28",
+          "ownership_disambiguation": {
+            "by_span": "0+00->1+00",
+            "by_sheets": [
+              5,
+              17,
+              21
+            ],
+            "distinct_from_siblings": [
+              {
+                "sibling": "bore_log63",
+                "span": "0+00->0+56",
+                "sheets": [
+                  5,
+                  17,
+                  21
+                ]
+              }
+            ],
+            "span_collision_with_sibling": [
+              "bore_log63"
+            ]
+          }
+        }
+      ],
+      "renderable_child_entries": [
+        "bore_log63",
+        "bore_log64"
+      ]
+    },
+    {
+      "source_parent_id": "bore_log29",
+      "source_file": null,
+      "source_page": null,
+      "is_split_family": false,
+      "sibling_group_id": "bore_log29",
+      "run_group_id": "bore_log29",
+      "entries": [
+        {
+          "source_entry_id": "bore_log29",
+          "log_id": "log29",
+          "entry_role": "standalone_bore",
+          "entry_span": "0+00->4+15",
+          "start_station": "0+00",
+          "end_station": "4+15",
+          "start_structure": null,
+          "end_structure": null,
+          "sheet_context": [
+            10
+          ],
+          "truth_sheets": [
+            10
+          ],
+          "corrected_sheets": [],
+          "matchline_context": [],
+          "prints": [
+            "10,12"
+          ],
+          "crews": [
+            "tx1-4"
+          ],
+          "dates": [
+            "2025-12-15"
+          ],
+          "truth_span": "0+00->4+15",
+          "adj_status": "RECOVERED",
+          "adj_corrected_span": "0+00->4+45",
+          "placement_status": "RENDERED",
+          "provenance_note": "",
+          "segment_order": 0,
+          "sibling_group_id": "bore_log29",
+          "run_group_id": "bore_log29",
+          "ownership_disambiguation": {
+            "by_span": "0+00->4+15",
+            "by_sheets": [
+              10
+            ],
+            "distinct_from_siblings": [],
+            "span_collision_with_sibling": []
+          }
+        }
+      ],
+      "renderable_child_entries": [
+        "bore_log29"
+      ]
+    },
+    {
+      "source_parent_id": "bore_log30",
+      "source_file": null,
+      "source_page": null,
+      "is_split_family": false,
+      "sibling_group_id": "bore_log30",
+      "run_group_id": "bore_log30",
+      "entries": [
+        {
+          "source_entry_id": "bore_log30",
+          "log_id": "log30",
+          "entry_role": "standalone_bore",
+          "entry_span": "0+00->5+00",
+          "start_station": "0+00",
+          "end_station": "5+00",
+          "start_structure": null,
+          "end_structure": null,
+          "sheet_context": [
+            10,
+            12
+          ],
+          "truth_sheets": [
+            10,
+            12
+          ],
+          "corrected_sheets": null,
+          "matchline_context": [],
+          "prints": [
+            "10,12"
+          ],
+          "crews": [
+            "tx1-4"
+          ],
+          "dates": [
+            "2025-12-17"
+          ],
+          "truth_span": "0+00->5+00",
+          "adj_status": null,
+          "adj_corrected_span": null,
+          "placement_status": "BLOCKED_OR_UNATTEMPTED",
+          "provenance_note": "NEEDS REVIEW: form DATE field may read '18/17/25' \u2014 interpreted as 12/17/25 based on project context and impossible month value '18'.",
+          "segment_order": 0,
+          "sibling_group_id": "bore_log30",
+          "run_group_id": "bore_log30",
+          "ownership_disambiguation": {
+            "by_span": "0+00->5+00",
+            "by_sheets": [
+              10,
+              12
+            ],
+            "distinct_from_siblings": [],
+            "span_collision_with_sibling": []
+          }
+        }
+      ],
+      "renderable_child_entries": []
+    },
+    {
+      "source_parent_id": "bore_log31",
+      "source_file": null,
+      "source_page": null,
+      "is_split_family": false,
+      "sibling_group_id": "bore_log31",
+      "run_group_id": "bore_log31",
+      "entries": [
+        {
+          "source_entry_id": "bore_log31",
+          "log_id": "log31",
+          "entry_role": "standalone_bore",
+          "entry_span": "0+00->2+60",
+          "start_station": "0+00",
+          "end_station": "2+60",
+          "start_structure": null,
+          "end_structure": null,
+          "sheet_context": [
+            10
+          ],
+          "truth_sheets": [
+            10
+          ],
+          "corrected_sheets": [],
+          "matchline_context": [],
+          "prints": [
+            "10,12"
+          ],
+          "crews": [
+            "tx1-4"
+          ],
+          "dates": [
+            "2025-12-18"
+          ],
+          "truth_span": "0+00->2+60",
+          "adj_status": "ABSTAIN_NO_SAFE_SOURCE",
+          "adj_corrected_span": null,
+          "placement_status": "BLOCKED_OR_UNATTEMPTED",
+          "provenance_note": "",
+          "segment_order": 0,
+          "sibling_group_id": "bore_log31",
+          "run_group_id": "bore_log31",
+          "ownership_disambiguation": {
+            "by_span": "0+00->2+60",
+            "by_sheets": [
+              10
+            ],
+            "distinct_from_siblings": [],
+            "span_collision_with_sibling": []
+          }
+        }
+      ],
+      "renderable_child_entries": []
+    },
+    {
+      "source_parent_id": "bore_log32",
+      "source_file": null,
+      "source_page": null,
+      "is_split_family": false,
+      "sibling_group_id": "bore_log32",
+      "run_group_id": "bore_log32",
+      "entries": [
+        {
+          "source_entry_id": "bore_log32",
+          "log_id": "log32",
+          "entry_role": "standalone_bore",
+          "entry_span": "0+00->2+13",
+          "start_station": "0+00",
+          "end_station": "2+13",
+          "start_structure": null,
+          "end_structure": null,
+          "sheet_context": [
+            18,
+            22
+          ],
+          "truth_sheets": [
+            18,
+            22
+          ],
+          "corrected_sheets": null,
+          "matchline_context": [],
+          "prints": [
+            "18,22"
+          ],
+          "crews": [
+            "tx1-4"
+          ],
+          "dates": [
+            "2026-01-15"
+          ],
+          "truth_span": "0+00->2+13",
+          "adj_status": null,
+          "adj_corrected_span": null,
+          "placement_status": "BLOCKED_OR_UNATTEMPTED",
+          "provenance_note": "",
+          "segment_order": 0,
+          "sibling_group_id": "bore_log32",
+          "run_group_id": "bore_log32",
+          "ownership_disambiguation": {
+            "by_span": "0+00->2+13",
+            "by_sheets": [
+              18,
+              22
+            ],
+            "distinct_from_siblings": [],
+            "span_collision_with_sibling": []
+          }
+        }
+      ],
+      "renderable_child_entries": []
+    },
+    {
+      "source_parent_id": "bore_log33",
+      "source_file": "2026-01-08_184854_2 - Jimenez",
+      "source_page": null,
+      "is_split_family": true,
+      "sibling_group_id": "bore_log33",
+      "run_group_id": "bore_log33",
+      "entries": [
+        {
+          "source_entry_id": "bore_log66",
+          "log_id": "log66",
+          "entry_role": "child_segment",
+          "entry_span": "0+00->0+55",
+          "start_station": "0+00",
+          "end_station": "0+55",
+          "start_structure": "installer_hh",
+          "end_structure": "nextlink_hh",
+          "sheet_context": [
+            10
+          ],
+          "truth_sheets": [
+            10
+          ],
+          "corrected_sheets": [
+            10
+          ],
+          "matchline_context": [],
+          "prints": [
+            "9,10"
+          ],
+          "crews": [
+            "tx1-4"
+          ],
+          "dates": [
+            "2026-01-07"
+          ],
+          "truth_span": "0+00->0+55",
+          "adj_status": "RECOVERED",
+          "adj_corrected_span": "0+00->0+55",
+          "placement_status": "RENDERED",
+          "provenance_note": "Segment B (col2, fresh start at 0+00) split from bore_log33.xlsx. Source: 2026-01-08_184854_2 - Jimenez. NEEDS REVIEW: print mapping uncertain \u2014 preserved full source print '9,10'.",
+          "segment_order": 0,
+          "sibling_group_id": "bore_log33",
+          "run_group_id": "bore_log33",
+          "ownership_disambiguation": {
+            "by_span": "0+00->0+55",
+            "by_sheets": [
+              10
+            ],
+            "distinct_from_siblings": [
+              {
+                "sibling": "bore_log65",
+                "span": "4+51->6+50",
+                "sheets": [
+                  9,
+                  10
+                ]
+              }
+            ],
+            "span_collision_with_sibling": []
+          }
+        },
+        {
+          "source_entry_id": "bore_log65",
+          "log_id": "log65",
+          "entry_role": "child_segment",
+          "entry_span": "4+51->6+50",
+          "start_station": "4+51",
+          "end_station": "6+50",
+          "start_structure": null,
+          "end_structure": null,
+          "sheet_context": [
+            9,
+            10
+          ],
+          "truth_sheets": [
+            9,
+            10
+          ],
+          "corrected_sheets": null,
+          "matchline_context": [],
+          "prints": [
+            "9,10"
+          ],
+          "crews": [
+            "tx1-4"
+          ],
+          "dates": [
+            "2026-01-02"
+          ],
+          "truth_span": "4+51->6+50",
+          "adj_status": null,
+          "adj_corrected_span": null,
+          "placement_status": "RENDERED",
+          "provenance_note": "Segment A (col1, continues from prior bore at high station 4+51) split from bore_log33.xlsx. Source: 2026-01-08_184854_2 - Jimenez. NEEDS REVIEW: print mapping uncertain \u2014 preserved full source print '9,10'.",
+          "segment_order": 1,
+          "sibling_group_id": "bore_log33",
+          "run_group_id": "bore_log33",
+          "ownership_disambiguation": {
+            "by_span": "4+51->6+50",
+            "by_sheets": [
+              9,
+              10
+            ],
+            "distinct_from_siblings": [
+              {
+                "sibling": "bore_log66",
+                "span": "0+00->0+55",
+                "sheets": [
+                  10
+                ]
+              }
+            ],
+            "span_collision_with_sibling": []
+          }
+        }
+      ],
+      "renderable_child_entries": [
+        "bore_log66",
+        "bore_log65"
+      ]
+    },
+    {
+      "source_parent_id": "bore_log34",
+      "source_file": "2026-01-08_184854_3 - Jimenez",
+      "source_page": null,
+      "is_split_family": true,
+      "sibling_group_id": "bore_log34",
+      "run_group_id": "bore_log34",
+      "entries": [
+        {
+          "source_entry_id": "bore_log67",
+          "log_id": "log67",
+          "entry_role": "child_segment",
+          "entry_span": "0+00->4+14",
+          "start_station": "0+00",
+          "end_station": "4+14",
+          "start_structure": "installer_hh",
+          "end_structure": "flower_pot",
+          "sheet_context": [
+            17,
+            19,
+            20
+          ],
+          "truth_sheets": [
+            19,
+            20
+          ],
+          "corrected_sheets": [
+            17,
+            20
+          ],
+          "matchline_context": [],
+          "prints": [
+            "19,20"
+          ],
+          "crews": [
+            "tx1-4"
+          ],
+          "dates": [
+            "2026-01-08"
+          ],
+          "truth_span": "0+00->4+14",
+          "adj_status": "RECOVERED",
+          "adj_corrected_span": "0+00->4+14",
+          "placement_status": "RENDERED",
+          "provenance_note": "Segment A (col1, 0+00\u21924+14) split from bore_log34.xlsx. Source: 2026-01-08_184854_3 - Jimenez. NEEDS REVIEW: col1 ends at 4+14 with BOC 9; col2 (split into bore_log68) starts at 4+54 with BOC 4 \u2014 BOC jump suggests different bore. NEEDS REVI",
+          "segment_order": 0,
+          "sibling_group_id": "bore_log34",
+          "run_group_id": "bore_log34",
+          "ownership_disambiguation": {
+            "by_span": "0+00->4+14",
+            "by_sheets": [
+              17,
+              19,
+              20
+            ],
+            "distinct_from_siblings": [
+              {
+                "sibling": "bore_log68",
+                "span": "4+54->7+21",
+                "sheets": [
+                  17,
+                  19,
+                  20
+                ]
+              }
+            ],
+            "span_collision_with_sibling": []
+          }
+        },
+        {
+          "source_entry_id": "bore_log68",
+          "log_id": "log68",
+          "entry_role": "child_segment",
+          "entry_span": "4+54->7+21",
+          "start_station": "4+54",
+          "end_station": "7+21",
+          "start_structure": null,
+          "end_structure": null,
+          "sheet_context": [
+            17,
+            19,
+            20
+          ],
+          "truth_sheets": [
+            19,
+            20
+          ],
+          "corrected_sheets": [
+            17,
+            20
+          ],
+          "matchline_context": [],
+          "prints": [
+            "19,20"
+          ],
+          "crews": [
+            "tx1-4"
+          ],
+          "dates": [
+            "2026-01-08"
+          ],
+          "truth_span": "4+54->7+21",
+          "adj_status": "RECOVERED",
+          "adj_corrected_span": "5+03->6+79",
+          "placement_status": "RENDERED",
+          "provenance_note": "Segment B (col2, 4+54\u21927+21) split from bore_log34.xlsx. Source: 2026-01-08_184854_3 - Jimenez. NEEDS REVIEW: starts at 4+54 (40-ft gap from end of col1 = bore_log67); BOC pattern 4-5 differs from bore_log67's BOC 9-10 pattern. NEEDS REVIEW:",
+          "segment_order": 1,
+          "sibling_group_id": "bore_log34",
+          "run_group_id": "bore_log34",
+          "ownership_disambiguation": {
+            "by_span": "4+54->7+21",
+            "by_sheets": [
+              17,
+              19,
+              20
+            ],
+            "distinct_from_siblings": [
+              {
+                "sibling": "bore_log67",
+                "span": "0+00->4+14",
+                "sheets": [
+                  17,
+                  19,
+                  20
+                ]
+              }
+            ],
+            "span_collision_with_sibling": []
+          }
+        }
+      ],
+      "renderable_child_entries": [
+        "bore_log67",
+        "bore_log68"
+      ]
+    },
+    {
+      "source_parent_id": "bore_log35",
+      "source_file": "2026-01-12_211448_2 - Jimenez",
+      "source_page": null,
+      "is_split_family": true,
+      "sibling_group_id": "bore_log35",
+      "run_group_id": "bore_log35",
+      "entries": [
+        {
+          "source_entry_id": "bore_log69",
+          "log_id": "log69",
+          "entry_role": "child_segment",
+          "entry_span": "0+00->4+54",
+          "start_station": "0+00",
+          "end_station": "4+54",
+          "start_structure": "installer_hh",
+          "end_structure": "installer_hh",
+          "sheet_context": [
+            17,
+            19,
+            20
+          ],
+          "truth_sheets": [
+            19,
+            20
+          ],
+          "corrected_sheets": [
+            17
+          ],
+          "matchline_context": [],
+          "prints": [
+            "19,20"
+          ],
+          "crews": [
+            "tx1-4"
+          ],
+          "dates": [
+            "2026-01-12"
+          ],
+          "truth_span": "0+00->4+54",
+          "adj_status": "RECOVERED",
+          "adj_corrected_span": "0+00->4+54",
+          "placement_status": "RENDERED",
+          "provenance_note": "Segment A (col1 + col2, 0+00\u21924+54 \u2014 near-contiguous, treated as one bore) split from bore_log35.xlsx. Source: 2026-01-12_211448_2 - Jimenez. NEEDS REVIEW: BOC on rows 11-12 could be 9 or 10. NEEDS REVIEW: print mapping uncertain \u2014 preserved",
+          "segment_order": 0,
+          "sibling_group_id": "bore_log35",
+          "run_group_id": "bore_log35",
+          "ownership_disambiguation": {
+            "by_span": "0+00->4+54",
+            "by_sheets": [
+              17,
+              19,
+              20
+            ],
+            "distinct_from_siblings": [
+              {
+                "sibling": "bore_log70",
+                "span": "0+00->2+15",
+                "sheets": [
+                  17,
+                  19,
+                  20
+                ]
+              }
+            ],
+            "span_collision_with_sibling": [
+              "bore_log70"
+            ]
+          }
+        },
+        {
+          "source_entry_id": "bore_log70",
+          "log_id": "log70",
+          "entry_role": "child_segment",
+          "entry_span": "0+00->2+15",
+          "start_station": "0+00",
+          "end_station": "2+15",
+          "start_structure": "installer_hh",
+          "end_structure": "flower_pot",
+          "sheet_context": [
+            17,
+            19,
+            20
+          ],
+          "truth_sheets": [
+            19,
+            20
+          ],
+          "corrected_sheets": [
+            17,
+            20
+          ],
+          "matchline_context": [],
+          "prints": [
+            "19,20"
+          ],
+          "crews": [
+            "tx1-4"
+          ],
+          "dates": [
+            "2026-01-12"
+          ],
+          "truth_span": "0+00->2+15",
+          "adj_status": "RECOVERED",
+          "adj_corrected_span": "0+00->2+15",
+          "placement_status": "BLOCKED_OR_UNATTEMPTED",
+          "provenance_note": "Segment B (col3, fresh 0+00\u21922+15 bore) split from bore_log35.xlsx. Source: 2026-01-12_211448_2 - Jimenez. NEEDS REVIEW: row 3 BOC could be 4 or 5. NEEDS REVIEW: print mapping uncertain \u2014 preserved full source print '19,20'.",
+          "segment_order": 1,
+          "sibling_group_id": "bore_log35",
+          "run_group_id": "bore_log35",
+          "ownership_disambiguation": {
+            "by_span": "0+00->2+15",
+            "by_sheets": [
+              17,
+              19,
+              20
+            ],
+            "distinct_from_siblings": [
+              {
+                "sibling": "bore_log69",
+                "span": "0+00->4+54",
+                "sheets": [
+                  17,
+                  19,
+                  20
+                ]
+              }
+            ],
+            "span_collision_with_sibling": [
+              "bore_log69"
+            ]
+          }
+        }
+      ],
+      "renderable_child_entries": [
+        "bore_log69"
+      ]
+    },
+    {
+      "source_parent_id": "bore_log36",
+      "source_file": null,
+      "source_page": null,
+      "is_split_family": false,
+      "sibling_group_id": "bore_log36",
+      "run_group_id": "bore_log36",
+      "entries": [
+        {
+          "source_entry_id": "bore_log36",
+          "log_id": "log36",
+          "entry_role": "standalone_bore",
+          "entry_span": "0+56->1+45",
+          "start_station": "0+56",
+          "end_station": "1+45",
+          "start_structure": "installer_hh",
+          "end_structure": "installer_hh",
+          "sheet_context": [
+            17
+          ],
+          "truth_sheets": [
+            17
+          ],
+          "corrected_sheets": [],
+          "matchline_context": [],
+          "prints": [
+            "17"
+          ],
+          "crews": [
+            "tx1-4"
+          ],
+          "dates": [
+            "2026-01-16"
+          ],
+          "truth_span": "0+56->1+45",
+          "adj_status": "RECOVERED",
+          "adj_corrected_span": "0+00->0+89",
+          "placement_status": "RENDERED",
+          "provenance_note": "",
+          "segment_order": 0,
+          "sibling_group_id": "bore_log36",
+          "run_group_id": "bore_log36",
+          "ownership_disambiguation": {
+            "by_span": "0+56->1+45",
+            "by_sheets": [
+              17
+            ],
+            "distinct_from_siblings": [],
+            "span_collision_with_sibling": []
+          }
+        }
+      ],
+      "renderable_child_entries": [
+        "bore_log36"
+      ]
+    },
+    {
+      "source_parent_id": "bore_log37",
+      "source_file": null,
+      "source_page": null,
+      "is_split_family": false,
+      "sibling_group_id": "bore_log37",
+      "run_group_id": "bore_log37",
+      "entries": [
+        {
+          "source_entry_id": "bore_log37",
+          "log_id": "log37",
+          "entry_role": "standalone_bore",
+          "entry_span": "STA 3+50->STA 4+08",
+          "start_station": "STA 3+50",
+          "end_station": "STA 4+08",
+          "start_structure": null,
+          "end_structure": null,
+          "sheet_context": [
+            23
+          ],
+          "truth_sheets": [
+            23
+          ],
+          "corrected_sheets": null,
+          "matchline_context": [],
+          "prints": [
+            "WP 23"
+          ],
+          "crews": [
+            "TX28-1"
+          ],
+          "dates": [
+            "2026-02-11"
+          ],
+          "truth_span": "3+50->4+08",
+          "adj_status": null,
+          "adj_corrected_span": null,
+          "placement_status": "RENDERED",
+          "provenance_note": "PDF source (Ben Nilles digital fill); depth + BOC preserved verbatim with foot marks. Job Name on form: 'Ben Nilles'.",
+          "segment_order": 0,
+          "sibling_group_id": "bore_log37",
+          "run_group_id": "bore_log37",
+          "ownership_disambiguation": {
+            "by_span": "STA 3+50->STA 4+08",
+            "by_sheets": [
+              23
+            ],
+            "distinct_from_siblings": [],
+            "span_collision_with_sibling": []
+          }
+        }
+      ],
+      "renderable_child_entries": [
+        "bore_log37"
+      ]
+    },
+    {
+      "source_parent_id": "bore_log38",
+      "source_file": null,
+      "source_page": null,
+      "is_split_family": false,
+      "sibling_group_id": "bore_log38",
+      "run_group_id": "bore_log38",
+      "entries": [
+        {
+          "source_entry_id": "bore_log38",
+          "log_id": "log38",
+          "entry_role": "standalone_bore",
+          "entry_span": "STA 0+62->STA 16+21",
+          "start_station": "STA 0+62",
+          "end_station": "STA 16+21",
+          "start_structure": null,
+          "end_structure": null,
+          "sheet_context": [
+            25,
+            27
+          ],
+          "truth_sheets": [
+            25,
+            27
+          ],
+          "corrected_sheets": [
+            25,
+            27
+          ],
+          "matchline_context": [],
+          "prints": [
+            "WP 25,27"
+          ],
+          "crews": [
+            "TX28-1"
+          ],
+          "dates": [
+            "2026-02-10"
+          ],
+          "truth_span": "0+62->16+21",
+          "adj_status": "ABSTAIN_NO_SAFE_SOURCE",
+          "adj_corrected_span": null,
+          "placement_status": "BLOCKED_OR_UNATTEMPTED",
+          "provenance_note": "PDF source (Ben Nilles digital fill); depth + BOC preserved verbatim with foot marks. Job Name on form: 'Ben Nilles'.",
+          "segment_order": 0,
+          "sibling_group_id": "bore_log38",
+          "run_group_id": "bore_log38",
+          "ownership_disambiguation": {
+            "by_span": "STA 0+62->STA 16+21",
+            "by_sheets": [
+              25,
+              27
+            ],
+            "distinct_from_siblings": [],
+            "span_collision_with_sibling": []
+          }
+        }
+      ],
+      "renderable_child_entries": []
+    },
+    {
+      "source_parent_id": "bore_log39",
+      "source_file": null,
+      "source_page": null,
+      "is_split_family": false,
+      "sibling_group_id": "bore_log39",
+      "run_group_id": "bore_log39",
+      "entries": [
+        {
+          "source_entry_id": "bore_log39",
+          "log_id": "log39",
+          "entry_role": "standalone_bore",
+          "entry_span": "10+00->14+41",
+          "start_station": "10+00",
+          "end_station": "14+41",
+          "start_structure": null,
+          "end_structure": null,
+          "sheet_context": [
+            25
+          ],
+          "truth_sheets": [
+            25
+          ],
+          "corrected_sheets": null,
+          "matchline_context": [],
+          "prints": [
+            "24,25"
+          ],
+          "crews": [
+            "LUNAR INFRASTRUCTURE"
+          ],
+          "dates": [
+            "2025-12-02"
+          ],
+          "truth_span": "10+00->14+41",
+          "adj_status": null,
+          "adj_corrected_span": null,
+          "placement_status": "RENDERED",
+          "provenance_note": "CHERI LN. NEEDS REVIEW: form says Job Name 'BREMHAM PH4', likely PH5 based on source package. Also row 1 depth shows 36' (foot mark) vs subsequent rows 36\" (inch mark) \u2014 preserved as written. NEEDS REVIEW: source depth mark appeared inconsi",
+          "segment_order": 0,
+          "sibling_group_id": "bore_log39",
+          "run_group_id": "bore_log39",
+          "ownership_disambiguation": {
+            "by_span": "10+00->14+41",
+            "by_sheets": [
+              25
+            ],
+            "distinct_from_siblings": [],
+            "span_collision_with_sibling": []
+          }
+        }
+      ],
+      "renderable_child_entries": [
+        "bore_log39"
+      ]
+    },
+    {
+      "source_parent_id": "bore_log40",
+      "source_file": "GAC 12",
+      "source_page": null,
+      "is_split_family": true,
+      "sibling_group_id": "bore_log40",
+      "run_group_id": "bore_log40",
+      "entries": [
+        {
+          "source_entry_id": "bore_log71",
+          "log_id": "log71",
+          "entry_role": "child_segment",
+          "entry_span": "0+00->6+95",
+          "start_station": "0+00",
+          "end_station": "6+95",
+          "start_structure": "nextlink_hh",
+          "end_structure": "flower_pot",
+          "sheet_context": [
+            23,
+            24
+          ],
+          "truth_sheets": [
+            23,
+            24
+          ],
+          "corrected_sheets": [
+            23,
+            24
+          ],
+          "matchline_context": [],
+          "prints": [
+            "23,24"
+          ],
+          "crews": [
+            "LUNAR INFRASTRUCTURE"
+          ],
+          "dates": [
+            "2025-12-03"
+          ],
+          "truth_span": "0+00->6+95",
+          "adj_status": "RECOVERED",
+          "adj_corrected_span": "0+00->6+95",
+          "placement_status": "RENDERED",
+          "provenance_note": "LAWNDALE AVE & HUISACHE. Segment A (col1) split from bore_log40.xlsx. Source: GAC 12.3.25 MATSEL WP23,24 - Lunar Infrastructure (PDF). PDF source; depth + BOC preserved as written (no unit marks on this form). Job Name 'BREMHAM PH5'. NEEDS ",
+          "segment_order": 0,
+          "sibling_group_id": "bore_log40",
+          "run_group_id": "bore_log40",
+          "ownership_disambiguation": {
+            "by_span": "0+00->6+95",
+            "by_sheets": [
+              23,
+              24
+            ],
+            "distinct_from_siblings": [
+              {
+                "sibling": "bore_log72",
+                "span": "7+50->10+00",
+                "sheets": [
+                  24
+                ]
+              }
+            ],
+            "span_collision_with_sibling": []
+          }
+        },
+        {
+          "source_entry_id": "bore_log72",
+          "log_id": "log72",
+          "entry_role": "child_segment",
+          "entry_span": "7+50->10+00",
+          "start_station": "7+50",
+          "end_station": "10+00",
+          "start_structure": null,
+          "end_structure": null,
+          "sheet_context": [
+            24
+          ],
+          "truth_sheets": [
+            24
+          ],
+          "corrected_sheets": null,
+          "matchline_context": [],
+          "prints": [
+            "23,24"
+          ],
+          "crews": [
+            "LUNAR INFRASTRUCTURE"
+          ],
+          "dates": [
+            "2025-12-03"
+          ],
+          "truth_span": "7+50->10+00",
+          "adj_status": null,
+          "adj_corrected_span": null,
+          "placement_status": "RENDERED",
+          "provenance_note": "LAWNDALE AVE. Segment B (col2) split from bore_log40.xlsx. Source: GAC 12.3.25 MATSEL WP23,24 - Lunar Infrastructure (PDF). Same source PDF as bore_log71, different street segment. PDF source; depth + BOC preserved as written. NEEDS REVIEW:",
+          "segment_order": 1,
+          "sibling_group_id": "bore_log40",
+          "run_group_id": "bore_log40",
+          "ownership_disambiguation": {
+            "by_span": "7+50->10+00",
+            "by_sheets": [
+              24
+            ],
+            "distinct_from_siblings": [
+              {
+                "sibling": "bore_log71",
+                "span": "0+00->6+95",
+                "sheets": [
+                  23,
+                  24
+                ]
+              }
+            ],
+            "span_collision_with_sibling": []
+          }
+        }
+      ],
+      "renderable_child_entries": [
+        "bore_log71",
+        "bore_log72"
+      ]
+    }
+  ]
+}

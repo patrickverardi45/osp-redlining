@@ -58,6 +58,7 @@ from truelinev2.ingest.manual_adjudication import (
     activation_summary, apply_adjudications, load_adjudication,
     parent_run_duplicate_check, validate_endpoint_anchors,
 )
+from truelinev2.ingest.parent_source import child_owns_route
 from truelinev2.ingest.pdf import PlanPdf
 from truelinev2.proof.run_brenham_corpus import EXPECTED_COUNT, PDF, enumerate_corpus
 from truelinev2.proof.run_log59_render_artifact_slice import (
@@ -916,6 +917,17 @@ def main() -> int:
         for lid in targets:
             v = solve_log(plan, offset, lid, rec)
             if v.get("legs"):
+                # PARENT-SOURCE GATE (ORIGINAL_HANDWRITTEN_PARENT_SOURCE_MODEL): a split child may render
+                # ONLY through its parent group, which disambiguates ownership by span + sheets so a child
+                # cannot claim a SIBLING's route -- the log48<-log50 mixup (which is even baked into log48's
+                # adjudication: corrected_end 5+14 == log50's route). Verified drift-free: every currently
+                # rendered log owns its route; the gate only blocks a child claiming a sibling's span.
+                _drawn = (v.get("closure") or {}).get("drawn_ft")
+                if _drawn is None:
+                    _drawn = sum(leg["len_pt"] for leg in v["legs"]) / SCALE
+                _g_ok, _g_reason = child_owns_route(lid, _drawn, sorted({leg["sheet"] for leg in v["legs"]}))
+                v["parent_source_gate"] = {"ok": _g_ok, "reason": _g_reason}
+            if v.get("legs") and v["parent_source_gate"]["ok"]:
                 pngs = _render(plan, offset, lid, v)
                 n_expected = len(v["legs"])
                 if len(pngs) == n_expected:
@@ -925,6 +937,10 @@ def main() -> int:
                 else:
                     v["blocker"] = f"render returned {len(pngs)}/{n_expected} PNGs"
                     blocked[lid] = v["blocker"]
+            elif v.get("legs"):
+                v["blocker"] = f"parent-source gate blocked render: {v['parent_source_gate']['reason']}"
+                v["legs"] = None
+                blocked[lid] = v["blocker"]
             else:
                 blocked[lid] = v["blocker"]
             ev["verdicts"][lid] = {k: x for k, x in v.items() if not k.startswith("_") and k != "legs"}

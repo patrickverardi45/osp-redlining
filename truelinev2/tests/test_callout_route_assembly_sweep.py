@@ -341,4 +341,8 @@ def test_sweep_renders_new_logs_end_to_end():
     # the corrected L-shaped corner-turn route UP Eledra St (the HH-HH footage annotation must win over the
     # adjudicated flower-pot terminus); lacking it, the default solver traces the wrong corridor and fails closure.
     assert "log70" in rep["still_blocked"]
+    # PARENT-SOURCE GATE: every rendered child passed its parent-group ownership gate (a child cannot claim
+    # a sibling's route -- the log48<-log50 mixup). log48 is NOT rendered (held under DUPLICATE_OF_DRAWN).
+    assert all(rep["verdicts"][l]["parent_source_gate"]["ok"] for l in rep["newly_rendered_full"])
+    assert "log48" not in rep["newly_rendered_full"]
     assert rep["engine_census_frozen"] is True and rep["no_fixture_mutation"] is True
