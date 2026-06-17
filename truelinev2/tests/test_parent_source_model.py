@@ -55,6 +55,17 @@ def test_each_sibling_owns_its_own_route():
     assert ps.child_owns_route("log50", 514.0, [10, 11])[0]   # log50 owns 0+00->5+14
 
 
+def test_log48_own_span_rejects_corrupted_adjudication():
+    # PHASE 5: log48's adjudication is CORRUPTED -- it carries sibling log50's Segment-C route (corrected_end
+    # 5+14). The model must use the CORPUS span (0+00->5+09, the true Segment A) as log48's canonical identity,
+    # NOT the corrupted adjudication, so log48 can never render the sibling route.
+    _, e = ps.entry("log48")
+    assert e["entry_span"] == "0+00->5+09"                    # corpus (true Segment A) span
+    assert e["adj_corrected_span"] == "0+00->5+14"            # corrupted adjudication == sibling Segment C
+    own_str, own_ft = ps._own_span("log48", e)
+    assert own_str == "0+00->5+09" and own_ft == 509.0        # corpus identity wins; corruption rejected
+
+
 def test_span_collision_is_detected_for_the_shared_0_00_start():
     # log48 and log50 share the 0+00 start -> flagged as colliding; log49 (44+89 start) does not
     assert "bore_log50" in ps.span_collision_siblings("log48")
