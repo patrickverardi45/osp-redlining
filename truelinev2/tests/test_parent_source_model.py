@@ -80,6 +80,26 @@ def test_unknown_child_cannot_be_placed():
     assert not ok and "not in the parent-source model" in reason
 
 
+def test_reassembly_builder_groups_families_correctly():
+    # PHASE 2/3: the pure parent-reassembly builder reconstructs the canonical parent dataset from the model
+    from truelinev2.proof.run_parent_reassembly import build_parent_records
+    recs = build_parent_records(ps.load_model())
+    assert len(recs) == 39
+    assert sum(1 for r in recs if r["is_split_family"]) == 13
+    assert sum(r["child_count"] for r in recs) == 58
+    assert sum(1 for r in recs if r["is_split_family"] for _ in r["children"]) == 32
+    ids = [c["child_log_id"] for r in recs for c in r["children"]]
+    assert len(ids) == len(set(ids)) == 58                    # every child id preserved exactly once
+    # bore_log20: 3 segments grouped; log48 held (corrupted adj rejected); log50 rendered
+    p20 = next(r for r in recs if r["source_parent_id"] == "bore_log20")
+    assert p20["handwritten_source"] == "2025-12-18_222857 - Jimenez"
+    kids = {c["child_log_id"]: c for c in p20["children"]}
+    assert kids["log48"]["segment_label"] == "Segment A (col1)" and kids["log48"]["span"] == "0+00->5+09"
+    assert kids["log48"]["review_status"] == "CORRUPTED_ADJUDICATION_REJECTED"
+    assert kids["log48"]["adjudication_conflicts_corpus"] is True
+    assert kids["log50"]["span"] == "0+00->5+14" and kids["log50"]["render_status"] == "RENDERED"
+
+
 def test_standalone_bore_is_its_own_parent_with_no_siblings():
     assert ps.parent_of("log2") == "bore_log2"
     assert ps.siblings("log2") == []
