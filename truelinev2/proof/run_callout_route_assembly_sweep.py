@@ -102,10 +102,38 @@ DUPLICATE_OF_DRAWN = ()
 # route, and the UNIQUE-viable-crossing + closure guards reject the parallel 1+91/1+92 Ledbetter run -- so no
 # owner naming and no sibling theft. span_ft is the bore-LOCAL plan span (post-reset 0+00->5+07), NOT a
 # station delta across the reset.
+# log70 (2026-06-17, LOG70_L_TURN_EXACT_FOOTAGE_RENDER lane): an owner re-correction that SUPERSEDES the
+# stored 2026-06-16 anchor. log70 is the L-shaped corner-turn up Eledra St: log69 runs horizontally along
+# Niebuhr St (1+45->4+54); at the STA 4+54 INSTALLER HH corner log70 turns 90 deg and runs UP Eledra St --
+# 'STA 0+00 TO 1+75' (175') on sheet 17 -> MATCHLINE STA 1+75/6+79 SEE SHEET 20 -> 'STA 1+75 TO 2+15' (40')
+# on sheet 20 -> STA 2+15 FLOWER POT. 175+40 = 215 ft = the printed 'HH - HH = 215'' annotation (== footage),
+# which WINS. The stored anchor's only error was the START side (sheet 17): it bound 1+45 (the far-left start
+# of log69's Niebuhr run), so the solver traced the whole L (561.5' -- which the parent gate also rejects as
+# claiming sibling log69's 454' span). Re-anchor the start to the 4+54 INSTALLER HH (sheet 17 side fixed);
+# the end (FLOWER POT 2+15, sheet 20) and span (215') were already correct ("sheet 20 side was correct").
+# Identity-only anchors (NO coordinates); the existing cross-sheet 2-leg solver traces it and closure to 215
+# discriminates the 215' Eledra run from the parallel 218' run; parent gate passes 215 / rejects sibling 454.
 OWNER_CONFIRMED_PLAN_ROUTES = {
     "log48": {"log_id": "log48", "corrected_start": "0+00", "corrected_end": "5+07",
               "corrected_sheets": [10, 12], "span_ft": 507, "status": "RECOVERED",
               "evidence_notes": "STA 45+33=0+00", "endpoint_anchors": None,
+              "allowed_to_draw": True, "must_remain_abstained": False},
+    "log70": {"log_id": "log70", "parent": "bore_log35", "status": "RECOVERED",
+              "corrected_start": "0+00", "corrected_end": "2+15",
+              "corrected_sheets": [17, 20], "span_ft": 215.0,
+              "endpoint_anchors": {
+                  "start": {"station": "4+54", "structure_class": "installer_hh",
+                            "boundary_kind": "structure_terminus", "clarity": "CLEAR",
+                            "structure_label": "INSTALLER HH",
+                            "owner_note_text": ("owner re-correction 2026-06-17: log70 L-turn starts at the "
+                                                "STA 4+54 INSTALLER HH (Niebuhr/Eledra corner; = log69 end) and "
+                                                "runs UP Eledra St. Supersedes the 1+45 start. HH-HH=215' == the "
+                                                "bore footage (175' s17 + 40' s20).")},
+                  "end": {"station": "2+15", "structure_class": "flower_pot",
+                          "boundary_kind": "structure_terminus", "clarity": "CLEAR",
+                          "structure_label": "FLOWER POT",
+                          "owner_note_text": ("owner-confirmed log70 end (sheet 20 side correct): STA 2+15 "
+                                              "FLOWER POT, 40' past the 1+75 matchline up Eledra St.")}},
               "allowed_to_draw": True, "must_remain_abstained": False},
 }
 # OWNER-REVIEWED REVIEW-CANDIDATE PROMOTIONS (2026-06-17 owner review of review_candidate_reasoning_sweep):

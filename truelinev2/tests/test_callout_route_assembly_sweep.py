@@ -56,10 +56,15 @@ DIRECTION_CORRECTED_TARGETS = ("log9", "log23")
 # is auto-excluded by the viable-crossing gate; reset HH 45+33=0+00 start, FLOWER POT 5+07 end; the parent
 # gate passes on its OWN 0+00->5+09 corpus span and REJECTS sibling log50's 5+14.
 LOG48_TARGETS = ("log48",)
+# log70 = OWNER-CONFIRMED PLAN ROUTE (2026-06-17 re-correction): L-shaped corner-turn up Eledra St. Start
+# re-anchored to the STA 4+54 INSTALLER HH (sheet 17 corner = log69 end), up Eledra 175' to the 1+75 matchline,
+# then 40' on sheet 20 to the STA 2+15 FLOWER POT; 175+40 = 215 ft == the printed 'HH - HH = 215'' footage,
+# which closure enforces (the prior 1+45 start traced 561.5'). Cross-sheet 17->20 two-leg.
+LOG70_TARGETS = ("log70",)
 NEW_TARGETS = (CROSS_SHEET_TARGETS + SINGLE_SHEET_TARGETS + NLEG_TARGETS
                + MATCHLINE_TERMINUS_TARGETS + HH_BRIDGE_TARGETS + THROUGH_CONTINUITY_TARGETS
                + RESET_TO_RESET_TARGETS + PROMOTED_CLEAN_TARGETS + DIRECTION_CORRECTED_TARGETS
-               + LOG48_TARGETS)
+               + LOG48_TARGETS + LOG70_TARGETS)
 # log29 + log54 are reviewed-but-unanchored: class + (for log29) sheet derived from source, no anchors
 SOURCE_DERIVED_CLASS_TARGETS = ("log29", "log54")
 # log12's END is an AP TERMINAL PORT HH bound by its AP-id token (AP-121); the station 10+92 does not bind
@@ -231,8 +236,8 @@ def test_promotion_constants_well_formed():
     assert set(OWNER_DIRECTION_CORRECTED) == set(OWNER_CORRECTED_SPAN_PROMOTIONS)   # log9/log23 get strict
     assert (set(SPAN_SEEDED_PROMOTIONS)
             == set(OWNER_APPROVED_SPAN_PROMOTIONS) | set(OWNER_CORRECTED_SPAN_PROMOTIONS))
-    # log70 is NOT YET promotable -- NOT a source conflict; the blocker is MISSING SOLVER SUPPORT for its
-    # corrected L-corner-turn route up Eledra St (printed HH-HH=215' footage annotation must win over the terminus)
+    # log70 renders via OWNER_CONFIRMED_PLAN_ROUTES (the L-turn up Eledra St, start re-anchored to STA 4+54),
+    # NOT via span-seeding -- so it is correctly absent from the span-seeded promotion set.
     assert "log70" not in SPAN_SEEDED_PROMOTIONS
 
 
@@ -333,9 +338,11 @@ def test_sweep_renders_new_logs_end_to_end():
         assert t["through_continuity"] is True                # the default minimal-extension branch overshot
         assert t["start_sheet"] == 17 and t["end_sheet"] == 5 and t["sheets_set"] == [5]   # off-sheet start
         assert t["closure"]["closes"] is True
-    # through-continuity fired for EXACTLY the log6 case -- the other cross-sheet renders close on the default
-    assert [lid for lid in rep["newly_rendered_full"]
-            if rep["verdicts"][lid].get("through_continuity")] == list(THROUGH_CONTINUITY_TARGETS)
+    # through-continuity fires for log6 (off-sheet start, branch overshoot) AND log70 (the L-turn start chain
+    # reaches the 1+75 matchline at multiple points; the branch through-continuous with the sheet-20 leg closes
+    # to 215'). The other cross-sheet renders close on the default minimal-extension branch.
+    assert sorted(lid for lid in rep["newly_rendered_full"]
+                  if rep["verdicts"][lid].get("through_continuity")) == sorted(THROUGH_CONTINUITY_TARGETS + LOG70_TARGETS)
     # log41 = reset-to-reset single-sheet across-street bore: one leg, closes (receiving HH by reset token)
     for lid in RESET_TO_RESET_TARGETS:
         v = rep["verdicts"][lid]
@@ -350,11 +357,19 @@ def test_sweep_renders_new_logs_end_to_end():
     # legacy per-token boundary went the wrong direction and either failed or mis-closed)
     for lid in DIRECTION_CORRECTED_TARGETS:
         assert len(rep["verdicts"][lid]["leg_summary"]) == 2, lid
-    # the correctly-withheld log: log70 is NOT YET promotable -- NOT a source conflict (the source is present:
-    # STA 4+54 INSTALLER HH + printed 'HH-HH=215'' == bore footage). The blocker is MISSING SOLVER SUPPORT for
-    # the corrected L-shaped corner-turn route UP Eledra St (the HH-HH footage annotation must win over the
-    # adjudicated flower-pot terminus); lacking it, the default solver traces the wrong corridor and fails closure.
-    assert "log70" in rep["still_blocked"]
+    # log70 NOW renders the owner-corrected L-shaped corner-turn route UP Eledra St (2026-06-17 re-correction):
+    # start re-anchored to the STA 4+54 INSTALLER HH (sheet 17, the Niebuhr/Eledra corner = log69 end), up
+    # Eledra 175' to the 1+75 matchline, then 40' on sheet 20 to the STA 2+15 FLOWER POT. 175+40 = 215 ft ==
+    # the printed 'HH - HH = 215'' footage, enforced by closure (the prior 1+45 start traced 561.5').
+    for lid in LOG70_TARGETS:
+        v = rep["verdicts"][lid]
+        assert len(sorted(OUT_DIR.glob(f"{lid}_*.png"))) == 2, lid             # cross-sheet 2-leg
+        assert v["start_sheet"] == 17 and v["end_sheet"] == 20
+        assert v["start_class"] == "installer_hh" and v["end_class"] == "flower_pot"
+        assert v["bound_labels"] == {"start": "4+54", "end": "2+15"}           # corrected start (NOT 1+45)
+        assert v["crossing_equation"] == ["1+75", "6+79"]
+        assert v["closure"]["closes"] is True and abs(v["closure"]["drawn_ft"] - 215.0) <= 21.5
+        assert v["parent_source_gate"]["ok"] is True                          # owns 0+00->2+15, rejects log69's 454
     # PARENT-SOURCE GATE: every rendered child passed its parent-group ownership gate (a child cannot claim
     # a sibling's route -- the log48<-log50 mixup).
     assert all(rep["verdicts"][l]["parent_source_gate"]["ok"] for l in rep["newly_rendered_full"])
