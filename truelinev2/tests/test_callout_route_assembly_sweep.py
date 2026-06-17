@@ -35,8 +35,13 @@ MATCHLINE_TERMINUS_TARGETS = ("log68",)
 # ('0+56=0+00'); the partner HH (a non-unique frame 0+00) is identified by the printed, value-unique
 # 'HH - HH = 56'' distance annotation positioned between the two HHs -- NOT by nearest.
 HH_BRIDGE_TARGETS = ("log63",)
+# log6 = a cross-sheet bore (17->5) whose start reset '0+56=0+00' is on sheet 17 but corrected_sheets=[5]
+# (off-sheet start bind), and whose start chain reaches the 3+23/0+69 matchline at TWO points -- the bore's
+# branch is the one THROUGH-CONTINUOUS (same height) with the sheet-5 leg; the default minimal-extension
+# branch overshoots closure (296.9'/360.8' vs 243'), the through-continuous one closes (242.4').
+THROUGH_CONTINUITY_TARGETS = ("log6",)
 NEW_TARGETS = (CROSS_SHEET_TARGETS + SINGLE_SHEET_TARGETS + NLEG_TARGETS
-               + MATCHLINE_TERMINUS_TARGETS + HH_BRIDGE_TARGETS)
+               + MATCHLINE_TERMINUS_TARGETS + HH_BRIDGE_TARGETS + THROUGH_CONTINUITY_TARGETS)
 # log29 + log54 are reviewed-but-unanchored: class + (for log29) sheet derived from source, no anchors
 SOURCE_DERIVED_CLASS_TARGETS = ("log29", "log54")
 # log12's END is an AP TERMINAL PORT HH bound by its AP-id token (AP-121); the station 10+92 does not bind
@@ -170,6 +175,27 @@ def test_ann_between_requires_projection_onto_segment():
     assert _ann_between((250.0, 386.0), a, b) is False     # 90pt to the side -> not this pair
 
 
+def test_through_continuous_pair_selects_matching_coordinate():
+    # a leg's blob may reach a matchline at MORE THAN ONE point; the bore's branch is the one
+    # through-continuous (same along-matchline coordinate) with the other leg -- not a length/nearest pick
+    from truelinev2.proof.run_callout_route_assembly_sweep import _through_continuous_pair, _boundary_crossings
+
+    def dash(x0, y0, x1, y1):
+        return {"lines": [(x0, y0, x1, y1)]}
+
+    s_mlb = (60.0, 0.0, 62.0, 400.0)        # vertical matchline (sheet-17 left edge)
+    e_mlb = (1140.0, 0.0, 1142.0, 400.0)    # vertical matchline (sheet-5 right edge)
+    # start chain reaches the matchline at y=100 AND y=300 (two branches); end chain only at y=300
+    s_chain = [dash(80.0, 100.0, 63.0, 100.0), dash(80.0, 300.0, 63.0, 300.0)]
+    e_chain = [dash(1120.0, 300.0, 1139.0, 300.0)]
+    assert len(_boundary_crossings(s_chain, s_mlb)) == 2   # two distinct crossing branches enumerated
+    s_bnd, e_bnd = _through_continuous_pair(s_chain, s_mlb, e_chain, e_mlb)
+    assert s_bnd is not None and abs(s_bnd[1] - 300.0) < 2.0   # the y=300 branch (matches the end leg)
+    assert e_bnd is not None and abs(e_bnd[1] - 300.0) < 2.0
+    # no through-continuous pair -> abstain (end leg crosses at y=200, which the start leg never reaches)
+    assert _through_continuous_pair(s_chain, s_mlb, [dash(1120.0, 200.0, 1139.0, 200.0)], e_mlb) == (None, None)
+
+
 # ---- heavy end-to-end (PDF + env gated) ---------------------------------------------
 
 @pytest.mark.skipif(not os.path.isfile(PDF), reason="Brenham plan PDF not present")
@@ -232,6 +258,18 @@ def test_sweep_renders_new_logs_end_to_end():
         assert len(h["hh_bridge_candidates"]) == 1            # unique HH at the printed span distance
         assert h["leg_summary"][0]["kind"] == "hh_hh_bridge"
         assert h["closure"]["closes"] is True
+    # log6 = cross-sheet 17->5 via through-continuity, with an OFF-SHEET start bind (reset on sheet 17, not in
+    # corrected_sheets=[5]); two legs close to 243' only when the crossing branch is through-continuous
+    for lid in THROUGH_CONTINUITY_TARGETS:
+        t = rep["verdicts"][lid]
+        pngs = sorted(OUT_DIR.glob(f"{lid}_*.png"))
+        assert len(pngs) == 2, (lid, [p.name for p in pngs])
+        assert t["through_continuity"] is True                # the default minimal-extension branch overshot
+        assert t["start_sheet"] == 17 and t["end_sheet"] == 5 and t["sheets_set"] == [5]   # off-sheet start
+        assert t["closure"]["closes"] is True
+    # through-continuity fired for EXACTLY the log6 case -- the other cross-sheet renders close on the default
+    assert [lid for lid in rep["newly_rendered_full"]
+            if rep["verdicts"][lid].get("through_continuity")] == list(THROUGH_CONTINUITY_TARGETS)
     # the correctly-withheld log (DO-NOT-WIDEN): log70 fails closure (the owner's flagged -504ft conflict)
     assert "log70" in rep["still_blocked"]
     assert rep["engine_census_frozen"] is True and rep["no_fixture_mutation"] is True

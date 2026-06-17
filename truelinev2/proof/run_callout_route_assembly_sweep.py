@@ -179,18 +179,11 @@ def _all_sheets(plan, offset):
     return [s for s in range(1, plan.page_count + 1) if 0 <= s + offset - 1 < plan.page_count]
 
 
-def _bind_unique(plan, offset, sheets, cls, label):
-    """The UNIQUE (sheet, class) where a terminus LABEL binds, derived from source. The sheet comes from the
-    owner's corrected_sheets, or -- when that set is EMPTY -- is EXTRACTED FROM SOURCE across ALL plan
-    sheets. The class is consumed when an owner anchor encoded it; when None it is DERIVED FROM SOURCE
-    (every modeled class tried; the unique leader-bound symbol wins -- never owner-named, never nearest).
-    0 or >=2 binds -> (None, None, {})."""
-    if not label:
-        return None, None, {}
-    search = list(sheets) if sheets else _all_sheets(plan, offset)
+def _bind_over(plan, offset, candidate_sheets, cls, label):
+    """The UNIQUE (sheet, class) where ``label`` binds across ``candidate_sheets`` (0 or >=2 -> None)."""
     # cheap pre-filter: a terminus can only bind on a sheet whose text prints its label token (one get_text
     # call vs a full words+line_items parse per class) -- necessary for any bind, narrows the search.
-    search = [s for s in search if label in plan.text_by_index(s + offset - 1)]
+    search = [s for s in candidate_sheets if label in plan.text_by_index(s + offset - 1)]
     classes = [cls] if cls else list(MODELED)
     bound, res = [], {}
     for sh in search:
@@ -202,6 +195,28 @@ def _bind_unique(plan, offset, sheets, cls, label):
     if len(bound) == 1:
         return bound[0][0], bound[0][1], res
     return None, None, res
+
+
+def _bind_unique(plan, offset, sheets, cls, label):
+    """The UNIQUE (sheet, class) where a terminus LABEL binds, derived from source. The sheet comes from the
+    owner's corrected_sheets, or -- when that set is EMPTY -- is EXTRACTED FROM SOURCE across ALL plan
+    sheets. The class is consumed when an owner anchor encoded it; when None it is DERIVED FROM SOURCE
+    (every modeled class tried; the unique leader-bound symbol wins -- never owner-named, never nearest).
+    0 or >=2 binds -> (None, None, {}).
+
+    OFF-SHEET FALLBACK: when corrected_sheets is given but the label does NOT bind on it, retry across ALL
+    plan sheets (uniqueness-gated). A cross-sheet bore's far endpoint can sit on a sheet the owner omitted
+    from corrected_sheets (e.g. log6's start reset '0+56=0+00' is on sheet 17 but corrected_sheets=[5]); a
+    GLOBALLY unique label binds there safely, while a non-unique one still yields >=2 -> None (no widening)."""
+    if not label:
+        return None, None, {}
+    if sheets:
+        sheet, c, res = _bind_over(plan, offset, list(sheets), cls, label)
+        if sheet is not None:
+            return sheet, c, res
+        off = _bind_over(plan, offset, _all_sheets(plan, offset), cls, label)
+        return (off[0], off[1], off[2] or res) if off[0] is not None else (None, None, off[2] or res)
+    return _bind_over(plan, offset, _all_sheets(plan, offset), cls, label)
 
 
 def _resolve_endpoint(plan, offset, sheets, cls, labels):
@@ -311,6 +326,40 @@ def _chain_boundary_near_x(chain, mlb, target_x, x_tol=14.0):
                 if best is None or d < best[0]:
                     best = (d, (ext[0], ext[1]))
     return best[1] if best else None
+
+
+def _boundary_crossings(chain, mlb):
+    """Every DISTINCT point where ``chain``'s terminal dashes reach matchline ``mlb`` (within MAX_DASH_GAP,
+    extended to the centerline), tagged with the ALONG-matchline coordinate (y for a vertical matchline, x
+    for a horizontal one). A conduit blob may reach the SAME drawn matchline at more than one point (several
+    runs to one sheet edge); this enumerates them so the caller can pick the through-continuous one."""
+    vertical = (mlb[3] - mlb[1]) >= (mlb[2] - mlb[0])
+    out = []
+    for seg in chain:
+        for ln in seg.get("lines") or ():
+            for p, q in (((ln[0], ln[1]), (ln[2], ln[3])), ((ln[2], ln[3]), (ln[0], ln[1]))):
+                if nearest_gap([p], mlb) > MAX_DASH_GAP:
+                    continue
+                ext = extend_dash_to_boundary([{"lines": [(p[0], p[1], q[0], q[1])]}], mlb)
+                if ext is None:
+                    continue
+                coord = ext[1] if vertical else ext[0]
+                if all(abs(coord - c) > 3.0 for c, _ in out):
+                    out.append((coord, tuple(ext)))
+    return out
+
+
+def _through_continuous_pair(s_chain, s_mlb, e_chain, e_mlb, tol=10.0):
+    """The UNIQUE (start_bnd, end_bnd) pair whose two legs cross their matchlines at the SAME along-matchline
+    coordinate -- a physical bore crosses the sheet boundary at ONE height (vertical matchline) / offset
+    (horizontal), and tiled sheets preserve that coordinate across the edge. This DISAMBIGUATES a leg whose
+    blob reaches the matchline at several points (the wrong branch overshoots closure): the bore's branch is
+    the one through-continuous with the OTHER leg. Returns (s_bnd, e_bnd) or (None, None) when not exactly
+    one matching pair (0 or >=2 -> abstain, never a length/nearest pick)."""
+    sc = _boundary_crossings(s_chain, s_mlb)
+    ec = _boundary_crossings(e_chain, e_mlb)
+    pairs = [(sx, ex) for (s, sx) in sc for (e, ex) in ec if abs(s - e) <= tol]
+    return pairs[0] if len(pairs) == 1 else (None, None)
 
 
 def _solve_nleg(plan, offset, out, s0, smid, sn, s_xy, s_chain, s_words, s_draw,
@@ -664,9 +713,33 @@ def solve_log(plan, offset, lid, rec):
         return out
     cr = viable[0]
     a_bnd, b_bnd = cr["_a"][1], cr["_b"][1]
-
     s_route, s_ok = _ordered_leg(s_chain, s_xy, a_bnd)
     e_route, e_ok = _ordered_leg(e_chain, b_bnd, e_xy)
+
+    # THROUGH-CONTINUITY refinement: the default minimal-extension boundary can pick the WRONG branch when a
+    # leg's conduit blob reaches the SAME drawn matchline at more than one point (closure then overshoots --
+    # log6's start chain reaches the 3+23/0+69 matchline at y~343 AND y~426). The physical bore crosses the
+    # sheet boundary at ONE along-matchline coordinate, so re-pick the UNIQUE crossing pair whose two legs
+    # cross at the same coordinate. Adopted ONLY when both legs stay source-backed AND it closes the printed
+    # span -- never a length/nearest pick. Single-branch crossings (the existing renders) close on the
+    # default, so the retry never fires and they are byte-identical.
+    out["through_continuity"] = False
+    default_closes = bool(span and s_ok and e_ok and abs(
+        (route_length(s_route) + route_length(e_route)) / SCALE - span) <= CLOSURE_REL_TOL * span)
+    if span and not default_closes:
+        s_mlb = _ml_bbox(s_words, s_draw, cr["equation"])
+        e_mlb = _ml_bbox(e_words, e_draw, cr["equation"])
+        a_tc, b_tc = (_through_continuous_pair(s_chain, s_mlb, e_chain, e_mlb)
+                      if (s_mlb and e_mlb) else (None, None))
+        if a_tc and b_tc:
+            s_r2, s_o2 = _ordered_leg(s_chain, s_xy, a_tc)
+            e_r2, e_o2 = _ordered_leg(e_chain, b_tc, e_xy)
+            if s_o2 and e_o2 and abs(
+                    (route_length(s_r2) + route_length(e_r2)) / SCALE - span) <= CLOSURE_REL_TOL * span:
+                a_bnd, b_bnd = a_tc, b_tc
+                s_route, e_route, s_ok, e_ok = s_r2, e_r2, s_o2, e_o2
+                out["through_continuity"] = True
+
     out["start_leg_source_backed"], out["end_leg_source_backed"] = s_ok, e_ok
     if not (s_ok and e_ok):
         out["blocker"] = f"a leg route not source-backed (start {s_ok}, end {e_ok})"
