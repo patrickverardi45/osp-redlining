@@ -150,30 +150,45 @@ def _all_sheets(plan, offset):
     return [s for s in range(1, plan.page_count + 1) if 0 <= s + offset - 1 < plan.page_count]
 
 
-def _resolve_endpoint(plan, offset, sheets, cls, station):
-    """Resolve a terminus to a UNIQUE (sheet, class) bind, derived from source. The sheet comes from the
+def _bind_unique(plan, offset, sheets, cls, label):
+    """The UNIQUE (sheet, class) where a terminus LABEL binds, derived from source. The sheet comes from the
     owner's corrected_sheets, or -- when that set is EMPTY -- is EXTRACTED FROM SOURCE across ALL plan
-    sheets (unique bind). The class is consumed when an owner anchor encoded it; when it is None (a
-    reviewed-but-unanchored log), it is DERIVED FROM SOURCE -- every modeled class is tried and the unique
-    leader-bound symbol wins (never owner-named, never nearest). 0 or >=2 binds -> (None, None, {})."""
-    if not station:
+    sheets. The class is consumed when an owner anchor encoded it; when None it is DERIVED FROM SOURCE
+    (every modeled class tried; the unique leader-bound symbol wins -- never owner-named, never nearest).
+    0 or >=2 binds -> (None, None, {})."""
+    if not label:
         return None, None, {}
     search = list(sheets) if sheets else _all_sheets(plan, offset)
-    # cheap pre-filter: a terminus can only bind on a sheet whose text prints its station token (one
-    # get_text call vs a full words+line_items parse per class) -- necessary for any bind, so it narrows
-    # the all-sheets source-derivation search without changing the result.
-    search = [s for s in search if station in plan.text_by_index(s + offset - 1)]
+    # cheap pre-filter: a terminus can only bind on a sheet whose text prints its label token (one get_text
+    # call vs a full words+line_items parse per class) -- necessary for any bind, narrows the search.
+    search = [s for s in search if label in plan.text_by_index(s + offset - 1)]
     classes = [cls] if cls else list(MODELED)
     bound, res = [], {}
     for sh in search:
         for c in classes:
-            xy, _, _, rr = _bind(plan, offset, sh, c, station)
+            xy, _, _, rr = _bind(plan, offset, sh, c, label)
             if xy is not None:
                 bound.append((sh, c))
                 res[f"s{sh}:{c}"] = rr
     if len(bound) == 1:
         return bound[0][0], bound[0][1], res
     return None, None, res
+
+
+def _resolve_endpoint(plan, offset, sheets, cls, labels):
+    """Resolve a terminus to a unique (sheet, class, label) bind, trying candidate LABELS in priority order
+    and taking the FIRST that binds uniquely: the printed station first, then any AP id-token (AP-NNN) from
+    the owner-reviewed notes -- a TERMINAL PORT HH prints its identity as an AP splice-loc id (the dialect's
+    id_token locator), so an AP terminus whose station label is not drawn still binds by its AP id. Station
+    first means the AP fallback only fires when the station does not bind; it never overrides a station bind
+    or contaminates the other endpoint. Returns (sheet, class, label, res)."""
+    last = {}
+    for label in labels:
+        sheet, c, res = _bind_unique(plan, offset, sheets, cls, label)
+        last = res or last
+        if sheet is not None:
+            return sheet, c, label, res
+    return None, None, None, last
 
 
 def _resolve_endpoints(r):
@@ -356,21 +371,25 @@ def solve_log(plan, offset, lid, rec):
         out["blocker"] = "endpoints not resolvable (no anchors and no parseable reset/corrected stations)"
         return out
 
-    # sheet + class resolved from source (class derived for reviewed-but-unanchored logs)
-    s_sheet, sc, s_res = _resolve_endpoint(plan, offset, sheets, sc, ss)
-    e_sheet, ec, e_res = _resolve_endpoint(plan, offset, sheets, ec, es)
+    # candidate bind labels in priority order: the printed station first, then any AP id-token from the
+    # owner notes (the TERMINAL PORT HH AP-terminus fallback -- bind by AP-NNN when the station label is not
+    # drawn at the symbol). AP ids only apply to reviewed-but-unanchored logs (anchored logs carry a class).
+    ap_ids = re.findall(r"AP-\d+", r.get("evidence_notes") or "") if not anchored else []
+    s_sheet, sc, s_lbl, s_res = _resolve_endpoint(plan, offset, sheets, sc, [ss, *ap_ids])
+    e_sheet, ec, e_lbl, e_res = _resolve_endpoint(plan, offset, sheets, ec, [es, *ap_ids])
     out["sheet_source_derived"] = (not sheets) and s_sheet is not None and e_sheet is not None
     out["class_source_derived"] = not anchored
     out["start_sheet"], out["end_sheet"] = s_sheet, e_sheet
     out["start_class"], out["end_class"] = sc, ec
+    out["bound_labels"] = {"start": s_lbl, "end": e_lbl}
     out["bind_results"] = {"start": s_res, "end": e_res}
     if s_sheet is None or e_sheet is None or sc not in MODELED or ec not in MODELED:
         out["blocker"] = (f"terminus did not resolve to a UNIQUE (sheet,class) source bind "
                           f"(start->s{s_sheet}/{sc}; end->s{e_sheet}/{ec})")
         return out
 
-    s_xy, s_words, s_draw, _ = _bind(plan, offset, s_sheet, sc, ss)
-    e_xy, e_words, e_draw, _ = _bind(plan, offset, e_sheet, ec, es)
+    s_xy, s_words, s_draw, _ = _bind(plan, offset, s_sheet, sc, s_lbl)
+    e_xy, e_words, e_draw, _ = _bind(plan, offset, e_sheet, ec, e_lbl)
     s_chain = _chain_at(s_draw, sc, s_xy)
     e_chain = _chain_at(e_draw, ec, e_xy)
     if not s_chain or not e_chain:

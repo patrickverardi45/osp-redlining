@@ -22,11 +22,13 @@ from truelinev2.extract.structure_position import (
     BRENHAM_CONDUIT_LAYERS, BRENHAM_LATERAL_CONDUIT_LAYERS,
 )
 
-CROSS_SHEET_TARGETS = ("log11", "log29", "log47", "log54", "log58", "log67")  # two sheet-local legs
+CROSS_SHEET_TARGETS = ("log11", "log12", "log29", "log47", "log54", "log58", "log67")  # two sheet-local legs
 SINGLE_SHEET_TARGETS = ("log36",)                            # single leg, sheet source-derived
 NEW_TARGETS = CROSS_SHEET_TARGETS + SINGLE_SHEET_TARGETS
 # log29 + log54 are reviewed-but-unanchored: class + (for log29) sheet derived from source, no anchors
 SOURCE_DERIVED_CLASS_TARGETS = ("log29", "log54")
+# log12's END is an AP TERMINAL PORT HH bound by its AP-id token (AP-121); the station 10+92 does not bind
+AP_TERMINUS_TARGET = "log12"
 # log46 is a 3-sheet N-leg route (10->13->14) but sheet 13 prints TWO PARALLEL runs that BOTH close the
 # span; the N-leg solver enumerates them and DEFERS (no unique source-backed route) -- DO-NOT-WIDEN.
 NLEG_AMBIGUOUS_TARGET = "log46"
@@ -147,6 +149,10 @@ def test_sweep_renders_new_logs_end_to_end():
     # the reviewed-but-unanchored logs had their terminus CLASS derived from source (no owner naming)
     for lid in SOURCE_DERIVED_CLASS_TARGETS:
         assert rep["verdicts"][lid]["class_source_derived"] is True
+    # log12's AP terminus bound by its AP-id token (the station label does not bind) -> terminal_port_hh
+    ap = rep["verdicts"][AP_TERMINUS_TARGET]
+    assert ap["bound_labels"]["end"].startswith("AP-")
+    assert ap["end_class"] == "terminal_port_hh"
     # the correctly-withheld log (DO-NOT-WIDEN): log70 fails closure (the owner's flagged -504ft conflict)
     assert "log70" in rep["still_blocked"]
     assert rep["engine_census_frozen"] is True and rep["no_fixture_mutation"] is True
