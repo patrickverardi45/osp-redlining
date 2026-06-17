@@ -444,6 +444,96 @@ def _solve_end_at_matchline(plan, offset, out, s_sheet, sc, s_lbl, ss, es, span)
     return out
 
 
+HH_SYMBOL_LAYER = "NEXTLINK"   # the drawn hand-hole symbol layer (installer / terminal / nextlink HHs)
+SAME_POINT_TOL = 8.0           # two endpoint binds within this gap = the SAME drawn structure (a symbol footprint)
+HH_ANN_PERP_TOL = 45.0         # an 'HH - HH = N'' annotation within this of the A-B line labels THAT pair
+
+
+def _hh_symbol_clusters(draw):
+    """Centers of the drawn hand-hole symbol clusters (the HH symbol layer), deduped within a symbol
+    footprint. Each cluster is one HH structure (an installer / terminal / nextlink hand-hole)."""
+    clusters = []
+    for t in draw:
+        if t.get("layer") != HH_SYMBOL_LAYER:
+            continue
+        c = (t["xc"], t["yc"])
+        if all(math.hypot(c[0] - cc[0], c[1] - cc[1]) > SAME_POINT_TOL for cc in clusters):
+            clusters.append(c)
+    return clusters
+
+
+def _ann_between(c, a, b, perp_tol=HH_ANN_PERP_TOL):
+    """True if point ``c`` projects ONTO the A-B segment (parameter in [0,1]) within ``perp_tol`` -- i.e.
+    the annotation lies alongside the drawn run between the two HHs, corroborating it labels THIS pair."""
+    ax, ay = a; bx, by = b; cx, cy = c
+    dx, dy = bx - ax, by - ay
+    l2 = dx * dx + dy * dy
+    if l2 == 0:
+        return False
+    t = ((cx - ax) * dx + (cy - ay) * dy) / l2
+    if not (0.0 <= t <= 1.0):
+        return False
+    px, py = ax + t * dx, ay + t * dy
+    return math.hypot(cx - px, cy - py) <= perp_tol
+
+
+def _solve_hh_hh_bridge(plan, offset, out, sheet, cls, a_lbl, a_xy, words, draw, span):
+    """HH-HH distance-annotation bridge. The two endpoint LABELS of this bore resolved to ONE drawn HH
+    structure (A) -- because the partner endpoint is a frame 0+00 whose bare station is not sheet-unique
+    and binds to the same reset structure. The plan STATES the pair with a printed 'HH - HH = N'' distance
+    annotation, so bind the partner HH (B) as the drawn HH symbol at the SOURCE-STATED distance -- NOT
+    nearest -- only when EVERY guard holds: (1) the 'HH - HH = N'' annotation (N == printed span) is UNIQUE
+    by value on the sheet; (2) EXACTLY ONE HH symbol sits at span +-CLOSURE_REL_TOL from A; (3) that
+    annotation lies BETWEEN A and B; (4) the route A->B is source-backed and closes to N. Any ambiguity ->
+    defer (DO-NOT-WIDEN: no nearest pick, no stacked-annotation collapse, no ruler cut)."""
+    out["hh_hh_bridge"] = True
+    out["single_sheet"] = True
+    if not span or span != int(span):
+        out["blocker"] = "HH-HH bridge: no integer printed span to match a 'HH - HH = N'' annotation"
+        return out
+    n = int(span)
+    hits = plan.search(sheet, offset, f"HH - HH = {n}'")
+    out["hh_annotation_value"], out["hh_annotation_hits"] = n, len(hits)
+    if len(hits) != 1:
+        out["blocker"] = (f"HH-HH bridge: printed 'HH - HH = {n}'' annotation not unique on the sheet "
+                          f"({len(hits)} hits) -> cannot uniquely select the pair (no stacked collapse)")
+        return out
+    ann = hits[0]
+    ann_c = ((ann[0] + ann[2]) / 2.0, (ann[1] + ann[3]) / 2.0)
+    # partner HH(s): drawn HH symbols at the SOURCE-STATED distance (span +- closure tol) from A -- distance
+    # MATCHED to the printed annotation value, never distance-minimised (nearest).
+    tol = CLOSURE_REL_TOL * span
+    cands = [c for c in _hh_symbol_clusters(draw)
+             if math.hypot(c[0] - a_xy[0], c[1] - a_xy[1]) > SAME_POINT_TOL
+             and abs(math.hypot(c[0] - a_xy[0], c[1] - a_xy[1]) / SCALE - span) <= tol]
+    out["hh_bridge_candidates"] = [[round(x, 1) for x in c] for c in cands]
+    if len(cands) != 1:
+        out["blocker"] = (f"HH-HH bridge: not a UNIQUE HH symbol at {n} ft from A ({len(cands)} candidates) "
+                          f"-> ambiguous, defer (no nearest pick)")
+        return out
+    b_xy = cands[0]
+    if not _ann_between(ann_c, a_xy, b_xy):
+        out["blocker"] = (f"HH-HH bridge: the unique 'HH - HH = {n}'' annotation is not positioned between "
+                          f"A and B -> it may label a different pair, defer")
+        return out
+    chain = _chain_at(draw, cls, a_xy)
+    route, ok = _ordered_leg(chain, a_xy, tuple(b_xy))
+    if not ok:
+        out["blocker"] = "HH-HH bridge: route A->B not source-backed (no drawn conduit between the two HHs)"
+        return out
+    drawn_ft = route_length(route) / SCALE
+    closes = abs(drawn_ft - span) <= CLOSURE_REL_TOL * span
+    out["closure"] = {"drawn_ft": round(drawn_ft, 1), "span_ft": span, "closes": closes}
+    if not closes:
+        out["blocker"] = (f"HH-HH bridge closure failed: route draws {round(drawn_ft, 1)} ft vs printed "
+                          f"HH-HH span {span} ft")
+        return out
+    out["legs"] = [{"sheet": sheet, "route": route, "a_xy": a_xy, "b_xy": tuple(b_xy),
+                    "len_pt": round(route_length(route), 1), "kind": "hh_hh_bridge",
+                    "start_label": a_lbl, "end_label": f"HH (HH-HH={n}')"}]
+    return out
+
+
 def solve_log(plan, offset, lid, rec):
     """Attempt the full route sentence for one anchored bore. Returns a verdict dict with either a
     render plan (legs to draw) or a named blocker. Renders nothing (the caller draws)."""
@@ -520,8 +610,13 @@ def solve_log(plan, offset, lid, rec):
         return out
 
     if s_sheet == e_sheet:
-        route, ok = _ordered_leg(s_chain, s_xy, e_xy)
         out["single_sheet"] = True
+        if math.hypot(s_xy[0] - e_xy[0], s_xy[1] - e_xy[1]) <= SAME_POINT_TOL:
+            # both endpoint labels resolved to ONE drawn HH (the partner endpoint is a non-unique frame
+            # 0+00 that binds to the same reset structure) -> bridge to the partner HH via the printed
+            # 'HH - HH = N'' distance annotation (a SOURCE relationship; never nearest).
+            return _solve_hh_hh_bridge(plan, offset, out, s_sheet, sc, s_lbl, s_xy, s_words, s_draw, span)
+        route, ok = _ordered_leg(s_chain, s_xy, e_xy)
         if not ok:
             out["blocker"] = "single-sheet route not source-backed (terminus-to-terminus chain path)"
             return out
@@ -617,6 +712,10 @@ def _render(plan, offset, lid, v):
             reason = (f"{lid} sheet-{leg['sheet']} bore: start {leg['start_label']} -> MATCHLINE STA "
                       f"{leg['matchline_sta']}; bore TERMINATES at the sheet boundary (continues as a "
                       f"separate bore on the partner sheet); single leg, printed-span closure")
+        elif leg["kind"] == "hh_hh_bridge":
+            reason = (f"{lid} sheet-{leg['sheet']} HH-HH bore: {leg['start_label']} -> {leg['end_label']}; "
+                      f"partner hand-hole identified by the printed HH-HH distance annotation (unique by "
+                      f"value, positioned between the two HHs); source-backed conduit, printed-span closure")
         else:
             reason = (f"{lid} sheet-{leg['sheet']} leg: MATCHLINE STA {leg['matchline_sta']} -> end "
                       f"{leg['end_label']}; joined to sheet {v['start_sheet']} by printed station identity")

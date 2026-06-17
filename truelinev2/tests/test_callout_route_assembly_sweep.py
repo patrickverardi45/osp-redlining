@@ -31,7 +31,12 @@ NLEG_TARGETS = ("log46",)
 # a SOURCE-derived AP id (AP-144, from the STA 5+03 placement note -- the bare station label is not unique),
 # its end is the sheet boundary (no second structure), one leg, printed-span closure (176').
 MATCHLINE_TERMINUS_TARGETS = ("log68",)
-NEW_TARGETS = CROSS_SHEET_TARGETS + SINGLE_SHEET_TARGETS + NLEG_TARGETS + MATCHLINE_TERMINUS_TARGETS
+# log63 = a single-sheet HH-to-HH bore (56') whose two endpoint labels collapse to ONE bound reset HH
+# ('0+56=0+00'); the partner HH (a non-unique frame 0+00) is identified by the printed, value-unique
+# 'HH - HH = 56'' distance annotation positioned between the two HHs -- NOT by nearest.
+HH_BRIDGE_TARGETS = ("log63",)
+NEW_TARGETS = (CROSS_SHEET_TARGETS + SINGLE_SHEET_TARGETS + NLEG_TARGETS
+               + MATCHLINE_TERMINUS_TARGETS + HH_BRIDGE_TARGETS)
 # log29 + log54 are reviewed-but-unanchored: class + (for log29) sheet derived from source, no anchors
 SOURCE_DERIVED_CLASS_TARGETS = ("log29", "log54")
 # log12's END is an AP TERMINAL PORT HH bound by its AP-id token (AP-121); the station 10+92 does not bind
@@ -144,6 +149,27 @@ def test_station_placement_ap_ids_refuses_ambiguous():
     assert station_placement_ap_ids(dup, "5+03") == []     # two placement headers for one station -> abstain
 
 
+def test_hh_symbol_clusters_dedups_within_footprint():
+    from truelinev2.proof.run_callout_route_assembly_sweep import _hh_symbol_clusters, HH_SYMBOL_LAYER
+
+    def s(x, y):
+        return {"layer": HH_SYMBOL_LAYER, "xc": x, "yc": y}
+
+    draw = [s(100, 100), s(101, 102), s(300, 300), {"layer": "OTHER", "xc": 100, "yc": 100}]
+    cl = _hh_symbol_clusters(draw)
+    assert len(cl) == 2                                    # the two near strokes collapse; OTHER-layer ignored
+
+
+def test_ann_between_requires_projection_onto_segment():
+    # the HH-HH annotation must project ONTO the A-B run (param in [0,1]) within the perp tol to label THAT
+    # pair -- prevents an annotation beyond an endpoint or far to the side from bridging the wrong pair
+    from truelinev2.proof.run_callout_route_assembly_sweep import _ann_between
+    a, b = (160.0, 342.0), (160.0, 421.0)
+    assert _ann_between((153.0, 386.0), a, b) is True      # alongside the run (perp ~7pt) -> labels this pair
+    assert _ann_between((153.0, 300.0), a, b) is False     # above A -> projects off the segment (t < 0)
+    assert _ann_between((250.0, 386.0), a, b) is False     # 90pt to the side -> not this pair
+
+
 # ---- heavy end-to-end (PDF + env gated) ---------------------------------------------
 
 @pytest.mark.skipif(not os.path.isfile(PDF), reason="Brenham plan PDF not present")
@@ -195,6 +221,17 @@ def test_sweep_renders_new_logs_end_to_end():
         assert m["start_class"] == "terminal_port_hh" and m["end_sheet"] is None
         assert m["leg_summary"][0]["kind"] == "matchline_terminus"
         assert m["closure"]["closes"] is True
+    # log63 = HH-HH distance-annotation bridge: one PNG, the 'HH - HH = 56'' annotation is unique by value
+    # (1 hit, no stacked collapse), EXACTLY one HH symbol at 56' (no nearest pick), and closure holds
+    for lid in HH_BRIDGE_TARGETS:
+        h = rep["verdicts"][lid]
+        pngs = sorted(OUT_DIR.glob(f"{lid}_*.png"))
+        assert len(pngs) == 1, (lid, [p.name for p in pngs])
+        assert h["hh_hh_bridge"] is True and h["single_sheet"] is True
+        assert h["hh_annotation_value"] == 56 and h["hh_annotation_hits"] == 1
+        assert len(h["hh_bridge_candidates"]) == 1            # unique HH at the printed span distance
+        assert h["leg_summary"][0]["kind"] == "hh_hh_bridge"
+        assert h["closure"]["closes"] is True
     # the correctly-withheld log (DO-NOT-WIDEN): log70 fails closure (the owner's flagged -504ft conflict)
     assert "log70" in rep["still_blocked"]
     assert rep["engine_census_frozen"] is True and rep["no_fixture_mutation"] is True
