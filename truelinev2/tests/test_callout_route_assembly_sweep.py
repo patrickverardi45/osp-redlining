@@ -40,8 +40,19 @@ HH_BRIDGE_TARGETS = ("log63",)
 # branch is the one THROUGH-CONTINUOUS (same height) with the sheet-5 leg; the default minimal-extension
 # branch overshoots closure (296.9'/360.8' vs 243'), the through-continuous one closes (242.4').
 THROUGH_CONTINUITY_TARGETS = ("log6",)
+# log41 = reset-to-reset across-street bore (single sheet 2): the receiving structure binds by its own
+# 'STA 0+46=0+00' reset TOKEN (corrected_end '0+44' is the bore's own length and prints no structure).
+RESET_TO_RESET_TARGETS = ("log41",)
+# OWNER-REVIEWED PROMOTIONS (2026-06-17): truth-table-SPAN-seeded routes the owner CONFIRMED correct
+# (no owner adjudication route -- the span seeds the endpoints, owner review authorises the render).
+# clean (unique crossing / single sheet): log10/log39 cross-sheet, log37/log72 single-sheet.
+PROMOTED_CLEAN_TARGETS = ("log10", "log37", "log39", "log72")
+# OWNER-CORRECTED (direction-strict): a candidate leg went the WRONG direction; the boundary matchline is
+# taken from the printed COMBINED 'SEE SHEET' label, not an ambiguous per-station token (log9/log23).
+DIRECTION_CORRECTED_TARGETS = ("log9", "log23")
 NEW_TARGETS = (CROSS_SHEET_TARGETS + SINGLE_SHEET_TARGETS + NLEG_TARGETS
-               + MATCHLINE_TERMINUS_TARGETS + HH_BRIDGE_TARGETS + THROUGH_CONTINUITY_TARGETS)
+               + MATCHLINE_TERMINUS_TARGETS + HH_BRIDGE_TARGETS + THROUGH_CONTINUITY_TARGETS
+               + RESET_TO_RESET_TARGETS + PROMOTED_CLEAN_TARGETS + DIRECTION_CORRECTED_TARGETS)
 # log29 + log54 are reviewed-but-unanchored: class + (for log29) sheet derived from source, no anchors
 SOURCE_DERIVED_CLASS_TARGETS = ("log29", "log54")
 # log12's END is an AP TERMINAL PORT HH bound by its AP-id token (AP-121); the station 10+92 does not bind
@@ -196,6 +207,45 @@ def test_through_continuous_pair_selects_matching_coordinate():
     assert _through_continuous_pair(s_chain, s_mlb, [dash(1120.0, 200.0, 1139.0, 200.0)], e_mlb) == (None, None)
 
 
+def test_promotion_constants_well_formed():
+    from truelinev2.proof.run_callout_route_assembly_sweep import (
+        OWNER_APPROVED_SPAN_PROMOTIONS, OWNER_CORRECTED_SPAN_PROMOTIONS, OWNER_DIRECTION_CORRECTED,
+        SPAN_SEEDED_PROMOTIONS,
+    )
+    for lid in SPAN_SEEDED_PROMOTIONS:                         # promotions are new, not already-drawn dups
+        assert lid not in ALREADY_DRAWN and lid not in DUPLICATE_OF_DRAWN
+    assert set(OWNER_DIRECTION_CORRECTED) == set(OWNER_CORRECTED_SPAN_PROMOTIONS)   # log9/log23 get strict
+    assert (set(SPAN_SEEDED_PROMOTIONS)
+            == set(OWNER_APPROVED_SPAN_PROMOTIONS) | set(OWNER_CORRECTED_SPAN_PROMOTIONS))
+    assert "log70" not in SPAN_SEEDED_PROMOTIONS   # DEFERRED (HH-HH=215' vs flower-pot-terminus conflict)
+
+
+def test_span_seed_record_normalises_truth_span():
+    from truelinev2.proof.run_callout_route_assembly_sweep import _span_seed_record
+    rows = [{"bore_id": "logX", "span": "02+65->05+00", "sheets": [12]}]
+    r = _span_seed_record("logX", rows)
+    assert r["corrected_start"] == "2+65" and r["corrected_end"] == "5+00"   # zero-pad stripped for bind
+    assert r["corrected_sheets"] == [12] and r["status"] == "RECOVERED" and r["span_ft"] is None
+    assert _span_seed_record("missing", rows) is None
+
+
+def test_leg_matchline_strict_uses_combined_label_matchline():
+    # DIRECTION RULE: with strict, the boundary sits on the matchline carrying the COMBINED 'a/b' label
+    # (the physical SEE-SHEET line), NOT a matchline merely near a same-numbered mid-sheet run-callout token.
+    from truelinev2.proof.run_callout_route_assembly_sweep import _leg_matchline
+    ml_a = {"layer": "MATCHLINE", "x0": 58, "y0": 0, "x1": 62, "y1": 400, "xc": 60, "yc": 200,
+            "lines": [(60, 0, 60, 400)]}                       # the SEE-SHEET partner matchline (left)
+    ml_b = {"layer": "MATCHLINE", "x0": 0, "y0": 48, "x1": 1000, "y1": 52, "xc": 500, "yc": 50,
+            "lines": [(0, 50, 1000, 50)]}                      # decoy matchline (top), near a run callout
+    words = [{"text": "3+98/3+08", "xc": 70, "yc": 200, "x0": 64, "y0": 196, "x1": 110, "y1": 204},
+             {"text": "3+08", "xc": 500, "yc": 45, "x0": 490, "y0": 41, "x1": 520, "y1": 49}]
+    chain = [{"lines": [(300, 200, 63, 200)]}, {"lines": [(300, 200, 500, 53)]}]
+    res = _leg_matchline(words, [ml_a, ml_b], chain, ("3+98", "3+08"), strict=True)
+    assert res is not None
+    _, bnd = res
+    assert abs(bnd[0] - 60) < 6 and 150 < bnd[1] < 250        # extended to ML_A (left), not the top decoy
+
+
 # ---- heavy end-to-end (PDF + env gated) ---------------------------------------------
 
 @pytest.mark.skipif(not os.path.isfile(PDF), reason="Brenham plan PDF not present")
@@ -270,6 +320,21 @@ def test_sweep_renders_new_logs_end_to_end():
     # through-continuity fired for EXACTLY the log6 case -- the other cross-sheet renders close on the default
     assert [lid for lid in rep["newly_rendered_full"]
             if rep["verdicts"][lid].get("through_continuity")] == list(THROUGH_CONTINUITY_TARGETS)
-    # the correctly-withheld log (DO-NOT-WIDEN): log70 fails closure (the owner's flagged -504ft conflict)
+    # log41 = reset-to-reset single-sheet across-street bore: one leg, closes (receiving HH by reset token)
+    for lid in RESET_TO_RESET_TARGETS:
+        v = rep["verdicts"][lid]
+        assert v["single_sheet"] is True and v["closure"]["closes"] is True
+        assert len(sorted(OUT_DIR.glob(f"{lid}_*.png"))) == 1
+    # OWNER-APPROVED + OWNER-CORRECTED promotions: each renders ALL its legs and CLOSES the printed span
+    for lid in (PROMOTED_CLEAN_TARGETS + DIRECTION_CORRECTED_TARGETS):
+        v = rep["verdicts"][lid]
+        assert v["closure"]["closes"] is True, (lid, v.get("closure"))
+        assert len(sorted(OUT_DIR.glob(f"{lid}_*.png"))) == len(v["leg_summary"]), lid
+    # owner-corrected logs are cross-sheet (two legs) routed via the STRICT combined-label matchline (the
+    # legacy per-token boundary went the wrong direction and either failed or mis-closed)
+    for lid in DIRECTION_CORRECTED_TARGETS:
+        assert len(rep["verdicts"][lid]["leg_summary"]) == 2, lid
+    # the correctly-withheld log (DO-NOT-WIDEN): log70 fails closure (the owner's flagged -504ft conflict;
+    # the printed HH-HH=215' length and the flower-pot terminus geometry conflict at source -> DEFERRED)
     assert "log70" in rep["still_blocked"]
     assert rep["engine_census_frozen"] is True and rep["no_fixture_mutation"] is True

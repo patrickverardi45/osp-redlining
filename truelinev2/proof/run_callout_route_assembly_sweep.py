@@ -85,9 +85,26 @@ CLOSURE_REL_TOL = 0.10      # two legs' drawn length vs printed bore span (corro
 ALREADY_DRAWN = ("log7", "log25", "log45", "log51", "log52", "log53", "log59",
                  "log64", "log65", "log66", "log69", "log71", "log50")
 # bores whose route would DUPLICATE an already-drawn sibling (DO-NOT-WIDEN: no parent/child overlap).
-# log48 (bore_log20) shares the STA 45+33=0+00 start + 5+14 flower-pot end with the drawn log50; the owner
-# flagged its sheet attribution as needing clarification -> not a clean independent redline.
+# log48 (bore_log20) is a PARENT/CHILD SPLIT artifact, confirmed against the corpus + owner review
+# (2026-06-17): bore_log20 was split into segments, and the already-drawn log50 IS "Segment C (col3) split
+# from bore_log20" (0+00->5+14, sheets 10/11/12). log48's ACTUAL bore is the 0+00->5+07 segment, NOT 5+14 --
+# so span-binding log48 would seed the SAME 5+14 structures as log50 (a duplicate redline). HELD until the
+# bore_log20 source family is reassembled so each child segment (5+07 vs 5+14) owns its own route.
 DUPLICATE_OF_DRAWN = ("log48",)
+# OWNER-REVIEWED REVIEW-CANDIDATE PROMOTIONS (2026-06-17 owner review of review_candidate_reasoning_sweep):
+# logs the owner CONFIRMED correct that carry NO owner adjudication route -- the engine truth-table SPAN
+# seeds the endpoints (source), and the owner review is the discriminator authorizing the deterministic
+# render of the source-backed, span-CLOSING route. Census is untouched (no adjudication record added);
+# closure + unique bind still gate every render (an approved log that does not bind/close stays blocked).
+OWNER_APPROVED_SPAN_PROMOTIONS = ("log10", "log37", "log39", "log72")
+# OWNER-CORRECTED logs (2026-06-17): a candidate leg went the WRONG direction and the owner identified the
+# correct branch. Span-seeded too, but they get STRICT direction routing -- the matchline boundary is taken
+# from the printed COMBINED 'SEE SHEET' label, not an ambiguous per-station token (the CRITICAL DIRECTION
+# RULE). (log70 was also owner-corrected but is DEFERRED, not promoted: its printed HH-HH=215' length and
+# its flower-pot terminus geometry conflict at source -- see the deferral note in the report/blockers.)
+OWNER_CORRECTED_SPAN_PROMOTIONS = ("log9", "log23")
+OWNER_DIRECTION_CORRECTED = ("log9", "log23")
+SPAN_SEEDED_PROMOTIONS = OWNER_APPROVED_SPAN_PROMOTIONS + OWNER_CORRECTED_SPAN_PROMOTIONS
 SYMBOL_LAYER = {"flower_pot": "FLOWER POT", "installer_hh": "NEXTLINK",
                 "terminal_port_hh": "NEXTLINK", "nextlink_hh": "NEXTLINK"}
 CONTEXT = {"flower_pot": ("FLOWER", "POT")}
@@ -251,9 +268,25 @@ def _resolve_endpoints(r):
     return start_sta, None, ce, None, False
 
 
-def _leg_matchline(words, draw, chain, cross):
-    """(station, boundary_xy) the leg's chain reaches for one printed crossing equation, trying each of
-    its station tokens; first that locates a unique chain-reached matchline wins. None if none reach."""
+def _leg_matchline(words, draw, chain, cross, strict=False):
+    """(station, boundary_xy) the leg's chain reaches for one printed crossing equation.
+
+    DIRECTION RULE (``strict``): the boundary matchline is identified by the COMBINED printed label ('a/b'
+    via _ml_bbox) which sits ON the physical 'MATCHLINE STA a/b - SEE SHEET <partner>' line -- so the leg
+    extends toward the matchline that NAMES the partner sheet, NOT a same-numbered station printed in a
+    mid-sheet run callout ('STA a TO b ...'). The bare per-token locator (locate_matchline_boundary) snaps
+    to whichever matchline a station token sits nearest, which is the WRONG physical line when that station
+    also appears in a run callout near a DIFFERENT matchline (this is exactly how log9/log23 went the wrong
+    direction). ``strict`` is enabled ONLY for owner-flagged wrong-direction logs; the default keeps the
+    legacy per-token locator so every previously-committed render is byte-identical (no drift)."""
+    if strict:
+        mlb = _ml_bbox(words, draw, cross)
+        if mlb is not None:
+            eps = dash_endpoints(chain)
+            if eps and min(nearest_gap([p], mlb) for p in eps) <= MAX_DASH_GAP:
+                bnd = extend_dash_to_boundary(chain, mlb)
+                if bnd is not None:
+                    return cross[0], tuple(bnd)
     for sta in cross:
         bnd, _, uniq = locate_matchline_boundary(words, draw, sta, chain)
         if bnd is not None and uniq:
@@ -708,10 +741,11 @@ def solve_log(plan, offset, lid, rec):
         else:
             out["blocker"] = f"no printed SEE-SHEET matchline crossing between sheets {s_sheet} and {e_sheet}"
         return out
+    strict = lid in OWNER_DIRECTION_CORRECTED
     viable = []
     for cross in crossings:
-        a = _leg_matchline(s_words, s_draw, s_chain, cross)
-        b = _leg_matchline(e_words, e_draw, e_chain, cross)
+        a = _leg_matchline(s_words, s_draw, s_chain, cross, strict=strict)
+        b = _leg_matchline(e_words, e_draw, e_chain, cross, strict=strict)
         if a and b:
             viable.append({"equation": list(cross), "start_sta": a[0], "start_bnd": [round(v, 1) for v in a[1]],
                            "end_sta": b[0], "end_bnd": [round(v, 1) for v in b[1]],
@@ -812,12 +846,39 @@ def _render(plan, offset, lid, v):
     return pngs
 
 
+def _span_seed_record(lid, truth_rows):
+    """Synthetic owner-reviewed record for an OWNER_APPROVED_SPAN_PROMOTIONS log: seed the endpoints from
+    the engine truth-table SPAN 'A->B' + sheets (source), normalising the zero-padded station ('02+65' ->
+    '2+65'). class None -> derived from source; unique-bind + printed-span closure still gate the render."""
+    row = next((r for r in truth_rows if r.get("bore_id") == lid), None)
+    m = re.match(r"(\d+\+\d+)\s*->\s*(\d+\+\d+)", (row or {}).get("span") or "")
+    if not row or not m:
+        return None
+
+    def _n(s):
+        mm = re.match(r"0*(\d+)\+(\d+)", s)
+        return f"{int(mm.group(1))}+{mm.group(2)}" if mm else s
+
+    return {"log_id": lid, "corrected_start": _n(m.group(1)), "corrected_end": _n(m.group(2)),
+            "corrected_sheets": row.get("sheets") or [], "span_ft": None, "status": "RECOVERED",
+            "evidence_notes": "", "endpoint_anchors": None, "allowed_to_draw": True,
+            "must_remain_abstained": False}
+
+
 def main() -> int:
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     for stale in OUT_DIR.glob("*.png"):
         stale.unlink()
     doc = load_adjudication()
     rec = {r["log_id"]: r for r in doc["logs"]}
+    # OWNER-APPROVED promotions: inject truth-table-span-seeded records so the deterministic sweep renders
+    # the owner-confirmed candidates (census untouched -- these are NOT adjudication records).
+    truth_rows = json.loads(TRUTH.read_text(encoding="utf-8"))["rows"] if TRUTH.is_file() else []
+    for _lid in SPAN_SEEDED_PROMOTIONS:
+        if _lid not in rec:
+            _srec = _span_seed_record(_lid, truth_rows)
+            if _srec:
+                rec[_lid] = _srec
     gates, ev = [], {"verdicts": {}}
 
     gates.append(("G0 engine census frozen (OFF 31/6/1/17/3, ON 22/1/4, log44+abstains held)",
