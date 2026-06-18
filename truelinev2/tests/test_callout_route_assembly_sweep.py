@@ -113,12 +113,22 @@ LOG19_TARGETS = ("log19",)
 # 45+33 NEXTLINK HH. The owner 44'->50' span correction lives in the parent model's adj_corrected_span
 # (source-confirmed by the printed 'DIR. BORE (50')' callout); drawn 49.9' closes 50'.
 LOG49_TARGETS = ("log49",)
+# log30 = the LEDBETTER LN parallel run (standalone bore_log30, 0+00->5+00, s10/12) -- the parallel
+# '1+91/1+92 Ledbetter run' log48's note records the Woodson solver rejecting. DISTINCT from the already-drawn
+# log48 (Woodson, 1+90/1+90 -> 5+07): the two routes run 219-258 ft apart on s10/s12 (read-only visual +
+# numeric re-verify, data/outputs/log30_visual_verify). Rendered via the new opt-in
+# `parallel_crossing_by_chain_reach` selector on the cross-sheet drop-terminus path: two parallel printed
+# crossings make the SEE-SHEET-<partner> matchline non-unique, so pick the crossing BOTH legs' conduit chains
+# REACH (1+91/1+92, NOT log48's 1+90) + PER-LEG closure (start leg 190.1'=local 1+91, end 318.9'=5+10-1+91;
+# the parallel 2+72 reset's 226' start leg FAILS per-leg though its total closes). Start reset 2+22=0+00
+# INSTALLER HH -> 5+10 FLOWER POT.
+LOG30_TARGETS = ("log30",)
 NEW_TARGETS = (CROSS_SHEET_TARGETS + SINGLE_SHEET_TARGETS + NLEG_TARGETS
                + MATCHLINE_TERMINUS_TARGETS + HH_BRIDGE_TARGETS + THROUGH_CONTINUITY_TARGETS
                + RESET_TO_RESET_TARGETS + PROMOTED_CLEAN_TARGETS + DIRECTION_CORRECTED_TARGETS
                + LOG48_TARGETS + LOG70_TARGETS + LOG61_TARGETS + LOG62_TARGETS + LOG60_TARGETS
                + LOG32_TARGETS + LOG27_TARGETS + LOG2_TARGETS + LOG8_TARGETS + LOG56_TARGETS
-               + LOG55_TARGETS + LOG19_TARGETS + LOG49_TARGETS)
+               + LOG55_TARGETS + LOG19_TARGETS + LOG49_TARGETS + LOG30_TARGETS)
 # log29 + log54 are reviewed-but-unanchored: class + (for log29) sheet derived from source, no anchors
 SOURCE_DERIVED_CLASS_TARGETS = ("log29", "log54")
 # log12's END is an AP TERMINAL PORT HH bound by its AP-id token (AP-121); the station 10+92 does not bind
@@ -270,6 +280,28 @@ def test_log48_promoted_from_hold_to_owner_confirmed_plan_route():
     assert seed["corrected_end"] == "5+07" and seed["corrected_sheets"] == [10, 12] and seed["span_ft"] == 507
     assert "45+33=0+00" in seed["evidence_notes"]      # start reset (SPLICE POINT 46) seeds the start bind
     assert seed["status"] == "RECOVERED"
+
+
+def test_log30_ledbetter_parallel_run_seed_opts_into_chain_reach_selector():
+    # log30 is the DISTINCT parallel sibling-corridor of the already-drawn log48 (different parent, different
+    # crossing 1+91/1+92 vs 1+90/1+90) -- not in the drawn/duplicate sets, opts into the new gated selector.
+    assert "log30" not in ALREADY_DRAWN and "log30" not in DUPLICATE_OF_DRAWN
+    seed = OWNER_CONFIRMED_PLAN_ROUTES["log30"]
+    assert seed["cross_sheet_drop_terminus"] is True               # uses the cross-sheet drop-terminus path
+    assert seed["parallel_crossing_by_chain_reach"] is True        # opt-in flag gates the parallel selector
+    assert seed["corrected_sheets"] == [10, 12] and seed["span_ft"] == 500
+    assert "2+22=0+00" in seed["evidence_notes"]                   # start reset (per-leg-closure selected)
+    assert seed["corrected_end"] == "5+10"                         # Ledbetter flower pot (s12)
+    assert seed["status"] == "RECOVERED"
+
+
+def test_parallel_crossing_selector_is_gated_off_by_default():
+    # the new selector must NOT change the default path: with the flag OFF, a non-unique SEE-SHEET-<partner>
+    # matchline still blocks (the existing behavior) -- so every prior render stays byte-identical.
+    import inspect
+    from truelinev2.proof.run_callout_route_assembly_sweep import _solve_cross_sheet_drop_terminus
+    sig = inspect.signature(_solve_cross_sheet_drop_terminus)
+    assert sig.parameters["parallel_by_chain_reach"].default is False   # opt-in, default off
 
 
 def test_log61_override_opts_into_bundled_matchline_selector():
@@ -727,4 +759,29 @@ def test_sweep_renders_new_logs_end_to_end():
     # log49 must NOT have stolen a sibling's route: its ~50' route is nowhere near log48/log50's ~500'+; the
     # parent-source gate (child_owns_route over parent bore_log20) enforces this.
     assert rep["verdicts"]["log49"]["closure"]["drawn_ft"] < 60.0
+    # log30 = the LEDBETTER LN parallel run via the new `parallel_crossing_by_chain_reach` selector: two
+    # parallel printed crossings (Woodson 1+90/1+90 = log48, Ledbetter 1+91/1+92 = log30) make the matchline
+    # non-unique, so the crossing BOTH legs' chains REACH is picked (1+91/1+92), and PER-LEG closure
+    # (start 190'=1+91, end 319'=5+10-1+91) confirms the 2+22 start over the parallel 2+72 reset.
+    assert "log30" in rep["newly_rendered_full"]
+    for lid in LOG30_TARGETS:
+        z = rep["verdicts"][lid]
+        assert len(sorted(OUT_DIR.glob(f"{lid}_*.png"))) == 2, lid          # cross-sheet 2-leg
+        assert z["cross_sheet_drop_terminus"] is True
+        assert z["start_sheet"] == 10 and z["end_sheet"] == 12
+        assert z["start_class"] == "installer_hh" and z["end_class"] == "flower_pot"
+        assert z["bound_labels"] == {"start": "2+22", "end": "5+10"}
+        assert z["parallel_crossings_reached_by_both"] == [["1+91", "1+92"]]   # exactly one viable crossing
+        assert z["parallel_crossing_selected"]["crossing"] == ["1+91", "1+92"]  # NOT log48's 1+90/1+90
+        plc = z["per_leg_closure"]                                            # each leg matches its station delta
+        assert abs(plc["start_drawn"] - plc["start_expected"]) <= 0.10 * plc["start_expected"]
+        assert abs(plc["end_drawn"] - plc["end_expected"]) <= 0.10 * plc["end_expected"]
+        assert z["closure"]["closes"] is True and abs(z["closure"]["drawn_ft"] - 500.0) <= 50.0
+        assert z["parent_source_gate"]["ok"] is True                         # standalone bore_log30
+        assert [leg["kind"] for leg in z["leg_summary"]] == ["start_leg", "end_leg"]
+    # NON-OVERLAP vs the already-drawn log48: log30 uses the DISTINCT Ledbetter crossing 1+91/1+92, log48 the
+    # Woodson 1+90/1+90 -- different physical matchlines, so the routes do not coincide (219-258 ft apart per
+    # run_log30_visual_verify). log48's own route is unchanged by the gated selector (byte-identical PNGs).
+    assert rep["verdicts"]["log30"]["parallel_crossing_selected"]["crossing"] == ["1+91", "1+92"]
+    assert rep["verdicts"]["log48"]["crossing_equation"] == ["1+90", "1+90"]
     assert rep["engine_census_frozen"] is True and rep["no_fixture_mutation"] is True

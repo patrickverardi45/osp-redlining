@@ -120,6 +120,20 @@ OWNER_CONFIRMED_PLAN_ROUTES = {
               "corrected_sheets": [10, 12], "span_ft": 507, "status": "RECOVERED",
               "evidence_notes": "STA 45+33=0+00", "endpoint_anchors": None,
               "allowed_to_draw": True, "must_remain_abstained": False},
+    # log30 (2026-06-18, LOG30_LEDBETTER_PARALLEL_RUN render lane): standalone bore_log30, corpus 0+00->5+00
+    # sheets [10,12]. It IS the parallel '1+91/1+92 Ledbetter run' log48's note records the Woodson solver
+    # rejecting -- a DISTINCT bore from the already-drawn log48 (Woodson, 1+90/1+90 -> 5+07): the two routes
+    # run 219-258 ft apart on s10/s12 (read-only visual + numeric re-verify, data/outputs/log30_visual_verify).
+    # Source-derived bind (no owner naming): start reset 'STA 2+22=0+00' (s10 HH) selected by PER-LEG closure
+    # (start leg 190.1' = local 1+91; the parallel 2+72 reset's 226' start leg FAILS per-leg closure though its
+    # total is in-tol); end '5+10' FLOWER POT (s12, Ledbetter); the 1+91/1+92 crossing chosen by both-legs
+    # chain-reach (NOT log48's 1+90). span_ft = corpus 500. LABELS ONLY -- coords extractor-derived; census
+    # uses `doc`, not this map (frozen). Parent gate: bore_log30 standalone (no sibling overlap).
+    "log30": {"log_id": "log30", "corrected_start": "0+00", "corrected_end": "5+10",
+              "corrected_sheets": [10, 12], "span_ft": 500, "status": "RECOVERED",
+              "evidence_notes": "STA 2+22=0+00", "endpoint_anchors": None,
+              "cross_sheet_drop_terminus": True, "parallel_crossing_by_chain_reach": True,
+              "allowed_to_draw": True, "must_remain_abstained": False},
     "log70": {"log_id": "log70", "parent": "bore_log35", "status": "RECOVERED",
               "corrected_start": "0+00", "corrected_end": "2+15",
               "corrected_sheets": [17, 20], "span_ft": 215.0,
@@ -1068,7 +1082,8 @@ def _solve_drop_terminus(plan, offset, out, sheet, sc, s_lbl, ss, es, end_cls, s
 
 def _solve_cross_sheet_drop_terminus(plan, offset, out, s_sheet, ss, e_sheet, es,
                                      s_xy, s_chain, s_words, s_draw,
-                                     e_xy, e_chain, e_words, e_draw, crossings, span):
+                                     e_xy, e_chain, e_words, e_draw, crossings, span,
+                                     parallel_by_chain_reach=False):
     """CROSS-SHEET DROP terminus (opt-in `cross_sheet_drop_terminus`): the cross-sheet extension of
     `drop_terminus_symbol_bind` -- a drop whose START binds on one sheet but whose TERMINUS is on a
     CONTINUATION sheet PAST the matchline, so the single-sheet `_solve_drop_terminus` finds 0 candidates
@@ -1118,6 +1133,38 @@ def _solve_cross_sheet_drop_terminus(plan, offset, out, s_sheet, ss, e_sheet, es
     out["partner_matchline"] = {"stations": stations,
                                 "start_bbox": [round(v, 1) for v in s_mlbs[0]] if len(s_mlbs) == 1 else None,
                                 "end_bbox": [round(v, 1) for v in e_mlbs[0]] if len(e_mlbs) == 1 else None}
+
+    # PARALLEL-CROSSING SELECTOR (opt-in `parallel_crossing_by_chain_reach`; gated so default renders stay
+    # byte-identical -- fires ONLY when the SEE-SHEET-<partner> matchline is non-unique). Two parallel printed
+    # crossings between the SAME sheet pair (log30's Ledbetter 1+91/1+92 vs the already-drawn log48's Woodson
+    # 1+90/1+90) make _partner_matchline_bbox return >1 per leg. Disambiguate to the crossing BOTH legs' OWN
+    # conduit chains physically REACH (extend_dash_to_boundary != None) -- the drawn dashes, a SOURCE
+    # discriminator, never nearest. Require EXACTLY ONE (0/>=2 -> abstain, DO-NOT-WIDEN). The per-leg
+    # station-delta closure gate (below) is the additional false-positive guard.
+    sel = None
+    if parallel_by_chain_reach and (len(s_mlbs) != 1 or len(e_mlbs) != 1):
+        viable = []
+        for c in shared:
+            sb = eb = s_st = e_st = None
+            for sta in c:
+                cb = _partner_matchline_bbox(s_words, s_draw, sta, e_sheet)
+                db = _partner_matchline_bbox(e_words, e_draw, sta, s_sheet)
+                if sb is None and cb and extend_dash_to_boundary(s_chain, cb) is not None:
+                    sb, s_st = cb, sta
+                if eb is None and db and extend_dash_to_boundary(e_chain, db) is not None:
+                    eb, e_st = db, sta
+            if sb is not None and eb is not None:
+                viable.append((list(c), sb, eb, s_st, e_st))
+        out["parallel_crossings_reached_by_both"] = [v[0] for v in viable]
+        if len(viable) != 1:
+            out["blocker"] = (f"parallel-crossing selector: {len(viable)} crossings reached by BOTH legs' "
+                              f"chains (need exactly 1) -- ambiguous, abstain (DO-NOT-WIDEN)")
+            return out
+        _c, sb, eb, s_st, e_st = viable[0]
+        s_mlbs, e_mlbs = [sb], [eb]
+        sel = {"crossing": _c, "start_sta": s_st, "end_sta": e_st}
+        out["parallel_crossing_selected"] = sel
+
     if len(s_mlbs) != 1 or len(e_mlbs) != 1:
         out["blocker"] = (f"cross-sheet drop-terminus: SEE-SHEET-<partner> matchline not unique on a leg "
                           f"(start {len(s_mlbs)}, end {len(e_mlbs)}) -- cannot place the join boundary")
@@ -1141,14 +1188,34 @@ def _solve_cross_sheet_drop_terminus(plan, offset, out, s_sheet, ss, e_sheet, es
         out["blocker"] = (f"cross-sheet drop-terminus closure failed: assembled legs draw {round(drawn_ft, 1)} "
                           f"ft vs printed bore span {span} ft (>{int(CLOSURE_REL_TOL*100)}% -> partial/wrong run)")
         return out
-    out["crossing_equation"] = list(shared[0])
+
+    # PER-LEG CLOSURE (parallel-crossing path only): each leg's drawn length must match its printed station
+    # delta -- start leg = bore-local 0+00 -> the start-side crossing station; end leg = the end-side crossing
+    # station -> corrected_end. Rejects a same-conduit-network start whose TOTAL happens to close but whose
+    # split does NOT match the printed stations (log30's true 2+22 start: start leg 190'=1+91, end leg
+    # 319'=5+10-1+91; the parallel 2+72 reset's 226' start leg fails this even though its total is in-tol).
+    if sel is not None:
+        s_ft, e_ft = route_length(s_route) / SCALE, route_length(e_route) / SCALE
+        exp_s = abs(parse_station(sel["start_sta"]))
+        exp_e = abs(parse_station(es) - parse_station(sel["end_sta"]))
+        out["per_leg_closure"] = {"start_drawn": round(s_ft, 1), "start_expected": round(exp_s, 1),
+                                  "end_drawn": round(e_ft, 1), "end_expected": round(exp_e, 1)}
+        if (exp_s <= 0 or exp_e <= 0 or abs(s_ft - exp_s) > CLOSURE_REL_TOL * exp_s
+                or abs(e_ft - exp_e) > CLOSURE_REL_TOL * exp_e):
+            out["blocker"] = (f"parallel-crossing per-leg closure failed: start {round(s_ft,1)}/{round(exp_s,1)} "
+                              f"end {round(e_ft,1)}/{round(exp_e,1)} ft (legs must match printed station deltas)")
+            return out
+
+    _xeq = sel["crossing"] if sel is not None else list(shared[0])
+    _msta = sel["start_sta"] if sel is not None else shared[0][0]
+    out["crossing_equation"] = _xeq
     out["legs"] = [
         {"sheet": s_sheet, "route": s_route, "a_xy": list(s_xy), "b_xy": list(s_bnd),
          "len_pt": round(route_length(s_route), 1), "kind": "start_leg", "start_label": ss,
-         "matchline_sta": shared[0][0]},
+         "matchline_sta": _msta},
         {"sheet": e_sheet, "route": e_route, "a_xy": list(e_bnd), "b_xy": list(e_xy),
          "len_pt": round(route_length(e_route), 1), "kind": "end_leg", "end_label": es,
-         "matchline_sta": shared[0][0]},
+         "matchline_sta": _msta},
     ]
     return out
 
@@ -1393,7 +1460,8 @@ def solve_log(plan, offset, lid, rec):
     if r.get("cross_sheet_drop_terminus"):
         return _solve_cross_sheet_drop_terminus(plan, offset, out, s_sheet, ss, e_sheet, es,
                                                  s_xy, s_chain, s_words, s_draw,
-                                                 e_xy, e_chain, e_words, e_draw, crossings, span)
+                                                 e_xy, e_chain, e_words, e_draw, crossings, span,
+                                                 parallel_by_chain_reach=r.get("parallel_crossing_by_chain_reach"))
 
     # BUNDLED-MATCHLINE STATION SELECTOR (opt-in via `bundled_matchline_from_end_callout`; gated so existing
     # bundled-matchline renders are byte-identical). A bundled 'MATCHLINE STA a/b/c' has several runs crossing
