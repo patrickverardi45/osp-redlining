@@ -58,7 +58,7 @@ from truelinev2.ingest.manual_adjudication import (
     activation_summary, apply_adjudications, load_adjudication,
     parent_run_duplicate_check, validate_endpoint_anchors,
 )
-from truelinev2.ingest.parent_source import child_owns_route
+from truelinev2.ingest.parent_source import child_owns_route, parent_of
 from truelinev2.ingest.pdf import PlanPdf
 from truelinev2.proof.run_brenham_corpus import EXPECTED_COUNT, PDF, enumerate_corpus
 from truelinev2.proof.run_log59_render_artifact_slice import (
@@ -148,6 +148,21 @@ OWNER_CONFIRMED_PLAN_ROUTES = {
              "evidence_notes": "STA 15+13=0+00", "endpoint_anchors": None,
              "fiber_conduit_candidate_set": True, "nleg_matchline_identity_join": True,
              "allowed_to_draw": True, "must_remain_abstained": False},
+    # log42 (2026-06-18, owner-correction render lane): Segment B of parent bore_log13 (sibling = the drawn
+    # log41, Segment A). Owner visual review CORRECTED the end: STA 2+87 is a TERMINAL 6 PORT HH (AP-105 SPLICE
+    # LOC 25), NOT a pothole -- the 'POTHOLE' token is a separate nearby feature. End binds by the AP-105 id
+    # (terminal_port_hh; the bare 2+87 label does not bind -- same mechanism as log12/AP-121). Start = the
+    # 7+40=0+00 NEXTLINK HH on s2, UNIQUELY closure-selected (of the two s2 resets only 7+40 closes 287'; the
+    # 0+46 reset = log41's, fails at 240'). Cross-sheet 2-leg via the 2+70/5+16 matchline; drawn 277.7' closes
+    # 287' (3.2%). It shares its ~35' ORIGIN TRUNK with the drawn sibling log41 (same splice 819,351.5) then
+    # diverges (log41 across the street; log42 east to AP-105) -- OWNER-AUTHORIZED via the narrow, gated
+    # `sibling_shared_origin_trunk_ok` exception (same parent + same origin + capped contiguous trunk +
+    # divergence + distinct ends; NOT a general overlap waiver, NOT the log14/log10 duplicate case).
+    "log42": {"log_id": "log42", "corrected_start": "0+00", "corrected_end": "2+87",
+              "corrected_sheets": [1, 2], "span_ft": 287.0, "status": "RECOVERED",
+              "evidence_notes": "STA 7+40=0+00 AP-105 SPLICE LOC 25", "endpoint_anchors": None,
+              "sibling_shared_origin_trunk_ok": "log41",
+              "allowed_to_draw": True, "must_remain_abstained": False},
     "log70": {"log_id": "log70", "parent": "bore_log35", "status": "RECOVERED",
               "corrected_start": "0+00", "corrected_end": "2+15",
               "corrected_sheets": [17, 20], "span_ft": 215.0,
@@ -593,6 +608,52 @@ def _conduit_set_for(r):
 def _chain_at(draw, cls, xy, conduit_set=BASE_CONDUIT):
     fp = symbol_footprint(draw, SYMBOL_LAYER[cls], xy)
     return connected_chain([x for x in draw if x.get("layer") in conduit_set], fp) if fp else []
+
+
+SIBLING_TRUNK_CAP_FT = 45.0     # max allowed shared origin-trunk (log41/log42 measured ~35' + tight tol)
+
+
+def _pt_to_route(p, route):
+    """Min distance from point p to polyline ``route`` (segment distance)."""
+    def seg(a, b):
+        ax, ay, bx, by = a[0], a[1], b[0], b[1]
+        dx, dy = bx - ax, by - ay
+        if dx == 0 and dy == 0:
+            return math.hypot(p[0] - ax, p[1] - ay)
+        t = max(0.0, min(1.0, ((p[0] - ax) * dx + (p[1] - ay) * dy) / (dx * dx + dy * dy)))
+        return math.hypot(p[0] - (ax + t * dx), p[1] - (ay + t * dy))
+    return min(seg(route[i], route[i + 1]) for i in range(len(route) - 1))
+
+
+def _sibling_shared_origin_trunk_ok(route_a, route_b, same_family, cap_ft, tol=None):
+    """NARROW overlap exception (NOT a general waiver): a render ``route_a`` may share its ORIGIN TRUNK with an
+    already-drawn route_b ONLY when ALL hold: (1) SAME parent/source family; (2) both start at ~the SAME bound
+    origin (within tol); (3) the coincidence is a single CONTIGUOUS PREFIX from that origin (the shared trunk),
+    (4) capped at ``cap_ft``; (5) route_a then DIVERGES -- no coincidence AFTER the prefix (a re-converging or
+    whole-route overlap = a duplicate -> reject); (6) the two ends are DISTINCT. This is exactly the log41/log42
+    sibling-splice case; a log14/log10-style full duplicate or any non-sibling overlap is rejected. Returns
+    (ok, detail)."""
+    tol = SAME_POINT_TOL if tol is None else tol
+    if not (route_a and route_b and len(route_a) >= 2 and len(route_b) >= 2):
+        return False, {"reason": "empty/degenerate route"}
+    if not same_family:
+        return False, {"reason": "not same parent/source family"}
+    if math.hypot(route_a[0][0] - route_b[0][0], route_a[0][1] - route_b[0][1]) > tol:
+        return False, {"reason": "different bound origin (not a shared splice)"}
+    coincident = [_pt_to_route(p, route_b) <= tol for p in route_a]
+    prefix = 0
+    while prefix < len(coincident) and coincident[prefix]:
+        prefix += 1
+    trunk_ft = round(route_length(route_a[:prefix]) / SCALE, 1) if prefix >= 2 else 0.0
+    if all(coincident):
+        return False, {"reason": "full duplicate -- no divergence", "trunk_ft": trunk_ft}
+    if any(coincident[prefix:]):
+        return False, {"reason": "overlap re-converges (not a single origin trunk)", "trunk_ft": trunk_ft}
+    if trunk_ft > cap_ft:
+        return False, {"reason": f"shared trunk {trunk_ft}ft exceeds cap {cap_ft}ft", "trunk_ft": trunk_ft}
+    if math.hypot(route_a[-1][0] - route_b[-1][0], route_a[-1][1] - route_b[-1][1]) <= tol:
+        return False, {"reason": "ends coincide (not distinct)", "trunk_ft": trunk_ft}
+    return True, {"trunk_ft": trunk_ft, "cap_ft": cap_ft, "diverges": True}
 
 
 def _all_sheets(plan, offset):
@@ -1786,6 +1847,28 @@ def main() -> int:
         offset = select_dialect(plan).calibrate(plan, 13)
         for lid in targets:
             v = solve_log(plan, offset, lid, rec)
+            # SIBLING-SHARED-ORIGIN-TRUNK gate (opt-in `sibling_shared_origin_trunk_ok` = the already-drawn
+            # sibling id this bore shares its ORIGIN TRUNK with). Runs ONLY for opted-in bores (others
+            # unaffected -> byte-identical). NARROW: same parent + same bound origin + a capped contiguous
+            # trunk + divergence + distinct ends (NOT a general overlap waiver; a non-sibling / full duplicate
+            # is rejected). log41/log42 owner-authorized (their common splice 819,351.5, ~35' shared trunk).
+            _sib = rec.get(lid, {}).get("sibling_shared_origin_trunk_ok")
+            if v.get("legs") and _sib:
+                _sv = solve_log(plan, offset, _sib, rec)
+                _shared = sorted({l["sheet"] for l in v["legs"]} & {l["sheet"] for l in (_sv.get("legs") or [])})
+                _ar = next((l["route"] for l in v["legs"] if _shared and l["sheet"] == _shared[0]), None)
+                _br = next((l["route"] for l in (_sv.get("legs") or []) if _shared and l["sheet"] == _shared[0]), None)
+                if _ar and _br:
+                    _ok, _d = _sibling_shared_origin_trunk_ok(
+                        _ar, _br, parent_of(lid) is not None and parent_of(lid) == parent_of(_sib),
+                        SIBLING_TRUNK_CAP_FT)
+                else:
+                    _ok, _d = False, {"reason": "no shared-sheet legs"}
+                v["sibling_shared_trunk"] = {"sibling": _sib, "shared_sheet": (_shared[0] if _shared else None),
+                                             "ok": _ok, **_d}
+                if not _ok:
+                    v["blocker"] = f"sibling-shared-trunk gate failed: {_d.get('reason')}"
+                    v["legs"] = None
             if v.get("legs"):
                 # PARENT-SOURCE GATE (ORIGINAL_HANDWRITTEN_PARENT_SOURCE_MODEL): a split child may render
                 # ONLY through its parent group, which disambiguates ownership by span + sheets so a child

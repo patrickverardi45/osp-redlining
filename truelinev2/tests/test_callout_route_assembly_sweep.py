@@ -131,12 +131,18 @@ LOG30_TARGETS = ("log30",)
 # UNAMBIGUOUS single-middle-run case (the s3/s4 frames are x-offset so the through-continuity x-match fails).
 # drawn 647.6' closes 650'. No route overlap with any drawn bore (shares ONLY the 21+63 HH endpoint w/ log11).
 LOG4_FIBER_TARGETS = ("log4",)
+# log42 = owner-corrected end (STA 2+87 TERMINAL 6 PORT HH / AP-105, NOT pothole). Segment B of bore_log13;
+# sibling = the drawn log41 (Segment A). Cross-sheet 2-leg (s2 7+40=0+00 NEXTLINK HH -> 2+70/5+16 matchline ->
+# s1 AP-105 terminal), closes 277.7'/287'. Shares its ~35' ORIGIN TRUNK with log41 (same splice) then diverges
+# -- owner-authorized via the NARROW gated `sibling_shared_origin_trunk_ok` exception.
+LOG42_TARGETS = ("log42",)
 NEW_TARGETS = (CROSS_SHEET_TARGETS + SINGLE_SHEET_TARGETS + NLEG_TARGETS
                + MATCHLINE_TERMINUS_TARGETS + HH_BRIDGE_TARGETS + THROUGH_CONTINUITY_TARGETS
                + RESET_TO_RESET_TARGETS + PROMOTED_CLEAN_TARGETS + DIRECTION_CORRECTED_TARGETS
                + LOG48_TARGETS + LOG70_TARGETS + LOG61_TARGETS + LOG62_TARGETS + LOG60_TARGETS
                + LOG32_TARGETS + LOG27_TARGETS + LOG2_TARGETS + LOG8_TARGETS + LOG56_TARGETS
-               + LOG55_TARGETS + LOG19_TARGETS + LOG49_TARGETS + LOG30_TARGETS + LOG4_FIBER_TARGETS)
+               + LOG55_TARGETS + LOG19_TARGETS + LOG49_TARGETS + LOG30_TARGETS + LOG4_FIBER_TARGETS
+               + LOG42_TARGETS)
 # log29 + log54 are reviewed-but-unanchored: class + (for log29) sheet derived from source, no anchors
 SOURCE_DERIVED_CLASS_TARGETS = ("log29", "log54")
 # log12's END is an AP TERMINAL PORT HH bound by its AP-id token (AP-121); the station 10+92 does not bind
@@ -340,6 +346,56 @@ def test_nleg_matchline_identity_join_is_gated_off_by_default():
     sig = inspect.signature(_solve_nleg)
     assert sig.parameters["conduit_set"].default == BASE_CONDUIT           # default = base only
     assert sig.parameters["matchline_identity_join"].default is False      # opt-in, default off (log46 unchanged)
+
+
+def test_log42_owner_corrected_seed_uses_ap105_terminal_not_pothole():
+    seed = OWNER_CONFIRMED_PLAN_ROUTES["log42"]
+    assert seed["sibling_shared_origin_trunk_ok"] == "log41"        # names the drawn sibling it shares trunk with
+    assert "AP-105" in seed["evidence_notes"]                       # end binds by AP-105 id (terminal_port_hh)
+    assert "7+40=0+00" in seed["evidence_notes"]                    # start reset (closure-selected over log41's 0+46)
+    assert seed["corrected_end"] == "2+87" and seed["corrected_sheets"] == [1, 2]
+    assert seed["status"] == "RECOVERED"
+    from truelinev2.ingest.parent_source import parent_of
+    assert parent_of("log42") == parent_of("log41") == "bore_log13"  # same parent family (gate precondition)
+
+
+def test_sibling_shared_origin_trunk_gate_is_narrow():
+    # proves the exception is NARROW: it allows ONLY a same-parent, same-origin, capped, divergent trunk, and
+    # rejects non-siblings, full duplicates (the log14/log10 shape), different origins, over-cap, and re-converge.
+    from truelinev2.proof.run_callout_route_assembly_sweep import (
+        _sibling_shared_origin_trunk_ok as G, SIBLING_TRUNK_CAP_FT)
+    CAP = 45.0
+    a = [(0.0, 0.0), (0.0, 25.0), (0.0, 50.0), (300.0, 50.0)]      # trunk ~50pt(=34.7') then east, distinct end
+    b = [(0.0, 0.0), (0.0, 68.0)]                                  # sibling log41-like: own divergent end
+    ok, d = G(a, b, True, CAP)
+    assert ok and d["trunk_ft"] <= CAP and d["diverges"] is True   # log41/log42 case -> ALLOW
+    assert not G(a, b, False, CAP)[0]                              # non-sibling/different family -> REJECT
+    assert "duplicate" in G([(0.,0.),(0.,30.),(0.,60.)], [(0.,0.),(0.,70.)], True, CAP)[1]["reason"]  # full dup
+    assert not G([(99.,99.),(99.,120.),(300.,120.)], b, True, CAP)[0]                     # different origin
+    assert "exceeds cap" in G([(0.,0.),(0.,40.),(0.,80.),(0.,120.),(300.,120.)], [(0.,0.),(0.,130.)], True, CAP)[1]["reason"]
+    assert not G([(0.,0.),(0.,30.),(150.,30.),(0.,30.),(0.,60.)], [(0.,0.),(0.,70.)], True, CAP)[0]   # re-converge
+    assert SIBLING_TRUNK_CAP_FT == 45.0
+
+
+@pytest.mark.skipif(not os.path.isfile(PDF), reason="Brenham plan PDF not present")
+def test_log42_start_is_closure_selected_7plus40_not_0plus46():
+    # the start reset is SOURCE-selected by closure: of the two s2 resets only 7+40 closes 287'; sibling log41's
+    # 0+46 reset fails (240') -> 7+40 is not a guess. (Also confirms the AP-105 end bind, not the POTHOLE text.)
+    from truelinev2.extract.registry import select_dialect
+    from truelinev2.ingest.pdf import PlanPdf
+    from truelinev2.proof.run_callout_route_assembly_sweep import solve_log
+    plan = PlanPdf(PDF)
+    try:
+        off = select_dialect(plan).calibrate(plan, 13)
+        base = dict(log_id="log42", status="RECOVERED", corrected_start="0+00", corrected_end="2+87",
+                    corrected_sheets=[1, 2], span_ft=287.0, allowed_to_draw=True, must_remain_abstained=False)
+        v740 = solve_log(plan, off, "log42", {"log42": {**base, "evidence_notes": "STA 7+40=0+00 AP-105 SPLICE LOC 25"}})
+        v046 = solve_log(plan, off, "log42", {"log42": {**base, "evidence_notes": "STA 0+46=0+00 AP-105 SPLICE LOC 25"}})
+        assert v740.get("legs") and v740["closure"]["closes"] is True       # 7+40 closes 287'
+        assert v740["bound_labels"] == {"start": "7+40", "end": "AP-105"}    # end bound by AP-105 id, NOT '2+87'
+        assert not v046.get("legs")                                         # 0+46 (=log41's reset) does NOT close
+    finally:
+        plan.close()
 
 
 def test_log61_override_opts_into_bundled_matchline_selector():
@@ -838,4 +894,21 @@ def test_sweep_renders_new_logs_end_to_end():
         assert z["closure"]["closes"] is True and abs(z["closure"]["drawn_ft"] - 650.0) <= 65.0
         assert z["parent_source_gate"]["ok"] is True                       # standalone bore_log4
         assert [leg["kind"] for leg in z["leg_summary"]] == ["start_leg", "mid_leg", "end_leg"]
+    # log42 = owner-corrected end (STA 2+87 TERMINAL 6 PORT HH / AP-105, NOT the adjacent POTHOLE text); end
+    # binds by the AP-105 id. Start 7+40=0+00 NEXTLINK HH (closure-selected over sibling log41's 0+46). Cross-
+    # sheet 2-leg; shares its ~35' ORIGIN TRUNK with the drawn sibling log41 then diverges, allowed by the
+    # narrow gated `sibling_shared_origin_trunk_ok` exception (same parent + same origin + capped + divergent).
+    assert "log42" in rep["newly_rendered_full"] and "log41" in rep["newly_rendered_full"]
+    for lid in LOG42_TARGETS:
+        z = rep["verdicts"][lid]
+        assert len(sorted(OUT_DIR.glob(f"{lid}_*.png"))) == 2, lid          # cross-sheet 2-leg
+        assert z["start_sheet"] == 2 and z["end_sheet"] == 1
+        assert z["start_class"] == "nextlink_hh" and z["end_class"] == "terminal_port_hh"
+        assert z["bound_labels"] == {"start": "7+40", "end": "AP-105"}      # AP-105 id, NOT '2+87'/POTHOLE
+        assert z["crossing_equation"] == ["2+70", "5+16"]
+        st = z["sibling_shared_trunk"]
+        assert st["sibling"] == "log41" and st["ok"] is True and st["diverges"] is True
+        assert st["trunk_ft"] <= 45.0                                       # capped shared origin trunk (~34.7')
+        assert z["closure"]["closes"] is True and abs(z["closure"]["drawn_ft"] - 287.0) <= 28.7
+        assert z["parent_source_gate"]["ok"] is True
     assert rep["engine_census_frozen"] is True and rep["no_fixture_mutation"] is True
