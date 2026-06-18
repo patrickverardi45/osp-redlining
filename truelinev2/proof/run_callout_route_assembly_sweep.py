@@ -134,6 +134,20 @@ OWNER_CONFIRMED_PLAN_ROUTES = {
               "evidence_notes": "STA 2+22=0+00", "endpoint_anchors": None,
               "cross_sheet_drop_terminus": True, "parallel_crossing_by_chain_reach": True,
               "allowed_to_draw": True, "must_remain_abstained": False},
+    # log4 (2026-06-18, FIBER_CORRIDOR_SPRINT render lane): standalone bore_log4, a 2-1.25" fiber MAIN on
+    # Chappell Hill, 15+13->21+63 (650'), sheets 3->4->5 (N-leg). BOTH endpoints are printed NEXTLINK HHs
+    # (reset 15+13=0+00 on s3; 21+63=0+00 on s5). The fiber conduit is on the generic BORE-PATH layer (outside
+    # BASE_CONDUIT) AND the s3/s4 frames are x-offset, so two gated, narrow opt-ins are needed: (1)
+    # `fiber_conduit_candidate_set` adds BORE-PATH to THIS log's conduit set only (global BASE_CONDUIT
+    # untouched -> census + all other renders byte-identical); (2) `nleg_matchline_identity_join` joins the 3
+    # legs by SEE-SHEET matchline identity (16+25, 20+18) in the UNAMBIGUOUS single-middle-run case (exactly 1
+    # component + 1 entry + 1 exit), the proven cross-sheet 2-leg shape. drawn 647.6' closes 650' (0.4%).
+    # Distinct corpus parent from the (undrawn) log3 that geographically contains it. span_ft = corpus 650.
+    "log4": {"log_id": "log4", "corrected_start": "0+00", "corrected_end": "21+63",
+             "corrected_sheets": [3, 4, 5], "span_ft": 650, "status": "RECOVERED",
+             "evidence_notes": "STA 15+13=0+00", "endpoint_anchors": None,
+             "fiber_conduit_candidate_set": True, "nleg_matchline_identity_join": True,
+             "allowed_to_draw": True, "must_remain_abstained": False},
     "log70": {"log_id": "log70", "parent": "bore_log35", "status": "RECOVERED",
               "corrected_start": "0+00", "corrected_end": "2+15",
               "corrected_sheets": [17, 20], "span_ft": 215.0,
@@ -562,9 +576,23 @@ def _bind(plan, offset, sheet, cls, station):
     return None, words, draw, last
 
 
-def _chain_at(draw, cls, xy):
+# the 2-1.25" fiber-MAIN path layer: a generic BORE layer OUTSIDE BASE_CONDUIT, so it is NEVER in the default
+# conduit set (census + every non-fiber render stay byte-identical). Used ONLY by the gated per-log opt-in.
+FIBER_CONDUIT_EXTRA = ("BORE - PATH",)
+
+
+def _conduit_set_for(r):
+    """The conduit layer set for THIS log's chain tracing. Default = BASE_CONDUIT. With the gated per-log
+    opt-in `fiber_conduit_candidate_set`, ADD the generic fiber-main path layer FOR THIS LOG ONLY -- the
+    global BASE_CONDUIT constant is NEVER mutated (census + all other renders byte-identical). Tracing stays
+    BOUNDED by connected-component-from-endpoint; the exactly-one-route + closure + no-overlap gates prevent
+    any sheet-wide generic-BORE widening."""
+    return (BASE_CONDUIT | set(FIBER_CONDUIT_EXTRA)) if r.get("fiber_conduit_candidate_set") else BASE_CONDUIT
+
+
+def _chain_at(draw, cls, xy, conduit_set=BASE_CONDUIT):
     fp = symbol_footprint(draw, SYMBOL_LAYER[cls], xy)
-    return connected_chain([x for x in draw if x.get("layer") in BASE_CONDUIT], fp) if fp else []
+    return connected_chain([x for x in draw if x.get("layer") in conduit_set], fp) if fp else []
 
 
 def _all_sheets(plan, offset):
@@ -789,7 +817,8 @@ def _through_continuous_pair(s_chain, s_mlb, e_chain, e_mlb, tol=10.0):
 
 
 def _solve_nleg(plan, offset, out, s0, smid, sn, s_xy, s_chain, s_words, s_draw,
-                e_xy, e_chain, e_words, e_draw, span):
+                e_xy, e_chain, e_words, e_draw, span, conduit_set=BASE_CONDUIT,
+                matchline_identity_join=False):
     """Three-sheet route s0 -> smid -> sn joined by TWO printed matchline crossings (the log46 shape).
 
     The middle leg is a CONNECTED CONDUIT COMPONENT on smid that spans the entry (->s0) and exit (->sn)
@@ -806,7 +835,7 @@ def _solve_nleg(plan, offset, out, s0, smid, sn, s_xy, s_chain, s_words, s_draw,
         out["blocker"] = "N-leg route needs a printed bore span for full-path closure"
         return out
     mid_words, mid_draw = plan.words(smid, offset), plan.line_items(smid, offset)
-    mid_conduit = [x for x in mid_draw if x.get("layer") in BASE_CONDUIT]
+    mid_conduit = [x for x in mid_draw if x.get("layer") in conduit_set]
     # the entry (->s0) and exit (->sn) matchline bboxes printed on smid (one per crossing equation)
     entries = [(c, _ml_bbox(mid_words, mid_draw, c)) for c in see_sheet_crossings(plan.lines(smid, offset), s0, "MATCHLINE")]
     exits = [(c, _ml_bbox(mid_words, mid_draw, c)) for c in see_sheet_crossings(plan.lines(smid, offset), sn, "MATCHLINE")]
@@ -817,7 +846,8 @@ def _solve_nleg(plan, offset, out, s0, smid, sn, s_xy, s_chain, s_words, s_draw,
         return bool(eps) and min(nearest_gap([p], bb) for p in eps) <= MAX_DASH_GAP
 
     sols = []
-    for comp in _conduit_components(mid_conduit):
+    comps = _conduit_components(mid_conduit)
+    for comp in comps:
         eps = dash_endpoints(comp)
         ent = [(c, bb) for c, bb in entries if _reaches(eps, bb)]
         ext = [(c, bb) for c, bb in exits if _reaches(eps, bb)]
@@ -836,6 +866,19 @@ def _solve_nleg(plan, offset, out, s0, smid, sn, s_xy, s_chain, s_words, s_draw,
         exit_bb_sn = _ml_bbox(e_words, e_draw, ecn)
         start_bnd = _chain_boundary_near_x(s_chain, entry_bb_s0, a_mid[0]) if entry_bb_s0 else None
         end_bnd = _chain_boundary_near_x(e_chain, exit_bb_sn, b_mid[0]) if exit_bb_sn else None
+        # MATCHLINE-IDENTITY JOIN (opt-in `nleg_matchline_identity_join`; gated): when smid's frame is NOT
+        # x-aligned with s0/sn (a fiber main drawn in offset sheet frames -- log4: s3 crosses 16+25 at x~772
+        # but the s4 run enters at x~690, the SAME physical bore), the through-continuity x-match fails. Safe
+        # ONLY in the unambiguous single-run case (exactly 1 middle component + 1 entry + 1 exit -> no parallel
+        # run to confuse): join each leg to its OWN sheet's matchline IDENTITY (the proven cross-sheet 2-leg
+        # join shape). Full-route printed-span closure remains the only-false-positive gate.
+        if matchline_identity_join and len(comps) == 1 and len(entries) == 1 and len(exits) == 1:
+            if start_bnd is None and entry_bb_s0:
+                _sb = extend_dash_to_boundary(s_chain, entry_bb_s0)
+                start_bnd = tuple(_sb) if _sb is not None else None
+            if end_bnd is None and exit_bb_sn:
+                _eb = extend_dash_to_boundary(e_chain, exit_bb_sn)
+                end_bnd = tuple(_eb) if _eb is not None else None
         if not (start_bnd and end_bnd):
             continue                       # run not through-continuous with this bore's start AND end
         r1, ok1 = _ordered_leg(s_chain, s_xy, start_bnd)
@@ -1390,8 +1433,9 @@ def solve_log(plan, offset, lid, rec):
         e_xy, e_words, e_draw = e_xy_ov, plan.words(e_sheet, offset), plan.line_items(e_sheet, offset)
     else:
         e_xy, e_words, e_draw, _ = _bind(plan, offset, e_sheet, ec, e_lbl)
-    s_chain = _chain_at(s_draw, sc, s_xy)
-    e_chain = _chain_at(e_draw, ec, e_xy)
+    cset = _conduit_set_for(r)                     # default BASE_CONDUIT; fiber opt-in adds BORE-PATH (gated)
+    s_chain = _chain_at(s_draw, sc, s_xy, cset)
+    e_chain = _chain_at(e_draw, ec, e_xy, cset)
     if not s_chain or not e_chain:
         out["blocker"] = f"no connected conduit chain at a terminus (start segs {len(s_chain)}, end segs {len(e_chain)})"
         return out
@@ -1443,7 +1487,9 @@ def solve_log(plan, offset, lid, rec):
             # 3-sheet route: start -> intermediate -> end, joined by two printed matchline crossings
             out["_ss"], out["_es"] = ss, es
             return _solve_nleg(plan, offset, out, s_sheet, mids[0], e_sheet,
-                               s_xy, s_chain, s_words, s_draw, e_xy, e_chain, e_words, e_draw, span)
+                               s_xy, s_chain, s_words, s_draw, e_xy, e_chain, e_words, e_draw, span,
+                               conduit_set=cset,
+                               matchline_identity_join=r.get("nleg_matchline_identity_join"))
         if mids:
             out["blocker"] = (f"N-leg route with {len(mids)} intermediate sheets {mids} not supported "
                               f"(only a single intermediate sheet is implemented)")

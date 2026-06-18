@@ -123,12 +123,20 @@ LOG49_TARGETS = ("log49",)
 # the parallel 2+72 reset's 226' start leg FAILS per-leg though its total closes). Start reset 2+22=0+00
 # INSTALLER HH -> 5+10 FLOWER POT.
 LOG30_TARGETS = ("log30",)
+# log4 = the first FIBER-MAIN render (FIBER_CORRIDOR_SPRINT): standalone bore_log4, 2-1.25" fiber on Chappell
+# Hill, 15+13->21+63 (650'), N-leg s3->s4->s5. BOTH endpoints printed NEXTLINK HHs (15+13=0+00 s3, 21+63=0+00
+# s5). Two gated, narrow opt-ins (global BASE_CONDUIT untouched -> census + all other renders byte-identical):
+# (1) `fiber_conduit_candidate_set` adds the generic BORE-PATH layer to THIS log's conduit set only; (2)
+# `nleg_matchline_identity_join` joins the 3 legs by SEE-SHEET matchline identity (16+25, 20+18) in the
+# UNAMBIGUOUS single-middle-run case (the s3/s4 frames are x-offset so the through-continuity x-match fails).
+# drawn 647.6' closes 650'. No route overlap with any drawn bore (shares ONLY the 21+63 HH endpoint w/ log11).
+LOG4_FIBER_TARGETS = ("log4",)
 NEW_TARGETS = (CROSS_SHEET_TARGETS + SINGLE_SHEET_TARGETS + NLEG_TARGETS
                + MATCHLINE_TERMINUS_TARGETS + HH_BRIDGE_TARGETS + THROUGH_CONTINUITY_TARGETS
                + RESET_TO_RESET_TARGETS + PROMOTED_CLEAN_TARGETS + DIRECTION_CORRECTED_TARGETS
                + LOG48_TARGETS + LOG70_TARGETS + LOG61_TARGETS + LOG62_TARGETS + LOG60_TARGETS
                + LOG32_TARGETS + LOG27_TARGETS + LOG2_TARGETS + LOG8_TARGETS + LOG56_TARGETS
-               + LOG55_TARGETS + LOG19_TARGETS + LOG49_TARGETS + LOG30_TARGETS)
+               + LOG55_TARGETS + LOG19_TARGETS + LOG49_TARGETS + LOG30_TARGETS + LOG4_FIBER_TARGETS)
 # log29 + log54 are reviewed-but-unanchored: class + (for log29) sheet derived from source, no anchors
 SOURCE_DERIVED_CLASS_TARGETS = ("log29", "log54")
 # log12's END is an AP TERMINAL PORT HH bound by its AP-id token (AP-121); the station 10+92 does not bind
@@ -302,6 +310,36 @@ def test_parallel_crossing_selector_is_gated_off_by_default():
     from truelinev2.proof.run_callout_route_assembly_sweep import _solve_cross_sheet_drop_terminus
     sig = inspect.signature(_solve_cross_sheet_drop_terminus)
     assert sig.parameters["parallel_by_chain_reach"].default is False   # opt-in, default off
+
+
+def test_log4_fiber_corridor_seed_opts_into_both_gated_primitives():
+    seed = OWNER_CONFIRMED_PLAN_ROUTES["log4"]
+    assert seed["fiber_conduit_candidate_set"] is True             # opt-in: adds BORE-PATH for THIS log only
+    assert seed["nleg_matchline_identity_join"] is True            # opt-in: single-run identity join
+    assert seed["corrected_sheets"] == [3, 4, 5] and seed["span_ft"] == 650
+    assert "15+13=0+00" in seed["evidence_notes"]                  # start reset NEXTLINK HH
+    assert seed["corrected_end"] == "21+63"                        # end NEXTLINK HH (s5)
+    assert seed["status"] == "RECOVERED"
+    assert "log4" not in ALREADY_DRAWN and "log4" not in DUPLICATE_OF_DRAWN
+
+
+def test_fiber_conduit_set_is_gated_and_never_widens_global_base():
+    # the fiber opt-in adds BORE-PATH ONLY for an opted-in record; the GLOBAL BASE_CONDUIT constant (census +
+    # every other render) is never mutated, and BORE-PATH stays out of it.
+    from truelinev2.proof.run_callout_route_assembly_sweep import (
+        BASE_CONDUIT, FIBER_CONDUIT_EXTRA, _conduit_set_for)
+    assert "BORE - PATH" not in BASE_CONDUIT                       # generic fiber layer NOT in the base set
+    assert _conduit_set_for({}) == BASE_CONDUIT                    # default: unchanged
+    assert _conduit_set_for({"fiber_conduit_candidate_set": True}) == BASE_CONDUIT | set(FIBER_CONDUIT_EXTRA)
+    assert BASE_CONDUIT == set(BRENHAM_CONDUIT_LAYERS.values()) | set(BRENHAM_LATERAL_CONDUIT_LAYERS.values())
+
+
+def test_nleg_matchline_identity_join_is_gated_off_by_default():
+    import inspect
+    from truelinev2.proof.run_callout_route_assembly_sweep import _solve_nleg
+    sig = inspect.signature(_solve_nleg)
+    assert sig.parameters["conduit_set"].default == BASE_CONDUIT           # default = base only
+    assert sig.parameters["matchline_identity_join"].default is False      # opt-in, default off (log46 unchanged)
 
 
 def test_log61_override_opts_into_bundled_matchline_selector():
@@ -784,4 +822,20 @@ def test_sweep_renders_new_logs_end_to_end():
     # run_log30_visual_verify). log48's own route is unchanged by the gated selector (byte-identical PNGs).
     assert rep["verdicts"]["log30"]["parallel_crossing_selected"]["crossing"] == ["1+91", "1+92"]
     assert rep["verdicts"]["log48"]["crossing_equation"] == ["1+90", "1+90"]
+    # log4 = the first FIBER-MAIN render via the two gated opt-ins: `fiber_conduit_candidate_set` (BORE-PATH
+    # added for THIS log only) lets the N-leg chains trace the 2-1.25" fiber, and `nleg_matchline_identity_join`
+    # joins the 3 legs by SEE-SHEET identity (the s3/s4 frames are x-offset). Both NEXTLINK HHs bind; exactly
+    # one middle run; drawn 647.6' closes 650'.
+    assert "log4" in rep["newly_rendered_full"]
+    for lid in LOG4_FIBER_TARGETS:
+        z = rep["verdicts"][lid]
+        assert len(sorted(OUT_DIR.glob(f"{lid}_*.png"))) == 3, lid          # 3-sheet N-leg fiber main
+        assert z["start_sheet"] == 3 and z["end_sheet"] == 5
+        assert z["start_class"] == "nextlink_hh" and z["end_class"] == "nextlink_hh"
+        assert z["bound_labels"] == {"start": "15+13", "end": "21+63"}
+        assert z["crossing_chain"] == [["16+25"], ["20+18"]]
+        assert len(z["nleg_closing_solutions"]) == 1                        # unique middle run (no parallel)
+        assert z["closure"]["closes"] is True and abs(z["closure"]["drawn_ft"] - 650.0) <= 65.0
+        assert z["parent_source_gate"]["ok"] is True                       # standalone bore_log4
+        assert [leg["kind"] for leg in z["leg_summary"]] == ["start_leg", "mid_leg", "end_leg"]
     assert rep["engine_census_frozen"] is True and rep["no_fixture_mutation"] is True
