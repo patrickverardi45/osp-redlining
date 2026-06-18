@@ -186,6 +186,26 @@ OWNER_CONFIRMED_PLAN_ROUTES = {
                           "owner_note_text": ("log62 end: STA 2+01 FLOWER POT (sheet 6) via the 1+92 crossing "
                                               "of the bundled 24+11/4+37/1+92 matchline (AP-138 RIGHT side).")}},
               "allowed_to_draw": True, "must_remain_abstained": False},
+    # log60 (2026-06-17, RAW_CORPUS_FAST_PICK lane): a clean SINGLE-SHEET drop on sheet 15 -- the easiest
+    # remaining raw corpus log. Source-VERIFIED (printed structures): STA 6+32 INSTALLER HH (the drop's local
+    # 0+00) -> STA 1+13 FLOWER POT, 'STA 0+00 TO STA 1+13' (113'). Both termini bind by clean station labels
+    # (6+32 / 1+13); the existing single-sheet solver traces the ordered conduit path and closes (drawn 111.3
+    # vs 113). No matchline, no parallel branch. Parent gate ok (bore_log26; own 0+00->1+13 vs colliding
+    # sibling log62's 201 -> owns its own). Identity-only anchors; no census/corpus change.
+    "log60": {"log_id": "log60", "parent": "bore_log26", "status": "RECOVERED",
+              "corrected_start": "0+00", "corrected_end": "1+13",
+              "corrected_sheets": [15], "span_ft": 113.0,
+              "endpoint_anchors": {
+                  "start": {"station": "6+32", "structure_class": "installer_hh",
+                            "boundary_kind": "structure_terminus", "clarity": "CLEAR",
+                            "structure_label": "INSTALLER HH",
+                            "owner_note_text": ("log60 single-sheet drop start: STA 6+32 INSTALLER HH "
+                                                "(sheet 15; the drop's local 0+00).")},
+                  "end": {"station": "1+13", "structure_class": "flower_pot",
+                          "boundary_kind": "structure_terminus", "clarity": "CLEAR",
+                          "structure_label": "FLOWER POT",
+                          "owner_note_text": "log60 end: STA 1+13 FLOWER POT (sheet 15)."}},
+              "allowed_to_draw": True, "must_remain_abstained": False},
 }
 # OWNER-REVIEWED REVIEW-CANDIDATE PROMOTIONS (2026-06-17 owner review of review_candidate_reasoning_sweep):
 # logs the owner CONFIRMED correct that carry NO owner adjudication route -- the engine truth-table SPAN

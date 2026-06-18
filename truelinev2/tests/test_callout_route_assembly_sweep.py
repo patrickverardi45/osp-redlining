@@ -69,10 +69,13 @@ LOG61_TARGETS = ("log61",)
 # bundled selector picks 1+92 (named by the sheet-6 end callout 'STA 1+92 TO STA 2+01') -> proving it
 # generalizes to the sibling branch; start STA 1+82 INSTALLER HH -> STA 2+01 FLOWER POT, ~201'.
 LOG62_TARGETS = ("log62",)
+# log60 = a clean SINGLE-SHEET raw-corpus drop on sheet 15 (the easiest remaining): STA 6+32 INSTALLER HH ->
+# STA 1+13 FLOWER POT (113'); both termini bind by clean station labels; no matchline, no bundled equation.
+LOG60_TARGETS = ("log60",)
 NEW_TARGETS = (CROSS_SHEET_TARGETS + SINGLE_SHEET_TARGETS + NLEG_TARGETS
                + MATCHLINE_TERMINUS_TARGETS + HH_BRIDGE_TARGETS + THROUGH_CONTINUITY_TARGETS
                + RESET_TO_RESET_TARGETS + PROMOTED_CLEAN_TARGETS + DIRECTION_CORRECTED_TARGETS
-               + LOG48_TARGETS + LOG70_TARGETS + LOG61_TARGETS + LOG62_TARGETS)
+               + LOG48_TARGETS + LOG70_TARGETS + LOG61_TARGETS + LOG62_TARGETS + LOG60_TARGETS)
 # log29 + log54 are reviewed-but-unanchored: class + (for log29) sheet derived from source, no anchors
 SOURCE_DERIVED_CLASS_TARGETS = ("log29", "log54")
 # log12's END is an AP TERMINAL PORT HH bound by its AP-id token (AP-121); the station 10+92 does not bind
@@ -446,4 +449,15 @@ def test_sweep_renders_new_logs_end_to_end():
         assert g["bundled_selected_station"] == "1+92"                      # RIGHT branch (NOT 4+37 / 24+11)
         assert g["closure"]["closes"] is True and abs(g["closure"]["drawn_ft"] - 201.0) <= 20.1
         assert g["parent_source_gate"]["ok"] is True
+    # log60 = a clean SINGLE-SHEET raw-corpus drop (sheet 15): STA 6+32 INSTALLER HH -> STA 1+13 FLOWER POT,
+    # ~113'. One leg, both termini bound by their station labels; no matchline.
+    assert "log60" in rep["newly_rendered_full"]
+    for lid in LOG60_TARGETS:
+        h = rep["verdicts"][lid]
+        assert len(sorted(OUT_DIR.glob(f"{lid}_*.png"))) == 1, lid          # single sheet
+        assert h["single_sheet"] is True and h["start_sheet"] == 15 and h["end_sheet"] == 15
+        assert h["start_class"] == "installer_hh" and h["end_class"] == "flower_pot"
+        assert h["bound_labels"] == {"start": "6+32", "end": "1+13"}
+        assert h["closure"]["closes"] is True and abs(h["closure"]["drawn_ft"] - 113.0) <= 11.3
+        assert h["parent_source_gate"]["ok"] is True
     assert rep["engine_census_frozen"] is True and rep["no_fixture_mutation"] is True
