@@ -72,10 +72,15 @@ LOG62_TARGETS = ("log62",)
 # log60 = a clean SINGLE-SHEET raw-corpus drop on sheet 15 (the easiest remaining): STA 6+32 INSTALLER HH ->
 # STA 1+13 FLOWER POT (113'); both termini bind by clean station labels; no matchline, no bundled equation.
 LOG60_TARGETS = ("log60",)
+# log32 = cross-sheet drop (18->22) whose origin was disambiguated by an owner-confirmed PRINTED-DISTANCE
+# discriminator: HH-HH=130' (s18) + HH-HH=83' (s22) = 213 = bore span -> origin is STA 12+22=0+00 NEXTLINK HH
+# (NOT the STA 12+93=0+00 INSTALLER HH, which also closes). End STA 2+13 FLOWER POT via the 1+77/1+76 matchline.
+LOG32_TARGETS = ("log32",)
 NEW_TARGETS = (CROSS_SHEET_TARGETS + SINGLE_SHEET_TARGETS + NLEG_TARGETS
                + MATCHLINE_TERMINUS_TARGETS + HH_BRIDGE_TARGETS + THROUGH_CONTINUITY_TARGETS
                + RESET_TO_RESET_TARGETS + PROMOTED_CLEAN_TARGETS + DIRECTION_CORRECTED_TARGETS
-               + LOG48_TARGETS + LOG70_TARGETS + LOG61_TARGETS + LOG62_TARGETS + LOG60_TARGETS)
+               + LOG48_TARGETS + LOG70_TARGETS + LOG61_TARGETS + LOG62_TARGETS + LOG60_TARGETS
+               + LOG32_TARGETS)
 # log29 + log54 are reviewed-but-unanchored: class + (for log29) sheet derived from source, no anchors
 SOURCE_DERIVED_CLASS_TARGETS = ("log29", "log54")
 # log12's END is an AP TERMINAL PORT HH bound by its AP-id token (AP-121); the station 10+92 does not bind
@@ -375,11 +380,11 @@ def test_sweep_renders_new_logs_end_to_end():
         assert t["through_continuity"] is True                # the default minimal-extension branch overshot
         assert t["start_sheet"] == 17 and t["end_sheet"] == 5 and t["sheets_set"] == [5]   # off-sheet start
         assert t["closure"]["closes"] is True
-    # through-continuity fires for log6 (off-sheet start, branch overshoot) AND log70 (the L-turn start chain
-    # reaches the 1+75 matchline at multiple points; the branch through-continuous with the sheet-20 leg closes
-    # to 215'). The other cross-sheet renders close on the default minimal-extension branch.
+    # through-continuity fires for log6 (off-sheet start, branch overshoot), log70 (L-turn) AND log32 (the
+    # 12+22 origin chain reaches the 1+77 matchline at multiple points; the branch through-continuous with the
+    # sheet-22 leg closes). The other cross-sheet renders close on the default minimal-extension branch.
     assert sorted(lid for lid in rep["newly_rendered_full"]
-                  if rep["verdicts"][lid].get("through_continuity")) == sorted(THROUGH_CONTINUITY_TARGETS + LOG70_TARGETS)
+                  if rep["verdicts"][lid].get("through_continuity")) == sorted(THROUGH_CONTINUITY_TARGETS + LOG70_TARGETS + LOG32_TARGETS)
     # log41 = reset-to-reset single-sheet across-street bore: one leg, closes (receiving HH by reset token)
     for lid in RESET_TO_RESET_TARGETS:
         v = rep["verdicts"][lid]
@@ -460,4 +465,16 @@ def test_sweep_renders_new_logs_end_to_end():
         assert h["bound_labels"] == {"start": "6+32", "end": "1+13"}
         assert h["closure"]["closes"] is True and abs(h["closure"]["drawn_ft"] - 113.0) <= 11.3
         assert h["parent_source_gate"]["ok"] is True
+    # log32 = cross-sheet drop (18->22): owner-confirmed origin STA 12+22=0+00 NEXTLINK HH (printed HH-HH
+    # 130'+83'=213 selects 12+22 over the 12+93 INSTALLER HH), end STA 2+13 FLOWER POT via the 1+77/1+76 matchline.
+    assert "log32" in rep["newly_rendered_full"]
+    for lid in LOG32_TARGETS:
+        j = rep["verdicts"][lid]
+        assert len(sorted(OUT_DIR.glob(f"{lid}_*.png"))) == 2, lid          # cross-sheet 2-leg
+        assert j["start_sheet"] == 18 and j["end_sheet"] == 22
+        assert j["start_class"] == "nextlink_hh" and j["end_class"] == "flower_pot"
+        assert j["bound_labels"] == {"start": "12+22", "end": "2+13"}       # 12+22 selected, NOT 12+93
+        assert j["crossing_equation"] == ["1+77", "1+76"]
+        assert j["closure"]["closes"] is True and abs(j["closure"]["drawn_ft"] - 213.0) <= 21.3
+        assert j["parent_source_gate"]["ok"] is True
     assert rep["engine_census_frozen"] is True and rep["no_fixture_mutation"] is True

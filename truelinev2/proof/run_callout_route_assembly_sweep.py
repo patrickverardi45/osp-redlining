@@ -206,6 +206,31 @@ OWNER_CONFIRMED_PLAN_ROUTES = {
                           "structure_label": "FLOWER POT",
                           "owner_note_text": "log60 end: STA 1+13 FLOWER POT (sheet 15)."}},
               "allowed_to_draw": True, "must_remain_abstained": False},
+    # log32 (2026-06-17, owner-supplied PRINTED-DISTANCE discriminator): cross-sheet drop 18->22, 0+00->2+13
+    # (213'). Sheet 18 prints TWO reset HHs that both produce a closing route (STA 12+22=0+00 NEXTLINK HH /
+    # SPLICE POINT 34 -> 207.2'; STA 12+93=0+00 INSTALLER HH -> 210.5'), so closure alone is ambiguous. The
+    # OWNER-CONFIRMED source discriminator is the printed HH-HH decomposition: HH-HH=130' on sheet 18 (the leg
+    # to the matchline) + HH-HH=83' on sheet 22 = 213 = the bore span -> the origin is STA 12+22=0+00 (NOT
+    # 12+93). Anchor the start to the 12+22 NEXTLINK HH; the end is STA 2+13 FLOWER POT on sheet 22 via the
+    # 1+77/1+76 matchline. The existing cross-sheet 2-leg solver traces it (drawn 207.2 vs 213, closes).
+    # Identity-only anchors; no census/corpus change. Parent gate ok (standalone bore_log32).
+    "log32": {"log_id": "log32", "parent": "bore_log32", "status": "RECOVERED",
+              "corrected_start": "0+00", "corrected_end": "2+13",
+              "corrected_sheets": [18, 22], "span_ft": 213.0,
+              "endpoint_anchors": {
+                  "start": {"station": "12+22", "structure_class": "nextlink_hh",
+                            "boundary_kind": "structure_terminus", "clarity": "CLEAR",
+                            "structure_label": "NEXTLINK HH",
+                            "owner_note_text": ("owner-confirmed log32 origin 2026-06-17: STA 12+22=0+00 NEXTLINK "
+                                                "HH (PROP. SPLICE POINT 34, sheet 18). Printed HH-HH decomposition "
+                                                "130' (s18) + 83' (s22) = 213 = bore span SELECTS 12+22, REJECTS "
+                                                "the STA 12+93=0+00 INSTALLER HH origin.")},
+                  "end": {"station": "2+13", "structure_class": "flower_pot",
+                          "boundary_kind": "structure_terminus", "clarity": "CLEAR",
+                          "structure_label": "FLOWER POT",
+                          "owner_note_text": ("log32 end: STA 2+13 FLOWER POT (sheet 22), reached from the 12+22 "
+                                              "origin down Hickory Ln across the 1+77/1+76 matchline.")}},
+              "allowed_to_draw": True, "must_remain_abstained": False},
 }
 # OWNER-REVIEWED REVIEW-CANDIDATE PROMOTIONS (2026-06-17 owner review of review_candidate_reasoning_sweep):
 # logs the owner CONFIRMED correct that carry NO owner adjudication route -- the engine truth-table SPAN
