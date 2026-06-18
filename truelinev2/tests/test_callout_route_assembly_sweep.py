@@ -88,11 +88,15 @@ LOG27_TARGETS = ("log27",)
 # sheet run callout 'STA 12+22 TO STA 18+38' next to the SEE-SHEET-22 line, so each leg's boundary is taken
 # from the 'SEE SHEET <partner>' matchline identity (s18 right edge SEE SHEET 19, s19 left edge SEE SHEET 18).
 LOG2_TARGETS = ("log2",)
+# log8 = OWNER-CONFIRMED PLAN ROUTE (2026-06-18): cross-sheet drop 18->22, STA 12+93=0+00 INSTALLER HH ->
+# STA 3+90 FLOWER POT, 390', Hickory Ln. Owner-confirmed start (12+93 INSTALLER, NOT log32's 12+22 NEXTLINK);
+# the existing cross-sheet 2-leg solver traces the 1+77/1+76 crossing with no special hook (chain 110+66+214).
+LOG8_TARGETS = ("log8",)
 NEW_TARGETS = (CROSS_SHEET_TARGETS + SINGLE_SHEET_TARGETS + NLEG_TARGETS
                + MATCHLINE_TERMINUS_TARGETS + HH_BRIDGE_TARGETS + THROUGH_CONTINUITY_TARGETS
                + RESET_TO_RESET_TARGETS + PROMOTED_CLEAN_TARGETS + DIRECTION_CORRECTED_TARGETS
                + LOG48_TARGETS + LOG70_TARGETS + LOG61_TARGETS + LOG62_TARGETS + LOG60_TARGETS
-               + LOG32_TARGETS + LOG27_TARGETS + LOG2_TARGETS)
+               + LOG32_TARGETS + LOG27_TARGETS + LOG2_TARGETS + LOG8_TARGETS)
 # log29 + log54 are reviewed-but-unanchored: class + (for log29) sheet derived from source, no anchors
 SOURCE_DERIVED_CLASS_TARGETS = ("log29", "log54")
 # log12's END is an AP TERMINAL PORT HH bound by its AP-id token (AP-121); the station 10+92 does not bind
@@ -540,4 +544,20 @@ def test_sweep_renders_new_logs_end_to_end():
         assert m["end_symbol_bound"]["station"] == "20+71" and m["end_symbol_bound"]["sheet"] == 19
         assert m["closure"]["closes"] is True and abs(m["closure"]["drawn_ft"] - 849.0) <= 84.9
         assert m["parent_source_gate"]["ok"] is True
+    # log8 = cross-sheet drop (18->22, 12+93->3+90, 390', Hickory Ln) -- owner-confirmed start STA 12+93=0+00
+    # INSTALLER HH (NOT log32's 12+22 NEXTLINK); end STA 3+90 FLOWER POT via the SAME 1+77/1+76 crossing as
+    # log32 but a DISTINCT bore (different start/end/span). No special hook -- the standard 2-leg solver traces it.
+    assert "log8" in rep["newly_rendered_full"]
+    for lid in LOG8_TARGETS:
+        n = rep["verdicts"][lid]
+        assert len(sorted(OUT_DIR.glob(f"{lid}_*.png"))) == 2, lid          # cross-sheet 2-leg
+        assert n["start_sheet"] == 18 and n["end_sheet"] == 22
+        assert n["start_class"] == "installer_hh" and n["end_class"] == "flower_pot"
+        assert n["bound_labels"] == {"start": "12+93", "end": "3+90"}       # 12+93 (NOT log32's 12+22)
+        assert n["crossing_equation"] == ["1+77", "1+76"]
+        assert n["closure"]["closes"] is True and abs(n["closure"]["drawn_ft"] - 390.0) <= 39.0
+        assert n["parent_source_gate"]["ok"] is True
+    # log8 must NOT have stolen log32's route: distinct start label + span (12+93/390 vs 12+22/213)
+    assert rep["verdicts"]["log32"]["bound_labels"]["start"] == "12+22"     # log32 unchanged
+    assert rep["verdicts"]["log8"]["bound_labels"]["start"] == "12+93"
     assert rep["engine_census_frozen"] is True and rep["no_fixture_mutation"] is True

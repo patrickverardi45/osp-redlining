@@ -289,6 +289,31 @@ OWNER_CONFIRMED_PLAN_ROUTES = {
                                              "HH AP-148 SPLICE LOC 34 (sheet 19, Niebuhr St). Legs 616'+233'="
                                              "849 across the reciprocal 18+38 / SEE SHEET 19 matchline.")}},
              "allowed_to_draw": True, "must_remain_abstained": False},
+    # log8 (2026-06-18, Gate #2 endpoint-identity review -- owner-confirmed start via plan screenshots): cross-
+    # sheet drop 18->22, span 390', down Hickory Ln. Owner confirmed the START is STA 12+93=0+00 13"X24"X24"
+    # INSTALLER HH (NOT the 12+22 NEXTLINK HH = log32's origin, which closes only loosely at 426'). Printed
+    # chain: STA 0+00 TO 1+10 (110') -> STA 1+10 TO 1+76 (66') on sheet 18 -> MATCHLINE STA 1+77/1+76 SEE SHEET
+    # 22 -> STA 1+76 TO 3+90 (214') on sheet 22 -> STA 3+90 11"X11"X12" FLOWER POT (Hickory cul-de-sac);
+    # 110+66+214 = 390. The existing cross-sheet 2-leg solver traces it with NO special hook (both termini bind
+    # by their own labels: 12+93 installer_hh reset, 3+90 flower_pot), drawn 384.6 vs 390 (closes). DISTINCT
+    # from log32 (12+22 NEXTLINK -> 2+13 FLOWER POT, 213') and log2 (12+22 -> 20+71, 849', sheets 18->19):
+    # different start + end + span. Parent gate ok (standalone bore_log8). Identity-only; no census/corpus change.
+    "log8": {"log_id": "log8", "parent": "bore_log8", "status": "RECOVERED",
+             "corrected_start": "12+93", "corrected_end": "3+90",
+             "corrected_sheets": [18, 22], "span_ft": 390.0,
+             "endpoint_anchors": {
+                 "start": {"station": "12+93", "structure_class": "installer_hh",
+                           "boundary_kind": "structure_terminus", "clarity": "CLEAR",
+                           "structure_label": "INSTALLER HH",
+                           "owner_note_text": ("owner-confirmed log8 start 2026-06-18 (plan screenshots): STA "
+                                               "12+93=0+00 13\"X24\"X24\" INSTALLER HH (sheet 18, Hickory Ln); "
+                                               "NOT the 12+22 NEXTLINK HH (= log32 origin, loose 426' close).")},
+                 "end": {"station": "3+90", "structure_class": "flower_pot",
+                         "boundary_kind": "structure_terminus", "clarity": "CLEAR",
+                         "structure_label": "FLOWER POT",
+                         "owner_note_text": ("log8 end: STA 3+90 11\"X11\"X12\" FLOWER POT (sheet 22, Hickory Ln "
+                                             "cul-de-sac), 214' past the 1+76 matchline. Chain 110+66+214 = 390.")}},
+             "allowed_to_draw": True, "must_remain_abstained": False},
 }
 # OWNER-REVIEWED REVIEW-CANDIDATE PROMOTIONS (2026-06-17 owner review of review_candidate_reasoning_sweep):
 # logs the owner CONFIRMED correct that carry NO owner adjudication route -- the engine truth-table SPAN
