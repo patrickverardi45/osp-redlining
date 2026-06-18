@@ -97,11 +97,16 @@ LOG8_TARGETS = ("log8",)
 # the new opt-in `drop_terminus_symbol_bind` primitive: walk the bound 0+46 INSTALLER HH chain to the UNIQUE
 # flower-pot symbol at the bore's 276' span (the 270' conduit callout admits a 2nd pot; 276' selects one).
 LOG56_TARGETS = ("log56",)
+# log55 = the SHEET-17 sibling of log56 (parent bore_log22), also a single-sheet drop to a SYMBOL-ONLY flower
+# pot via `drop_terminus_symbol_bind`: sheet 17 prints FIVE 0+00 resets, but only the owner-confirmed STA
+# 4+57=0+00 INSTALLER HH reaches a UNIQUE flower-pot terminus that closes the bore's 169' span (drawn 173.8').
+LOG55_TARGETS = ("log55",)
 NEW_TARGETS = (CROSS_SHEET_TARGETS + SINGLE_SHEET_TARGETS + NLEG_TARGETS
                + MATCHLINE_TERMINUS_TARGETS + HH_BRIDGE_TARGETS + THROUGH_CONTINUITY_TARGETS
                + RESET_TO_RESET_TARGETS + PROMOTED_CLEAN_TARGETS + DIRECTION_CORRECTED_TARGETS
                + LOG48_TARGETS + LOG70_TARGETS + LOG61_TARGETS + LOG62_TARGETS + LOG60_TARGETS
-               + LOG32_TARGETS + LOG27_TARGETS + LOG2_TARGETS + LOG8_TARGETS + LOG56_TARGETS)
+               + LOG32_TARGETS + LOG27_TARGETS + LOG2_TARGETS + LOG8_TARGETS + LOG56_TARGETS
+               + LOG55_TARGETS)
 # log29 + log54 are reviewed-but-unanchored: class + (for log29) sheet derived from source, no anchors
 SOURCE_DERIVED_CLASS_TARGETS = ("log29", "log54")
 # log12's END is an AP TERMINAL PORT HH bound by its AP-id token (AP-121); the station 10+92 does not bind
@@ -608,4 +613,23 @@ def test_sweep_renders_new_logs_end_to_end():
         assert p["closure"]["closes"] is True and abs(p["closure"]["drawn_ft"] - 276.0) <= 27.6
         assert p["leg_summary"][0]["kind"] == "drop_terminus"
         assert p["parent_source_gate"]["ok"] is True
+    # log55 = the SHEET-17 sibling of log56 (parent bore_log22), SAME drop_terminus_symbol_bind primitive:
+    # the owner-confirmed STA 4+57=0+00 INSTALLER HH chain reaches the UNIQUE flower-pot symbol at the bore's
+    # 169' span (closes 173.8'). Only the 4+57 reset (of five 0+00 resets on sheet 17) binds a closing terminus.
+    assert "log55" in rep["newly_rendered_full"]
+    for lid in LOG55_TARGETS:
+        q = rep["verdicts"][lid]
+        assert len(sorted(OUT_DIR.glob(f"{lid}_*.png"))) == 1, lid          # single sheet, one leg
+        assert q["single_sheet"] is True and q["start_sheet"] == 17 and q["end_sheet"] == 17
+        assert q["start_class"] == "installer_hh" and q["end_class"] == "flower_pot"
+        assert q["bound_labels"] == {"start": "4+57", "end": "1+69"}
+        assert len(q["drop_terminus_candidates"]) == 1                      # uniqueness gate satisfied
+        assert q["drop_terminus_bound"]["sheet"] == 17
+        assert q["closure"]["closes"] is True and abs(q["closure"]["drawn_ft"] - 169.0) <= 16.9
+        assert q["leg_summary"][0]["kind"] == "drop_terminus"
+        assert q["parent_source_gate"]["ok"] is True
+    # log55 must NOT have stolen sibling log56's route: distinct sheet (17 vs 2) AND span (169 vs 276)
+    assert rep["verdicts"]["log55"]["start_sheet"] == 17 and rep["verdicts"]["log56"]["start_sheet"] == 2
+    assert rep["verdicts"]["log55"]["drop_terminus_bound"]["sheet"] == 17
+    assert rep["verdicts"]["log56"]["drop_terminus_bound"]["sheet"] == 2
     assert rep["engine_census_frozen"] is True and rep["no_fixture_mutation"] is True

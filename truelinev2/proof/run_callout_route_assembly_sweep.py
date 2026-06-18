@@ -345,6 +345,38 @@ OWNER_CONFIRMED_PLAN_ROUTES = {
                                               "at the end of the traceable 270' 1-1.25\" drop (symbol-only -- no "
                                               "bindable station label; bore-log 2+76 = OCR drift from printed 2+70).")}},
               "allowed_to_draw": True, "must_remain_abstained": False},
+    # log55 (2026-06-18, Gate #1 DROP_TERMINUS_SYMBOL_BIND -- owner-confirmed start): single-sheet drop on
+    # sheet 17, the sibling of log56 under parent bore_log22. START = STA 4+57=0+00 INSTALLER HH -- owner-
+    # confirmed 2026-06-18. Sheet 17 prints FIVE reset HHs that each reset to 0+00 (2+05/1+45/4+57/3+91/0+56),
+    # so the bare 0+00 is 5-way ambiguous; but ONLY the 4+57=0+00 reset's BASE_CONDUIT drop chain reaches a
+    # UNIQUE flower-pot symbol that closes the bore span (the other four bind no closing terminus) -- so the
+    # source uniquely indicates 4+57, and the owner confirmed it. END = a SYMBOL-ONLY flower pot with NO
+    # bindable station label (same shape as log56), so the opt-in `drop_terminus_symbol_bind` walks the 4+57
+    # chain to the UNIQUE end-class symbol at the printed span (drawn 173.8' vs span 169', closes). CLOSURE
+    # SPAN = the bore-log's own 169' (truth_span 0+00->1+69). Single-sheet, no matchline. The gate REJECTS
+    # fiber/generic BORE chains and >=2 reachable pots. Identity-only anchors; coordinates extractor-derived;
+    # no census/corpus change. Parent gate ok: log55 owns this 0+00->1+69 / sheet-17 route through parent
+    # bore_log22 -- DISTINCT from sibling log56 (0+00->2+76 / sheet 2): different sheet AND span, no sibling
+    # route theft (log55 span_collision_with_sibling is empty).
+    "log55": {"log_id": "log55", "parent": "bore_log22", "status": "RECOVERED",
+              "corrected_start": "4+57", "corrected_end": "1+69",
+              "corrected_sheets": [17], "span_ft": 169.0,
+              "drop_terminus_symbol_bind": True,
+              "endpoint_anchors": {
+                  "start": {"station": "4+57", "structure_class": "installer_hh",
+                            "boundary_kind": "structure_terminus", "clarity": "CLEAR",
+                            "structure_label": "INSTALLER HH",
+                            "owner_note_text": ("owner-confirmed log55 start 2026-06-18: STA 4+57=0+00 INSTALLER "
+                                                "HH (sheet 17) -- the ONLY one of five 0+00 resets "
+                                                "(2+05/1+45/4+57/3+91/0+56) whose drop chain reaches a unique "
+                                                "flower-pot terminus that closes the 169' span.")},
+                  "end": {"station": "1+69", "structure_class": "flower_pot",
+                          "boundary_kind": "structure_terminus", "clarity": "CLEAR",
+                          "structure_label": "FLOWER POT",
+                          "owner_note_text": ("owner-confirmed log55 end 2026-06-18: the UNIQUE flower-pot symbol "
+                                              "at the end of the traceable 1-1.25\" drop (symbol-only -- no "
+                                              "bindable station label); bore-log span 0+00->1+69 = 169'.")}},
+              "allowed_to_draw": True, "must_remain_abstained": False},
 }
 # OWNER-REVIEWED REVIEW-CANDIDATE PROMOTIONS (2026-06-17 owner review of review_candidate_reasoning_sweep):
 # logs the owner CONFIRMED correct that carry NO owner adjudication route -- the engine truth-table SPAN
