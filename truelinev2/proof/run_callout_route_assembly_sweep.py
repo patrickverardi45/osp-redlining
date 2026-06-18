@@ -52,7 +52,7 @@ from truelinev2.extract.matchline_join import (
 from truelinev2.extract.registry import select_dialect
 from truelinev2.extract.structure_position import (
     BRENHAM_CONDUIT_LAYERS, BRENHAM_LATERAL_CONDUIT_LAYERS, BRENHAM_STRUCTURE_LAYERS,
-    POSITION_BOUND, resolve_nextlink_hh_callout, resolve_structure_position,
+    POSITION_BOUND, cluster_symbols, resolve_nextlink_hh_callout, resolve_structure_position,
 )
 from truelinev2.ingest.manual_adjudication import (
     activation_summary, apply_adjudications, load_adjudication,
@@ -314,6 +314,37 @@ OWNER_CONFIRMED_PLAN_ROUTES = {
                          "owner_note_text": ("log8 end: STA 3+90 11\"X11\"X12\" FLOWER POT (sheet 22, Hickory Ln "
                                              "cul-de-sac), 214' past the 1+76 matchline. Chain 110+66+214 = 390.")}},
              "allowed_to_draw": True, "must_remain_abstained": False},
+    # log56 (2026-06-18, DROP_TERMINUS_SYMBOL_BIND lane -- owner-confirmed): single-sheet drop on sheet 2
+    # (Stone St). START = STA 0+46=0+00 INSTALLER HH (owner-confirmed; the co-located origin of the printed
+    # 'STA 0+00 TO 2+70 (270') 1-1.25" PORT TERMINAL TAIL' drop). END = a SYMBOL-ONLY flower pot with NO
+    # bindable station label (the 2+70/2+76 labels do not bind a flower_pot; nearest is 2+52, 37pt off), so the
+    # new opt-in `drop_terminus_symbol_bind` walks the start's BASE_CONDUIT drop chain to the UNIQUE flower-pot
+    # symbol at the printed span (267.3 vs 270, closes). The bore-log end 2+76 is owner-accepted OCR/handwriting
+    # drift from the printed 2+70 (same class as log48 5+09 vs printed 5+07). Single-sheet, no matchline. The
+    # gate REJECTS fiber/generic BORE chains (log42 has 0 BASE_CONDUIT segs there) and >=2 reachable pots.
+    # CLOSURE SPAN = the bore-log's own 276' (0+00->2+76, the full drop TO THE POT), NOT the 270' conduit-run
+    # callout (STA 0+00 TO 2+70, which stops ~6' short of the pot): two flower pots sit near 270' (a 245.4'
+    # decoy on the Stone St row + the real 273.6' pot), and the 276' bore span uniquely selects the 273.6' one
+    # (the 245.4' decoy fails closure at 11%). Identity-only anchors; coordinates extractor-derived; no
+    # census/corpus change. Parent gate ok: log56 owns this 0+00->2+76 / sheet-2 route through parent bore_log22.
+    "log56": {"log_id": "log56", "parent": "bore_log22", "status": "RECOVERED",
+              "corrected_start": "0+46", "corrected_end": "2+70",
+              "corrected_sheets": [2], "span_ft": 276.0,
+              "drop_terminus_symbol_bind": True,
+              "endpoint_anchors": {
+                  "start": {"station": "0+46", "structure_class": "installer_hh",
+                            "boundary_kind": "structure_terminus", "clarity": "CLEAR",
+                            "structure_label": "INSTALLER HH",
+                            "owner_note_text": ("owner-confirmed log56 start 2026-06-18: STA 0+46=0+00 INSTALLER "
+                                                "HH (sheet 2, Stone St) -- the '0+00 TO 2+70' PORT TERMINAL TAIL "
+                                                "drop origin (NOT the 7+40 NEXTLINK splice).")},
+                  "end": {"station": "2+70", "structure_class": "flower_pot",
+                          "boundary_kind": "structure_terminus", "clarity": "CLEAR",
+                          "structure_label": "FLOWER POT",
+                          "owner_note_text": ("owner-confirmed log56 end 2026-06-18: the UNIQUE flower-pot symbol "
+                                              "at the end of the traceable 270' 1-1.25\" drop (symbol-only -- no "
+                                              "bindable station label; bore-log 2+76 = OCR drift from printed 2+70).")}},
+              "allowed_to_draw": True, "must_remain_abstained": False},
 }
 # OWNER-REVIEWED REVIEW-CANDIDATE PROMOTIONS (2026-06-17 owner review of review_candidate_reasoning_sweep):
 # logs the owner CONFIRMED correct that carry NO owner adjudication route -- the engine truth-table SPAN
@@ -775,6 +806,7 @@ def _solve_end_at_matchline(plan, offset, out, s_sheet, sc, s_lbl, ss, es, span)
 HH_SYMBOL_LAYER = "NEXTLINK"   # the drawn hand-hole symbol layer (installer / terminal / nextlink HHs)
 SAME_POINT_TOL = 8.0           # two endpoint binds within this gap = the SAME drawn structure (a symbol footprint)
 HH_ANN_PERP_TOL = 45.0         # an 'HH - HH = N'' annotation within this of the A-B line labels THAT pair
+DROP_TERMINUS_SYMBOL_TOL = 30.0  # a drop-terminus symbol must sit within this of the chain's terminal dash endpoint
 
 
 def _hh_symbol_clusters(draw):
@@ -859,6 +891,76 @@ def _solve_hh_hh_bridge(plan, offset, out, sheet, cls, a_lbl, a_xy, words, draw,
     out["legs"] = [{"sheet": sheet, "route": route, "a_xy": a_xy, "b_xy": tuple(b_xy),
                     "len_pt": round(route_length(route), 1), "kind": "hh_hh_bridge",
                     "start_label": a_lbl, "end_label": f"HH (HH-HH={n}')"}]
+    return out
+
+
+def _terminus_symbol_candidates(chain, start_xy, symbols, span):
+    """(endpoint, route, symbol) for each end-class symbol sitting within DROP_TERMINUS_SYMBOL_TOL of a dash
+    endpoint of the START's BASE_CONDUIT chain AND whose source-backed ordered route from the start CLOSES the
+    printed span. Near-identical endpoints are collapsed (SAME_POINT_TOL). PURE selector -- the caller renders
+    ONLY when EXACTLY ONE survives (0 or >=2 -> abstain; never a nearest/length pick). No station, no coord."""
+    eps = dash_endpoints(chain)
+    if not eps or not span:
+        return []
+    out, seen = [], []
+    for sym in symbols:
+        ep = min(eps, key=lambda p: math.hypot(sym.x - p[0], sym.y - p[1]))
+        if math.hypot(sym.x - ep[0], sym.y - ep[1]) > DROP_TERMINUS_SYMBOL_TOL:
+            continue
+        if any(math.hypot(ep[0] - q[0], ep[1] - q[1]) <= SAME_POINT_TOL for q in seen):
+            continue
+        route, ok = _ordered_leg(chain, start_xy, ep)
+        if not ok:
+            continue
+        if abs(route_length(route) / SCALE - span) > CLOSURE_REL_TOL * span:
+            continue
+        seen.append(ep)
+        out.append((ep, route, sym))
+    return out
+
+
+def _solve_drop_terminus(plan, offset, out, sheet, sc, s_lbl, ss, es, end_cls, span):
+    """Single-sheet DROP to a SYMBOL-ONLY terminus (opt-in `drop_terminus_symbol_bind`): the terminus is a
+    drawn flower-pot/drop symbol with NO bindable station label, so the standard station/AP locators abstain.
+    Walk the bound start's BASE_CONDUIT chain to the UNIQUE end-class symbol at the printed span distance.
+    Gates (all source-derived; DO-NOT-WIDEN): (1) a traceable BASE_CONDUIT chain at the start -- a fiber /
+    generic-BORE route yields an EMPTY chain (those layers are outside BASE_CONDUIT) -> reject; (2) EXACTLY
+    ONE end-class symbol reachable at span (0 or >=2 -> reject, no nearest pick); (3) the ordered leg is
+    source-backed (the terminus is conduit-connected to the start); (4) printed-span closure is MANDATORY
+    (no partial stub). Single-sheet only (no matchline). No station, no invented coordinate."""
+    s_xy, s_words, s_draw, _ = _bind(plan, offset, sheet, sc, s_lbl)
+    if not s_xy:
+        out["blocker"] = "drop-terminus: start structure did not bind"
+        return out
+    chain = _chain_at(s_draw, sc, s_xy)
+    if not chain:
+        out["blocker"] = ("drop-terminus: no traceable BASE_CONDUIT chain at the start "
+                          "(fiber / generic BORE only -> not a drop)")
+        return out
+    cands = _terminus_symbol_candidates(chain, s_xy, cluster_symbols(s_draw, SYMBOL_LAYER[end_cls]), span)
+    out["drop_terminus_candidates"] = [{"xy": [round(c[0][0], 1), round(c[0][1], 1)],
+                                        "drawn_ft": round(route_length(c[1]) / SCALE, 1)} for c in cands]
+    if len(cands) != 1:
+        out["blocker"] = (f"drop-terminus: {len(cands)} unique {end_cls} symbols reachable at span {span} ft "
+                          f"(need exactly 1; 0 or >=2 -> abstain, no nearest/length pick)")
+        return out
+    ep, route, sym = cands[0]
+    drawn_ft = route_length(route) / SCALE
+    closes = bool(span) and abs(drawn_ft - span) <= CLOSURE_REL_TOL * span
+    out["closure"] = {"drawn_ft": round(drawn_ft, 1), "span_ft": span, "closes": closes}
+    if not closes:
+        out["blocker"] = (f"drop-terminus closure failed: {round(drawn_ft, 1)} ft vs span {span} ft "
+                          f"(>{int(CLOSURE_REL_TOL*100)}%)")
+        return out
+    out["start_sheet"], out["end_sheet"] = sheet, sheet
+    out["start_class"], out["end_class"] = sc, end_cls
+    out["bound_labels"] = {"start": ss, "end": es}
+    out["single_sheet"] = True
+    out["drop_terminus_bound"] = {"sheet": sheet, "symbol_xy": [round(sym.x, 1), round(sym.y, 1)],
+                                  "endpoint_xy": [round(ep[0], 1), round(ep[1], 1)]}
+    out["legs"] = [{"sheet": sheet, "route": route, "a_xy": list(s_xy), "b_xy": list(ep),
+                    "len_pt": round(route_length(route), 1), "kind": "drop_terminus",
+                    "start_label": ss, "end_label": es}]
     return out
 
 
@@ -984,6 +1086,15 @@ def solve_log(plan, offset, lid, rec):
                               for cr in see_sheet_crossings(plan.lines(s_sheet, offset), p, "MATCHLINE"))
         if partners and end_is_crossing:
             return _solve_end_at_matchline(plan, offset, out, s_sheet, sc, s_lbl, ss, es, span)
+
+    # DROP-TERMINUS SYMBOL BIND (opt-in `drop_terminus_symbol_bind`; gated): single-sheet drop whose terminus
+    # is a drawn flower-pot/drop symbol with NO bindable station label. Fires AFTER end-symbol-bind and
+    # end-at-matchline (a labeled HH / a matchline-exit terminus wins first), only when the start bound and the
+    # end did not. All gates are inside _solve_drop_terminus (traceable BASE_CONDUIT chain, unique symbol at
+    # span, source-backed leg, mandatory closure). Self-contained -> returns the render plan or a named blocker.
+    if (s_sheet is not None and sc in MODELED and e_sheet is None
+            and r.get("drop_terminus_symbol_bind") and _end_cls in MODELED and es):
+        return _solve_drop_terminus(plan, offset, out, s_sheet, sc, s_lbl, ss, es, _end_cls, span)
 
     if s_sheet is None or e_sheet is None or sc not in MODELED or ec not in MODELED:
         out["blocker"] = (f"terminus did not resolve to a UNIQUE (sheet,class) source bind "
@@ -1246,6 +1357,11 @@ def _render(plan, offset, lid, v):
             reason = (f"{lid} sheet-{leg['sheet']} HH-HH bore: {leg['start_label']} -> {leg['end_label']}; "
                       f"partner hand-hole identified by the printed HH-HH distance annotation (unique by "
                       f"value, positioned between the two HHs); source-backed conduit, printed-span closure")
+        elif leg["kind"] == "drop_terminus":
+            reason = (f"{lid} sheet-{leg['sheet']} drop: {leg['start_label']} -> symbol-only "
+                      f"{v.get('end_class')} terminus (single sheet; bound to the UNIQUE drop-terminus symbol "
+                      f"at the printed span along the source-backed conduit chain -- no station label); "
+                      f"printed-span closure")
         else:
             reason = (f"{lid} sheet-{leg['sheet']} leg: MATCHLINE STA {leg['matchline_sta']} -> end "
                       f"{leg['end_label']}; joined to sheet {v['start_sheet']} by printed station identity")

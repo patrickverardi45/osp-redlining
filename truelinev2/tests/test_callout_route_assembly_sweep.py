@@ -16,9 +16,10 @@ import pytest
 from truelinev2.extract.matchline_join import see_sheet_crossings
 from truelinev2.proof.run_brenham_corpus import PDF
 from truelinev2.proof.run_callout_route_assembly_sweep import (
-    ALLOWED, ALREADY_DRAWN, BASE_CONDUIT, DUPLICATE_OF_DRAWN, OWNER_CONFIRMED_PLAN_ROUTES, R_COMPLETE,
-    _resolve_endpoints,
+    ALLOWED, ALREADY_DRAWN, BASE_CONDUIT, DROP_TERMINUS_SYMBOL_TOL, DUPLICATE_OF_DRAWN,
+    OWNER_CONFIRMED_PLAN_ROUTES, R_COMPLETE, SCALE, _resolve_endpoints, _terminus_symbol_candidates,
 )
+from truelinev2.proof.run_log71_render_artifact_slice import route_length
 from truelinev2.extract.structure_position import (
     BRENHAM_CONDUIT_LAYERS, BRENHAM_LATERAL_CONDUIT_LAYERS,
 )
@@ -92,11 +93,15 @@ LOG2_TARGETS = ("log2",)
 # STA 3+90 FLOWER POT, 390', Hickory Ln. Owner-confirmed start (12+93 INSTALLER, NOT log32's 12+22 NEXTLINK);
 # the existing cross-sheet 2-leg solver traces the 1+77/1+76 crossing with no special hook (chain 110+66+214).
 LOG8_TARGETS = ("log8",)
+# log56 = single-sheet drop on sheet 2 to a SYMBOL-ONLY flower pot (no bindable station label), rendered via
+# the new opt-in `drop_terminus_symbol_bind` primitive: walk the bound 0+46 INSTALLER HH chain to the UNIQUE
+# flower-pot symbol at the bore's 276' span (the 270' conduit callout admits a 2nd pot; 276' selects one).
+LOG56_TARGETS = ("log56",)
 NEW_TARGETS = (CROSS_SHEET_TARGETS + SINGLE_SHEET_TARGETS + NLEG_TARGETS
                + MATCHLINE_TERMINUS_TARGETS + HH_BRIDGE_TARGETS + THROUGH_CONTINUITY_TARGETS
                + RESET_TO_RESET_TARGETS + PROMOTED_CLEAN_TARGETS + DIRECTION_CORRECTED_TARGETS
                + LOG48_TARGETS + LOG70_TARGETS + LOG61_TARGETS + LOG62_TARGETS + LOG60_TARGETS
-               + LOG32_TARGETS + LOG27_TARGETS + LOG2_TARGETS + LOG8_TARGETS)
+               + LOG32_TARGETS + LOG27_TARGETS + LOG2_TARGETS + LOG8_TARGETS + LOG56_TARGETS)
 # log29 + log54 are reviewed-but-unanchored: class + (for log29) sheet derived from source, no anchors
 SOURCE_DERIVED_CLASS_TARGETS = ("log29", "log54")
 # log12's END is an AP TERMINAL PORT HH bound by its AP-id token (AP-121); the station 10+92 does not bind
@@ -144,6 +149,35 @@ def test_new_targets_not_in_already_drawn():
     for lid in NEW_TARGETS:
         assert lid not in ALREADY_DRAWN
     assert R_COMPLETE in ALLOWED
+
+
+def _dash(x0, y0, x1, y1):
+    return {"x0": min(x0, x1), "y0": min(y0, y1), "x1": max(x0, x1), "y1": max(y0, y1),
+            "lines": [(float(x0), float(y0), float(x1), float(y1))], "layer": "BORE - PORT"}
+
+
+def test_drop_terminus_symbol_candidates_uniqueness_and_rejection():
+    """The drop-terminus selector binds ONLY a UNIQUE end-class symbol reachable at the printed span via a
+    source-backed BASE_CONDUIT route; it rejects off-alignment symbols, closure failures, and ambiguity."""
+    from types import SimpleNamespace
+    # straight trunk 0..288 pt (= 200 ft at SCALE 1.44), dash gaps < MAX_DASH_GAP
+    trunk = [_dash(x, 0, x + 20, 0) for x in range(0, 289, 30)]
+    start = (0.0, 0.0)
+    far = SimpleNamespace(x=288.0, y=0.0)
+    # (1) UNIQUE PASS: one symbol at the 200 ft end, span 200 -> exactly 1, route closes
+    c1 = _terminus_symbol_candidates(trunk, start, [far], 200.0)
+    assert len(c1) == 1 and abs(route_length(c1[0][1]) / SCALE - 200.0) <= 5.0
+    # (2) REJECT off-alignment: a symbol 60 pt off the line (> DROP_TERMINUS_SYMBOL_TOL) -> 0
+    assert _terminus_symbol_candidates(trunk, start, [SimpleNamespace(x=288.0, y=60.0)], 200.0) == []
+    # (3) REJECT closure failure: drawn 200 ft vs span 120 ft (>10%) -> 0 (no partial stub)
+    assert _terminus_symbol_candidates(trunk, start, [far], 120.0) == []
+    # (4) REJECT ambiguity: a Y with TWO distinct endpoints both ~ span, each with a symbol -> 2 (>=2 -> the
+    #     solver abstains; never a nearest/length pick)
+    branch = [_dash(x, 0, x + 20, 0) for x in range(0, 241, 30)] + [_dash(240, 0, 280, 26), _dash(240, 0, 280, -26)]
+    syms2 = [SimpleNamespace(x=280.0, y=26.0), SimpleNamespace(x=280.0, y=-26.0)]
+    c4 = _terminus_symbol_candidates(branch, start, syms2, 195.0)
+    assert len(c4) >= 2
+    assert DROP_TERMINUS_SYMBOL_TOL == 30.0
 
 
 def test_resolve_endpoints_anchored():
@@ -560,4 +594,18 @@ def test_sweep_renders_new_logs_end_to_end():
     # log8 must NOT have stolen log32's route: distinct start label + span (12+93/390 vs 12+22/213)
     assert rep["verdicts"]["log32"]["bound_labels"]["start"] == "12+22"     # log32 unchanged
     assert rep["verdicts"]["log8"]["bound_labels"]["start"] == "12+93"
+    # log56 = single-sheet drop to a SYMBOL-ONLY flower pot via the new drop_terminus_symbol_bind primitive:
+    # the 0+46 INSTALLER HH chain reaches the UNIQUE flower-pot symbol at the bore's 276' span (closes 273.6).
+    assert "log56" in rep["newly_rendered_full"]
+    for lid in LOG56_TARGETS:
+        p = rep["verdicts"][lid]
+        assert len(sorted(OUT_DIR.glob(f"{lid}_*.png"))) == 1, lid          # single sheet, one leg
+        assert p["single_sheet"] is True and p["start_sheet"] == 2 and p["end_sheet"] == 2
+        assert p["start_class"] == "installer_hh" and p["end_class"] == "flower_pot"
+        assert p["bound_labels"]["start"] == "0+46"
+        assert len(p["drop_terminus_candidates"]) == 1                      # uniqueness gate satisfied
+        assert p["drop_terminus_bound"]["sheet"] == 2
+        assert p["closure"]["closes"] is True and abs(p["closure"]["drawn_ft"] - 276.0) <= 27.6
+        assert p["leg_summary"][0]["kind"] == "drop_terminus"
+        assert p["parent_source_gate"]["ok"] is True
     assert rep["engine_census_frozen"] is True and rep["no_fixture_mutation"] is True
