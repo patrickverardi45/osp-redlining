@@ -101,12 +101,17 @@ LOG56_TARGETS = ("log56",)
 # pot via `drop_terminus_symbol_bind`: sheet 17 prints FIVE 0+00 resets, but only the owner-confirmed STA
 # 4+57=0+00 INSTALLER HH reaches a UNIQUE flower-pot terminus that closes the bore's 169' span (drawn 173.8').
 LOG55_TARGETS = ("log55",)
+# log19 = the CROSS-SHEET extension of the drop terminus: start STA 4+94 INSTALLER HH on sheet 14 continues
+# PAST the BUNDLED 'MATCHLINE STA 10+44/9+53 - SEE SHEET 7' to the owner-confirmed STA 11+69 FLOWER POT on
+# sheet 7 (accounting correction 11+19 + 50' = 11+69; the 12+64 pot via the 10+44 entry is NOT used). Two
+# sheet-local legs joined by the reciprocal SEE-SHEET identity, boundary by partner-sheet match (not per-token).
+LOG19_TARGETS = ("log19",)
 NEW_TARGETS = (CROSS_SHEET_TARGETS + SINGLE_SHEET_TARGETS + NLEG_TARGETS
                + MATCHLINE_TERMINUS_TARGETS + HH_BRIDGE_TARGETS + THROUGH_CONTINUITY_TARGETS
                + RESET_TO_RESET_TARGETS + PROMOTED_CLEAN_TARGETS + DIRECTION_CORRECTED_TARGETS
                + LOG48_TARGETS + LOG70_TARGETS + LOG61_TARGETS + LOG62_TARGETS + LOG60_TARGETS
                + LOG32_TARGETS + LOG27_TARGETS + LOG2_TARGETS + LOG8_TARGETS + LOG56_TARGETS
-               + LOG55_TARGETS)
+               + LOG55_TARGETS + LOG19_TARGETS)
 # log29 + log54 are reviewed-but-unanchored: class + (for log29) sheet derived from source, no anchors
 SOURCE_DERIVED_CLASS_TARGETS = ("log29", "log54")
 # log12's END is an AP TERMINAL PORT HH bound by its AP-id token (AP-121); the station 10+92 does not bind
@@ -183,6 +188,51 @@ def test_drop_terminus_symbol_candidates_uniqueness_and_rejection():
     c4 = _terminus_symbol_candidates(branch, start, syms2, 195.0)
     assert len(c4) >= 2
     assert DROP_TERMINUS_SYMBOL_TOL == 30.0
+
+
+def test_cross_sheet_drop_terminus_reject_gates():
+    """The cross-sheet drop-terminus primitive REFUSES (typed blocker, no render) when a source clause is
+    missing: no printed span (the only false-positive guard without a second free structure), a leg with no
+    BASE_CONDUIT chain (fiber/generic BORE), or no RECIPROCAL SEE-SHEET matchline on the partner sheet."""
+    from truelinev2.proof.run_callout_route_assembly_sweep import _solve_cross_sheet_drop_terminus
+    seg = [{"lines": [(0.0, 0.0, 10.0, 0.0)]}]      # a non-empty BASE_CONDUIT chain stub
+
+    class _Plan:                                    # returns the partner sheet's lines for plan.lines()
+        def __init__(self, lines):
+            self._l = lines
+
+        def lines(self, sheet, off):
+            return self._l
+
+    def _call(**over):
+        recip = over.pop("recip", [])
+        kw = dict(plan=_Plan(recip), offset=0, out={}, s_sheet=14, ss="4+94", e_sheet=7, es="11+69",
+                  s_xy=(0.0, 0.0), s_chain=seg, s_words=[], s_draw=[], e_xy=(10.0, 0.0), e_chain=seg,
+                  e_words=[], e_draw=[], crossings=[("10+44", "9+53")], span=656.0)
+        kw.update(over)
+        return _solve_cross_sheet_drop_terminus(**kw)
+
+    assert _call(span=None)["cross_sheet_drop_terminus"] is True            # flag set even on refusal
+    assert "no printed bore span" in _call(span=None)["blocker"]            # (1) closure is the only guard
+    assert "no BASE_CONDUIT chain" in _call(e_chain=[])["blocker"]          # (2) fiber terminus leg -> reject
+    assert "no BASE_CONDUIT chain" in _call(s_chain=[])["blocker"]          # (2) fiber start leg -> reject
+    # (3) the partner sheet prints NO reciprocal 'SEE SHEET 14' -> reject (no invented join)
+    assert "no RECIPROCAL SEE-SHEET" in _call(recip=["MATCHLINE STA 9+99 - SEE SHEET 99"])["blocker"]
+    # a printed reciprocal IS present but the synthetic legs have no drawn matchline bbox -> still refuses
+    # (cannot place the join boundary), never a guess. A refusal returns no "legs" key (caller uses .get).
+    refused = _call(recip=["MATCHLINE STA 10+44/9+53 - SEE SHEET 14"])
+    assert refused.get("legs") is None and "matchline not unique" in refused["blocker"]
+
+
+def test_log19_cross_sheet_drop_terminus_seed():
+    seed = OWNER_CONFIRMED_PLAN_ROUTES["log19"]
+    assert seed["cross_sheet_drop_terminus"] is True                       # opt-in flag gates the primitive
+    assert seed["corrected_sheets"] == [14, 7] and seed["span_ft"] == 656.0
+    assert seed["corrected_end"] == "11+69"                                # accounting correction (recorded 11+50)
+    assert seed["endpoint_anchors"]["start"]["station"] == "4+94"
+    assert seed["endpoint_anchors"]["start"]["structure_class"] == "installer_hh"
+    assert seed["endpoint_anchors"]["end"]["station"] == "11+69"           # owner-confirmed terminus, NOT 12+64
+    assert seed["endpoint_anchors"]["end"]["structure_class"] == "flower_pot"
 
 
 def test_resolve_endpoints_anchored():
@@ -632,4 +682,22 @@ def test_sweep_renders_new_logs_end_to_end():
     assert rep["verdicts"]["log55"]["start_sheet"] == 17 and rep["verdicts"]["log56"]["start_sheet"] == 2
     assert rep["verdicts"]["log55"]["drop_terminus_bound"]["sheet"] == 17
     assert rep["verdicts"]["log56"]["drop_terminus_bound"]["sheet"] == 2
+    # log19 = CROSS-SHEET drop terminus via the new `cross_sheet_drop_terminus` primitive: start STA 4+94
+    # INSTALLER HH (s14) -> owner-confirmed STA 11+69 FLOWER POT (s7) across the BUNDLED 10+44/9+53 matchline.
+    # Each leg's boundary is taken from the SEE-SHEET partner identity (the per-token locator snaps to a 320.9'
+    # partial); two source-backed legs close the 656' span. NOT the 10+44-entry STA 12+64 pot.
+    assert "log19" in rep["newly_rendered_full"]
+    for lid in LOG19_TARGETS:
+        w = rep["verdicts"][lid]
+        assert len(sorted(OUT_DIR.glob(f"{lid}_*.png"))) == 2, lid          # cross-sheet 2-leg
+        assert w["cross_sheet_drop_terminus"] is True
+        assert w["start_sheet"] == 14 and w["end_sheet"] == 7
+        assert w["start_class"] == "installer_hh" and w["end_class"] == "flower_pot"
+        assert w["bound_labels"] == {"start": "4+94", "end": "11+69"}       # owner-confirmed terminus (NOT 12+64)
+        assert w["crossing_equation"] == ["10+44", "9+53"]                  # the bundled reciprocal matchline
+        assert w["partner_matchline"]["start_bbox"] is not None and w["partner_matchline"]["end_bbox"] is not None
+        assert w["start_leg_source_backed"] is True and w["end_leg_source_backed"] is True
+        assert w["closure"]["closes"] is True and abs(w["closure"]["drawn_ft"] - 656.0) <= 65.6
+        assert w["parent_source_gate"]["ok"] is True                       # standalone bore_log19, owns 4+94->11+50
+        assert [leg["kind"] for leg in w["leg_summary"]] == ["start_leg", "end_leg"]
     assert rep["engine_census_frozen"] is True and rep["no_fixture_mutation"] is True

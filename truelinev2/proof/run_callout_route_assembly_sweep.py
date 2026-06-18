@@ -377,6 +377,45 @@ OWNER_CONFIRMED_PLAN_ROUTES = {
                                               "at the end of the traceable 1-1.25\" drop (symbol-only -- no "
                                               "bindable station label); bore-log span 0+00->1+69 = 169'.")}},
               "allowed_to_draw": True, "must_remain_abstained": False},
+    # log19 (2026-06-18, Gate #2 CROSS_SHEET_DROP_TERMINUS_EXTENSION -- owner-confirmed terminus): a drop whose
+    # start STA 4+94 INSTALLER HH binds on sheet 14 and continues PAST the BUNDLED 'MATCHLINE STA 10+44/9+53 -
+    # SEE SHEET 7' to a FLOWER POT on sheet 7. The single-sheet drop_terminus_symbol_bind returns 0 candidates
+    # (the pot is off-sheet); the NEW opt-in `cross_sheet_drop_terminus` assembles two sheet-local legs joined
+    # by the reciprocal SEE-SHEET identity (s14 left-edge SEE SHEET 7 + s7 right-edge SEE SHEET 14), each leg's
+    # boundary selected by the matchline IDENTITY -- the bundled '10+44' token also prints mid-sheet by a
+    # DIFFERENT matchline, so the per-token locator snaps to a 320.9' partial; the partner-sheet selector gives
+    # the full 459.2' start run. The 10+44/9+53 matchline is BUNDLED (carries TWO parallel bores), so TWO sheet-7
+    # pots BOTH close the 656' span: STA 11+69 (via the 9+53 entry, 675.9') and STA 12+64 (via the 10+44 entry,
+    # 679.3'). OWNER CONFIRMED 2026-06-18 the terminus is STA 11+69 -- the END of the printed 'STA 9+86 TO STA
+    # 11+69' drop chain, via the 9+53 entry (NOT the 10+44 entry / STA 12+64). ACCOUNTING CORRECTION: the log
+    # records both 11+19 and 11+50, where the 50' was accounted ADDITIVELY from 11+19 (11+19 + 50' = 11+69), so
+    # 11+50 was never the absolute terminus -- the station chain is 11+00 -> 11+50 -> 11+69. 11+69 binds a
+    # flower_pot by its printed label, so the >=2-pot bundled ambiguity is resolved by owner confirmation (NOT a
+    # closer-closure/nearest pick). Drawn 675.9 vs span 656 (3%, closes). NOT the fiber
+    # backbone -- both legs trace a 1-1.25" HDPE BASE_CONDUIT chain. Identity-only anchors; coordinates
+    # extractor-derived; no census/corpus change. Parent gate ok: standalone bore_log19, owns 4+94->11+50 / s14.
+    "log19": {"log_id": "log19", "parent": "bore_log19", "status": "RECOVERED",
+              "corrected_start": "4+94", "corrected_end": "11+69",
+              "corrected_sheets": [14, 7], "span_ft": 656.0,
+              "cross_sheet_drop_terminus": True,
+              "endpoint_anchors": {
+                  "start": {"station": "4+94", "structure_class": "installer_hh",
+                            "boundary_kind": "structure_terminus", "clarity": "CLEAR",
+                            "structure_label": "INSTALLER HH",
+                            "owner_note_text": ("log19 start: STA 4+94 INSTALLER HH (sheet 14); BASE_CONDUIT drop "
+                                                "chain to the bundled 10+44/9+53 SEE-SHEET-7 matchline.")},
+                  "end": {"station": "11+69", "structure_class": "flower_pot",
+                          "boundary_kind": "structure_terminus", "clarity": "CLEAR",
+                          "structure_label": "FLOWER POT",
+                          "owner_note_text": ("owner-confirmed log19 terminus 2026-06-18: STA 11+69 FLOWER POT "
+                                              "(sheet 7, 905 Carlee Dr), the end of the printed STA 9+86->11+69 "
+                                              "drop chain via the 9+53 entry of the BUNDLED 10+44/9+53 matchline. "
+                                              "Selected over the 10+44-entry STA 12+64 pot (both close 656'; owner "
+                                              "confirmation resolves the bundled-matchline ambiguity). ACCOUNTING "
+                                              "CORRECTION: recorded 11+50 was a documentation error -- the 50' was "
+                                              "accounted additively from 11+19 (11+19 + 50' = 11+69), so 11+50 was "
+                                              "never the absolute terminus.")}},
+              "allowed_to_draw": True, "must_remain_abstained": False},
 }
 # OWNER-REVIEWED REVIEW-CANDIDATE PROMOTIONS (2026-06-17 owner review of review_candidate_reasoning_sweep):
 # logs the owner CONFIRMED correct that carry NO owner adjudication route -- the engine truth-table SPAN
@@ -996,6 +1035,93 @@ def _solve_drop_terminus(plan, offset, out, sheet, sc, s_lbl, ss, es, end_cls, s
     return out
 
 
+def _solve_cross_sheet_drop_terminus(plan, offset, out, s_sheet, ss, e_sheet, es,
+                                     s_xy, s_chain, s_words, s_draw,
+                                     e_xy, e_chain, e_words, e_draw, crossings, span):
+    """CROSS-SHEET DROP terminus (opt-in `cross_sheet_drop_terminus`): the cross-sheet extension of
+    `drop_terminus_symbol_bind` -- a drop whose START binds on one sheet but whose TERMINUS is on a
+    CONTINUATION sheet PAST the matchline, so the single-sheet `_solve_drop_terminus` finds 0 candidates
+    (the pot is off-sheet). Assembles TWO sheet-local legs (start->matchline, matchline->terminus) joined by
+    the printed RECIPROCAL SEE-SHEET station identity -- the proven cross-sheet 2-leg render shape (frames
+    NOT reconciled) -- but tolerant of a BUNDLED matchline (`MATCHLINE STA a/b - SEE SHEET N` carrying >1
+    parallel run): each leg's boundary is taken from the `SEE SHEET <partner>` matchline IDENTITY
+    (`_partner_matchline_bbox`), NOT the per-token locator, which snaps to a stray same-numbered token by a
+    DIFFERENT matchline (log19: the bare `10+44` token mid-sheet -> a 320.9' partial instead of the 459.2'
+    run to the left-edge SEE-SHEET-7 line). The owner-confirmed terminus binds UNIQUELY by its printed label
+    (a bundled matchline carries parallel bores whose pots BOTH close the span; that >=2-candidate ambiguity
+    is resolved by OWNER CONFIRMATION of the terminus, the doctrine for a no-printed-discriminator case --
+    NOT a closer-closure/nearest pick).
+
+    Gates (all source-derived; DO-NOT-WIDEN): (1) opt-in flag + bound start + bound terminus (caller); (2)
+    MANDATORY printed bore span (without a second free structure, full-route closure is the only false-positive
+    guard); (3) a traceable BASE_CONDUIT chain on BOTH legs (fiber/generic BORE -> empty chain -> reject); (4)
+    a printed RECIPROCAL SEE-SHEET crossing (this sheet->partner AND partner->this sheet, sharing stations);
+    (5) a UNIQUE `SEE SHEET <partner>` matchline on EACH sheet that its OWN chain reaches (0/>=2 -> abstain);
+    (6) both legs source-backed; (7) MANDATORY full-route closure -- a sheet-local PARTIAL (only the start leg)
+    draws far short of the span and is rejected (never a partial drawn as a full bore)."""
+    out["cross_sheet_drop_terminus"] = True
+    if not span:
+        out["blocker"] = "cross-sheet drop-terminus: no printed bore span (full-route closure is the only guard)"
+        return out
+    if not s_chain or not e_chain:
+        out["blocker"] = (f"cross-sheet drop-terminus: a leg has no BASE_CONDUIT chain (start segs "
+                          f"{len(s_chain)}, end segs {len(e_chain)}) -- fiber/generic BORE is not a drop")
+        return out
+    e_cross = see_sheet_crossings(plan.lines(e_sheet, offset), s_sheet, "MATCHLINE")
+    shared = [c for c in crossings if any(set(c) & set(d) for d in e_cross)]
+    out["printed_crossings_reciprocal"] = [list(c) for c in e_cross]
+    if not crossings or not e_cross or not shared:
+        out["blocker"] = (f"cross-sheet drop-terminus: no RECIPROCAL SEE-SHEET matchline between sheets "
+                          f"{s_sheet} and {e_sheet} (start {crossings}, partner {e_cross})")
+        return out
+    stations = sorted({sta for c in shared for sta in c})
+    # boundary on EACH leg by the SEE-SHEET-<partner> matchline IDENTITY (unique across the bundled stations)
+    s_mlbs, e_mlbs = [], []
+    for sta in stations:
+        bb = _partner_matchline_bbox(s_words, s_draw, sta, e_sheet)
+        if bb and bb not in s_mlbs:
+            s_mlbs.append(bb)
+        bb = _partner_matchline_bbox(e_words, e_draw, sta, s_sheet)
+        if bb and bb not in e_mlbs:
+            e_mlbs.append(bb)
+    out["partner_matchline"] = {"stations": stations,
+                                "start_bbox": [round(v, 1) for v in s_mlbs[0]] if len(s_mlbs) == 1 else None,
+                                "end_bbox": [round(v, 1) for v in e_mlbs[0]] if len(e_mlbs) == 1 else None}
+    if len(s_mlbs) != 1 or len(e_mlbs) != 1:
+        out["blocker"] = (f"cross-sheet drop-terminus: SEE-SHEET-<partner> matchline not unique on a leg "
+                          f"(start {len(s_mlbs)}, end {len(e_mlbs)}) -- cannot place the join boundary")
+        return out
+    s_bnd = extend_dash_to_boundary(s_chain, s_mlbs[0])
+    e_bnd = extend_dash_to_boundary(e_chain, e_mlbs[0])
+    if s_bnd is None or e_bnd is None:
+        out["blocker"] = ("cross-sheet drop-terminus: a leg conduit chain does not reach its SEE-SHEET "
+                          f"partner matchline (start {s_bnd is not None}, end {e_bnd is not None})")
+        return out
+    s_route, s_ok = _ordered_leg(s_chain, s_xy, tuple(s_bnd))
+    e_route, e_ok = _ordered_leg(e_chain, tuple(e_bnd), e_xy)
+    out["start_leg_source_backed"], out["end_leg_source_backed"] = s_ok, e_ok
+    if not (s_ok and e_ok):
+        out["blocker"] = f"cross-sheet drop-terminus: leg route not source-backed (start {s_ok}, end {e_ok})"
+        return out
+    drawn_ft = (route_length(s_route) + route_length(e_route)) / SCALE
+    closes = abs(drawn_ft - span) <= CLOSURE_REL_TOL * span
+    out["closure"] = {"drawn_ft": round(drawn_ft, 1), "span_ft": span, "closes": closes}
+    if not closes:
+        out["blocker"] = (f"cross-sheet drop-terminus closure failed: assembled legs draw {round(drawn_ft, 1)} "
+                          f"ft vs printed bore span {span} ft (>{int(CLOSURE_REL_TOL*100)}% -> partial/wrong run)")
+        return out
+    out["crossing_equation"] = list(shared[0])
+    out["legs"] = [
+        {"sheet": s_sheet, "route": s_route, "a_xy": list(s_xy), "b_xy": list(s_bnd),
+         "len_pt": round(route_length(s_route), 1), "kind": "start_leg", "start_label": ss,
+         "matchline_sta": shared[0][0]},
+        {"sheet": e_sheet, "route": e_route, "a_xy": list(e_bnd), "b_xy": list(e_xy),
+         "len_pt": round(route_length(e_route), 1), "kind": "end_leg", "end_label": es,
+         "matchline_sta": shared[0][0]},
+    ]
+    return out
+
+
 _BUNDLE_END_CALLOUT = re.compile(r"STA\s*(\d+\+\d+)\s*TO\s*STA\s*(\d+\+\d+)", re.I)
 
 
@@ -1198,6 +1324,17 @@ def solve_log(plan, offset, lid, rec):
         else:
             out["blocker"] = f"no printed SEE-SHEET matchline crossing between sheets {s_sheet} and {e_sheet}"
         return out
+
+    # CROSS-SHEET DROP TERMINUS (opt-in `cross_sheet_drop_terminus`; gated). A drop whose start binds on
+    # s_sheet but whose terminus is on a continuation sheet PAST the matchline (the single-sheet
+    # drop_terminus_symbol_bind returns 0 candidates). Self-contained -> selects each leg's boundary by the
+    # SEE-SHEET-<partner> matchline identity (bundled-matchline tolerant) and joins two source-backed legs by
+    # printed station identity, gated by full-route closure. Fires only when both termini already bound (the
+    # owner-confirmed terminus binds by its printed label) and both legs have a BASE_CONDUIT chain.
+    if r.get("cross_sheet_drop_terminus"):
+        return _solve_cross_sheet_drop_terminus(plan, offset, out, s_sheet, ss, e_sheet, es,
+                                                 s_xy, s_chain, s_words, s_draw,
+                                                 e_xy, e_chain, e_words, e_draw, crossings, span)
 
     # BUNDLED-MATCHLINE STATION SELECTOR (opt-in via `bundled_matchline_from_end_callout`; gated so existing
     # bundled-matchline renders are byte-identical). A bundled 'MATCHLINE STA a/b/c' has several runs crossing
