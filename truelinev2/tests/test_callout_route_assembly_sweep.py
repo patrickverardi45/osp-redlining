@@ -61,10 +61,14 @@ LOG48_TARGETS = ("log48",)
 # then 40' on sheet 20 to the STA 2+15 FLOWER POT; 175+40 = 215 ft == the printed 'HH - HH = 215'' footage,
 # which closure enforces (the prior 1+45 start traced 561.5'). Cross-sheet 17->20 two-leg.
 LOG70_TARGETS = ("log70",)
+# log61 = OWNER-CONFIRMED PLAN ROUTE (2026-06-17): Ruth Circle cul-de-sac, cross-sheet 5->6, span 207'. The
+# 5<->6 boundary is a BUNDLED matchline 'STA 24+11/4+37/1+92'; the source-backed selector picks 4+37 (named by
+# the sheet-6 end callout 'STA 4+37 TO STA 4+50') -> the AP-137 LEFT branch, NOT 24+11 fiber / 1+92 AP-138 right.
+LOG61_TARGETS = ("log61",)
 NEW_TARGETS = (CROSS_SHEET_TARGETS + SINGLE_SHEET_TARGETS + NLEG_TARGETS
                + MATCHLINE_TERMINUS_TARGETS + HH_BRIDGE_TARGETS + THROUGH_CONTINUITY_TARGETS
                + RESET_TO_RESET_TARGETS + PROMOTED_CLEAN_TARGETS + DIRECTION_CORRECTED_TARGETS
-               + LOG48_TARGETS + LOG70_TARGETS)
+               + LOG48_TARGETS + LOG70_TARGETS + LOG61_TARGETS)
 # log29 + log54 are reviewed-but-unanchored: class + (for log29) sheet derived from source, no anchors
 SOURCE_DERIVED_CLASS_TARGETS = ("log29", "log54")
 # log12's END is an AP TERMINAL PORT HH bound by its AP-id token (AP-121); the station 10+92 does not bind
@@ -142,6 +146,29 @@ def test_log48_promoted_from_hold_to_owner_confirmed_plan_route():
     assert seed["corrected_end"] == "5+07" and seed["corrected_sheets"] == [10, 12] and seed["span_ft"] == 507
     assert "45+33=0+00" in seed["evidence_notes"]      # start reset (SPLICE POINT 46) seeds the start bind
     assert seed["status"] == "RECOVERED"
+
+
+def test_log61_override_opts_into_bundled_matchline_selector():
+    seed = OWNER_CONFIRMED_PLAN_ROUTES["log61"]
+    assert seed["bundled_matchline_from_end_callout"] is True      # opt-in flag gates the selector
+    assert seed["corrected_sheets"] == [5, 6] and seed["span_ft"] == 207.0
+    assert seed["endpoint_anchors"]["start"]["station"] == "2+43"
+    assert seed["endpoint_anchors"]["end"]["station"] == "4+50"    # LEFT-branch terminus, NOT 2+01
+
+
+def test_select_bundled_station_picks_end_callout_station_else_abstains():
+    # STATION-SPECIFIC (not geometry): the crossing is the start station of the printed 'STA X TO STA <end>'
+    # end callout, and only if it is one of the bundled equation's stations.
+    from truelinev2.proof.run_callout_route_assembly_sweep import _select_bundled_station
+    eq = ("24+11", "4+37", "1+92")
+    s6 = ["STA 4+37 TO STA 4+50 DIR. BORE (13') 1-1.25\" VACANT HDPE", "STA 4+50 FLOWER POT"]
+    assert _select_bundled_station(s6, "4+50", eq) == "4+37"        # log61: 4+37 named by the end callout
+    # a callout naming a station NOT in the equation -> not selectable (no widening)
+    assert _select_bundled_station(["STA 9+99 TO STA 4+50"], "4+50", eq) is None
+    # no 'STA X TO STA <end>' callout -> abstain
+    assert _select_bundled_station(["STA 4+50 FLOWER POT"], "4+50", eq) is None
+    # >=2 equation-stations both ending at <end> -> ambiguous -> abstain (DO-NOT-WIDEN)
+    assert _select_bundled_station(["STA 4+37 TO STA 4+50", "STA 1+92 TO STA 4+50"], "4+50", eq) is None
 
 
 def test_conduit_components_splits_parallel_runs():
@@ -387,4 +414,17 @@ def test_sweep_renders_new_logs_end_to_end():
         assert len(f["viable_crossings"]) == 1                              # 1+91/1+92 Ledbetter excluded
         assert f["closure"]["closes"] is True                              # ~504' vs 507'
         assert f["parent_source_gate"]["ok"] is True                       # owns 0+00->5+09, not 5+14
+    # log61 NOW renders the AP-137 / LEFT branch of the Ruth Circle cul-de-sac via the BUNDLED-MATCHLINE
+    # SELECTOR: the sheet-6 end callout 'STA 4+37 TO 4+50' names 4+37, so 4+37 is selected from the bundled
+    # 24+11/4+37/1+92 equation (NOT 24+11 fiber / 1+92 = AP-138 RIGHT branch -> the 250.7' overshoot). ~207'.
+    assert "log61" in rep["newly_rendered_full"]
+    for lid in LOG61_TARGETS:
+        c = rep["verdicts"][lid]
+        assert len(sorted(OUT_DIR.glob(f"{lid}_*.png"))) == 2, lid          # cross-sheet 2-leg
+        assert c["start_sheet"] == 5 and c["end_sheet"] == 6
+        assert c["bound_labels"] == {"start": "2+43", "end": "4+50"}
+        assert c["bundled_equation"] == ["24+11", "4+37", "1+92"]           # the bundled matchline
+        assert c["bundled_selected_station"] == "4+37"                      # NOT 24+11 / 1+92
+        assert c["closure"]["closes"] is True and abs(c["closure"]["drawn_ft"] - 207.0) <= 20.7
+        assert c["parent_source_gate"]["ok"] is True
     assert rep["engine_census_frozen"] is True and rep["no_fixture_mutation"] is True

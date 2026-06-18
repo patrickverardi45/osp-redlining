@@ -137,6 +137,31 @@ OWNER_CONFIRMED_PLAN_ROUTES = {
                           "owner_note_text": ("owner-confirmed log70 end (sheet 20 side correct): STA 2+15 "
                                               "FLOWER POT, 40' past the 1+75 matchline up Eledra St.")}},
               "allowed_to_draw": True, "must_remain_abstained": False},
+    # log61 (2026-06-17, LOG61_CURVE_SIDE_DISCRIMINATOR_RENDER lane): the Ruth Circle cul-de-sac bore, 2+43->
+    # 4+50 (207'), cross-sheet 5->6. The 5<->6 boundary is a BUNDLED matchline 'MATCHLINE STA 24+11/4+37/1+92
+    # SEE SHEET 6' (3 runs on one line). CORRECT route = AP-137 / LEFT branch: STA 2+43 INSTALLER HH (sheet 5)
+    # -> up the left side -> 4+37 crossing -> STA 4+37 TO 4+50 (13') -> STA 4+50 FLOWER POT (sheet 6). The
+    # `bundled_matchline_from_end_callout` flag activates the source-backed selector: the sheet-6 end callout
+    # 'STA 4+37 TO STA 4+50' names 4+37, so the 4+37 crossing is selected (NOT 24+11 fiber, NOT 1+92 / AP-138
+    # RIGHT branch / STA 2+01 FLOWER POT / 250.7' overshoot). Conduit is straight POLYLINE (no curve issue).
+    # Identity-only anchors (NO coordinates); does NOT edit census/adjudication. Parent gate passes 207
+    # (sheets {5,6} overlap model sheet {6}); closure to 207 refuses the 250.7' wrong branch.
+    "log61": {"log_id": "log61", "parent": "bore_log26", "status": "RECOVERED",
+              "corrected_start": "2+43", "corrected_end": "4+50",
+              "corrected_sheets": [5, 6], "span_ft": 207.0,
+              "bundled_matchline_from_end_callout": True,
+              "endpoint_anchors": {
+                  "start": {"station": "2+43", "structure_class": "installer_hh",
+                            "boundary_kind": "structure_terminus", "clarity": "CLEAR",
+                            "structure_label": "INSTALLER HH",
+                            "owner_note_text": ("owner-corrected log61 start 2026-06-17: STA 2+43 INSTALLER HH "
+                                                "at the base of the Ruth Circle cul-de-sac (sheet 5).")},
+                  "end": {"station": "4+50", "structure_class": "flower_pot",
+                          "boundary_kind": "structure_terminus", "clarity": "CLEAR",
+                          "structure_label": "FLOWER POT",
+                          "owner_note_text": ("owner-corrected log61 end 2026-06-17: the LEFT-side (AP-137) STA "
+                                              "4+50 FLOWER POT on sheet 6 (NOT the RIGHT-side AP-138 STA 2+01).")}},
+              "allowed_to_draw": True, "must_remain_abstained": False},
 }
 # OWNER-REVIEWED REVIEW-CANDIDATE PROMOTIONS (2026-06-17 owner review of review_candidate_reasoning_sweep):
 # logs the owner CONFIRMED correct that carry NO owner adjudication route -- the engine truth-table SPAN
@@ -667,6 +692,26 @@ def _solve_hh_hh_bridge(plan, offset, out, sheet, cls, a_lbl, a_xy, words, draw,
     return out
 
 
+_BUNDLE_END_CALLOUT = re.compile(r"STA\s*(\d+\+\d+)\s*TO\s*STA\s*(\d+\+\d+)", re.I)
+
+
+def _select_bundled_station(end_lines, end_station, equation):
+    """SOURCE-BACKED bundled-matchline station selector. A bundled matchline equation
+    'MATCHLINE STA a/b/c - SEE SHEET N' has several runs crossing ONE physical line; the crossing THIS bore
+    uses is the start station X of the printed END-side run callout 'STA X TO STA <end_station>' that
+    produces the terminus leg -- a PRINTED station identity, NOT geometry. Returns the UNIQUE X that is also
+    one of the equation's stations; None if 0 or >=2 qualifying callouts (abstain; DO-NOT-WIDEN). A station
+    the source does not tie to this bore's terminus (e.g. log61's 24+11 fiber run / 1+92 right branch) can
+    never be selected."""
+    eqset = set(equation)
+    xs = set()
+    for ln in end_lines:
+        for m in _BUNDLE_END_CALLOUT.finditer(ln):
+            if m.group(2) == end_station and m.group(1) in eqset:
+                xs.add(m.group(1))
+    return next(iter(xs)) if len(xs) == 1 else None
+
+
 def solve_log(plan, offset, lid, rec):
     """Attempt the full route sentence for one anchored bore. Returns a verdict dict with either a
     render plan (legs to draw) or a named blocker. Renders nothing (the caller draws)."""
@@ -792,6 +837,57 @@ def solve_log(plan, offset, lid, rec):
         else:
             out["blocker"] = f"no printed SEE-SHEET matchline crossing between sheets {s_sheet} and {e_sheet}"
         return out
+
+    # BUNDLED-MATCHLINE STATION SELECTOR (opt-in via `bundled_matchline_from_end_callout`; gated so existing
+    # bundled-matchline renders are byte-identical). A bundled 'MATCHLINE STA a/b/c' has several runs crossing
+    # ONE physical line; the default minimal-extension boundary can snap to the WRONG run (log61: the 24+11
+    # fiber run -> 250.7' overshoot down the AP-138 RIGHT branch). Select the station the printed END callout
+    # 'STA X TO STA <es>' names (log61 sheet-6 'STA 4+37 TO STA 4+50' -> 4+37), bind the END leg at that
+    # station's crossing (the short terminus chain reaches it unambiguously), and bind the START leg at the
+    # crossing THROUGH-CONTINUOUS with it (nearest along-matchline x). Closure + the parent gate still gate the
+    # render; any ambiguity (no unique end-callout station / no aligned start crossing / closure off) abstains.
+    if r.get("bundled_matchline_from_end_callout"):
+        bundled = next((c for c in crossings if len(c) > 1), None)
+        sel = _select_bundled_station(plan.lines(e_sheet, offset), es, bundled) if bundled else None
+        out["bundled_equation"] = list(bundled) if bundled else None
+        out["bundled_selected_station"] = sel
+        if bundled is None or sel is None:
+            out["blocker"] = ("bundled-matchline selector: crossing station not uniquely derivable from a "
+                              f"printed 'STA X TO STA {es}' end callout within {out['bundled_equation']}")
+            return out
+        e_mlb = _ml_bbox(e_words, e_draw, bundled)
+        s_mlb = _ml_bbox(s_words, s_draw, bundled)
+        e_bnd = locate_matchline_boundary(e_words, e_draw, sel, e_chain)[0] if e_mlb else None
+        if not (e_mlb and s_mlb and e_bnd):
+            out["blocker"] = "bundled-matchline selector: end-leg boundary or matchline bbox not resolved"
+            return out
+        s_bnd = _chain_boundary_near_x(s_chain, s_mlb, e_bnd[0])
+        if s_bnd is None:
+            out["blocker"] = (f"bundled-matchline selector: start chain has no crossing within x-tol of the "
+                              f"end's {sel} crossing (sheet {s_sheet}->{e_sheet} frame offset too large)")
+            return out
+        s_route, s_ok = _ordered_leg(s_chain, s_xy, s_bnd)
+        e_route, e_ok = _ordered_leg(e_chain, e_bnd, e_xy)
+        out["start_leg_source_backed"], out["end_leg_source_backed"] = s_ok, e_ok
+        if not (s_ok and e_ok):
+            out["blocker"] = f"bundled-matchline selector: leg route not source-backed (start {s_ok}, end {e_ok})"
+            return out
+        drawn_ft = (route_length(s_route) + route_length(e_route)) / SCALE
+        closes = bool(span) and abs(drawn_ft - span) <= CLOSURE_REL_TOL * span
+        out["closure"] = {"drawn_ft": round(drawn_ft, 1), "span_ft": span, "closes": closes}
+        if not closes:
+            out["blocker"] = (f"bundled-matchline selector closure failed: {round(drawn_ft, 1)} ft vs span "
+                              f"{span} ft (>{int(CLOSURE_REL_TOL*100)}% -> wrong branch)")
+            return out
+        out["crossing_equation"] = list(bundled)
+        out["legs"] = [
+            {"sheet": s_sheet, "route": s_route, "a_xy": s_xy, "b_xy": s_bnd,
+             "len_pt": round(route_length(s_route), 1), "kind": "start_leg", "start_label": ss, "matchline_sta": sel},
+            {"sheet": e_sheet, "route": e_route, "a_xy": e_bnd, "b_xy": e_xy,
+             "len_pt": round(route_length(e_route), 1), "kind": "end_leg", "end_label": es, "matchline_sta": sel},
+        ]
+        return out
+
     strict = lid in OWNER_DIRECTION_CORRECTED
     viable = []
     for cross in crossings:
