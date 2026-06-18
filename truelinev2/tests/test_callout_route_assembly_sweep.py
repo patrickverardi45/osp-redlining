@@ -82,11 +82,17 @@ LOG32_TARGETS = ("log32",)
 # the 13+55 NEXTLINK HH symbol is too far from its non-unique label for the callout locator, so bind the unique
 # NEXTLINK symbol near the 13+55 label. Start STA 7+30 TERMINAL 6-PORT HH (AP-152).
 LOG27_TARGETS = ("log27",)
+# log2 = OWNER-CONFIRMED PLAN ROUTE (2026-06-18, Gate #2 endpoint-identity review): cross-sheet mainline
+# 18->19, STA 12+22 NEXTLINK HH -> STA 20+71 TERMINAL 6-PORT HH (AP-148), 849', Niebuhr St. Owner-confirmed
+# end bound by end-symbol; the PARTNER-SHEET selector fixes the boundary -- '18+38' also prints in the mid-
+# sheet run callout 'STA 12+22 TO STA 18+38' next to the SEE-SHEET-22 line, so each leg's boundary is taken
+# from the 'SEE SHEET <partner>' matchline identity (s18 right edge SEE SHEET 19, s19 left edge SEE SHEET 18).
+LOG2_TARGETS = ("log2",)
 NEW_TARGETS = (CROSS_SHEET_TARGETS + SINGLE_SHEET_TARGETS + NLEG_TARGETS
                + MATCHLINE_TERMINUS_TARGETS + HH_BRIDGE_TARGETS + THROUGH_CONTINUITY_TARGETS
                + RESET_TO_RESET_TARGETS + PROMOTED_CLEAN_TARGETS + DIRECTION_CORRECTED_TARGETS
                + LOG48_TARGETS + LOG70_TARGETS + LOG61_TARGETS + LOG62_TARGETS + LOG60_TARGETS
-               + LOG32_TARGETS + LOG27_TARGETS)
+               + LOG32_TARGETS + LOG27_TARGETS + LOG2_TARGETS)
 # log29 + log54 are reviewed-but-unanchored: class + (for log29) sheet derived from source, no anchors
 SOURCE_DERIVED_CLASS_TARGETS = ("log29", "log54")
 # log12's END is an AP TERMINAL PORT HH bound by its AP-id token (AP-121); the station 10+92 does not bind
@@ -517,4 +523,21 @@ def test_sweep_renders_new_logs_end_to_end():
         assert k["end_symbol_bound"]["station"] == "13+55" and k["end_symbol_bound"]["sheet"] == 16
         assert k["closure"]["closes"] is True and abs(k["closure"]["drawn_ft"] - 625.0) <= 62.5
         assert k["parent_source_gate"]["ok"] is True
+    # log2 = cross-sheet mainline (18->19, 12+22->20+71, 849', Niebuhr St) rendered via the owner-confirmed END
+    # (STA 20+71 TERMINAL 6-PORT HH AP-148, bound by end-symbol) + the PARTNER-SHEET boundary selector: '18+38'
+    # also prints in the mid-sheet run callout 'STA 12+22 TO STA 18+38' by the SEE-SHEET-22 line, so each leg's
+    # boundary is taken from the 'SEE SHEET <partner>' matchline identity (NOT the ambiguous per-station token).
+    assert "log2" in rep["newly_rendered_full"]
+    for lid in LOG2_TARGETS:
+        m = rep["verdicts"][lid]
+        assert len(sorted(OUT_DIR.glob(f"{lid}_*.png"))) == 2, lid          # cross-sheet 2-leg
+        assert m["start_sheet"] == 18 and m["end_sheet"] == 19
+        assert m["start_class"] == "nextlink_hh" and m["end_class"] == "terminal_port_hh"
+        assert m["bound_labels"] == {"start": "12+22", "end": "20+71"}
+        assert m["crossing_equation"] == ["18+38"]
+        assert m["partner_matchline"]["station"] == "18+38"                  # boundary by SEE-SHEET identity
+        assert m["partner_matchline"]["start_bbox"] is not None and m["partner_matchline"]["end_bbox"] is not None
+        assert m["end_symbol_bound"]["station"] == "20+71" and m["end_symbol_bound"]["sheet"] == 19
+        assert m["closure"]["closes"] is True and abs(m["closure"]["drawn_ft"] - 849.0) <= 84.9
+        assert m["parent_source_gate"]["ok"] is True
     assert rep["engine_census_frozen"] is True and rep["no_fixture_mutation"] is True

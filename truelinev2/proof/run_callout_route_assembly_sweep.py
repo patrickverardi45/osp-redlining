@@ -259,6 +259,36 @@ OWNER_CONFIRMED_PLAN_ROUTES = {
                           "owner_note_text": ("log27 end: STA 13+55 NEXTLINK HH PROP. SPLICE POINT 36 (sheet "
                                               "16), across the owner-corrected 11+66 matchline join.")}},
               "allowed_to_draw": True, "must_remain_abstained": False},
+    # log2 (2026-06-18, Gate #2 ENDPOINT_IDENTITY_OWNER_REVIEW -- owner-confirmed end): cross-sheet mainline
+    # sheets 18->19, span 849'. START = STA 12+22 NEXTLINK HH / PROP. SPLICE POINT 34 (sheet 18) -- the bore
+    # log NAMES 12+22 directly (no 0+00 collision; same origin owner-confirmed for log32). END = STA 20+71
+    # TERMINAL 6-PORT HH / AP-148 SPLICE LOC 34 (sheet 19, Niebuhr St) -- owner-confirmed 2026-06-18; bare
+    # '20+71' prints 3x so `end_hh_symbol_bind` binds the UNIQUE terminal HH symbol near a 20+71 label
+    # (AP-148 is globally unique, 1/43 pages). PRINTED leg footages corroborate: 616' (s18 12+22->18+38) +
+    # 233' (s19 18+38->20+71) = 849 = span. The 18+38 join is reciprocal ('SEE SHEET 19' on s18, 'SEE SHEET
+    # 18' on s19), but '18+38' also prints in the mid-sheet run callout 'STA 12+22 TO STA 18+38' next to the
+    # SEE-SHEET-22 line, so the per-token boundary locator snaps WRONG (215' partial) -> `crossing_by_partner
+    # _sheet` selects each leg's boundary by the SEE-SHEET-<partner> matchline identity (drawn 848.0 vs 849,
+    # closes). Identity-only anchors; no census/corpus change. Parent gate ok (standalone bore_log2; distinct
+    # from log32's 213'/[18,22]/flower-pot drop off the SAME splice point).
+    "log2": {"log_id": "log2", "parent": "bore_log2", "status": "RECOVERED",
+             "corrected_start": "12+22", "corrected_end": "20+71",
+             "corrected_sheets": [18, 19], "span_ft": 849.0,
+             "end_hh_symbol_bind": True, "crossing_by_partner_sheet": True,
+             "endpoint_anchors": {
+                 "start": {"station": "12+22", "structure_class": "nextlink_hh",
+                           "boundary_kind": "structure_terminus", "clarity": "CLEAR",
+                           "structure_label": "NEXTLINK HH",
+                           "owner_note_text": ("log2 start: STA 12+22=0+00 NEXTLINK HH PROP. SPLICE POINT 34 "
+                                               "(sheet 18); bore log names 12+22 directly. Same origin "
+                                               "owner-confirmed for log32.")},
+                 "end": {"station": "20+71", "structure_class": "terminal_port_hh",
+                         "boundary_kind": "structure_terminus", "clarity": "CLEAR",
+                         "structure_label": "TERMINAL 6 PORT HH",
+                         "owner_note_text": ("owner-confirmed log2 end 2026-06-18: STA 20+71 TERMINAL 6-PORT "
+                                             "HH AP-148 SPLICE LOC 34 (sheet 19, Niebuhr St). Legs 616'+233'="
+                                             "849 across the reciprocal 18+38 / SEE SHEET 19 matchline.")}},
+             "allowed_to_draw": True, "must_remain_abstained": False},
 }
 # OWNER-REVIEWED REVIEW-CANDIDATE PROMOTIONS (2026-06-17 owner review of review_candidate_reasoning_sweep):
 # logs the owner CONFIRMED correct that carry NO owner adjudication route -- the engine truth-table SPAN
@@ -490,6 +520,24 @@ def _ml_bbox(words, draw, cross):
             t = toks[0]
             return min(mls, key=lambda bb: nearest_gap([(float(t["xc"]), float(t["yc"]))], bb))
     return None
+
+
+def _partner_matchline_bbox(words, draw, station, partner_sheet, tol=42.0):
+    """The drawn matchline bbox carrying the printed 'MATCHLINE STA <station> ... SEE SHEET <partner_sheet>'
+    line, identified by the PARTNER-SHEET number (the printed crossing IDENTITY) -- NOT the per-station
+    token, which is non-unique when <station> also prints in a mid-sheet run callout printed next to a
+    DIFFERENT matchline (log2: '18+38' is both 'STA 12+22 TO STA 18+38', sitting by the SEE-SHEET-22 line,
+    AND the 'MATCHLINE STA 18+38 - SEE SHEET 19' label on the right-edge line). Among the sheet's matchline
+    bboxes, the UNIQUE one whose nearby printed text (within ``tol`` pt of the drawn line) carries MATCHLINE
+    + <station> + 'SHEET <partner_sheet>'. 0 or >=2 -> None (uniqueness-gated; never a nearest pick).
+    Source-derived (printed matchline label + drawn line); no frame graph, no coordinate reconciliation."""
+    matches = []
+    for bb in matchline_bboxes(draw, "MATCHLINE"):
+        near = " ".join(str(w.get("text", "")) for w in words
+                        if nearest_gap([(float(w["xc"]), float(w["yc"]))], bb) <= tol).upper()
+        if "MATCHLINE" in near and station in near and re.search(rf"SHEET\s*{partner_sheet}\b", near):
+            matches.append(bb)
+    return matches[0] if len(matches) == 1 else None
 
 
 def _conduit_components(conduit):
@@ -1030,6 +1078,53 @@ def solve_log(plan, offset, lid, rec):
              "len_pt": round(route_length(s_route), 1), "kind": "start_leg", "start_label": ss, "matchline_sta": sel},
             {"sheet": e_sheet, "route": e_route, "a_xy": e_bnd, "b_xy": e_xy,
              "len_pt": round(route_length(e_route), 1), "kind": "end_leg", "end_label": es, "matchline_sta": sel},
+        ]
+        return out
+
+    # PARTNER-SHEET BOUNDARY SELECTOR (opt-in `crossing_by_partner_sheet`; gated so existing renders are
+    # byte-identical). Identify each leg's cross-sheet boundary by the matchline carrying the printed
+    # 'MATCHLINE STA <sta> ... SEE SHEET <partner>' line (the reciprocal printed crossing IDENTITY), then
+    # extend each leg's own conduit chain to its own partner matchline. Needed when the crossing station is
+    # also printed in a mid-sheet run callout next to a DIFFERENT matchline, so the per-token locator (and
+    # _ml_bbox's first-token pick) snap to the WRONG physical line (log2: the start chain's '18+38' token by
+    # the SEE-SHEET-22 line -> a 215' partial instead of the 616' run to the right-edge SEE-SHEET-19 line).
+    # Uniqueness + printed-span closure gate every leg; any non-unique matchline / unreached chain abstains.
+    if r.get("crossing_by_partner_sheet"):
+        sta = crossings[0][0] if (len(crossings) == 1 and len(crossings[0]) == 1) else None
+        s_mlb = _partner_matchline_bbox(s_words, s_draw, sta, e_sheet) if sta else None
+        e_mlb = _partner_matchline_bbox(e_words, e_draw, sta, s_sheet) if sta else None
+        out["partner_matchline"] = {"station": sta,
+                                    "start_bbox": [round(v, 1) for v in s_mlb] if s_mlb else None,
+                                    "end_bbox": [round(v, 1) for v in e_mlb] if e_mlb else None}
+        if not (s_mlb and e_mlb):
+            out["blocker"] = ("partner-sheet selector: 'MATCHLINE STA <sta> - SEE SHEET <partner>' not "
+                              f"uniquely identified (start s{s_sheet}->partner {e_sheet}, end s{e_sheet}->"
+                              f"partner {s_sheet}; sta={sta})")
+            return out
+        s_bnd = extend_dash_to_boundary(s_chain, s_mlb)
+        e_bnd = extend_dash_to_boundary(e_chain, e_mlb)
+        if s_bnd is None or e_bnd is None:
+            out["blocker"] = "partner-sheet selector: a leg conduit chain does not reach its partner matchline"
+            return out
+        s_route, s_ok = _ordered_leg(s_chain, s_xy, tuple(s_bnd))
+        e_route, e_ok = _ordered_leg(e_chain, tuple(e_bnd), e_xy)
+        out["start_leg_source_backed"], out["end_leg_source_backed"] = s_ok, e_ok
+        if not (s_ok and e_ok):
+            out["blocker"] = f"partner-sheet selector: leg route not source-backed (start {s_ok}, end {e_ok})"
+            return out
+        drawn_ft = (route_length(s_route) + route_length(e_route)) / SCALE
+        closes = bool(span) and abs(drawn_ft - span) <= CLOSURE_REL_TOL * span
+        out["closure"] = {"drawn_ft": round(drawn_ft, 1), "span_ft": span, "closes": closes}
+        if not closes:
+            out["blocker"] = (f"partner-sheet selector closure failed: {round(drawn_ft, 1)} ft vs span "
+                              f"{span} ft (>{int(CLOSURE_REL_TOL*100)}% -> wrong crossing/partial)")
+            return out
+        out["crossing_equation"] = list(crossings[0])
+        out["legs"] = [
+            {"sheet": s_sheet, "route": s_route, "a_xy": s_xy, "b_xy": list(s_bnd),
+             "len_pt": round(route_length(s_route), 1), "kind": "start_leg", "start_label": ss, "matchline_sta": sta},
+            {"sheet": e_sheet, "route": e_route, "a_xy": list(e_bnd), "b_xy": e_xy,
+             "len_pt": round(route_length(e_route), 1), "kind": "end_leg", "end_label": es, "matchline_sta": sta},
         ]
         return out
 
