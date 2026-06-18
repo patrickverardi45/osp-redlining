@@ -65,10 +65,14 @@ LOG70_TARGETS = ("log70",)
 # 5<->6 boundary is a BUNDLED matchline 'STA 24+11/4+37/1+92'; the source-backed selector picks 4+37 (named by
 # the sheet-6 end callout 'STA 4+37 TO STA 4+50') -> the AP-137 LEFT branch, NOT 24+11 fiber / 1+92 AP-138 right.
 LOG61_TARGETS = ("log61",)
+# log62 = the RIGHT (AP-138) branch of the SAME Ruth Circle cul-de-sac (bore_log26 sibling of log61). The
+# bundled selector picks 1+92 (named by the sheet-6 end callout 'STA 1+92 TO STA 2+01') -> proving it
+# generalizes to the sibling branch; start STA 1+82 INSTALLER HH -> STA 2+01 FLOWER POT, ~201'.
+LOG62_TARGETS = ("log62",)
 NEW_TARGETS = (CROSS_SHEET_TARGETS + SINGLE_SHEET_TARGETS + NLEG_TARGETS
                + MATCHLINE_TERMINUS_TARGETS + HH_BRIDGE_TARGETS + THROUGH_CONTINUITY_TARGETS
                + RESET_TO_RESET_TARGETS + PROMOTED_CLEAN_TARGETS + DIRECTION_CORRECTED_TARGETS
-               + LOG48_TARGETS + LOG70_TARGETS + LOG61_TARGETS)
+               + LOG48_TARGETS + LOG70_TARGETS + LOG61_TARGETS + LOG62_TARGETS)
 # log29 + log54 are reviewed-but-unanchored: class + (for log29) sheet derived from source, no anchors
 SOURCE_DERIVED_CLASS_TARGETS = ("log29", "log54")
 # log12's END is an AP TERMINAL PORT HH bound by its AP-id token (AP-121); the station 10+92 does not bind
@@ -163,6 +167,9 @@ def test_select_bundled_station_picks_end_callout_station_else_abstains():
     eq = ("24+11", "4+37", "1+92")
     s6 = ["STA 4+37 TO STA 4+50 DIR. BORE (13') 1-1.25\" VACANT HDPE", "STA 4+50 FLOWER POT"]
     assert _select_bundled_station(s6, "4+50", eq) == "4+37"        # log61: 4+37 named by the end callout
+    # log62 (RIGHT branch sibling, SAME equation): end 2+01 -> selects 1+92 (the selector generalizes)
+    s6r = ["STA 1+92 TO STA 2+01 DIR. BORE (9') 1-1.25\" VACANT HDPE", "STA 2+01 FLOWER POT"]
+    assert _select_bundled_station(s6r, "2+01", eq) == "1+92"
     # a callout naming a station NOT in the equation -> not selectable (no widening)
     assert _select_bundled_station(["STA 9+99 TO STA 4+50"], "4+50", eq) is None
     # no 'STA X TO STA <end>' callout -> abstain
@@ -427,4 +434,16 @@ def test_sweep_renders_new_logs_end_to_end():
         assert c["bundled_selected_station"] == "4+37"                      # NOT 24+11 / 1+92
         assert c["closure"]["closes"] is True and abs(c["closure"]["drawn_ft"] - 207.0) <= 20.7
         assert c["parent_source_gate"]["ok"] is True
+    # log62 = the RIGHT (AP-138) branch (bore_log26 sibling of log61): the SAME bundled selector picks 1+92
+    # (named by the sheet-6 end callout 'STA 1+92 TO STA 2+01') -> generalizes from log61's 4+37. ~201'.
+    assert "log62" in rep["newly_rendered_full"]
+    for lid in LOG62_TARGETS:
+        g = rep["verdicts"][lid]
+        assert len(sorted(OUT_DIR.glob(f"{lid}_*.png"))) == 2, lid
+        assert g["start_sheet"] == 5 and g["end_sheet"] == 6
+        assert g["bound_labels"] == {"start": "1+82", "end": "2+01"}        # right-branch entrance -> 2+01
+        assert g["bundled_equation"] == ["24+11", "4+37", "1+92"]
+        assert g["bundled_selected_station"] == "1+92"                      # RIGHT branch (NOT 4+37 / 24+11)
+        assert g["closure"]["closes"] is True and abs(g["closure"]["drawn_ft"] - 201.0) <= 20.1
+        assert g["parent_source_gate"]["ok"] is True
     assert rep["engine_census_frozen"] is True and rep["no_fixture_mutation"] is True

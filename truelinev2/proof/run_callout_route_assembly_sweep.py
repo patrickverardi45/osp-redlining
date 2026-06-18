@@ -162,6 +162,30 @@ OWNER_CONFIRMED_PLAN_ROUTES = {
                           "owner_note_text": ("owner-corrected log61 end 2026-06-17: the LEFT-side (AP-137) STA "
                                               "4+50 FLOWER POT on sheet 6 (NOT the RIGHT-side AP-138 STA 2+01).")}},
               "allowed_to_draw": True, "must_remain_abstained": False},
+    # log62 (2026-06-17, NEXT_EASIEST lane): the RIGHT (AP-138) branch of the SAME Ruth Circle cul-de-sac --
+    # bore_log26 sibling of log61. Source-VERIFIED route (printed structure identities, not owner-named):
+    # STA 1+82 INSTALLER HH (sheet 5, the right-branch entrance; the bore's local 0+00) -> up the right side ->
+    # the SAME bundled 'MATCHLINE STA 24+11/4+37/1+92 SEE SHEET 6' at the 1+92 crossing -> 'STA 1+92 TO 2+01'
+    # -> STA 2+01 FLOWER POT (sheet 6). span 0+00->2+01 = 201'. The bundled selector picks 1+92 (named by the
+    # sheet-6 end callout 'STA 1+92 TO STA 2+01') -- proving it generalizes to the sibling branch (24+11 fiber /
+    # 4+37 = log61's LEFT branch are never selected). drawn 198.1 vs 201 (closes); parent gate ok (collision
+    # sibling = log60, not log61). Identity-only anchors; no census/corpus change.
+    "log62": {"log_id": "log62", "parent": "bore_log26", "status": "RECOVERED",
+              "corrected_start": "0+00", "corrected_end": "2+01",
+              "corrected_sheets": [5, 6], "span_ft": 201.0,
+              "bundled_matchline_from_end_callout": True,
+              "endpoint_anchors": {
+                  "start": {"station": "1+82", "structure_class": "installer_hh",
+                            "boundary_kind": "structure_terminus", "clarity": "CLEAR",
+                            "structure_label": "INSTALLER HH",
+                            "owner_note_text": ("log62 RIGHT (AP-138) branch start: STA 1+82 INSTALLER HH "
+                                                "(sheet 5, right-branch entrance = bore-local 0+00).")},
+                  "end": {"station": "2+01", "structure_class": "flower_pot",
+                          "boundary_kind": "structure_terminus", "clarity": "CLEAR",
+                          "structure_label": "FLOWER POT",
+                          "owner_note_text": ("log62 end: STA 2+01 FLOWER POT (sheet 6) via the 1+92 crossing "
+                                              "of the bundled 24+11/4+37/1+92 matchline (AP-138 RIGHT side).")}},
+              "allowed_to_draw": True, "must_remain_abstained": False},
 }
 # OWNER-REVIEWED REVIEW-CANDIDATE PROMOTIONS (2026-06-17 owner review of review_candidate_reasoning_sweep):
 # logs the owner CONFIRMED correct that carry NO owner adjudication route -- the engine truth-table SPAN
