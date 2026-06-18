@@ -76,11 +76,17 @@ LOG60_TARGETS = ("log60",)
 # discriminator: HH-HH=130' (s18) + HH-HH=83' (s22) = 213 = bore span -> origin is STA 12+22=0+00 NEXTLINK HH
 # (NOT the STA 12+93=0+00 INSTALLER HH, which also closes). End STA 2+13 FLOWER POT via the 1+77/1+76 matchline.
 LOG32_TARGETS = ("log32",)
+# log27 = cross-sheet mainline run (15->16, 7+30->13+55, 625', E Mansfield) rendered via two owner-confirmed
+# gated hooks: (a) MATCHLINE SEE-SHEET TYPO -- sheet 15 mislabels the 11+66 matchline 'SEE SHEET 14' (should be
+# 16); applied only because sheet 16 prints the reciprocal 'SEE SHEET 15' at 11+66. (b) END HH SYMBOL BIND --
+# the 13+55 NEXTLINK HH symbol is too far from its non-unique label for the callout locator, so bind the unique
+# NEXTLINK symbol near the 13+55 label. Start STA 7+30 TERMINAL 6-PORT HH (AP-152).
+LOG27_TARGETS = ("log27",)
 NEW_TARGETS = (CROSS_SHEET_TARGETS + SINGLE_SHEET_TARGETS + NLEG_TARGETS
                + MATCHLINE_TERMINUS_TARGETS + HH_BRIDGE_TARGETS + THROUGH_CONTINUITY_TARGETS
                + RESET_TO_RESET_TARGETS + PROMOTED_CLEAN_TARGETS + DIRECTION_CORRECTED_TARGETS
                + LOG48_TARGETS + LOG70_TARGETS + LOG61_TARGETS + LOG62_TARGETS + LOG60_TARGETS
-               + LOG32_TARGETS)
+               + LOG32_TARGETS + LOG27_TARGETS)
 # log29 + log54 are reviewed-but-unanchored: class + (for log29) sheet derived from source, no anchors
 SOURCE_DERIVED_CLASS_TARGETS = ("log29", "log54")
 # log12's END is an AP TERMINAL PORT HH bound by its AP-id token (AP-121); the station 10+92 does not bind
@@ -184,6 +190,25 @@ def test_select_bundled_station_picks_end_callout_station_else_abstains():
     assert _select_bundled_station(["STA 4+50 FLOWER POT"], "4+50", eq) is None
     # >=2 equation-stations both ending at <end> -> ambiguous -> abstain (DO-NOT-WIDEN)
     assert _select_bundled_station(["STA 4+37 TO STA 4+50", "STA 1+92 TO STA 4+50"], "4+50", eq) is None
+
+
+def test_bind_hh_symbol_near_label_is_unique_gated():
+    # the owner-confirmed END-SYMBOL bind: the UNIQUE HH symbol within max_leader of a printed <station> label
+    # (for an HH whose drawn symbol is too far from its non-unique label for the standard callout locator).
+    from truelinev2.proof.run_callout_route_assembly_sweep import _bind_hh_symbol_near_label, HH_SYMBOL_LAYER
+
+    def sym(x, y):
+        return {"layer": HH_SYMBOL_LAYER, "xc": x, "yc": y}
+    words = [{"text": "13+55", "xc": 543.0, "yc": 245.0}, {"text": "13+55", "xc": 703.0, "yc": 244.0}]
+    draw = [sym(624.0, 316.0), {"layer": "OTHER", "xc": 624.0, "yc": 316.0}]
+    xy = _bind_hh_symbol_near_label(draw, words, "13+55", max_leader=130.0)   # ~107pt from both labels
+    assert xy is not None and abs(xy[0] - 624.0) < 2 and abs(xy[1] - 316.0) < 2
+    # no matching label -> None
+    assert _bind_hh_symbol_near_label(draw, words, "9+99") is None
+    # the symbol farther than max_leader -> None (no over-reach)
+    assert _bind_hh_symbol_near_label([sym(624.0, 316.0)], words, "13+55", max_leader=50.0) is None
+    # TWO HH symbols both near the label -> ambiguous -> None (uniqueness-gated)
+    assert _bind_hh_symbol_near_label([sym(624.0, 316.0), sym(560.0, 300.0)], words, "13+55") is None
 
 
 def test_conduit_components_splits_parallel_runs():
@@ -477,4 +502,19 @@ def test_sweep_renders_new_logs_end_to_end():
         assert j["crossing_equation"] == ["1+77", "1+76"]
         assert j["closure"]["closes"] is True and abs(j["closure"]["drawn_ft"] - 213.0) <= 21.3
         assert j["parent_source_gate"]["ok"] is True
+    # log27 = cross-sheet mainline run rendered via the owner-confirmed MATCHLINE TYPO + END-SYMBOL bind hooks:
+    # 11+66 join corrected from 'SEE SHEET 14' to 16 (reciprocal confirmed), end NEXTLINK HH bound by symbol.
+    assert "log27" in rep["newly_rendered_full"]
+    for lid in LOG27_TARGETS:
+        k = rep["verdicts"][lid]
+        assert len(sorted(OUT_DIR.glob(f"{lid}_*.png"))) == 2, lid          # cross-sheet 2-leg
+        assert k["start_sheet"] == 15 and k["end_sheet"] == 16
+        assert k["start_class"] == "terminal_port_hh" and k["end_class"] == "nextlink_hh"
+        assert k["bound_labels"] == {"start": "7+30", "end": "13+55"}
+        assert k["crossing_equation"] == ["11+66"]                          # the typo-corrected join
+        assert k["matchline_typo_applied"]["printed_see_sheet"] == 14 and k["matchline_typo_applied"]["corrected_to"] == 16
+        assert k["matchline_typo_applied"]["reciprocal_confirmed"] is True
+        assert k["end_symbol_bound"]["station"] == "13+55" and k["end_symbol_bound"]["sheet"] == 16
+        assert k["closure"]["closes"] is True and abs(k["closure"]["drawn_ft"] - 625.0) <= 62.5
+        assert k["parent_source_gate"]["ok"] is True
     assert rep["engine_census_frozen"] is True and rep["no_fixture_mutation"] is True

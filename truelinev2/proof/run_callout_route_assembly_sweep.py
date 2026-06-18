@@ -231,6 +231,34 @@ OWNER_CONFIRMED_PLAN_ROUTES = {
                           "owner_note_text": ("log32 end: STA 2+13 FLOWER POT (sheet 22), reached from the 12+22 "
                                               "origin down Hickory Ln across the 1+77/1+76 matchline.")}},
               "allowed_to_draw": True, "must_remain_abstained": False},
+    # log27 (2026-06-17, owner-confirmed CROSS-SHEET TYPO + END-SYMBOL bind): mainline run sheets 15->16,
+    # 7+30->13+55 (625', E Mansfield St). Start = STA 7+30 TERMINAL 6-PORT HH (AP-152 SPLICE LOC 35) on sheet
+    # 15. The 15<->16 join is the printed MATCHLINE STA 11+66, but sheet 15 mislabels it 'SEE SHEET 14' (owner-
+    # confirmed plan TYPO; should be SEE SHEET 16) while sheet 16 correctly prints the reciprocal 'SEE SHEET
+    # 15' at 11+66 -- so the join is still confirmed BOTH ways, only the start-sheet number is corrected (opt-
+    # in `matchline_see_sheet_typo`, gated to log27). End = STA 13+55 NEXTLINK HH (PROP. SPLICE POINT 36) on
+    # sheet 16; its drawn symbol sits ~107pt from its non-unique '13+55' label so the standard callout locator
+    # fails -> owner-confirmed `end_hh_symbol_bind` binds the UNIQUE NEXTLINK symbol near the 13+55 label. The
+    # existing cross-sheet 2-leg solver then traces it (s15 leg 435.6' + s16 leg 188.8' = 624.4 vs 625 span,
+    # closes). Parent gate ok (standalone bore_log27). Identity-only; no census/corpus change.
+    "log27": {"log_id": "log27", "parent": "bore_log27", "status": "RECOVERED",
+              "corrected_start": "7+30", "corrected_end": "13+55",
+              "corrected_sheets": [15, 16], "span_ft": 625.0,
+              "matchline_see_sheet_typo": {"start_sheet": 15, "end_sheet": 16, "station": "11+66",
+                                           "printed_sheet": 14},
+              "end_hh_symbol_bind": True,
+              "endpoint_anchors": {
+                  "start": {"station": "7+30", "structure_class": "terminal_port_hh",
+                            "boundary_kind": "structure_terminus", "clarity": "CLEAR",
+                            "structure_label": "TERMINAL PORT HH",
+                            "owner_note_text": ("log27 start: STA 7+30 TERMINAL 6-PORT HH AP-152 SPLICE LOC 35 "
+                                                "(sheet 15, E Mansfield St).")},
+                  "end": {"station": "13+55", "structure_class": "nextlink_hh",
+                          "boundary_kind": "structure_terminus", "clarity": "CLEAR",
+                          "structure_label": "NEXTLINK HH",
+                          "owner_note_text": ("log27 end: STA 13+55 NEXTLINK HH PROP. SPLICE POINT 36 (sheet "
+                                              "16), across the owner-corrected 11+66 matchline join.")}},
+              "allowed_to_draw": True, "must_remain_abstained": False},
 }
 # OWNER-REVIEWED REVIEW-CANDIDATE PROMOTIONS (2026-06-17 owner review of review_candidate_reasoning_sweep):
 # logs the owner CONFIRMED correct that carry NO owner adjudication route -- the engine truth-table SPAN
@@ -781,6 +809,20 @@ def _select_bundled_station(end_lines, end_station, equation):
     return next(iter(xs)) if len(xs) == 1 else None
 
 
+def _bind_hh_symbol_near_label(draw, words, station, max_leader=130.0):
+    """OWNER-CONFIRMED end bind: the UNIQUE hand-hole symbol (HH_SYMBOL_LAYER) whose nearest printed
+    <station> label sits within max_leader pt. For an end HH whose drawn symbol is too far from its (often
+    non-unique) station label for the standard callout locator's leader tolerance to bind. Source-derived
+    (drawn symbol + printed station label); uniqueness-gated (0 or >=2 qualifying symbols -> None). Never an
+    invented coordinate -- the returned xy is a real drawn HH symbol center."""
+    labels = [(w["xc"], w["yc"]) for w in words if str(w.get("text", "")) == station]
+    if not labels:
+        return None
+    near = [c for c in _hh_symbol_clusters(draw)
+            if min(math.hypot(c[0] - lx, c[1] - ly) for lx, ly in labels) <= max_leader]
+    return tuple(near[0]) if len(near) == 1 else None
+
+
 def solve_log(plan, offset, lid, rec):
     """Attempt the full route sentence for one anchored bore. Returns a verdict dict with either a
     render plan (legs to draw) or a named blocker. Renders nothing (the caller draws)."""
@@ -840,6 +882,22 @@ def solve_log(plan, offset, lid, rec):
     out["bound_labels"] = {"start": s_lbl, "end": e_lbl}
     out["bind_results"] = {"start": s_res, "end": e_res}
 
+    # OWNER-CONFIRMED END SYMBOL BIND (opt-in `end_hh_symbol_bind`; gated): when the end HH's drawn symbol
+    # sits too far from its (non-unique) printed station label for the standard callout locator to bind, the
+    # owner confirms the end structure and we bind to the UNIQUE end-class HH symbol nearest a printed end-
+    # station label on a corrected sheet (source-derived; uniqueness-gated). Fires BEFORE the end-at-matchline
+    # fallback so a real end structure is not mistaken for a boundary terminus.
+    e_xy_ov = None
+    _end_cls = (r.get("endpoint_anchors") or {}).get("end", {}).get("structure_class")
+    if e_sheet is None and r.get("end_hh_symbol_bind") and _end_cls in MODELED and es:
+        for sh in (sheets or [s_sheet]):
+            xy = _bind_hh_symbol_near_label(plan.line_items(sh, offset), plan.words(sh, offset), es)
+            if xy is not None:
+                e_sheet, ec, e_lbl, e_xy_ov = sh, _end_cls, es, xy
+                out["end_sheet"], out["end_class"], out["bound_labels"]["end"] = e_sheet, ec, e_lbl
+                out["end_symbol_bound"] = {"sheet": sh, "station": es, "xy": [round(v, 1) for v in xy]}
+                break
+
     # END-AT-MATCHLINE: a bore may TERMINATE at a printed matchline crossing station -- its far end is the
     # sheet boundary (the conduit continues as a DIFFERENT bore on the partner sheet), not a second
     # structure. When the start binds to a structure and the end station did NOT bind to any structure but
@@ -860,7 +918,10 @@ def solve_log(plan, offset, lid, rec):
         return out
 
     s_xy, s_words, s_draw, _ = _bind(plan, offset, s_sheet, sc, s_lbl)
-    e_xy, e_words, e_draw, _ = _bind(plan, offset, e_sheet, ec, e_lbl)
+    if e_xy_ov is not None:                       # owner-confirmed end symbol bind (standard locator failed)
+        e_xy, e_words, e_draw = e_xy_ov, plan.words(e_sheet, offset), plan.line_items(e_sheet, offset)
+    else:
+        e_xy, e_words, e_draw, _ = _bind(plan, offset, e_sheet, ec, e_lbl)
     s_chain = _chain_at(s_draw, sc, s_xy)
     e_chain = _chain_at(e_draw, ec, e_xy)
     if not s_chain or not e_chain:
@@ -892,6 +953,21 @@ def solve_log(plan, offset, lid, rec):
     # ---- cross-sheet: resolve the printed crossing both legs reach, render two sheet-local legs ----
     s_lines = plan.lines(s_sheet, offset)
     crossings = see_sheet_crossings(s_lines, e_sheet, "MATCHLINE")
+    # OWNER-CONFIRMED MATCHLINE SEE-SHEET TYPO (opt-in `matchline_see_sheet_typo`; tightly gated): the start
+    # sheet prints the matchline at <station> as 'SEE SHEET <printed>' (a plan typo) instead of the real
+    # partner <e_sheet>, so see_sheet_crossings can't find the join. Apply ONLY when (1) that exact wrong
+    # crossing is UNIQUELY printed on the start sheet at <station>, AND (2) the partner sheet prints the
+    # RECIPROCAL 'SEE SHEET <s_sheet>' at the SAME <station> -- so the physical join is still source-confirmed
+    # from BOTH sheets; only the start-sheet's sheet NUMBER is corrected. Never a broad sheet-ref override.
+    typo = r.get("matchline_see_sheet_typo")
+    if not crossings and typo and typo.get("start_sheet") == s_sheet and typo.get("end_sheet") == e_sheet:
+        sta = typo["station"]
+        wrong = [c for c in see_sheet_crossings(s_lines, typo["printed_sheet"], "MATCHLINE") if sta in c]
+        recip = [c for c in see_sheet_crossings(plan.lines(e_sheet, offset), s_sheet, "MATCHLINE") if sta in c]
+        if len(wrong) == 1 and recip:
+            crossings = wrong
+            out["matchline_typo_applied"] = {"station": sta, "printed_see_sheet": typo["printed_sheet"],
+                                             "corrected_to": e_sheet, "reciprocal_confirmed": True}
     out["printed_crossings_start_to_end"] = [list(c) for c in crossings]
     if not crossings:
         mids = [s for s in sheets if s not in (s_sheet, e_sheet)]
