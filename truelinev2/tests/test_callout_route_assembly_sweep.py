@@ -106,12 +106,19 @@ LOG55_TARGETS = ("log55",)
 # sheet 7 (accounting correction 11+19 + 50' = 11+69; the 12+64 pot via the 10+44 entry is NOT used). Two
 # sheet-local legs joined by the reciprocal SEE-SHEET identity, boundary by partner-sheet match (not per-token).
 LOG19_TARGETS = ("log19",)
+# log49 = single-sheet installer->nextlink bore on sheet 10 (Segment B of parent bore_log20; siblings
+# log48/log50). START '44+83' prints 3x (run-callout text) so the bare locator abstains; the new opt-in
+# `start_label_context` binds the UNIQUE installer-HH symbol via the INSTALLER HH callout context+leader
+# (owner Candidate A 914.6,420.2; Candidate B carries no INSTALLER HH callout -> rejected by source). END =
+# 45+33 NEXTLINK HH. The owner 44'->50' span correction lives in the parent model's adj_corrected_span
+# (source-confirmed by the printed 'DIR. BORE (50')' callout); drawn 49.9' closes 50'.
+LOG49_TARGETS = ("log49",)
 NEW_TARGETS = (CROSS_SHEET_TARGETS + SINGLE_SHEET_TARGETS + NLEG_TARGETS
                + MATCHLINE_TERMINUS_TARGETS + HH_BRIDGE_TARGETS + THROUGH_CONTINUITY_TARGETS
                + RESET_TO_RESET_TARGETS + PROMOTED_CLEAN_TARGETS + DIRECTION_CORRECTED_TARGETS
                + LOG48_TARGETS + LOG70_TARGETS + LOG61_TARGETS + LOG62_TARGETS + LOG60_TARGETS
                + LOG32_TARGETS + LOG27_TARGETS + LOG2_TARGETS + LOG8_TARGETS + LOG56_TARGETS
-               + LOG55_TARGETS + LOG19_TARGETS)
+               + LOG55_TARGETS + LOG19_TARGETS + LOG49_TARGETS)
 # log29 + log54 are reviewed-but-unanchored: class + (for log29) sheet derived from source, no anchors
 SOURCE_DERIVED_CLASS_TARGETS = ("log29", "log54")
 # log12's END is an AP TERMINAL PORT HH bound by its AP-id token (AP-121); the station 10+92 does not bind
@@ -700,4 +707,24 @@ def test_sweep_renders_new_logs_end_to_end():
         assert w["closure"]["closes"] is True and abs(w["closure"]["drawn_ft"] - 656.0) <= 65.6
         assert w["parent_source_gate"]["ok"] is True                       # standalone bore_log19, owns 4+94->11+50
         assert [leg["kind"] for leg in w["leg_summary"]] == ["start_leg", "end_leg"]
+    # log49 = single-sheet installer->nextlink on sheet 10 via the new `start_label_context` hook: the bare
+    # '44+83' prints 3x so the START binds by the INSTALLER HH callout context+leader -> the UNIQUE symbol
+    # (owner Candidate A 914.6,420.2); Candidate B is rejected by source. END = 45+33 NEXTLINK HH. The owner
+    # 44'->50' span correction (parent-model adj_corrected_span, source-confirmed by the printed 50' callout)
+    # lets the parent-source gate pass; drawn 49.9' closes 50'.
+    assert "log49" in rep["newly_rendered_full"]
+    for lid in LOG49_TARGETS:
+        q = rep["verdicts"][lid]
+        assert len(sorted(OUT_DIR.glob(f"{lid}_*.png"))) == 1, lid          # single sheet, one leg
+        assert q["single_sheet"] is True and q["start_sheet"] == 10 and q["end_sheet"] == 10
+        assert q["start_class"] == "installer_hh" and q["end_class"] == "nextlink_hh"
+        assert q["bound_labels"] == {"start": "44+83", "end": "45+33"}
+        assert q["start_context_bound"]["context"] == ["INSTALLER", "HH"]    # SOURCE-derived bind, not a coordinate
+        assert q["start_context_bound"]["sheet"] == 10
+        assert q["closure"]["closes"] is True and abs(q["closure"]["drawn_ft"] - 50.0) <= 5.0
+        assert q["leg_summary"][0]["kind"] == "single_sheet"
+        assert q["parent_source_gate"]["ok"] is True
+    # log49 must NOT have stolen a sibling's route: its ~50' route is nowhere near log48/log50's ~500'+; the
+    # parent-source gate (child_owns_route over parent bore_log20) enforces this.
+    assert rep["verdicts"]["log49"]["closure"]["drawn_ft"] < 60.0
     assert rep["engine_census_frozen"] is True and rep["no_fixture_mutation"] is True

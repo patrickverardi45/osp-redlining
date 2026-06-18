@@ -416,6 +416,37 @@ OWNER_CONFIRMED_PLAN_ROUTES = {
                                               "accounted additively from 11+19 (11+19 + 50' = 11+69), so 11+50 was "
                                               "never the absolute terminus.")}},
               "allowed_to_draw": True, "must_remain_abstained": False},
+    # log49 (2026-06-18, owner-confirmed start coordinate + span): single-sheet installer->nextlink bore on
+    # sheet 10, the Segment B (high-station 44+89->45+33) child of parent bore_log20 (siblings log48/log50).
+    # START = STA 44+83 13"X24"X24" INSTALLER HH -- the bore-log records 44+89 (OCR/field drift, owner-accepted
+    # 2026-06-18); '44+83' prints 3x (run-callout text) so the bare locator abstains LABEL_WORD_NOT_UNIQUE. The
+    # NEW opt-in `start_label_context` binds the UNIQUE installer-HH symbol via the INSTALLER HH callout's own
+    # context words ("INSTALLER","HH") -> label box -> leader -> symbol (914.6,420.2) == owner Candidate A;
+    # Candidate B (861,354) carries NO INSTALLER HH callout -> rejected BY SOURCE, not preference. END = STA
+    # 45+33=0+00 NEXTLINK HH / PROP. SPLICE POINT 46 (binds via the nextlink callout locator). The printed run
+    # is STA 44+83 TO 45+33 DIR. BORE (50'); drawn 49.9' closes 50' (0.1%). The owner 44'->50' span correction
+    # is recorded as the parent model's adj_corrected_span (source-confirmed by the printed callout; accepted --
+    # log49 has no span-colliding sibling), so the parent-source gate passes. DISTINCT from siblings: 49.9' is
+    # nowhere near log48 (507') or log50 (514'); span_collision empty.
+    "log49": {"log_id": "log49", "parent": "bore_log20", "status": "RECOVERED",
+              "corrected_start": "44+83", "corrected_end": "45+33",
+              "corrected_sheets": [10], "span_ft": 50.0,
+              "start_label_context": ["INSTALLER", "HH"],
+              "endpoint_anchors": {
+                  "start": {"station": "44+83", "structure_class": "installer_hh",
+                            "boundary_kind": "structure_terminus", "clarity": "CLEAR",
+                            "structure_label": "INSTALLER HH",
+                            "owner_note_text": ("owner-confirmed log49 start 2026-06-18: STA 44+83 "
+                                                "13\"X24\"X24\" INSTALLER HH (sheet 10); bore-log 44+89 = OCR/"
+                                                "field drift (owner-accepted). Bound via the INSTALLER HH "
+                                                "callout context+leader to the UNIQUE symbol (Candidate A); "
+                                                "Candidate B has no such callout -> rejected by source.")},
+                  "end": {"station": "45+33", "structure_class": "nextlink_hh",
+                          "boundary_kind": "structure_terminus", "clarity": "CLEAR",
+                          "structure_label": "NEXTLINK HH",
+                          "owner_note_text": ("owner-confirmed log49 end 2026-06-18: STA 45+33=0+00 NEXTLINK "
+                                              "HH / PROP. SPLICE POINT 46 (sheet 10).")}},
+              "allowed_to_draw": True, "must_remain_abstained": False},
 }
 # OWNER-REVIEWED REVIEW-CANDIDATE PROMOTIONS (2026-06-17 owner review of review_candidate_reasoning_sweep):
 # logs the owner CONFIRMED correct that carry NO owner adjudication route -- the engine truth-table SPAN
@@ -1215,6 +1246,31 @@ def solve_log(plan, offset, lid, rec):
     out["bound_labels"] = {"start": s_lbl, "end": e_lbl}
     out["bind_results"] = {"start": s_res, "end": e_res}
 
+    # OWNER-CONFIRMED START LABEL-CONTEXT BIND (opt-in `start_label_context`; gated): the start STATION label
+    # is not sheet-unique (it also prints in run callouts) so the bare locator abstains LABEL_WORD_NOT_UNIQUE;
+    # the owner confirms the start STRUCTURE CLASS and we bind the UNIQUE class symbol via the printed
+    # structure callout's OWN context words (its label box must ALSO contain them) -> leader -> symbol -- the
+    # standard word->box->leader->symbol->fill chain, never a coordinate (the START analogue of
+    # end_hh_symbol_bind). Uniqueness across the candidate sheets is mandatory (0 or >=2 binds -> no override).
+    s_xy_ov = None
+    _start_cls = (r.get("endpoint_anchors") or {}).get("start", {}).get("structure_class")
+    _start_ctx = r.get("start_label_context")
+    if s_sheet is None and _start_ctx and _start_cls in MODELED and ss:
+        sbinds = []
+        for sh in (sheets or _all_sheets(plan, offset)):
+            sv = resolve_structure_position(
+                label_text=ss, structure_class=_start_cls, words=plan.words(sh, offset),
+                drawings=plan.line_items(sh, offset), layer_table=BRENHAM_STRUCTURE_LAYERS,
+                context_texts=tuple(_start_ctx))
+            if sv.result == POSITION_BOUND and sv.symbol_xy:
+                sbinds.append((sh, tuple(sv.symbol_xy)))
+        if len(sbinds) == 1:
+            s_sheet, sc, s_lbl, s_xy_ov = sbinds[0][0], _start_cls, ss, sbinds[0][1]
+            out["start_sheet"], out["start_class"], out["bound_labels"]["start"] = s_sheet, sc, s_lbl
+            out["start_context_bound"] = {"sheet": s_sheet, "station": ss,
+                                          "context": list(_start_ctx),
+                                          "xy": [round(v, 1) for v in s_xy_ov]}
+
     # OWNER-CONFIRMED END SYMBOL BIND (opt-in `end_hh_symbol_bind`; gated): when the end HH's drawn symbol
     # sits too far from its (non-unique) printed station label for the standard callout locator to bind, the
     # owner confirms the end structure and we bind to the UNIQUE end-class HH symbol nearest a printed end-
@@ -1259,7 +1315,10 @@ def solve_log(plan, offset, lid, rec):
                           f"(start->s{s_sheet}/{sc}; end->s{e_sheet}/{ec})")
         return out
 
-    s_xy, s_words, s_draw, _ = _bind(plan, offset, s_sheet, sc, s_lbl)
+    if s_xy_ov is not None:                       # owner-confirmed start context bind (standard locator failed)
+        s_xy, s_words, s_draw = s_xy_ov, plan.words(s_sheet, offset), plan.line_items(s_sheet, offset)
+    else:
+        s_xy, s_words, s_draw, _ = _bind(plan, offset, s_sheet, sc, s_lbl)
     if e_xy_ov is not None:                       # owner-confirmed end symbol bind (standard locator failed)
         e_xy, e_words, e_draw = e_xy_ov, plan.words(e_sheet, offset), plan.line_items(e_sheet, offset)
     else:

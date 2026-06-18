@@ -1526,8 +1526,8 @@
             "2025-12-18"
           ],
           "truth_span": "44+89->45+33",
-          "adj_status": null,
-          "adj_corrected_span": null,
+          "adj_status": "RECOVERED",
+          "adj_corrected_span": "44+83->45+33",
           "placement_status": "BLOCKED_OR_UNATTEMPTED",
           "provenance_note": "Segment B (col2, high-station continuation 44+89\u219245+33) split from bore_log20.xlsx. Source: 2025-12-18_222857 - Jimenez. NEEDS REVIEW: print mapping uncertain \u2014 preserved full source print '10,11,12'.",
           "segment_order": 2,
