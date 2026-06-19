@@ -143,16 +143,39 @@ needs Phase 2B: generate the input manifest's artifact records from the sweep re
 `verdicts[*].artifacts` for the 37, plus a unified re-render (or owner-confirmed single-file
 selection) to give the 13 `ALREADY_DRAWN` an authoritative artifact list.
 
+## Phase 2B — unified-50 render + real publish: STOPPED at the precondition
+
+Authorized to render the 50 drawn logs into one authoritative directory and publish a real
+manifest — but **stopped at the feasibility gate** (no render run, no manifest published, no
+partial-as-full claim). Determined by `truelinev2/proof/run_redline_manifest_unified50_render_publish.py`
+(read-only gate that renders/publishes nothing unless ALL 50 have one authoritative path):
+
+- **37 `NEW_TARGETS`** render authoritatively via the callout route-assembly sweep — one dir,
+  1:1 with the sweep report `verdicts[*].artifacts` (Phase 2A.5). **Ready.**
+- **13 `ALREADY_DRAWN`** (log7/25/45/50/51/52/53/59/64/65/66/69/71) are **excluded from that
+  sweep by design** (the `ALREADY_DRAWN` skip in `_is_target`) and render only through
+  scattered, heterogeneous per-log proofs with **multiple candidate PNGs each** (log65=9,
+  log51=5, log59=4, log25=3), log7 only a PARTIAL/representative stroke, and **log50 wired into
+  no unified registry**. There is no single authoritative all-50 path.
+- Bringing the 13 into one path requires either an **authorized unified solver pass** (changes
+  the engine — forbidden in this task) or **owner-confirmed canonical-artifact selection** per
+  log (non-source — forbidden). Each needs separate authorization.
+
+The Phase-2A publisher + Phase-2A.5 checksum dry-run already prove the pipe works on the 37's
+real render bytes; the missing piece is a **unified render that covers all 50** — that is the
+real Phase 2B/2C, and it is engine/solver work, not a contract step.
+
 ## Not yet built (explicit Phase boundary)
 
 Phases 1–2A delivered the **contract, example, mock UI, and artifact publisher**; Phase 2A.5
-inspected existing artifacts (above). Still **not** built:
+inspected existing artifacts; Phase 2B hit the unified-render precondition (above). Still
+**not** built:
 
+- a **unified all-50 render path** (authorized solver pass) so every drawn log has one
+  authoritative final artifact — the blocker to a real 50/58 publish;
 - a clean parameterized **solving runner** that *generates* the manifest + final artifacts
-  from a render (the publisher consumes artifacts; it does not produce them — the upstream
-  is still Brenham-hardcoded proof/sweep scripts);
-- an **actual published run on real render outputs** — Phase 2A.5 found the 37 `NEW_TARGETS`
-  ready but the 13 `ALREADY_DRAWN` ambiguous, so no real publish was performed;
+  from that render (the publisher consumes artifacts; it does not produce them);
+- an **actual published 50/58 run** (blocked on the unified render above);
 - a **full solve/render benchmark**;
 - any **website/backend wiring** or deploy.
 
