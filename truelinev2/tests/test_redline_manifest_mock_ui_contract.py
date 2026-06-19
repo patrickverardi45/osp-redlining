@@ -1,5 +1,12 @@
 """Phase-1 redline-manifest MOCK UI contract test (no browser, no engine).
 
+SUPERSEDED / HISTORICAL FIXTURE ONLY. The mock UI under truelinev2/contracts/mock_ui/ is retired as a
+product direction (lane TRUELINE_V2_UI_FABLE_PRESERVE_AND_MOCK_UI_RETIRE, 2026-06-19); the authoritative
+v2 UI base is the preserved Fable repo trueline-web-experience (see wiki/ui/fable_v2_ui_bones.md and
+truelinev2/contracts/mock_ui/_DEPRECATED.md). This test is kept ONLY as a historical contract fixture:
+its value now is cross-checking the example manifest's truth (log3/log14/blocked/warnings/placeholders),
+not endorsing the mock as the UI. Do not extend the mock UI to satisfy new product needs.
+
 Verifies the static mock UI under truelinev2/contracts/mock_ui/ is manifest-driven
 and honors the contract: it references the example manifest, excludes forbidden/stale
 sources, carries the required contract-only labels, implements the filter/status

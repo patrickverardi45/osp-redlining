@@ -75,7 +75,14 @@ A `blocker` object is present **iff** `blocked` is true and carries an `unlock_r
 6. Surface per-log `warnings` (e.g. stored-anchor debt `B-DATA-LOG48-ADJ-1`,
    owner-corrected sheets) to consumers.
 
-## Contract mock UI (Phase 1 preview)
+## Contract mock UI (Phase 1 preview) — ⚠️ SUPERSEDED / historical fixture
+
+> **DEPRECATED as a product direction** (lane `TRUELINE_V2_UI_FABLE_PRESERVE_AND_MOCK_UI_RETIRE`,
+> 2026-06-19). The authoritative v2 UI base is the preserved **Fable** repo `trueline-web-experience`
+> — see [`wiki/ui/fable_v2_ui_bones.md`](ui/fable_v2_ui_bones.md) and
+> `truelinev2/contracts/mock_ui/_DEPRECATED.md`. The mock below remains **only** as a historical
+> contract fixture (its test still guards manifest↔fixture fidelity). Do not extend it; future web
+> work adapts the Fable surfaces to this contract.
 
 A static, manifest-driven preview lives under `truelinev2/contracts/mock_ui/`
 (`redline_manifest_mock.html` / `.css` / `.js`) — it proves the manifest shape supports
@@ -332,12 +339,16 @@ runner, a complete render-cost benchmark (13 + 37), and an adapter-neutral durab
 Still **not** built:
 
 - **website/backend wiring** to read the store's `latest_valid` bundle and serve manifest + artifacts
-  (the Phase-1 mock UI could consume a real served bundle as the first integration test) — still no
-  live wiring;
+  (the Phase-2J read-only consumer `truelinev2/contracts/published_bundle_consumer.py` already reads the
+  store end-to-end; the remaining step adapts the **Fable** `trueline-web-experience` surfaces to it —
+  see [`wiki/ui/fable_v2_ui_bones.md`](ui/fable_v2_ui_bones.md)) — still no live wiring;
 - a **cloud/object-store adapter** behind the (now-defined) store contract — when a vendor is chosen;
 - any deploy;
 - *(optional)* a **warm-engine / single-process unified runner** to collapse the ~6 min full refresh.
 
-Safe next work against this contract: a **contract-first mock UI** that consumes the
-example manifest (status/provenance chips, blocked-log CTAs, the “50 of 58 accounted”
-honesty header, artifact rendering by manifest reference) — with **no live engine wiring**.
+Safe next work against this contract: **adapt the preserved Fable v2 UI bones**
+(`trueline-web-experience` — see [`wiki/ui/fable_v2_ui_bones.md`](ui/fable_v2_ui_bones.md)) to read a
+real served bundle via the Phase-2J consumer (`published_bundle_consumer.py`) — status/provenance
+chips, blocked-log CTAs, the “50 of 58 accounted” honesty header, artifact rendering by manifest
+reference — with **no live engine wiring** and **no new UI built from scratch**. (The retired
+`mock_ui/` is a historical fixture, not the UI direction.)
