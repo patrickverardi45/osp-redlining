@@ -1,7 +1,7 @@
 # START HERE — TrueLine v2 Canonical Bootstrap
 
 > Single source of current working truth. Read THIS file first, in full — it is small on purpose.
-> Snapshot below is current as of **2026-06-18 (continued 33 — log3/log14 owner-adjudication, read-only; 49/58)**. For the absolute-latest
+> Snapshot below is current as of **2026-06-19 (continued 34 — log3 WIRED + DRAWN; frontier 50/58)**. For the absolute-latest
 > state, read ONLY the top ~35 lines of `C:/Nova/knowledge/TrueLine-Wiki/wiki/hot.md` — never the whole file.
 > **Do NOT load history/archive files** (`log.md`, `current-sprint.md`, full `hot.md`) unless explicitly
 > asked or investigating a specific historical decision.
@@ -19,15 +19,31 @@ review" buckets are not progress until they become drawn strokes.
 ## Repo / branch state
 - Repo: `C:/Nova/projects/TrueLine/TrueLine_Beta`  ·  Branch: `feat/truelinev2`
 - Product lives in `truelinev2/` (clean-room, zero old-app imports). v2 suite: **1392 passed / 2 skipped**
-  (log44 added assertions to the existing sweep e2e — no new test). Callout-sweep e2e **31 passed / 1 skipped**.
+  (log3/log44 added assertions to the existing sweep e2e — no new test). Callout-sweep e2e **31 passed / 1 skipped**.
 - Isolated track: monolith / Render / Vercel UNTOUCHED; nothing merged or deployed.
 
 ## HEAD / remote state (verify with `git` before trusting this snapshot)
-- Last RENDER commit: **`7039c48`** (log44, 49/58 — unchanged; continued-33 was read-only). Local HEAD = the
-  continued-33 read-only adjudication+docs commit on top of save-32 `96b0143` (pushed → `origin/feat/truelinev2`).
-  `origin/main`: **`068a279`** (untouched).
+- Last RENDER commit: **`c19b565`** (log3 wired + DRAWN, 49→50/58). Local HEAD = the continued-34 docs/START_HERE
+  commit on top of `c19b565` (pushed → `origin/feat/truelinev2`). `origin/main`: **`068a279`** (untouched).
 
-## Latest — continued 33 (2026-06-18, READ-ONLY adjudication; no render)
+## Latest — continued 34 (2026-06-19): log3 WIRED + DRAWN (49→50)
+**continued 34 — log3 owner-confirmed / HUMAN-ADJUSTABLE GEOMETRY render.** Frontier **49 → 50/58** (log3 = 50th
+drawn). Lineage `069e70d` (continued-33 save) → **`683825c`** (log3 owner-control ingest PROOF, 16/16, read-only)
+→ **`c19b565`** (log3 sweep WIRING, DRAWN). The s3 `12+66→15+13` conduit is too FRAGMENTED to auto-trace
+(`DESIGN_PATH_NOT_CONNECTED`); the owner confirmed the route + dotted the TOP path → 11 owner control points
+DIFF-ingested → the s3 leg is the STRAIGHT segment between two source-bound endpoints (matchline crossing @ owner
+top-y 296.5 → `15+13 NEXTLINK HH`), control-point-verified (maxdev 1.3pt), closing 247.7'. Renders 2 red strokes
+(s2 `12+63 FLOWER POT` stub 2.8' + s3 247') via gated opt-ins `printed_run_callout_chain_route` +
+`owner_confirmed_geometry`; new content = upstream **250'**, downstream `15+13→21+63` (650') COVERED by drawn log4
+(gated `covered_by_drawn_children` parent-gate exception), 0 overlap. **FIRST owner-GEOMETRY render** — Patrick
+classified it the **HUMAN-ADJUSTABLE lane** (NOT deterministic AUTO), reconciling with "never invented
+coordinates / manual placement is not the [AUTO] product". All **64 prior PNGs BYTE-IDENTICAL** (md5 stash-baseline
+diff); census FROZEN (`doc`); `parent_source_model`/fixtures UNTOUCHED; v2 1392/2-skip; e2e PASS. Doctrine:
+fragmented conduit + parallel tracks → owner picks the track + confirms straightness → straight segment between
+BOUND endpoints (minimal, not freehand); DIFF-vs-baseline ingests owner packets (only explicit marks). Detail:
+[[current-sprint]] / [[log]] continued 34.
+
+### Prior — continued 33 (2026-06-18, READ-ONLY adjudication; no render)
 **continued 33 — log3/log14 owner-adjudication (READ-ONLY).** No render; frontier UNCHANGED **49/58**. **log14 =
 confirmed DUPLICATE of drawn log10** — its only bindable s7 route is log10's first leg (`0+58=0+00 / 0+00→4+16`);
 end `4+18` unprintable; `solve_log` BLOCKED → covered_by_existing_redline, NOT a missing redline (effective
@@ -63,34 +79,36 @@ primitives are GATED per-log opt-ins → all **62 prior render PNGs BYTE-IDENTIC
   default-OFF; no corpus/`parent_source_model`/fixture mutation; NO census rebaseline; NO new production flag; red strokes.
 
 ## Current redline frontier
-**49/58 drawn** (unchanged; continued-33 was read-only). **log14 RESOLVED** as a confirmed DUPLICATE of drawn
-log10 (covered_by_existing_redline — not a missing redline; effective placeable denominator ~57). Remaining
-genuinely-open **8**: log3, log5, log15, log16, log31, log38, log43, log57 — all owner/source-gated:
-- **Owner span-correction + N-leg solver:** log3 — distinct longer bore than drawn log4 (shares `15+13→21+63`);
-  recorded start `12+63` is a printed DRIVEWAY boundary on s2 (non-structure → unbindable; `12+66` is the s2/s3
-  matchline). Re-origin to the 9+75 AP-106 8-port HH needs owner authorization + s2→s5 N-leg support.
-  (Reclassified continued-33 from owner-adjudication; was wrongly framed as "12+63 unprinted".)
+**50/58 drawn** (+log3 this arc). **log3 RESOLVED — WIRED + DRAWN** (continued-34, `c19b565`): owner-confirmed /
+HUMAN-ADJUSTABLE GEOMETRY render — s2 `12+63 FLOWER POT` stub (2.8') + s3 247' STRAIGHT top-path between two bound
+endpoints (matchline crossing @ owner top-y → `15+13 NEXTLINK HH`, 11-control-point-verified); downstream
+`15+13→21+63` (650') covered by drawn log4. **log14** remains a confirmed DUPLICATE of drawn log10
+(covered_by_existing_redline — the 8th non-drawn, NOT a missing redline). Remaining genuinely-open **7**:
+log5, log15, log16, log31, log38, log43, log57 — all owner/source-gated:
 - **Owner-locked ABSTAIN:** log5, log31, log38, log43 (`must_remain_abstained`).
 - **Source-gap:** log15/log16 (unprinted ruler-cuts → sheet-5+ head-end), log57 (`.FS` drive sheet, absent).
-- (RESOLVED continued 33: log14 = confirmed DUPLICATE of drawn log10; log3 reclassified to owner span-correction
-  + N-leg solver — packet `gac/log3_log14_owner_adjudication.md`. Read-only lane, no render.)
+- (RESOLVED continued 34: log3 WIRED + DRAWN — owner-confirmed/human-adjustable GEOMETRY, the FIRST owner-geometry
+  render; gated per-log opt-ins, 64 prior PNGs byte-identical, census frozen, fixtures untouched. `c19b565`.)
+- (RESOLVED continued 33: log14 = confirmed DUPLICATE of drawn log10; log3 reclassified (then wired in 34) —
+  packet `gac/log3_log14_owner_adjudication.md`.)
 - (RESOLVED continued 32: log44 rendered `7039c48` — owner source-verified the corpus print-18 mis-map onto the
   Woodson s10+13 run; AP-158/2+45 intermediate, STA 3+23 FLOWER POT end. The source-location conflict is closed.)
 
 ## Current next gates (each separately authorized; NONE started)
-1. **Owner-locked abstains** log5/31/38/43 — owner must lift the abstain + supply safe source. **← recommended next lane.**
-2. **Source-gap** log15/log16 (sheet-5+ head-end for the unprinted cuts) + log57 (`.FS` drive-decomposition sheet).
-3. **Owner span-correction** for log3 — authorize re-origin to the 9+75 AP-106 8-port HH (changes the recorded
-   span) + build s2→s5 N-leg solver support. (log14 needs no gate — resolved continued-33 as a duplicate of log10.)
+1. **Accountability table** for 50/58 — formalize the drawn / covered-by-sibling / owner-locked-abstain / source-gap
+   breakdown. **← recommended next.**
+2. **Owner-locked abstains** log5/31/38/43 — owner must lift the abstain + supply safe source.
+3. **Source-gap** log15/log16 (sheet-5+ head-end for the unprinted cuts) + log57 (`.FS` drive-decomposition sheet).
+   (log3 + log14 need no gate — log3 WIRED + DRAWN continued-34 `c19b565`; log14 = duplicate of log10.)
 
 ## Current known blockers (each a NAMED missing piece, NOT a generic solver limitation)
 - **log14** — RESOLVED continued-33: its only bindable s7 route IS drawn log10's first leg (reset `0+58=0+00`,
   run `0+00→4+16`; end `4+18` unprintable, `solve_log` BLOCKED) → confirmed DUPLICATE / covered_by_existing_redline.
   Not a missing redline.
-- **log3** — RECLASSIFIED continued-33: a distinct, genuinely-longer bore than drawn log4 (shares `15+13→21+63`),
-  but recorded start `12+63` is a printed DRIVEWAY boundary on s2 (non-structure → unbindable; `12+66` is the
-  s2/s3 matchline, NOT a run-start). Nearest real origin = the 9+75 AP-106 8-port HH (288' upstream/outside span).
-  Blocker = owner span-correction (re-origin) + s2→s5 N-leg solver. Packet `gac/log3_log14_owner_adjudication.md`.
+- **log3** — RESOLVED continued-34: WIRED + DRAWN (`c19b565`) as an owner-confirmed / HUMAN-ADJUSTABLE GEOMETRY
+  render. The fragmented s3 conduit couldn't auto-trace (`DESIGN_PATH_NOT_CONNECTED`), so the owner confirmed the
+  straight TOP path (11 control points); s2 `12+63 FLOWER POT` stub + s3 247' straight segment between bound
+  endpoints; downstream `15+13→21+63` covered by drawn log4. No longer a blocker. (Was reclassified in continued-33.)
 - **Owner-locked abstains** log5/31/38/43 (`must_remain_abstained`); **source-gap** log15/16 (unprinted cuts) + log57 (`.FS`).
 - **Stored-anchor debt** — log48 (corrupted `5+14`) + log70 (superseded `1+45`) render via the override, but the
   stored fixture values are still wrong; repair under a census re-baseline. (B-DATA-LOG48-ADJ-1.)
