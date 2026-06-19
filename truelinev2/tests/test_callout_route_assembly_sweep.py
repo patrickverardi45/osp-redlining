@@ -136,13 +136,21 @@ LOG4_FIBER_TARGETS = ("log4",)
 # s1 AP-105 terminal), closes 277.7'/287'. Shares its ~35' ORIGIN TRUNK with log41 (same splice) then diverges
 # -- owner-authorized via the NARROW gated `sibling_shared_origin_trunk_ok` exception.
 LOG42_TARGETS = ("log42",)
+# log44 = OWNER-CORRECTED FOOTAGE-TICK RENDER (2026-06-18): bore_log17 Segment B, owner source-verified onto
+# the WOODSON LN drop on sheets 10+13 (the corpus 'print 18' was a sheet mis-map). Cross-sheet 2-leg: STA
+# 43+36 INSTALLER HH (s10, = local 0+00) -> down Woodson 167' -> MATCHLINE 1+67/1+66 SEE SHEET 13 -> past the
+# AP-158 terminal (2+45, intermediate) to STA 3+23 FLOWER POT (s13); 167+156 = 323' closes the corpus 325'.
+# Binds on endpoint_anchors alone (the log70 shape); two gated owner-confirmations: `owner_corrected_parent_
+# sheet_context` flips the parent gate's stale corpus sheet [18]->[10,13] (span + anti-sibling still pass
+# first) and `footage_tick_ladder_route_evidence` corroborates each leg with the printed 2'/5'/7' ladders.
+LOG44_TARGETS = ("log44",)
 NEW_TARGETS = (CROSS_SHEET_TARGETS + SINGLE_SHEET_TARGETS + NLEG_TARGETS
                + MATCHLINE_TERMINUS_TARGETS + HH_BRIDGE_TARGETS + THROUGH_CONTINUITY_TARGETS
                + RESET_TO_RESET_TARGETS + PROMOTED_CLEAN_TARGETS + DIRECTION_CORRECTED_TARGETS
                + LOG48_TARGETS + LOG70_TARGETS + LOG61_TARGETS + LOG62_TARGETS + LOG60_TARGETS
                + LOG32_TARGETS + LOG27_TARGETS + LOG2_TARGETS + LOG8_TARGETS + LOG56_TARGETS
                + LOG55_TARGETS + LOG19_TARGETS + LOG49_TARGETS + LOG30_TARGETS + LOG4_FIBER_TARGETS
-               + LOG42_TARGETS)
+               + LOG42_TARGETS + LOG44_TARGETS)
 # log29 + log54 are reviewed-but-unanchored: class + (for log29) sheet derived from source, no anchors
 SOURCE_DERIVED_CLASS_TARGETS = ("log29", "log54")
 # log12's END is an AP TERMINAL PORT HH bound by its AP-id token (AP-121); the station 10+92 does not bind
@@ -911,4 +919,29 @@ def test_sweep_renders_new_logs_end_to_end():
         assert st["trunk_ft"] <= 45.0                                       # capped shared origin trunk (~34.7')
         assert z["closure"]["closes"] is True and abs(z["closure"]["drawn_ft"] - 287.0) <= 28.7
         assert z["parent_source_gate"]["ok"] is True
+    # log44 = OWNER-CORRECTED FOOTAGE-TICK RENDER: bore_log17 Segment B, owner source-verified onto the WOODSON
+    # LN drop (sheets 10+13; the corpus 'print 18' was a sheet mis-map). Cross-sheet 2-leg, binds on
+    # endpoint_anchors (the log70 shape): STA 43+36 INSTALLER HH -> MATCHLINE 1+67/1+66 SEE SHEET 13 -> STA
+    # 3+23 FLOWER POT, past the AP-158 terminal (2+45, INTERMEDIATE). The bundled 1+67/1+66 matchline resolves
+    # uniquely by chain-reach (the parallel 1+66 RIGHT sibling is excluded). TWO gated owner-confirmations:
+    # `owner_corrected_parent_sheet_context` (corpus sheet [18] -> owner-verified [10,13]; span + anti-sibling
+    # pass FIRST) and `footage_tick_ladder_route_evidence` (each drawn leg carries a printed 2'/5'/7' ladder).
+    assert "log44" in rep["newly_rendered_full"]
+    for lid in LOG44_TARGETS:
+        z = rep["verdicts"][lid]
+        assert len(sorted(OUT_DIR.glob(f"{lid}_*.png"))) == 2, lid          # cross-sheet 2-leg
+        assert z["start_sheet"] == 10 and z["end_sheet"] == 13
+        assert z["start_class"] == "installer_hh" and z["end_class"] == "flower_pot"
+        assert z["bound_labels"] == {"start": "43+36", "end": "3+23"}       # AP-158 (2+45) is intermediate
+        assert z["crossing_equation"] == ["1+67", "1+66"]                   # bundled matchline, chain-reach unique
+        assert len(z["viable_crossings"]) == 1                              # 1+66 right sibling / 1+60-1+62 excluded
+        assert z["closure"]["closes"] is True and abs(z["closure"]["drawn_ft"] - 323.0) <= 32.3
+        assert [leg["kind"] for leg in z["leg_summary"]] == ["start_leg", "end_leg"]
+        # owner-corrected parent sheet: the corpus 'print 18' was a mapping error; span + anti-sibling passed first
+        assert z["owner_corrected_parent_sheet"]["corrected_to"] == [10, 13]
+        assert z["parent_source_gate"]["ok"] is True
+        # footage-tick ladder evidence: every drawn leg carries >=1 printed footage-tick ladder (owner's source)
+        fte = z["footage_tick_evidence"]
+        assert fte["ok"] is True and all(pl["n_ladders"] >= 1 for pl in fte["per_leg"])
+        assert {pl["sheet"] for pl in fte["per_leg"]} == {10, 13}
     assert rep["engine_census_frozen"] is True and rep["no_fixture_mutation"] is True

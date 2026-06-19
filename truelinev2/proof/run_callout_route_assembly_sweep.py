@@ -163,6 +163,46 @@ OWNER_CONFIRMED_PLAN_ROUTES = {
               "evidence_notes": "STA 7+40=0+00 AP-105 SPLICE LOC 25", "endpoint_anchors": None,
               "sibling_shared_origin_trunk_ok": "log41",
               "allowed_to_draw": True, "must_remain_abstained": False},
+    # log44 (2026-06-18, OWNER-CORRECTED FOOTAGE-TICK RENDER lane): bore_log17 Segment B. The corpus mis-maps
+    # it to 'print 18' (0+00->3+25, 325') but sheet 18 has NO matching run (the prior owner packet confirmed
+    # it). The owner SOURCE-VERIFIED the real route from the plan PDF (two screenshots): it is the WOODSON LN
+    # drop on sheets 10+13. START = the 'STA 43+36 13"x24"x24" INSTALLER HH' at the E Tom Green/Woodson corner
+    # (sheet 10, = local 0+00); down Woodson 167' to 'MATCHLINE STA 1+67/1+66 - SEE SHEET 13'; the sheet-13
+    # RECIPROCAL 'MATCHLINE STA 1+67/1+66 - SEE SHEET 10' continues down Woodson PAST the AP-158 TERMINAL 8
+    # PORT HH (STA 2+45, an INTERMEDIATE structure -- NOT the end) to the END 'STA 3+23 11"x11"x12" FLOWER POT'
+    # (sheet 13). 167' + 156' = 323' closes the corpus 325' (3+23 ~= the corpus 3+25). Same shape as log70
+    # (INSTALLER HH start + reset + matchline reciprocity + FLOWER POT end) -> binds + renders on
+    # endpoint_anchors alone; the bundled 1+67/1+66 matchline resolves UNIQUELY by chain-reach (the parallel
+    # 1+66 RIGHT sibling 1+66->3+89 / AP-160 is a DIFFERENT bore not reached by log44's left-bore chains, and
+    # the other bundled crossing 1+60/1+62 is also not reached). TWO gated owner-confirmations: (1)
+    # `owner_corrected_parent_sheet_context` flips the parent gate's STALE corpus sheet [18] to the owner-
+    # verified [10,13] -- the span-closure + anti-sibling-mixup checks still pass FIRST (the corpus span 325 is
+    # right; only the sheet was mis-mapped; fixture untouched); (2) `footage_tick_ladder_route_evidence`
+    # corroborates each drawn leg with the printed '2'/5'/7'' footage-tick LADDERS the owner highlighted
+    # (route direction + segment-length source evidence; abstains if a leg lacks one). Labels only --
+    # coordinates extractor-derived; census uses `doc`, not this map (frozen).
+    "log44": {"log_id": "log44", "parent": "bore_log17", "status": "RECOVERED",
+              "corrected_start": "0+00", "corrected_end": "3+23",
+              "corrected_sheets": [10, 13], "span_ft": 323.0,
+              "owner_corrected_parent_sheet_context": [10, 13],
+              "footage_tick_ladder_route_evidence": True,
+              "endpoint_anchors": {
+                  "start": {"station": "43+36", "structure_class": "installer_hh",
+                            "boundary_kind": "structure_terminus", "clarity": "CLEAR",
+                            "structure_label": "INSTALLER HH",
+                            "owner_note_text": ("owner source-verification 2026-06-18: log44 START is the STA "
+                                                "43+36 13\"x24\"x24\" INSTALLER HH on Woodson Ln (sheet 10, = "
+                                                "local 0+00); the corpus 'print 18' was a sheet mis-map. Runs "
+                                                "down Woodson to MATCHLINE 1+67/1+66 SEE SHEET 13. AP-158 (STA "
+                                                "2+45) is an INTERMEDIATE terminal, NOT the start.")},
+                  "end": {"station": "3+23", "structure_class": "flower_pot",
+                          "boundary_kind": "structure_terminus", "clarity": "CLEAR",
+                          "structure_label": "FLOWER POT",
+                          "owner_note_text": ("owner-confirmed log44 END: STA 3+23 11\"x11\"x12\" FLOWER POT on "
+                                              "1404 Woodson Ln (sheet 13), reached past the AP-158 terminal; the "
+                                              "drawn bore continues to 3+90 / SEE SHEET 14 but log44 TERMINATES "
+                                              "at the 3+23 flower pot (no source proves continuation).")}},
+              "allowed_to_draw": True, "must_remain_abstained": False},
     "log70": {"log_id": "log70", "parent": "bore_log35", "status": "RECOVERED",
               "corrected_start": "0+00", "corrected_end": "2+15",
               "corrected_sheets": [17, 20], "span_ft": 215.0,
@@ -1358,6 +1398,80 @@ def _bind_hh_symbol_near_label(draw, words, station, max_leader=130.0):
     return tuple(near[0]) if len(near) == 1 else None
 
 
+# ---- FOOTAGE-TICK LADDER ROUTE EVIDENCE (opt-in `footage_tick_ladder_route_evidence`; gated) -------------
+# The plan prints small perpendicular DISTANCE LADDERS along every bore (the owner-highlighted '2'/5'/7''
+# offset stacks). They are SOURCE evidence of a route's DIRECTION and SEGMENT LENGTH: a real drawn bore
+# corridor carries these ladders all along it. This primitive CORROBORATES an ALREADY source-bounded route
+# (endpoints stay bound by structures/matchlines -- ladders NEVER create or move an endpoint) and ABSTAINS if
+# a drawn leg lacks a ladder. The BAND is deliberately tight (< half the ~50' ROW inter-bore spacing) so a
+# within-band ladder provably belongs to THIS bore, not a parallel sibling -- the "different nearby bore"
+# ambiguity is excluded geometrically. Gated -> opt-in only, so every other render is byte-identical.
+TICK_LADDER_MAX_FT = 20          # offset-ladder values are small (2'..12'); HH-HH / terminal-tail values excluded
+TICK_LADDER_BAND = 22.0          # pt: a ladder must sit within this of the drawn route to corroborate it (~15')
+TICK_LADDER_STACK_TOL = 13.0     # pt: foot-value tokens within this of each other form ONE ladder stack
+_TICK_FT = re.compile(r"^(\d{1,3})['’]$")
+
+
+def _seg_point_dist(px, py, ax, ay, bx, by):
+    vx, vy = bx - ax, by - ay
+    l2 = vx * vx + vy * vy
+    if l2 == 0:
+        return math.hypot(px - ax, py - ay)
+    t = max(0.0, min(1.0, ((px - ax) * vx + (py - ay) * vy) / l2))
+    return math.hypot(px - (ax + t * vx), py - (ay + t * vy))
+
+
+def _point_route_dist(px, py, route):
+    if len(route) < 2:
+        return float("inf")
+    return min(_seg_point_dist(px, py, route[i][0], route[i][1], route[i + 1][0], route[i + 1][1])
+               for i in range(len(route) - 1))
+
+
+def _footage_tick_ladders(words, route, band=TICK_LADDER_BAND, max_ft=TICK_LADDER_MAX_FT,
+                          stack_tol=TICK_LADDER_STACK_TOL):
+    """Printed footage-tick LADDERS (>=2 small foot-value tokens stacked together) within `band` pt of the
+    drawn `route`. These are the small offset stacks the plan prints ALONG a bore -- NOT the large single
+    HH-HH / terminal-tail distances (excluded by max_ft). Returns [(xc, yc, [values...])] ladder clusters."""
+    cand = []
+    for w in words:
+        m = _TICK_FT.match(str(w.get("text", "")).strip())
+        if m and int(m.group(1)) <= max_ft and _point_route_dist(w["xc"], w["yc"], route) <= band:
+            cand.append((w["xc"], w["yc"], int(m.group(1))))
+    ladders, used = [], set()
+    for i, (x, y, val) in enumerate(cand):
+        if i in used:
+            continue
+        grp = [(x, y, val)]
+        used.add(i)
+        for j, (x2, y2, v2) in enumerate(cand):
+            if j not in used and math.hypot(x2 - x, y2 - y) <= stack_tol:
+                grp.append((x2, y2, v2))
+                used.add(j)
+        if len(grp) >= 2:
+            ladders.append((round(sum(g[0] for g in grp) / len(grp), 1),
+                            round(sum(g[1] for g in grp) / len(grp), 1),
+                            sorted(g[2] for g in grp)))
+    return ladders
+
+
+def _footage_tick_ladder_evidence(plan, offset, legs):
+    """GATED route-direction/length CORROBORATION: every drawn leg must run along a corridor carrying >=1
+    printed footage-tick ladder. Returns (ok, detail). Never moves an endpoint; ok=False ABSTAINS
+    (DO-NOT-WIDEN) when a leg has no supporting ladder."""
+    per_leg = []
+    for leg in legs:
+        lad = _footage_tick_ladders(plan.words(leg["sheet"], offset), leg["route"])
+        per_leg.append({"sheet": leg["sheet"], "kind": leg["kind"], "n_ladders": len(lad),
+                        "ladders": [{"xy": [l[0], l[1]], "ft": l[2]} for l in lad[:6]]})
+    ok = all(pl["n_ladders"] >= 1 for pl in per_leg)
+    return ok, {"ok": ok, "band_pt": TICK_LADDER_BAND, "max_ft": TICK_LADDER_MAX_FT,
+                "rule": ("every drawn leg must carry >=1 printed footage-tick ladder within "
+                         f"{TICK_LADDER_BAND}pt (~15' < half the ~50' ROW spacing -> belongs to THIS bore, "
+                         "not a parallel sibling); ladders corroborate direction + length, never set endpoints"),
+                "per_leg": per_leg}
+
+
 def solve_log(plan, offset, lid, rec):
     """Attempt the full route sentence for one anchored bore. Returns a verdict dict with either a
     render plan (legs to draw) or a named blocker. Renders nothing (the caller draws)."""
@@ -1869,6 +1983,18 @@ def main() -> int:
                 if not _ok:
                     v["blocker"] = f"sibling-shared-trunk gate failed: {_d.get('reason')}"
                     v["legs"] = None
+            # FOOTAGE-TICK LADDER ROUTE EVIDENCE gate (opt-in `footage_tick_ladder_route_evidence`; gated). For
+            # an opted-in bore, every drawn leg must run along a corridor carrying >=1 printed footage-tick
+            # ladder (the owner's distance-ladder SOURCE evidence for route direction + segment length).
+            # Abstains (blocks) if a leg lacks one; never creates/moves an endpoint (those stay structure/
+            # matchline-bound). Runs ONLY for opted-in bores -> all other renders byte-identical.
+            if v.get("legs") and rec.get(lid, {}).get("footage_tick_ladder_route_evidence"):
+                _tok, _td = _footage_tick_ladder_evidence(plan, offset, v["legs"])
+                v["footage_tick_evidence"] = _td
+                if not _tok:
+                    v["blocker"] = ("footage-tick ladder gate failed: a drawn leg lacks printed footage-tick "
+                                    "ladder evidence (route direction/length not corroborated)")
+                    v["legs"] = None
             if v.get("legs"):
                 # PARENT-SOURCE GATE (ORIGINAL_HANDWRITTEN_PARENT_SOURCE_MODEL): a split child may render
                 # ONLY through its parent group, which disambiguates ownership by span + sheets so a child
@@ -1878,7 +2004,23 @@ def main() -> int:
                 _drawn = (v.get("closure") or {}).get("drawn_ft")
                 if _drawn is None:
                     _drawn = sum(leg["len_pt"] for leg in v["legs"]) / SCALE
-                _g_ok, _g_reason = child_owns_route(lid, _drawn, sorted({leg["sheet"] for leg in v["legs"]}))
+                _cand_sheets = sorted({leg["sheet"] for leg in v["legs"]})
+                _g_ok, _g_reason = child_owns_route(lid, _drawn, _cand_sheets)
+                # OWNER-CORRECTED PARENT SHEET CONTEXT (opt-in `owner_corrected_parent_sheet_context`; gated).
+                # The corpus parent model records a WRONG sheet for this child (a print-mapping error the owner
+                # corrected -- log44's corpus 'print 18' vs the real Woodson sheets 10+13). child_owns_route
+                # returns its FIRST failing reason in order: (1) sibling anti-mixup, (2) own-span closure, (3)
+                # sheet context. So a SOLE 'disjoint from its own' failure means steps 1-2 ALREADY PASSED (the
+                # candidate closes the corpus's OWN recorded span; no sibling collision). Flip ONLY that stale-
+                # sheet failure, and ONLY when the drawn sheets EQUAL the owner-confirmed corrected sheets.
+                # Never widens span/sibling ownership; the fixture (parent_source_model.json) is untouched.
+                _ocs = rec.get(lid, {}).get("owner_corrected_parent_sheet_context")
+                if (not _g_ok and _ocs and sorted(_ocs) == _cand_sheets
+                        and "disjoint from its own" in (_g_reason or "")):
+                    v["owner_corrected_parent_sheet"] = {"corrected_to": _cand_sheets, "corpus_reason": _g_reason}
+                    _g_ok = True
+                    _g_reason = (f"{lid} owner-corrected parent sheet context {_cand_sheets} (corpus print-sheet "
+                                 f"was a mapping error); span-closure + anti-sibling-mixup already passed")
                 v["parent_source_gate"] = {"ok": _g_ok, "reason": _g_reason}
             if v.get("legs") and v["parent_source_gate"]["ok"]:
                 pngs = _render(plan, offset, lid, v)
