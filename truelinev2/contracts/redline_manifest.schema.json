@@ -1,0 +1,271 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://trueline.dev/contracts/redline_manifest.schema.json",
+  "title": "TrueLine v2 Redline Manifest",
+  "description": "Engine->website contract (Phase 1). The website consumes ONLY this manifest for drawn/covered/blocked truth -- never parent_source_model.json, never PNG filenames. Each schema_version is pinned by this file. Keyword usage is intentionally a small subset (type, enum, const, required, properties, additionalProperties, items, minItems, minimum) so it can be validated with or without a JSON-Schema library.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "mock_example",
+    "disclaimer",
+    "project_id",
+    "project_name",
+    "engine",
+    "summary",
+    "status_counts",
+    "provenance_counts",
+    "consumption_rules",
+    "logs"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1.0.0",
+      "description": "Pins the contract version this file describes."
+    },
+    "mock_example": {
+      "type": "boolean",
+      "description": "true => hand-authored example, not produced by the solver/renderer. A real engine manifest sets this false."
+    },
+    "disclaimer": {
+      "type": "string",
+      "description": "Human-readable provenance / honesty statement for this manifest instance."
+    },
+    "project_id": {
+      "type": "string"
+    },
+    "project_name": {
+      "type": "string"
+    },
+    "engine": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["branch", "engine_head", "render_commit", "generated_from"],
+      "properties": {
+        "branch": {"type": "string"},
+        "engine_head": {"type": "string", "description": "Repo HEAD this manifest reflects."},
+        "render_commit": {"type": "string", "description": "Last commit that changed the drawn set."},
+        "generated_from": {"type": "string", "description": "How this manifest was produced (runner id / 'hand-authored ...')."}
+      }
+    },
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["total_logs", "drawn_count", "covered_count", "blocked_count", "frontier"],
+      "properties": {
+        "total_logs": {"type": "integer", "minimum": 0},
+        "drawn_count": {"type": "integer", "minimum": 0},
+        "covered_count": {"type": "integer", "minimum": 0},
+        "blocked_count": {"type": "integer", "minimum": 0},
+        "frontier": {"type": "string", "description": "Headline 'drawn/total' string, e.g. '50/58'. Never display total/total."}
+      }
+    },
+    "status_counts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "DRAWN_REDLINE",
+        "COVERED_BY_EXISTING_REDLINE",
+        "OWNER_LOCKED_ABSTAIN",
+        "SOURCE_GAP_BLOCKED",
+        "MISSING_SOURCE_SHEET_BLOCKED"
+      ],
+      "properties": {
+        "DRAWN_REDLINE": {"type": "integer", "minimum": 0},
+        "COVERED_BY_EXISTING_REDLINE": {"type": "integer", "minimum": 0},
+        "OWNER_LOCKED_ABSTAIN": {"type": "integer", "minimum": 0},
+        "SOURCE_GAP_BLOCKED": {"type": "integer", "minimum": 0},
+        "MISSING_SOURCE_SHEET_BLOCKED": {"type": "integer", "minimum": 0}
+      }
+    },
+    "provenance_counts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "DETERMINISTIC_AUTO",
+        "OWNER_CONFIRMED_HUMAN_ADJUSTABLE",
+        "COVERED_BY_EXISTING_REDLINE",
+        "BLOCKED_OWNER_LOCKED",
+        "BLOCKED_SOURCE_GAP",
+        "BLOCKED_MISSING_SOURCE"
+      ],
+      "properties": {
+        "DETERMINISTIC_AUTO": {"type": "integer", "minimum": 0},
+        "OWNER_CONFIRMED_HUMAN_ADJUSTABLE": {"type": "integer", "minimum": 0},
+        "COVERED_BY_EXISTING_REDLINE": {"type": "integer", "minimum": 0},
+        "BLOCKED_OWNER_LOCKED": {"type": "integer", "minimum": 0},
+        "BLOCKED_SOURCE_GAP": {"type": "integer", "minimum": 0},
+        "BLOCKED_MISSING_SOURCE": {"type": "integer", "minimum": 0}
+      }
+    },
+    "consumption_rules": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"type": "string"},
+      "description": "Plain-language rules the consuming website/backend must honor."
+    },
+    "logs": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "log_id",
+          "parent_id",
+          "entry_role",
+          "status",
+          "provenance",
+          "drawn",
+          "covered",
+          "blocked",
+          "drawn_lane",
+          "source_sheets",
+          "span",
+          "closure",
+          "coverage",
+          "blocker",
+          "artifacts",
+          "evidence",
+          "warnings"
+        ],
+        "properties": {
+          "log_id": {"type": "string"},
+          "parent_id": {"type": "string", "description": "Original handwritten bore-log family id."},
+          "entry_role": {"type": "string", "enum": ["standalone", "split_child"]},
+          "status": {
+            "type": "string",
+            "enum": [
+              "DRAWN_REDLINE",
+              "COVERED_BY_EXISTING_REDLINE",
+              "OWNER_LOCKED_ABSTAIN",
+              "SOURCE_GAP_BLOCKED",
+              "MISSING_SOURCE_SHEET_BLOCKED"
+            ]
+          },
+          "provenance": {
+            "type": "string",
+            "enum": [
+              "DETERMINISTIC_AUTO",
+              "OWNER_CONFIRMED_HUMAN_ADJUSTABLE",
+              "COVERED_BY_EXISTING_REDLINE",
+              "BLOCKED_OWNER_LOCKED",
+              "BLOCKED_SOURCE_GAP",
+              "BLOCKED_MISSING_SOURCE"
+            ]
+          },
+          "drawn": {"type": "boolean"},
+          "covered": {"type": "boolean"},
+          "blocked": {"type": "boolean"},
+          "drawn_lane": {
+            "type": ["string", "null"],
+            "enum": ["ALREADY_DRAWN", "NEW_TARGETS", null],
+            "description": "Authoritative drawn mechanism: prior render lane vs current callout-route-assembly sweep; null when not drawn."
+          },
+          "source_sheets": {
+            "type": "array",
+            "minItems": 1,
+            "items": {"type": "integer", "minimum": 1},
+            "description": "Drawn-truth sheet numbers (owner-corrected where applicable; see warnings)."
+          },
+          "span": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["start_station", "end_station", "label"],
+            "properties": {
+              "start_station": {"type": "string"},
+              "end_station": {"type": "string"},
+              "label": {"type": "string"}
+            }
+          },
+          "closure": {
+            "type": ["object", "null"],
+            "additionalProperties": false,
+            "properties": {
+              "drawn_ft": {"type": "number", "minimum": 0},
+              "new_content_ft": {"type": "number", "minimum": 0},
+              "target_ft": {"type": "number", "minimum": 0},
+              "corpus_ft": {"type": "number", "minimum": 0},
+              "downstream_covered_ft": {"type": "number", "minimum": 0},
+              "closes": {"type": "boolean"},
+              "note": {"type": "string"}
+            },
+            "description": "Drawn-length closure figures. null when not captured for this entry (this mock fills it only where a published figure exists)."
+          },
+          "coverage": {
+            "type": ["object", "null"],
+            "additionalProperties": false,
+            "properties": {
+              "covered_by": {"type": "string", "description": "log_id whose existing stroke already places this bore's route."},
+              "downstream_covered_by": {"type": "array", "items": {"type": "string"}},
+              "covers_downstream_of": {"type": "array", "items": {"type": "string"}},
+              "note": {"type": "string"}
+            },
+            "description": "Parent/child or duplicate coverage relationships. null when none."
+          },
+          "blocker": {
+            "type": ["object", "null"],
+            "additionalProperties": false,
+            "required": ["category", "name", "unlock_requirement"],
+            "properties": {
+              "category": {"type": "string", "enum": ["OWNER_LOCKED", "SOURCE_GAP", "MISSING_SOURCE_SHEET"]},
+              "name": {"type": "string"},
+              "unlock_requirement": {"type": "string", "description": "The named source/owner input that would unblock this log."},
+              "must_not_draw_reason": {"type": "string"}
+            },
+            "description": "Present (non-null) iff blocked == true."
+          },
+          "artifacts": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["kind", "path", "sha256", "example_placeholder"],
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "enum": ["FINAL_REDLINE_PNG", "PROOF_HELPER", "EVIDENCE_SCREENSHOT"],
+                  "description": "Only FINAL_REDLINE_PNG is a redline output the website renders."
+                },
+                "sheet": {"type": "integer", "minimum": 1},
+                "leg_kind": {"type": "string"},
+                "path": {"type": "string", "description": "Manifest-relative published path."},
+                "sha256": {"type": ["string", "null"], "description": "Content hash once published; null = not generated."},
+                "example_placeholder": {"type": "boolean", "description": "true => mock path, not a real published artifact."}
+              }
+            },
+            "description": "Empty for non-drawn logs. Website renders only kind == FINAL_REDLINE_PNG, addressed by path + sha256."
+          },
+          "evidence": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["kind", "ref"],
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "ACCOUNTABILITY_LEDGER",
+                    "SWEEP_CONSTANT",
+                    "SWEEP_TEST",
+                    "GAC_PACKET",
+                    "OWNER_REVIEW",
+                    "AUDIT_DOC"
+                  ]
+                },
+                "ref": {"type": "string", "description": "Repo-relative path to the supporting source-of-truth."},
+                "note": {"type": "string"}
+              }
+            }
+          },
+          "warnings": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "Consumer-facing hazards (e.g. stale fixture fields, owner-corrected sheets)."
+          }
+        }
+      }
+    }
+  }
+}
