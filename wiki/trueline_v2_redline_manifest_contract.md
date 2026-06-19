@@ -183,20 +183,36 @@ drawn-truth from the manifest, never filenames. Static integrity locked by
 ALREADY_DRAWN in the canonical dir) — the Phase-2B unified-render precondition is satisfied
 **without** an engine/solver change, by re-rendering the 13's existing canonical lanes.
 
+## Phase 2D — all-50 real manifest published (DONE)
+
+`truelinev2/proof/run_redline_manifest_all50_publish.py` assembled the first **real** all-50
+redline manifest: it merges the two authoritative artifact sources — 37 NEW_TARGETS from the
+sweep report `verdicts[*].artifacts` + 13 ALREADY_DRAWN from the Phase-2C canonical report —
+into one publisher input, then runs the Phase-2A publisher. Result (gitignored, **NOT committed**)
+under `data/outputs/redline_manifest_publish/brenham_c19b565_all50_real_manifest/`:
+**`mock_example:false`, counts 58/50/1/7, 83 final stroke artifacts (~50.5 MB), all 50 drawn logs
+with ≥1 published `FINAL_REDLINE_PNG`** (real `sha256` + `bytes`, `published:true`,
+`example_placeholder:false`). All 83 published files re-verified on disk (0 checksum/flag
+mismatches). Semantics preserved: log3 `OWNER_CONFIRMED_HUMAN_ADJUSTABLE`; log7 carries a
+PARTIAL/representative warning; log14 covered-by-log10 with **no** artifact; the 7 blocked keep
+their unlock requirements with **no** artifacts; log48/log70 stored-anchor debt stays
+warning-only. Benchmark: assemble ~4 ms · publish ~97 ms · validate ~2 ms. No render, no solver,
+no geometry/fixture change. Assembler logic locked by
+`truelinev2/tests/test_redline_manifest_all50_assembler.py` (synthetic inputs; no real artifacts).
+
+**The engine→website contract chain is now end-to-end real for the 50/58 frontier:** schema →
+example → mock UI → publisher → unified render registry → **real published all-50 manifest**.
+
 ## Not yet built (explicit Phase boundary)
 
-Phases 1–2A delivered the **contract, example, mock UI, and artifact publisher**; Phase 2A.5
-inspected existing artifacts; Phase 2B hit (and Phase 2C resolved) the unified-render
-precondition. Still **not** built:
+Phases 1–2D delivered the **contract, example, mock UI, artifact publisher, unified render
+registry, and a real published all-50 manifest**. Still **not** built:
 
-- **Phase 2D — the all-50 combine + real publish** (now UNBLOCKED, pure contract step, no
-  engine): assemble one all-50 input manifest whose artifact records point at the 37 sweep
-  artifacts (`verdicts[*].artifacts`) + the 13 canonical artifacts, then run the Phase-2A
-  publisher → a real `redline_manifest.json` (`mock_example:false`, real sha256/bytes);
-- a clean parameterized **solving runner** that *generates* the manifest from a render
-  (the publisher consumes artifacts; it does not produce them);
-- a **full solve/render benchmark**;
-- any **website/backend wiring** or deploy.
+- a clean parameterized **one-command runner** that chains render → registry → publish in a
+  single step (today they are separate proof scripts run in sequence);
+- a **full solve/render benchmark** (the publish phase is benchmarked; the render phase is not);
+- **website/backend wiring** to serve the published manifest + artifacts (still no live wiring);
+- any deploy.
 
 Safe next work against this contract: a **contract-first mock UI** that consumes the
 example manifest (status/provenance chips, blocked-log CTAs, the “50 of 58 accounted”
