@@ -1,7 +1,7 @@
 # START HERE — TrueLine v2 Canonical Bootstrap
 
 > Single source of current working truth. Read THIS file first, in full — it is small on purpose.
-> Snapshot below is current as of **2026-06-19 (continued 36 — repo-hygiene arc COMPLETE, 101→0 untracked; frontier 50/58)**. For the absolute-latest
+> Snapshot below is current as of **2026-06-19 (continued 37 — redline-manifest engine→website CONTRACT pipeline COMPLETE, Phases 2A–2I; NO render-truth change; frontier 50/58)**. For the absolute-latest
 > state, read ONLY the top ~35 lines of `C:/Nova/knowledge/TrueLine-Wiki/wiki/hot.md` — never the whole file.
 > **Do NOT load history/archive files** (`log.md`, `current-sprint.md`, full `hot.md`) unless explicitly
 > asked or investigating a specific historical decision.
@@ -23,12 +23,30 @@ review" buckets are not progress until they become drawn strokes.
 - Isolated track: monolith / Render / Vercel UNTOUCHED; nothing merged or deployed.
 
 ## HEAD / remote state (verify with `git` before trusting this snapshot)
-- Last RENDER commit: **`c19b565`** (log3 wired + DRAWN, 49→50/58 — UNCHANGED). Local HEAD = **`e3df509`**
-  (continued-36 repo-hygiene complete; pushed → `origin/feat/truelinev2` = `e3df509`). Continued-36 lineage on the
-  continued-35 save `69dd876`: `f5dbed1` (evidence trail) → `c0e6680` (Group-A evidence) → `e3df509` (doctrine relocate).
+- Last RENDER commit: **`c19b565`** (log3 wired + DRAWN, 49→50/58 — UNCHANGED). Local HEAD = **`81f3cd3`**
+  (continued-37 redline-manifest CONTRACT pipeline complete; pushed → `origin/feat/truelinev2` = `81f3cd3`). Continued-37
+  12-commit proof/contract lineage on the continued-36 save `744d88c`: `a0a490f`→`505a9a2`→`bccfdc8`→`4c11722`→`f7a616b`→`c0498d4`→`06c734a`→`f7988ab`→`cbeb9be`→`aaa8952`→`9ed6c98`→`81f3cd3` (NO render-truth change).
   ARCHIVE (recovery): branch/tag `archive-v2-continued-35-superseded-scratch` = **`d8508b9`** (superseded `backend/tl_core/**` + 14 proof slices). `origin/main`: **`068a279`** (untouched).
 
-## Latest — continued 36 (2026-06-19): repo-hygiene arc COMPLETE (101→0 untracked); NO render; frontier 50/58
+## Latest — continued 37 (2026-06-19): redline-manifest engine→website CONTRACT pipeline COMPLETE (Phases 2A–2I); NO render-truth change; frontier 50/58
+**continued 37 — 12-commit proof/CONTRACT arc; NO engine/renderer/fixture/anchor/corpus/census/parent-model/flag change;
+frontier UNCHANGED 50/58; render commit stays `c19b565`; HEAD `81f3cd3`.** Built + proved the entire engine→website
+redline-manifest pipeline, all generated artifacts GITIGNORED under `data/outputs/` (NONE committed): schema-pinned
+`truelinev2/contracts/redline_manifest.schema.json` + a 50/58 example (2A `a0a490f`) → static manifest-driven mock UI
+(`505a9a2`) → artifact **publisher** (real sha256/bytes, `mock_example:false`; `bccfdc8`) → existing-artifact inspection
+(2A.5 `4c11722`) → **2B STOP** (`f7a616b`: a unified all-50 render is impossible without a solver change — the callout
+sweep hardcodes the ALREADY_DRAWN skip; refused partial-37-as-50) → **2C** canonical render registry re-renders the 13
+ALREADY_DRAWN through their existing lanes (`c0498d4`; resolves 2B WITHOUT a solver change; 13/13, log50 incl, log7 PARTIAL)
+→ **2D** first REAL all-50 manifest (`06c734a`; 83 artifacts/50.5 MB, 58/50/1/7) → **2E** published-bundle contract
+(`f7988ab`; static-serving safe, checksum-verified, bundle index) → **2F** one-command pipeline runner (`cbeb9be`; + fixed
+a latent zero-bucket reconciliation false-rejection) → **2G/2H** render benchmarks (`aaa8952`/`9ed6c98`: 13=52.2 s,
+37=299.6 s; full refresh ~5.9 min, render-bound) → **2I** adapter-neutral durable bundle store (`81f3cd3`; immutable
+content-keyed `bundles/<id>/` + `store_index.json` `latest_valid` + retention + `WEBSITE_READ_CONTRACT`; real bundle stored
+`brenham-c19b565-ddfffff7cbe7`, store VALID). ~63 targeted contract tests (61 pass + 2 jsonschema-optional skips).
+`B-DATA-LOG48-ADJ-1` unchanged. The full local contract+storage chain is complete + benchmarked; the next step crosses into
+website/backend wiring (gated). Detail: [[current-sprint]] / [[log]] continued 37.
+
+### Prior — continued 36 (2026-06-19): repo-hygiene arc COMPLETE (101→0 untracked); NO render; frontier 50/58
 **continued 36 — pure repo-hygiene + provenance; NO engine/render/census change; frontier UNCHANGED 50/58; render commit
 stays `c19b565`; HEAD `e3df509`.** The continued-35 inventory found 101 untracked files; this arc drove it to **0** without
 losing anything. Feat lineage (on the continued-35 save `69dd876`): **`f5dbed1`** committed the evidence trail (7 `gac/*.md`
@@ -128,14 +146,19 @@ log5, log15, log16, log31, log38, log43, log57 — all owner/source-gated:
   Woodson s10+13 run; AP-158/2+45 intermediate, STA 3+23 FLOWER POT end. The source-location conflict is closed.)
 
 ## Current next gates (each separately authorized; NONE started)
-1. **`TRUELINE_V2_REDLINEMANIFEST_SCHEMA_AND_RUNNER_CONTRACT`** — schema-pinned `redline_manifest.json` + clean
-   parameterized runner boundary + stable artifact publishing (SHA) + full solve/render benchmark. **← recommended next.**
-   Safe to start NOW: contract-first mock UI vs the manifest schema (no live engine wiring). See
-   `wiki/trueline_v2_engine_website_readiness_audit.md`.
-2. **Repo hygiene** — ✅ COMPLETE (continued-36): untracked 101→0; evidence trail + Group-A committed (`f5dbed1`/`c0e6680`),
+1. **Website / backend wiring** — read the durable store's `latest_valid` bundle (Phase 2I) + serve `redline_manifest.json`
+   + artifacts statically; point the Phase-1 mock UI at a REAL served bundle as the first integration test (NO live render).
+   **← recommended next**, but GATED: crosses into `web/`/`backend/` (currently forbidden — needs explicit authorization).
+   Then a cloud/object-store adapter behind the store contract; then deploy. Canonical: `wiki/trueline_v2_redline_manifest_contract.md`.
+2. **`TRUELINE_V2_REDLINEMANIFEST_SCHEMA_AND_RUNNER_CONTRACT`** — ✅ DONE (continued-37, Phases 2A–2I, `a0a490f`→`81f3cd3`):
+   schema + 50/58 example + mock UI + publisher + unified render registry + real all-50 manifest + published-bundle contract +
+   one-command pipeline runner + render-cost benchmark (full refresh ~5.9 min, render-bound) + adapter-neutral durable bundle
+   store. All generated artifacts gitignored under `data/outputs/`; ~63 contract tests. Optional follow-on: a warm-engine /
+   single-process unified runner to cut the ~6 min refresh.
+3. **Repo hygiene** — ✅ COMPLETE (continued-36): untracked 101→0; evidence trail + Group-A committed (`f5dbed1`/`c0e6680`),
    superseded set archived at `d8508b9`, doctrine relocated (`e3df509`). The `git add -A` landmine is defused.
-3. **Accountability table** — ✅ DONE (continued-35, `b083b76`); website-readiness audited (`15e00f7`).
-4. **Owner-locked abstains** log5/31/38/43 + **source-gap** log15/16 + log57 — unchanged (owner/source input needed).
+4. **Accountability table** — ✅ DONE (continued-35, `b083b76`); website-readiness audited (`15e00f7`).
+5. **Owner-locked abstains** log5/31/38/43 + **source-gap** log15/16 + log57 — unchanged (owner/source input needed).
 
 ## Current known blockers (each a NAMED missing piece, NOT a generic solver limitation)
 - **log14** — RESOLVED continued-33: its only bindable s7 route IS drawn log10's first leg (reset `0+58=0+00`,
