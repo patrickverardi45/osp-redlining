@@ -96,14 +96,38 @@ cd truelinev2/contracts && python -m http.server 8000
 Locked by `truelinev2/tests/test_redline_manifest_mock_ui_contract.py`. **Still no live
 wiring, no runner, no deploy.**
 
+## Artifact publisher (Phase 2A)
+
+`truelinev2/contracts/redline_manifest_publisher.py` is the artifact pipe: given a
+manifest-shaped input, a source-artifact root, a publish root, and a run label, it
+validates the input against the schema, copies each drawn log's final redline artifacts
+into a stable `…/<run-label>/artifacts/<log_id>/` directory, computes `sha256` + `bytes`,
+flips each record to `published: true` / `example_placeholder: false`, and emits a real
+manifest with `mock_example: false` (re-validated against the schema). It **fails loudly**
+if a drawn log is missing a required final artifact, and **refuses** to fake artifacts for
+covered/blocked logs. Status / provenance / coverage / blocker / warning fields are carried
+through unchanged (publishing is an artifact step, not a placement step). The schema gained
+two optional artifact fields (`bytes`, `published`); the placeholder example still validates
+(backward-compatible). Locked by `truelinev2/tests/test_redline_manifest_publisher.py`
+(temporary fake artifacts; no renderer run).
+
+```
+python -m truelinev2.contracts.redline_manifest_publisher \
+    --manifest <in.json> --source-root <dir> --publish-root <dir> --run-label <id>
+```
+
 ## Not yet built (explicit Phase boundary)
 
-This task delivered the **contract and example only**. It did **not** build:
+Phases 1–2A delivered the **contract, example, mock UI, and artifact publisher**. Still
+**not** built:
 
-- a clean parameterized **runner** that emits a real manifest (still Brenham-hardcoded
-  proof/sweep scripts);
-- **live artifact publishing** with real `sha256` (example artifacts are
-  `example_placeholder: true`, `sha256: null`);
+- a clean parameterized **solving runner** that *generates* the manifest + final artifacts
+  from a render (the publisher consumes artifacts; it does not produce them — the upstream
+  is still Brenham-hardcoded proof/sweep scripts);
+- an **actual published run on real Brenham render outputs** (the publisher has so far only
+  been exercised on temporary fake artifacts in tests — no real artifacts are published or
+  committed);
+- a **full solve/render benchmark**;
 - any **website/backend wiring** or deploy.
 
 Safe next work against this contract: a **contract-first mock UI** that consumes the

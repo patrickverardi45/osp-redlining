@@ -229,12 +229,14 @@
                 },
                 "sheet": {"type": "integer", "minimum": 1},
                 "leg_kind": {"type": "string"},
-                "path": {"type": "string", "description": "Manifest-relative published path."},
-                "sha256": {"type": ["string", "null"], "description": "Content hash once published; null = not generated."},
-                "example_placeholder": {"type": "boolean", "description": "true => mock path, not a real published artifact."}
+                "path": {"type": "string", "description": "Manifest-relative published path (relative to the manifest's own directory once published)."},
+                "sha256": {"type": ["string", "null"], "description": "Content hash; null on a placeholder, a 64-char hex digest once published."},
+                "example_placeholder": {"type": "boolean", "description": "true => mock path, not a real published artifact; false once published."},
+                "bytes": {"type": "integer", "minimum": 0, "description": "Published artifact size in bytes. Absent on placeholder entries; set by the artifact publisher."},
+                "published": {"type": "boolean", "description": "true once copied to the stable publish directory with a real sha256. Absent/false on placeholders."}
               }
             },
-            "description": "Empty for non-drawn logs. Website renders only kind == FINAL_REDLINE_PNG, addressed by path + sha256."
+            "description": "Empty for non-drawn logs. Website renders only kind == FINAL_REDLINE_PNG, addressed by path + sha256. Placeholder entries (example) omit bytes/published; the publisher fills path/sha256/bytes/published and flips example_placeholder to false."
           },
           "evidence": {
             "type": "array",
