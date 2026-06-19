@@ -122,10 +122,16 @@ def reconciliation_errors(manifest):
         blocked += 1 if lg["blocked"] else 0
         if sum((bool(lg["drawn"]), bool(lg["covered"]), bool(lg["blocked"]))) != 1:
             errors.append("%s: exactly one of drawn/covered/blocked must be true" % lg["log_id"])
-    if status_tally != manifest.get("status_counts"):
-        errors.append("status_counts %r != per-log tally %r" % (manifest.get("status_counts"), status_tally))
-    if prov_tally != manifest.get("provenance_counts"):
-        errors.append("provenance_counts %r != per-log tally %r" % (manifest.get("provenance_counts"), prov_tally))
+    # Compare per key with a 0 default so explicit zero-count buckets (e.g. a project with no
+    # covered logs) are NOT falsely rejected; real mismatches (incl. extra declared keys) still fail.
+    declared_status = manifest.get("status_counts") or {}
+    if any(status_tally.get(k, 0) != declared_status.get(k, 0)
+           for k in set(status_tally) | set(declared_status)):
+        errors.append("status_counts %r != per-log tally %r" % (declared_status, status_tally))
+    declared_prov = manifest.get("provenance_counts") or {}
+    if any(prov_tally.get(k, 0) != declared_prov.get(k, 0)
+           for k in set(prov_tally) | set(declared_prov)):
+        errors.append("provenance_counts %r != per-log tally %r" % (declared_prov, prov_tally))
     s = manifest.get("summary", {})
     if [s.get("total_logs"), s.get("drawn_count"), s.get("covered_count"), s.get("blocked_count")] != \
             [len(logs), drawn, covered, blocked]:

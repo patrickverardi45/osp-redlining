@@ -222,15 +222,34 @@ schema / 0 structure errors · static-serving safe YES**, manifest sha256 `ddfff
 Contract code + 11 tests run on **tiny temp fixtures** (no 50 MB artifacts moved into the repo).
 No render, no engine, no web/backend wiring.
 
+## Phase 2F — one-command local pipeline runner (DONE)
+
+`truelinev2/proof/run_redline_manifest_local_pipeline.py` chains the proven pipeline in one
+command: verify the 37 NEW_TARGET sweep artifacts → verify (or, behind `--render-already-drawn13`,
+re-render) the 13 ALREADY_DRAWN canonical artifacts → assemble the all-50 input (Phase 2D) →
+publish (Phase 2A) → validate the bundle (Phase 2E) → emit one report. Three modes:
+**`--validate-existing`** (DEFAULT; no render, no republish), **`--publish-existing-artifacts`**
+(fresh bundle from existing artifacts, no render), and the explicit **`--render-already-drawn13`**
+(announces render authorization; never re-runs the 37 sweep, never renders blocked/covered logs).
+Both no-render modes proven: validate-existing → the Phase-2D/2E bundle VALID (sha256 `ddfffff7…`);
+publish-existing → a fresh `…/brenham_c19b565_all50_pipeline/` bundle VALID (83 artifacts · 50.5 MB
+· `mock_example:false` · all semantics preserved). Per-phase benchmarks recorded. Locked by
+`truelinev2/tests/test_redline_manifest_local_pipeline.py` (synthetic fixtures; no real artifacts).
+
+This phase also fixed a **latent reconciliation bug** surfaced by the pipeline's tiny fixtures:
+`redline_manifest_publisher.reconciliation_errors` now compares status/provenance counts per key
+with a 0 default, so a manifest with an empty bucket (e.g. a project with 0 covered logs) is no
+longer falsely rejected (regression-locked in the publisher test). The real 58-log example —
+every bucket non-empty — is unaffected.
+
 ## Not yet built (explicit Phase boundary)
 
-Phases 1–2E delivered the **contract, example, mock UI, artifact publisher, unified render
-registry, a real published all-50 manifest, and a validated published-bundle contract**. Still
-**not** built:
+Phases 1–2F delivered the **contract, example, mock UI, artifact publisher, unified render
+registry, a real published all-50 manifest, a validated published-bundle contract, and a
+one-command local pipeline runner**. Still **not** built:
 
-- a clean parameterized **one-command runner** that chains render → registry → publish → bundle
-  validation in a single step (today they are separate proof scripts run in sequence);
-- a **full solve/render benchmark** (publish + bundle validation are benchmarked; render is not);
+- a **full solve/render benchmark** (assemble + publish + bundle validation are benchmarked; the
+  render phase is not);
 - a **durable published store** with retention/versioning (today the validated bundle lives only in
   gitignored `data/outputs/`);
 - **website/backend wiring** to serve the bundle (the Phase-1 mock UI could now consume a real

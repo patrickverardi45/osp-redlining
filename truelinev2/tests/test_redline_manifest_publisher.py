@@ -230,3 +230,26 @@ def test_no_forbidden_sources_in_publisher():
     assert "truelinev2.render" not in src
     assert "match.engine" not in src
     assert "solve_log" not in src
+
+
+def test_reconciliation_allows_zero_count_buckets():
+    # Regression: a manifest with an empty bucket (e.g. 0 covered) must reconcile, not be
+    # falsely rejected because the declared counts carry an explicit zero the tally omits.
+    m = {
+        "summary": {"total_logs": 2, "drawn_count": 1, "covered_count": 0, "blocked_count": 1},
+        "status_counts": {"DRAWN_REDLINE": 1, "COVERED_BY_EXISTING_REDLINE": 0,
+                          "OWNER_LOCKED_ABSTAIN": 1, "SOURCE_GAP_BLOCKED": 0,
+                          "MISSING_SOURCE_SHEET_BLOCKED": 0},
+        "provenance_counts": {"DETERMINISTIC_AUTO": 1, "OWNER_CONFIRMED_HUMAN_ADJUSTABLE": 0,
+                              "COVERED_BY_EXISTING_REDLINE": 0, "BLOCKED_OWNER_LOCKED": 1,
+                              "BLOCKED_SOURCE_GAP": 0, "BLOCKED_MISSING_SOURCE": 0},
+        "logs": [
+            {"log_id": "logA", "status": "DRAWN_REDLINE", "provenance": "DETERMINISTIC_AUTO",
+             "drawn": True, "covered": False, "blocked": False},
+            {"log_id": "logB", "status": "OWNER_LOCKED_ABSTAIN", "provenance": "BLOCKED_OWNER_LOCKED",
+             "drawn": False, "covered": False, "blocked": True},
+        ],
+    }
+    assert reconciliation_errors(m) == []
+    m["status_counts"]["DRAWN_REDLINE"] = 5  # a genuine mismatch is still caught
+    assert reconciliation_errors(m)
