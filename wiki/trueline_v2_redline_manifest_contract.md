@@ -116,17 +116,43 @@ python -m truelinev2.contracts.redline_manifest_publisher \
     --manifest <in.json> --source-root <dir> --publish-root <dir> --run-label <id>
 ```
 
+## Phase 2A.5 — existing-artifact inspection finding (read-only)
+
+`truelinev2/proof/run_redline_manifest_existing_artifact_inspection.py` answered: *can we
+publish a real manifest from the render artifacts already on disk, without re-rendering?*
+**Finding: not unambiguously, not yet** (render was NOT run). Against the 50-drawn ledger
+truth (status from the manifest, never from filenames), at render commit `c19b565`:
+
+- **37 `NEW_TARGETS`** — clean: authoritative per-sheet stroke PNGs co-located in
+  `data/outputs/callout_route_assembly_sweep/`, 1:1 with the sweep report's
+  `verdicts[*].artifacts` (66 files, `still_blocked: {}`). A **checksum dry-run** computed
+  real `sha256` + `bytes` for all 66 with the publisher's own routine — these are publishable.
+- **13 `ALREADY_DRAWN`** (log7/25/45/50/51/52/53/59/64/65/66/69/71) — **ambiguous**: their
+  stroke files are scattered across ~10 prior-lane dirs with inconsistent naming
+  (`_symbol_anchored_stroke` / `_design_path_` / `_regrade_` / `_redline_stroke`) and
+  multiple candidates per log (log65 has 9). **No single authoritative list** → choosing
+  "the" final artifact would require filename inference (forbidden) or a unified re-render
+  (forbidden).
+- **8 non-drawn** — clean: **zero** stroke artifacts (no contamination, nothing faked).
+- The Phase-1 example's placeholder artifact records (synthesized, mostly 1/log) do **not**
+  match the real **per-sheet** outputs (25 count mismatches), so the example cannot be fed
+  to the publisher against real files as-is.
+
+**No real manifest was published and no real-publish claim is made.** A full 50/50 publish
+needs Phase 2B: generate the input manifest's artifact records from the sweep report's
+`verdicts[*].artifacts` for the 37, plus a unified re-render (or owner-confirmed single-file
+selection) to give the 13 `ALREADY_DRAWN` an authoritative artifact list.
+
 ## Not yet built (explicit Phase boundary)
 
-Phases 1–2A delivered the **contract, example, mock UI, and artifact publisher**. Still
-**not** built:
+Phases 1–2A delivered the **contract, example, mock UI, and artifact publisher**; Phase 2A.5
+inspected existing artifacts (above). Still **not** built:
 
 - a clean parameterized **solving runner** that *generates* the manifest + final artifacts
   from a render (the publisher consumes artifacts; it does not produce them — the upstream
   is still Brenham-hardcoded proof/sweep scripts);
-- an **actual published run on real Brenham render outputs** (the publisher has so far only
-  been exercised on temporary fake artifacts in tests — no real artifacts are published or
-  committed);
+- an **actual published run on real render outputs** — Phase 2A.5 found the 37 `NEW_TARGETS`
+  ready but the 13 `ALREADY_DRAWN` ambiguous, so no real publish was performed;
 - a **full solve/render benchmark**;
 - any **website/backend wiring** or deploy.
 
