@@ -1,7 +1,7 @@
 # START HERE — TrueLine v2 Canonical Bootstrap
 
 > Single source of current working truth. Read THIS file first, in full — it is small on purpose.
-> Snapshot below is current as of **2026-06-19 (continued 35 — accountability ledger + website-readiness audit + repo-hygiene; frontier 50/58)**. For the absolute-latest
+> Snapshot below is current as of **2026-06-19 (continued 36 — repo-hygiene arc COMPLETE, 101→0 untracked; frontier 50/58)**. For the absolute-latest
 > state, read ONLY the top ~35 lines of `C:/Nova/knowledge/TrueLine-Wiki/wiki/hot.md` — never the whole file.
 > **Do NOT load history/archive files** (`log.md`, `current-sprint.md`, full `hot.md`) unless explicitly
 > asked or investigating a specific historical decision.
@@ -23,12 +23,25 @@ review" buckets are not progress until they become drawn strokes.
 - Isolated track: monolith / Render / Vercel UNTOUCHED; nothing merged or deployed.
 
 ## HEAD / remote state (verify with `git` before trusting this snapshot)
-- Last RENDER commit: **`c19b565`** (log3 wired + DRAWN, 49→50/58 — UNCHANGED this arc). Local HEAD = **`8ea66bc`**
-  (continued-35 docs + repo-hygiene; pushed → `origin/feat/truelinev2` = `8ea66bc`). Continued-35 lineage on top of
-  `c19b565`: `94d42ad` (continued-34 save) → `b083b76` (accountability ledger) → `15e00f7` (website-readiness audit)
-  → `6f2e4a5` (track load-bearing solver slice) → `8ea66bc` (ignore local agent tooling). `origin/main`: **`068a279`** (untouched).
+- Last RENDER commit: **`c19b565`** (log3 wired + DRAWN, 49→50/58 — UNCHANGED). Local HEAD = **`e3df509`**
+  (continued-36 repo-hygiene complete; pushed → `origin/feat/truelinev2` = `e3df509`). Continued-36 lineage on the
+  continued-35 save `69dd876`: `f5dbed1` (evidence trail) → `c0e6680` (Group-A evidence) → `e3df509` (doctrine relocate).
+  ARCHIVE (recovery): branch/tag `archive-v2-continued-35-superseded-scratch` = **`d8508b9`** (superseded `backend/tl_core/**` + 14 proof slices). `origin/main`: **`068a279`** (untouched).
 
-## Latest — continued 35 (2026-06-19): accountability ledger + website-readiness audit + repo-hygiene (NO render; frontier 50/58)
+## Latest — continued 36 (2026-06-19): repo-hygiene arc COMPLETE (101→0 untracked); NO render; frontier 50/58
+**continued 36 — pure repo-hygiene + provenance; NO engine/render/census change; frontier UNCHANGED 50/58; render commit
+stays `c19b565`; HEAD `e3df509`.** The continued-35 inventory found 101 untracked files; this arc drove it to **0** without
+losing anything. Feat lineage (on the continued-35 save `69dd876`): **`f5dbed1`** committed the evidence trail (7 `gac/*.md`
+source-adjudication packets + `run_review_candidate_reasoning_sweep.py`); **`c0e6680`** committed 4 Group-A evidence slices
+(KMZ↔PDF georeference ×2, the ambiguity-resolution render primitive, the `gac/log44`-cited owner-source packet); **`e3df509`**
+relocated the token-reduction doctrine to `wiki/doctrine/`. A pushed **ARCHIVE** branch+tag `archive-v2-continued-35-superseded-scratch`
+= **`d8508b9`** preserves the superseded `backend/tl_core/**` (35) + 14 ambiguous proof slices, which were then removed from the
+working tree (step 4C); 26 scratch probes + `probe_err.txt` were deleted (step 5); the old-app `RECOVERED_BASELINE_98d108a.md`
+note was deleted (owner decision; recoverable via tag `recovered-pdf-first-overlay-98d108a` + branch `backup-live-lp-chain-6eaade3`).
+**`backend/tl_core` is now ARCHIVE-ONLY** (a superseded reuse-by-import wrapper, never imported by v2); the `git add -A` landmine is
+DEFUSED; **repo hygiene is COMPLETE (untracked = 0)**. NO code/renderer/fixture/census/flag change. Detail: [[current-sprint]] / [[log]] continued 36.
+
+### Prior — continued 35 (2026-06-19): accountability ledger + website-readiness audit + repo-hygiene (NO render; frontier 50/58)
 **continued 35 — docs + repo-hygiene checkpoint; NO engine/render/census change; frontier UNCHANGED 50/58; render commit
 stays `c19b565`.** Four commits on `feat/truelinev2` (HEAD **`8ea66bc`**): **`b083b76`** added
 `wiki/trueline_v2_50_of_58_accountability_table.md` — the 58-log ledger (**50 DRAWN / 1 COVERED log14←log10 / 4
@@ -115,15 +128,13 @@ log5, log15, log16, log31, log38, log43, log57 — all owner/source-gated:
   Woodson s10+13 run; AP-158/2+45 intermediate, STA 3+23 FLOWER POT end. The source-location conflict is closed.)
 
 ## Current next gates (each separately authorized; NONE started)
-1. **Accountability table** — ✅ DONE (continued-35, `b083b76`): `wiki/trueline_v2_50_of_58_accountability_table.md`
-   (50 drawn / 1 covered / 4 owner-locked / 2 source-gap / 1 missing-sheet). Website-readiness audited (`15e00f7`).
-2. **Website-readiness contract** — schema-pinned `redline_manifest.json` + clean parameterized runner boundary +
-   stable artifact publishing (SHA) + full solve/render benchmark. **← recommended next** (after the remaining
-   repo-hygiene decisions). Safe to start NOW: contract-first mock UI vs the manifest schema (no live engine wiring).
-   See `wiki/trueline_v2_engine_website_readiness_audit.md`.
-3. **Repo-hygiene finish** — commit `gac/*.md` (7) + `run_review_candidate_reasoning_sweep.py`; owner-review
-   `backend/tl_core/` + the 14 proof slices; delete the 27 scratch probes; relocate `trueline-token-reduction-doctrine.md`.
-   (Done: load-bearing solver slice tracked `6f2e4a5`; `.agents/` + `skills-lock.json` ignored `8ea66bc`.)
+1. **`TRUELINE_V2_REDLINEMANIFEST_SCHEMA_AND_RUNNER_CONTRACT`** — schema-pinned `redline_manifest.json` + clean
+   parameterized runner boundary + stable artifact publishing (SHA) + full solve/render benchmark. **← recommended next.**
+   Safe to start NOW: contract-first mock UI vs the manifest schema (no live engine wiring). See
+   `wiki/trueline_v2_engine_website_readiness_audit.md`.
+2. **Repo hygiene** — ✅ COMPLETE (continued-36): untracked 101→0; evidence trail + Group-A committed (`f5dbed1`/`c0e6680`),
+   superseded set archived at `d8508b9`, doctrine relocated (`e3df509`). The `git add -A` landmine is defused.
+3. **Accountability table** — ✅ DONE (continued-35, `b083b76`); website-readiness audited (`15e00f7`).
 4. **Owner-locked abstains** log5/31/38/43 + **source-gap** log15/16 + log57 — unchanged (owner/source input needed).
 
 ## Current known blockers (each a NAMED missing piece, NOT a generic solver limitation)
