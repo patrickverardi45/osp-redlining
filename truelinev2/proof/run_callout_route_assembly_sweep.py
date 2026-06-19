@@ -81,6 +81,8 @@ FROZEN_BUCKETS = {"DRAWABLE_REVIEW": 31, "HUMAN_ADJUSTABLE_REVIEW": 6,
 ABSTAIN_4 = ("log5", "log31", "log38", "log43")
 SCALE = 1.44                # Brenham drawn pts/ft
 CLOSURE_REL_TOL = 0.10      # two legs' drawn length vs printed bore span (corroboration, span_ft known)
+OWNER_CONTROL_ON_LINE_TOL = 10.0   # pt: owner control points must lie within this of the straight owner-confirmed
+#                                    segment to VERIFY it (confirming evidence, not the drawn geometry)
 
 # the bores already drawn by a committed render proof (the frontier this sweep extends past)
 ALREADY_DRAWN = ("log7", "log25", "log45", "log51", "log52", "log53", "log59",
@@ -530,6 +532,37 @@ OWNER_CONFIRMED_PLAN_ROUTES = {
                           "owner_note_text": ("owner-confirmed log49 end 2026-06-18: STA 45+33=0+00 NEXTLINK "
                                               "HH / PROP. SPLICE POINT 46 (sheet 10).")}},
               "allowed_to_draw": True, "must_remain_abstained": False},
+}
+# OWNER-CONFIRMED GEOMETRY ROUTES (2026-06-19, HUMAN-ADJUSTABLE lane; NOT deterministic AUTO). For a bore whose
+# printed conduit is too fragmented to auto-trace (proven DESIGN_PATH_NOT_CONNECTED) but whose route the owner
+# CONFIRMED from the plan PDF. Drawn as a gated per-log opt-in; census uses `doc` (frozen) so the AUTO buckets
+# are untouched; the fixture/parent_source_model are untouched. The owner contributes the TRACK (top-y) +
+# STRAIGHTNESS confirmation; the geometry is the straight segment between two SOURCE-BOUND endpoints, verified by
+# the owner's printed control points. log3 (proof commit `683825c`, 16/16 gates): the upstream NEW content
+# 12+63 FLOWER POT (s2) -> 15+13 NEXTLINK HH (s3, owner top path y~296.5), 250'; the downstream 15+13->21+63
+# (650') is COVERED by the already-drawn log4 (NOT re-stroked). 11 owner control points on the s3 top centerline.
+OWNER_CONFIRMED_GEOMETRY_ROUTES = {
+    "log3": {"log_id": "log3", "status": "RECOVERED",
+             "corrected_start": "12+63", "corrected_end": "15+13", "corrected_sheets": [2, 3], "span_ft": 250,
+             "printed_run_callout_chain_route": ["5+26", "12+66"], "owner_confirmed_geometry": True,
+             "owner_top_path_y": 296.5, "s3_printed_ft": 247, "fiber_conduit_candidate_set": True,
+             "covered_by_drawn_children": ["log4"], "uncovered_span_ft": 250,
+             "owner_control_points_s3": [
+                 (876.3, 296.9), (901.7, 297.2), (922.7, 298.0), (952.4, 297.0), (983.2, 297.4), (1017.5, 297.3),
+                 (1053.0, 297.0), (1078.7, 297.0), (1099.6, 296.1), (1127.5, 296.5), (1140.8, 295.8)],
+             "endpoint_anchors": {
+                 "start": {"station": "12+63", "structure_class": "flower_pot", "boundary_kind": "structure_terminus",
+                           "clarity": "CLEAR", "structure_label": "FLOWER POT",
+                           "owner_note_text": ("owner-confirmed 2026-06-19: log3 START = the STA 12+63 "
+                                               "11\"x11\"x12\" FLOWER POT on sheet 2.")},
+                 "end": {"station": "15+13", "structure_class": "nextlink_hh", "boundary_kind": "structure_terminus",
+                         "clarity": "CLEAR", "structure_label": "NEXTLINK HH",
+                         "owner_note_text": ("log3 upstream NEW-content END = STA 15+13 30\"x48\"x36\" NEXTLINK HH "
+                                             "(= log4's start / shared junction); downstream 15+13->21+63 (650') is "
+                                             "COVERED by drawn log4, not re-stroked. The s3 route is the owner-"
+                                             "confirmed STRAIGHT top path (printed conduit too fragmented to "
+                                             "auto-trace: DESIGN_PATH_NOT_CONNECTED); human-adjustable lane.")}},
+             "allowed_to_draw": True, "must_remain_abstained": False},
 }
 # OWNER-REVIEWED REVIEW-CANDIDATE PROMOTIONS (2026-06-17 owner review of review_candidate_reasoning_sweep):
 # logs the owner CONFIRMED correct that carry NO owner adjudication route -- the engine truth-table SPAN
@@ -1472,6 +1505,72 @@ def _footage_tick_ladder_evidence(plan, offset, legs):
                 "per_leg": per_leg}
 
 
+def _solve_owner_confirmed_chain_route(plan, offset, out, r, s_sheet, s_xy, s_chain, s_words, s_draw,
+                                       e_sheet, e_xy, span):
+    """OWNER-CONFIRMED, HUMAN-ADJUSTABLE chain route (opt-in ``printed_run_callout_chain_route``; gated; NOT
+    deterministic AUTO). Used ONLY when the printed conduit between two source-BOUND endpoints is too fragmented
+    to auto-trace (proven DESIGN_PATH_NOT_CONNECTED, log3 s3) AND the owner confirmed the route from the plan PDF.
+
+    Draws TWO sheet-local legs joined by the printed matchline identity:
+      - start leg  = the s2 stub SOURCE-TRACED from the bound flower pot to the matchline boundary;
+      - owner leg  = the STRAIGHT segment between the two source-BOUND endpoints (the matchline crossing at the
+                     owner-confirmed top-track y, and the bound HH) -- the simplest non-invented interpolation,
+                     VERIFIED by the owner's printed control points (they must lie on it) + printed-span closure.
+    No invented free polyline: the geometry is endpoint-to-endpoint straight; the owner contributes only the
+    track (top-y) + straightness confirmation. Census uses ``doc`` (frozen); the fixture is untouched."""
+    raw = r.get("printed_run_callout_chain_route")
+    cross = tuple(raw) if isinstance(raw, (list, tuple)) else ("5+26", "12+66")
+    # --- start leg: bound flower pot -> matchline boundary on s_sheet (source-traced) ---
+    bb_s = _ml_bbox(s_words, s_draw, cross)
+    a_s = extend_dash_to_boundary(s_chain, bb_s) if bb_s else None
+    if a_s is None:
+        out["blocker"] = "owner-chain: start-sheet stub conduit does not reach the matchline"
+        return out
+    r1, ok1 = _ordered_leg(s_chain, tuple(s_xy), tuple(a_s))
+    if not ok1:
+        out["blocker"] = "owner-chain: start-sheet stub not source-backed"
+        return out
+    # --- owner leg: STRAIGHT segment matchline-crossing(owner top-y) -> bound HH on e_sheet ---
+    e_words, e_draw = plan.words(e_sheet, offset), plan.line_items(e_sheet, offset)
+    bb_e = _ml_bbox(e_words, e_draw, cross)
+    top_y = r.get("owner_top_path_y")
+    if bb_e is None or top_y is None:
+        out["blocker"] = "owner-chain: no end-sheet matchline bbox / owner_top_path_y"
+        return out
+    a_e = ((bb_e[0] + bb_e[2]) / 2.0, float(top_y))            # matchline crossing at the owner top-track y
+    r3 = [tuple(a_e), tuple(e_xy)]                              # the straight segment (two bound endpoints)
+    owner_pts = [tuple(p) for p in (r.get("owner_control_points_s3") or [])]
+    on_dev = max((_pt_to_route(p, r3) for p in owner_pts), default=0.0)
+    out["owner_controls_on_segment_maxdev_pt"] = round(on_dev, 1)
+    out["n_owner_controls"] = len(owner_pts)
+    if owner_pts and on_dev > OWNER_CONTROL_ON_LINE_TOL:
+        out["blocker"] = (f"owner-chain: control points deviate {round(on_dev,1)}pt > {OWNER_CONTROL_ON_LINE_TOL}pt "
+                          f"from the straight owner segment (not verified)")
+        return out
+    s3_ft = float(r.get("s3_printed_ft") or 0)
+    drawn_s3 = route_length(r3) / SCALE
+    if s3_ft and abs(drawn_s3 - s3_ft) > CLOSURE_REL_TOL * s3_ft:
+        out["blocker"] = f"owner-chain: owner segment {round(drawn_s3,1)}ft vs printed {s3_ft}ft (closure failed)"
+        return out
+    drawn_total = (route_length(r1) + route_length(r3)) / SCALE
+    if span:
+        out["closure"] = {"drawn_ft": round(drawn_total, 1), "span_ft": span,
+                          "closes": abs(drawn_total - span) <= CLOSURE_REL_TOL * span}
+        if not out["closure"]["closes"]:
+            out["blocker"] = f"owner-chain closure failed: drawn {round(drawn_total,1)} ft vs span {span} ft"
+            return out
+    out["owner_confirmed_geometry"] = True
+    out["legs"] = [
+        {"sheet": s_sheet, "route": r1, "a_xy": tuple(s_xy), "b_xy": tuple(a_s),
+         "len_pt": round(route_length(r1), 1), "kind": "start_leg",
+         "start_label": out.get("_ss"), "matchline_sta": cross[-1]},
+        {"sheet": e_sheet, "route": r3, "a_xy": tuple(a_e), "b_xy": tuple(e_xy),
+         "len_pt": round(route_length(r3), 1), "kind": "owner_confirmed_segment",
+         "end_label": out.get("_es"), "matchline_sta": cross[-1]},
+    ]
+    return out
+
+
 def solve_log(plan, offset, lid, rec):
     """Attempt the full route sentence for one anchored bore. Returns a verdict dict with either a
     render plan (legs to draw) or a named blocker. Renders nothing (the caller draws)."""
@@ -1614,6 +1713,15 @@ def solve_log(plan, offset, lid, rec):
     if not s_chain or not e_chain:
         out["blocker"] = f"no connected conduit chain at a terminus (start segs {len(s_chain)}, end segs {len(e_chain)})"
         return out
+
+    # OWNER-CONFIRMED PRINTED-RUN-CALLOUT CHAIN ROUTE (opt-in `printed_run_callout_chain_route`; gated;
+    # HUMAN-ADJUSTABLE owner-confirmed lane, NOT deterministic AUTO). Fires ONLY for opted-in bores (log3) ->
+    # every other render is byte-identical. Used when the printed conduit is too fragmented to auto-trace and
+    # the owner confirmed the route from the plan; draws the source-traced start stub + the straight owner segment.
+    if r.get("printed_run_callout_chain_route"):
+        out["_ss"], out["_es"] = ss, es
+        return _solve_owner_confirmed_chain_route(plan, offset, out, r, s_sheet, s_xy, s_chain, s_words, s_draw,
+                                                  e_sheet, e_xy, span)
 
     if s_sheet == e_sheet:
         out["single_sheet"] = True
@@ -1879,6 +1987,12 @@ def _render(plan, offset, lid, v):
                       f"{v.get('end_class')} terminus (single sheet; bound to the UNIQUE drop-terminus symbol "
                       f"at the printed span along the source-backed conduit chain -- no station label); "
                       f"printed-span closure")
+        elif leg["kind"] == "owner_confirmed_segment":
+            reason = (f"{lid} sheet-{leg['sheet']} OWNER-CONFIRMED segment: MATCHLINE STA {leg['matchline_sta']} "
+                      f"-> {leg['end_label']} (HUMAN-ADJUSTABLE owner-confirmed lane -- the printed conduit is too "
+                      f"fragmented to auto-trace, so the route is the STRAIGHT segment between the two source-bound "
+                      f"endpoints, owner-confirmed from the plan + control-point-verified; NOT deterministic "
+                      f"auto-placement)")
         else:
             reason = (f"{lid} sheet-{leg['sheet']} leg: MATCHLINE STA {leg['matchline_sta']} -> end "
                       f"{leg['end_label']}; joined to sheet {v['start_sheet']} by printed station identity")
@@ -1929,6 +2043,10 @@ def main() -> int:
     # computed from `doc` (untouched), never from `rec`.
     for _lid, _orec in OWNER_CONFIRMED_PLAN_ROUTES.items():
         rec[_lid] = dict(_orec)
+    # OWNER-CONFIRMED GEOMETRY ROUTES (human-adjustable lane): inject the owner-confirmed route record so the
+    # gated per-log opt-in renders it. Census from `doc` (frozen), never from `rec`.
+    for _lid, _grec in OWNER_CONFIRMED_GEOMETRY_ROUTES.items():
+        rec[_lid] = dict(_grec)
     gates, ev = [], {"verdicts": {}}
 
     gates.append(("G0 engine census frozen (OFF 31/6/1/17/3, ON 22/1/4, log44+abstains held)",
@@ -2021,6 +2139,22 @@ def main() -> int:
                     _g_ok = True
                     _g_reason = (f"{lid} owner-corrected parent sheet context {_cand_sheets} (corpus print-sheet "
                                  f"was a mapping error); span-closure + anti-sibling-mixup already passed")
+                # OWNER-CONFIRMED PARENT/CHILD COVERAGE (opt-in `covered_by_drawn_children`; gated). This bore is a
+                # continuous PARENT run whose DOWNSTREAM portion is already a drawn child sibling (log4); only the
+                # NEW UPSTREAM content is drawn here, so the drawn span legitimately closes the UNCOVERED portion
+                # (recorded_span - covered_child_span), NOT the full recorded span. Fires ONLY when child_owns_route
+                # already passed anti-sibling-mixup (sole failure = own-span closure), the named child(ren) are
+                # render TARGETS, and the drawn span closes the declared uncovered span. Never widens ownership.
+                _cbc = rec.get(lid, {}).get("covered_by_drawn_children")
+                _unc = rec.get(lid, {}).get("uncovered_span_ft")
+                if (not _g_ok and _cbc and _unc and "does not close its own recorded span" in (_g_reason or "")
+                        and all(_ch in targets for _ch in _cbc)
+                        and abs(_drawn - float(_unc)) <= CLOSURE_REL_TOL * float(_unc)):
+                    v["parent_child_coverage"] = {"covered_by_drawn_children": list(_cbc),
+                                                  "uncovered_span_ft": _unc, "drawn_ft": round(_drawn, 1)}
+                    _g_ok = True
+                    _g_reason = (f"{lid} draws only its UNCOVERED upstream {_unc}ft (continuous parent run; "
+                                 f"downstream covered by drawn {list(_cbc)}); anti-sibling-mixup already passed")
                 v["parent_source_gate"] = {"ok": _g_ok, "reason": _g_reason}
             if v.get("legs") and v["parent_source_gate"]["ok"]:
                 pngs = _render(plan, offset, lid, v)

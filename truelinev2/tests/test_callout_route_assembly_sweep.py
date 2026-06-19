@@ -144,13 +144,19 @@ LOG42_TARGETS = ("log42",)
 # sheet_context` flips the parent gate's stale corpus sheet [18]->[10,13] (span + anti-sibling still pass
 # first) and `footage_tick_ladder_route_evidence` corroborates each leg with the printed 2'/5'/7' ladders.
 LOG44_TARGETS = ("log44",)
+# log3 = OWNER-CONFIRMED GEOMETRY (human-adjustable lane; NOT deterministic AUTO). The s3 12+66->15+13 conduit
+# is too fragmented to auto-trace (DESIGN_PATH_NOT_CONNECTED); the owner confirmed the route from the plan, so
+# the s3 leg is the STRAIGHT segment between the two source-bound endpoints (matchline crossing @ owner top-y ->
+# 15+13 HH), control-point-verified. Draws only the NEW upstream 250' (s2 12+63 FLOWER POT stub + s3 247');
+# downstream 15+13->21+63 (650') is COVERED by the already-drawn log4 (parent/child coverage; not re-stroked).
+LOG3_OWNER_GEOMETRY_TARGETS = ("log3",)
 NEW_TARGETS = (CROSS_SHEET_TARGETS + SINGLE_SHEET_TARGETS + NLEG_TARGETS
                + MATCHLINE_TERMINUS_TARGETS + HH_BRIDGE_TARGETS + THROUGH_CONTINUITY_TARGETS
                + RESET_TO_RESET_TARGETS + PROMOTED_CLEAN_TARGETS + DIRECTION_CORRECTED_TARGETS
                + LOG48_TARGETS + LOG70_TARGETS + LOG61_TARGETS + LOG62_TARGETS + LOG60_TARGETS
                + LOG32_TARGETS + LOG27_TARGETS + LOG2_TARGETS + LOG8_TARGETS + LOG56_TARGETS
                + LOG55_TARGETS + LOG19_TARGETS + LOG49_TARGETS + LOG30_TARGETS + LOG4_FIBER_TARGETS
-               + LOG42_TARGETS + LOG44_TARGETS)
+               + LOG42_TARGETS + LOG44_TARGETS + LOG3_OWNER_GEOMETRY_TARGETS)
 # log29 + log54 are reviewed-but-unanchored: class + (for log29) sheet derived from source, no anchors
 SOURCE_DERIVED_CLASS_TARGETS = ("log29", "log54")
 # log12's END is an AP TERMINAL PORT HH bound by its AP-id token (AP-121); the station 10+92 does not bind
@@ -944,4 +950,25 @@ def test_sweep_renders_new_logs_end_to_end():
         fte = z["footage_tick_evidence"]
         assert fte["ok"] is True and all(pl["n_ladders"] >= 1 for pl in fte["per_leg"])
         assert {pl["sheet"] for pl in fte["per_leg"]} == {10, 13}
+    # log3 = OWNER-CONFIRMED GEOMETRY (human-adjustable lane; NOT deterministic AUTO). The s3 12+66->15+13 conduit
+    # is too fragmented to auto-trace; the owner confirmed the route, so the s3 leg is the STRAIGHT segment between
+    # the two source-bound endpoints (matchline crossing @ owner top-y -> 15+13 HH), control-point-verified. Draws
+    # only the NEW upstream 250' (s2 12+63 FLOWER POT stub + s3 247'); downstream 15+13->21+63 (650') is COVERED by
+    # the already-drawn log4 (parent/child coverage exception; not re-stroked).
+    assert "log3" in rep["newly_rendered_full"]
+    for lid in LOG3_OWNER_GEOMETRY_TARGETS:
+        z = rep["verdicts"][lid]
+        assert len(sorted(OUT_DIR.glob(f"{lid}_*.png"))) == 2, lid          # s2 stub + s3 owner segment
+        assert z["owner_confirmed_geometry"] is True                        # human-adjustable lane, not AUTO
+        assert z["start_sheet"] == 2 and z["end_sheet"] == 3
+        assert z["start_class"] == "flower_pot" and z["end_class"] == "nextlink_hh"
+        assert [leg["kind"] for leg in z["leg_summary"]] == ["start_leg", "owner_confirmed_segment"]
+        assert z["n_owner_controls"] == 11                                  # 11 owner control points
+        assert z["owner_controls_on_segment_maxdev_pt"] <= 10.0             # they lie on the straight segment
+        assert z["closure"]["closes"] is True and abs(z["closure"]["drawn_ft"] - 250.0) <= 25.0
+        # parent/child coverage: draws only the UNCOVERED upstream 250'; downstream COVERED by drawn log4
+        assert z["parent_child_coverage"]["covered_by_drawn_children"] == ["log4"]
+        assert z["parent_child_coverage"]["uncovered_span_ft"] == 250
+        assert z["parent_source_gate"]["ok"] is True
+        assert "log4" in rep["newly_rendered_full"]                         # the covered child IS drawn
     assert rep["engine_census_frozen"] is True and rep["no_fixture_mutation"] is True
