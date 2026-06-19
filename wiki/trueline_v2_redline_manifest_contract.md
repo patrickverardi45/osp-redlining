@@ -165,17 +165,36 @@ The Phase-2A publisher + Phase-2A.5 checksum dry-run already prove the pipe work
 real render bytes; the missing piece is a **unified render that covers all 50** — that is the
 real Phase 2B/2C, and it is engine/solver work, not a contract step.
 
+## Phase 2C — ALREADY_DRAWN canonical render registry (DONE)
+
+`truelinev2/proof/run_already_drawn13_canonical_render_registry.py` pins **one** canonical
+existing render entrypoint per ALREADY_DRAWN log (12 from the proven try-draw-all drivers +
+**log50** added explicitly — Phase 2B found it standalone) and **re-renders all 13 into one
+clean dir** (re-running the proven lanes, *not* selecting old PNGs by filename). Result:
+**13/13 rendered, exit 0, no blocker** — 17 final stroke PNGs (~12.5 MB) under the gitignored
+`data/outputs/redline_manifest_publish/already_drawn13_canonical/<log>/`. Every collected
+artifact is a redline **stroke** (helper crops filtered out; `other_png=0`); log7 flagged
+`PARTIAL` (representative interior route); log50 rendered its splice-46 cross-sheet two legs.
+No geometry/solver/fixture/census change — each lane is an existing proof driven out-of-process;
+drawn-truth from the manifest, never filenames. Static integrity locked by
+`truelinev2/tests/test_already_drawn13_render_registry.py`.
+
+**All 50 drawn logs now have authoritative artifacts** (37 NEW_TARGETS in the sweep dir + 13
+ALREADY_DRAWN in the canonical dir) — the Phase-2B unified-render precondition is satisfied
+**without** an engine/solver change, by re-rendering the 13's existing canonical lanes.
+
 ## Not yet built (explicit Phase boundary)
 
 Phases 1–2A delivered the **contract, example, mock UI, and artifact publisher**; Phase 2A.5
-inspected existing artifacts; Phase 2B hit the unified-render precondition (above). Still
-**not** built:
+inspected existing artifacts; Phase 2B hit (and Phase 2C resolved) the unified-render
+precondition. Still **not** built:
 
-- a **unified all-50 render path** (authorized solver pass) so every drawn log has one
-  authoritative final artifact — the blocker to a real 50/58 publish;
-- a clean parameterized **solving runner** that *generates* the manifest + final artifacts
-  from that render (the publisher consumes artifacts; it does not produce them);
-- an **actual published 50/58 run** (blocked on the unified render above);
+- **Phase 2D — the all-50 combine + real publish** (now UNBLOCKED, pure contract step, no
+  engine): assemble one all-50 input manifest whose artifact records point at the 37 sweep
+  artifacts (`verdicts[*].artifacts`) + the 13 canonical artifacts, then run the Phase-2A
+  publisher → a real `redline_manifest.json` (`mock_example:false`, real sha256/bytes);
+- a clean parameterized **solving runner** that *generates* the manifest from a render
+  (the publisher consumes artifacts; it does not produce them);
 - a **full solve/render benchmark**;
 - any **website/backend wiring** or deploy.
 
