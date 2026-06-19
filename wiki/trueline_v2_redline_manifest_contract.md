@@ -291,17 +291,51 @@ single-process unified runner could cut the ~6 min sharply if refresh latency ev
 Benchmark artifact: gitignored
 `…/brenham_c19b565_newtargets_sweep_benchmark/_phase2h_newtargets_sweep_benchmark.json`.
 
+## Phase 2I — durable published-bundle store (DONE)
+
+`truelinev2/contracts/published_bundle_store.py` defines the **adapter-neutral durable store** — the
+storage/serving boundary the website will read later. Layout (filesystem-shaped, but maps directly
+onto an object-store/CDN prefix):
+
+```
+<store_root>/
+    store_index.json                 # MUTABLE registry: latest_valid pointer + all bundles
+    bundles/<bundle_id>/             # IMMUTABLE published bundle (never overwritten)
+        redline_manifest.json · artifacts/<log_id>/<file>.png · _published_bundle_index.json · _store_bundle_meta.json
+```
+
+`bundle_id` is a **content/version key** (`<project>-<render_commit>-<manifest_sha256[:12]>`), so
+identical content → identical id (idempotent store) and historical bundles are immutable.
+`store_bundle()` admits a source ONLY if it passes the Phase-2E validator + reconciliation +
+`mock_example:false`, copies it in, **re-validates the copy by checksum**, writes immutable per-bundle
+metadata (project · render commit · manifest sha256 · artifact count · total bytes · created timestamp
+· summary 58/50/1/7 · manifest entrypoint), and repoints `latest_valid`. `validate_store()`
+re-validates every registered bundle and confirms `latest_valid` points to a valid bundle. **Retention:**
+keep the latest-valid pointer + keep all immutable historical bundles; never overwrite silently.
+`website_read_errors()` + `WEBSITE_READ_CONTRACT` codify the read rules (validated bundle only · no
+live render · no PNG-filename status · no stale source/model fields · no covered/blocked artifacts ·
+`mock_example:false` · consume via `latest_valid` or an explicit immutable id).
+
+Proof (`run_redline_manifest_durable_store_proof.py`) stored the real all-50 bundle as
+**`brenham-c19b565-ddfffff7cbe7`** (manifest sha256 `ddfffff7…`, 83 artifacts · 50.5 MB · summary
+58/50/1/7): store **VALID**, latest pointer OK, **website-readable YES**. Locked by 8
+store-contract tests (tiny temp fixtures): valid store · idempotency · immutable history + latest
+repoint · rejection of missing-artifact / checksum-mismatch / mock_example / count-drift · corruption
++ bad-latest detection · immutable-overwrite guard · read contract. Output gitignored; no render, no
+engine, no web/backend wiring.
+
 ## Not yet built (explicit Phase boundary)
 
-Phases 1–2H delivered the **contract, example, mock UI, artifact publisher, unified render
-registry, a real published all-50 manifest, a validated published-bundle contract, a one-command
-local pipeline runner, and a complete render-cost benchmark (13 + 37)**. Still **not** built:
+Phases 1–2I delivered the **contract, example, mock UI, artifact publisher, unified render registry,
+a real published all-50 manifest, a validated published-bundle contract, a one-command local pipeline
+runner, a complete render-cost benchmark (13 + 37), and an adapter-neutral durable bundle store**.
+Still **not** built:
 
-- a **durable published store** with retention/versioning (today the validated bundle lives only in
-  gitignored `data/outputs/`);
-- **website/backend wiring** to serve the bundle (the Phase-1 mock UI could now consume a real
-  bundle as the first integration test) — still no live wiring;
-- any deploy.
+- **website/backend wiring** to read the store's `latest_valid` bundle and serve manifest + artifacts
+  (the Phase-1 mock UI could consume a real served bundle as the first integration test) — still no
+  live wiring;
+- a **cloud/object-store adapter** behind the (now-defined) store contract — when a vendor is chosen;
+- any deploy;
 - *(optional)* a **warm-engine / single-process unified runner** to collapse the ~6 min full refresh.
 
 Safe next work against this contract: a **contract-first mock UI** that consumes the
