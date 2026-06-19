@@ -242,14 +242,40 @@ with a 0 default, so a manifest with an empty bucket (e.g. a project with 0 cove
 longer falsely rejected (regression-locked in the publisher test). The real 58-log example —
 every bucket non-empty — is unaffected.
 
+## Phase 2G — render-phase benchmark (DONE)
+
+`truelinev2/proof/run_redline_manifest_render_benchmark.py` drove the pipeline in explicit
+`--render-already-drawn13` mode (re-rendered ONLY the 13 ALREADY_DRAWN; the 37 NEW_TARGET sweep was
+NOT re-run; log14 + the 7 blocked never rendered) → publish → bundle-validate, recording the full
+breakdown. Result: **13/13 re-rendered, 0 failures, 17 stroke artifacts**; the final all-50 bundle
+**VALID** (83 artifacts · 50.5 MB · schema PASS · static-serving safe · all semantics preserved).
+Local timing (Windows, repo venv):
+
+| phase | seconds |
+|---|---|
+| inspect / verify | 0.002 |
+| **render (13 ALREADY_DRAWN)** | **52.16** |
+| assemble | 0.001 |
+| publish | 0.094 |
+| bundle validate | 0.038 |
+| **total** | **52.30** |
+
+**Takeaway:** render dominates wall-clock by ~370× over assemble + publish + validate (~0.13 s
+combined). The render cost is mostly per-subprocess startup (each of the 13 lanes re-loads the
+engine + parses the plan PDF; ~4 s/log), not per-log geometry — so a single-process or warm-engine
+runner would cut it sharply. Even so, the whole 13-log re-render-and-publish is **under a minute**;
+a background-job model is comfortable and the publish→serve path is effectively instant once
+artifacts exist. Benchmark artifact: gitignored
+`…/brenham_c19b565_pipeline_render13_benchmark/_phase2g_render_benchmark.json`.
+
 ## Not yet built (explicit Phase boundary)
 
-Phases 1–2F delivered the **contract, example, mock UI, artifact publisher, unified render
-registry, a real published all-50 manifest, a validated published-bundle contract, and a
-one-command local pipeline runner**. Still **not** built:
+Phases 1–2G delivered the **contract, example, mock UI, artifact publisher, unified render
+registry, a real published all-50 manifest, a validated published-bundle contract, a one-command
+local pipeline runner, and a render-phase benchmark**. Still **not** built:
 
-- a **full solve/render benchmark** (assemble + publish + bundle validation are benchmarked; the
-  render phase is not);
+- a **37 NEW_TARGET sweep wall-clock benchmark** (the 13-log re-render is measured at ~52 s; the
+  single-process 37-log sweep timing is separate and not yet captured — not authorized in 2G);
 - a **durable published store** with retention/versioning (today the validated bundle lives only in
   gitignored `data/outputs/`);
 - **website/backend wiring** to serve the bundle (the Phase-1 mock UI could now consume a real
