@@ -203,15 +203,38 @@ no geometry/fixture change. Assembler logic locked by
 **The engine→website contract chain is now end-to-end real for the 50/58 frontier:** schema →
 example → mock UI → publisher → unified render registry → **real published all-50 manifest**.
 
+## Phase 2E — published bundle contract (DONE)
+
+`truelinev2/contracts/published_bundle.py` formalizes the **published run bundle** — the durable
+static-serving boundary the website will consume: `<bundle_root>/redline_manifest.json` +
+`artifacts/<log_id>/<file>.png` + `_published_bundle_index.json`. `validate_bundle()` proves the
+manifest is schema-valid and every artifact reference is a **safe in-root relative path** (no
+absolute/drive-letter, no `..` traversal, no backslash, no `data/outputs` leakage) that **exists**,
+matches its `sha256` + `bytes`, and is `published:true` / `example_placeholder:false`; it also
+enforces drawn-has-artifact / covered-blocked-have-none, and reports **static-serving safe** + the
+manifest sha256. `build_bundle_index()` emits `_published_bundle_index.json` (bundle format · run
+label · project · schema version · engine head/render commit · manifest filename + sha256 ·
+artifact count · total bytes · validation summary · generated_at).
+
+Proof against the real Phase-2D bundle (`truelinev2/proof/run_redline_manifest_published_bundle_validation.py`):
+**valid YES · 83 artifacts · 50,499,989 bytes · 0 checksum-mismatch / 0 missing / 0 unsafe / 0
+schema / 0 structure errors · static-serving safe YES**, manifest sha256 `ddfffff7…3e50689f`.
+Contract code + 11 tests run on **tiny temp fixtures** (no 50 MB artifacts moved into the repo).
+No render, no engine, no web/backend wiring.
+
 ## Not yet built (explicit Phase boundary)
 
-Phases 1–2D delivered the **contract, example, mock UI, artifact publisher, unified render
-registry, and a real published all-50 manifest**. Still **not** built:
+Phases 1–2E delivered the **contract, example, mock UI, artifact publisher, unified render
+registry, a real published all-50 manifest, and a validated published-bundle contract**. Still
+**not** built:
 
-- a clean parameterized **one-command runner** that chains render → registry → publish in a
-  single step (today they are separate proof scripts run in sequence);
-- a **full solve/render benchmark** (the publish phase is benchmarked; the render phase is not);
-- **website/backend wiring** to serve the published manifest + artifacts (still no live wiring);
+- a clean parameterized **one-command runner** that chains render → registry → publish → bundle
+  validation in a single step (today they are separate proof scripts run in sequence);
+- a **full solve/render benchmark** (publish + bundle validation are benchmarked; render is not);
+- a **durable published store** with retention/versioning (today the validated bundle lives only in
+  gitignored `data/outputs/`);
+- **website/backend wiring** to serve the bundle (the Phase-1 mock UI could now consume a real
+  bundle as the first integration test) — still no live wiring;
 - any deploy.
 
 Safe next work against this contract: a **contract-first mock UI** that consumes the
