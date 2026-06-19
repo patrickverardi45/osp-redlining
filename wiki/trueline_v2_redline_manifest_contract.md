@@ -75,6 +75,27 @@ A `blocker` object is present **iff** `blocked` is true and carries an `unlock_r
 6. Surface per-log `warnings` (e.g. stored-anchor debt `B-DATA-LOG48-ADJ-1`,
    owner-corrected sheets) to consumers.
 
+## Contract mock UI (Phase 1 preview)
+
+A static, manifest-driven preview lives under `truelinev2/contracts/mock_ui/`
+(`redline_manifest_mock.html` / `.css` / `.js`) — it proves the manifest shape supports
+the product UI **before** any runner or live wiring. It **fetches the committed example
+manifest** (single source of truth) and renders the header (project · `50/58` · counts ·
+render commit), the 5 accountability cards, All/Drawn/Covered/Blocked/Warnings filters,
+and the per-log list — including log3 as `OWNER_CONFIRMED_HUMAN_ADJUSTABLE` (not auto),
+log14 "covered by log10 / no duplicate artifact", each blocker's exact unlock requirement,
+and the stored-anchor-debt warnings as **advisories** (never placement truth). It consumes
+**only** the manifest — no engine, backend, parent model, stale status field, or filename
+inference. Browsers block `fetch()` on `file://`, so preview via a local static server:
+
+```
+cd truelinev2/contracts && python -m http.server 8000
+# open http://localhost:8000/mock_ui/redline_manifest_mock.html
+```
+
+Locked by `truelinev2/tests/test_redline_manifest_mock_ui_contract.py`. **Still no live
+wiring, no runner, no deploy.**
+
 ## Not yet built (explicit Phase boundary)
 
 This task delivered the **contract and example only**. It did **not** build:

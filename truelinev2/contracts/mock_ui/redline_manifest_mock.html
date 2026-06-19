@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>TrueLine v2 — Redline Manifest (Contract Mock)</title>
+  <meta name="description" content="Contract mock only. Static, manifest-driven preview of the TrueLine v2 redline manifest. No live engine wiring." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="redline_manifest_mock.css" />
+</head>
+<body>
+  <div class="grid-bg" aria-hidden="true"></div>
+
+  <!-- Required contract labels — these are static and always visible. -->
+  <div class="ribbon" role="note" aria-label="contract preview disclaimer">
+    <span class="ribbon-dot" aria-hidden="true"></span>
+    <strong>Contract mock only</strong>
+    <span class="sep">/</span> No live engine wiring
+    <span class="sep">/</span> Example manifest
+    <span class="ribbon-tail">read-only preview &middot; consumes the redline manifest contract</span>
+  </div>
+
+  <!-- Loading / fetch-help state (replaced once the manifest resolves). -->
+  <div class="loadstate" id="loadState">
+    <p><span class="spin" aria-hidden="true"></span> Loading example manifest&hellip;</p>
+  </div>
+
+  <!-- App shell — every value below is rendered by JS from the fetched manifest. -->
+  <main class="wrap" id="app" hidden>
+    <header class="masthead">
+      <p class="kicker">TrueLine v2 &middot; OSP Redline Engine</p>
+      <h1 id="projectName">&mdash;</h1>
+      <div class="chiprow" id="chiprow"></div>
+    </header>
+
+    <section class="hero" aria-label="frontier summary">
+      <div class="frontier">
+        <div class="big" id="frontierBig">&mdash;</div>
+        <div class="cap" id="frontierCap">redlines drawn / logs accounted</div>
+        <div class="bar"><i id="frontierBar" style="width:0%"></i></div>
+      </div>
+      <div class="tiles" id="heroTiles"></div>
+    </section>
+
+    <div class="sec-head"><h2>Accountability</h2><span class="rule"></span></div>
+    <section class="cards" id="summaryCards" aria-label="status summary (click to filter)"></section>
+
+    <nav class="toolbar" id="toolbar" aria-label="filter logs">
+      <button class="fbtn" data-filter="all" aria-pressed="true">All</button>
+      <button class="fbtn" data-filter="drawn" aria-pressed="false">Drawn</button>
+      <button class="fbtn" data-filter="covered" aria-pressed="false">Covered</button>
+      <button class="fbtn" data-filter="blocked" aria-pressed="false">Blocked</button>
+      <button class="fbtn" data-filter="warnings" aria-pressed="false">Warnings</button>
+      <span class="count" id="showingCount"></span>
+    </nav>
+
+    <section class="list" id="logList" aria-live="polite"></section>
+
+    <footer class="footer" id="footer"></footer>
+  </main>
+
+  <script src="redline_manifest_mock.js"></script>
+</body>
+</html>
