@@ -38,5 +38,9 @@ backend/.git_old/
 .env*.local
 .claude/
 
+# Local agent tooling
+.agents/
+skills-lock.json
+
 # Local tarball output from scripts/backup_uploads.sh
 backups/
