@@ -1,7 +1,7 @@
 # START HERE — TrueLine v2 Canonical Bootstrap
 
 > Single source of current working truth. Read THIS file first, in full — it is small on purpose.
-> Snapshot below is current as of **2026-06-19 (continued 34 — log3 WIRED + DRAWN; frontier 50/58)**. For the absolute-latest
+> Snapshot below is current as of **2026-06-19 (continued 35 — accountability ledger + website-readiness audit + repo-hygiene; frontier 50/58)**. For the absolute-latest
 > state, read ONLY the top ~35 lines of `C:/Nova/knowledge/TrueLine-Wiki/wiki/hot.md` — never the whole file.
 > **Do NOT load history/archive files** (`log.md`, `current-sprint.md`, full `hot.md`) unless explicitly
 > asked or investigating a specific historical decision.
@@ -23,10 +23,30 @@ review" buckets are not progress until they become drawn strokes.
 - Isolated track: monolith / Render / Vercel UNTOUCHED; nothing merged or deployed.
 
 ## HEAD / remote state (verify with `git` before trusting this snapshot)
-- Last RENDER commit: **`c19b565`** (log3 wired + DRAWN, 49→50/58). Local HEAD = the continued-34 docs/START_HERE
-  commit on top of `c19b565` (pushed → `origin/feat/truelinev2`). `origin/main`: **`068a279`** (untouched).
+- Last RENDER commit: **`c19b565`** (log3 wired + DRAWN, 49→50/58 — UNCHANGED this arc). Local HEAD = **`8ea66bc`**
+  (continued-35 docs + repo-hygiene; pushed → `origin/feat/truelinev2` = `8ea66bc`). Continued-35 lineage on top of
+  `c19b565`: `94d42ad` (continued-34 save) → `b083b76` (accountability ledger) → `15e00f7` (website-readiness audit)
+  → `6f2e4a5` (track load-bearing solver slice) → `8ea66bc` (ignore local agent tooling). `origin/main`: **`068a279`** (untouched).
 
-## Latest — continued 34 (2026-06-19): log3 WIRED + DRAWN (49→50)
+## Latest — continued 35 (2026-06-19): accountability ledger + website-readiness audit + repo-hygiene (NO render; frontier 50/58)
+**continued 35 — docs + repo-hygiene checkpoint; NO engine/render/census change; frontier UNCHANGED 50/58; render commit
+stays `c19b565`.** Four commits on `feat/truelinev2` (HEAD **`8ea66bc`**): **`b083b76`** added
+`wiki/trueline_v2_50_of_58_accountability_table.md` — the 58-log ledger (**50 DRAWN / 1 COVERED log14←log10 / 4
+OWNER_LOCKED_ABSTAIN log5·31·38·43 / 2 SOURCE_GAP log15·16 / 1 MISSING_SOURCE_SHEET log57**; drawn set = sweep
+`ALREADY_DRAWN`∪`NEW_TARGETS`; `placement_status` proven STALE → never the drawn census). **`15e00f7`** added
+`wiki/trueline_v2_engine_website_readiness_audit.md`: the engine is **accountability-complete but NOT 58/58
+drawn-complete and NOT website-ready** — the gap is a CONTRACT boundary (no machine-readable `redline_manifest.json`;
+no clean parameterized runner — proof-script-driven + Brenham-hardcoded, seam exemplar-only log53/64/71, API default-OFF
+review-card transport; artifacts gitignored/on-demand; runtime unbenchmarked; stale `placement_status`; proof≠final),
+with 5 status + 6 provenance enums (**log3 preserved OWNER_CONFIRMED_HUMAN_ADJUSTABLE, not AUTO**) + the two-truth-axes
+warning. **`6f2e4a5`** (repo-hygiene fix 1) tracked the load-bearing
+`truelinev2/proof/run_station_corridor_route_solver_slice.py` (imported by TRACKED `run_log15_log16_run_group_review_slice.py:37`
++ `test_log15_log16_run_group_review.py:79` → clone/CI fix; targeted test 8 passed). **`8ea66bc`** (repo-hygiene fix 2)
+added `.gitignore` rules `.agents/` + `skills-lock.json` (untracked 100→86). NO code/renderer/fixture/census/flag change.
+Safe website work NOW = contract-first mock UI vs the manifest schema; no live wiring. Detail: [[current-sprint]] /
+[[log]] continued 35.
+
+### Prior — continued 34 (2026-06-19): log3 WIRED + DRAWN (49→50)
 **continued 34 — log3 owner-confirmed / HUMAN-ADJUSTABLE GEOMETRY render.** Frontier **49 → 50/58** (log3 = 50th
 drawn). Lineage `069e70d` (continued-33 save) → **`683825c`** (log3 owner-control ingest PROOF, 16/16, read-only)
 → **`c19b565`** (log3 sweep WIRING, DRAWN). The s3 `12+66→15+13` conduit is too FRAGMENTED to auto-trace
@@ -95,11 +115,16 @@ log5, log15, log16, log31, log38, log43, log57 — all owner/source-gated:
   Woodson s10+13 run; AP-158/2+45 intermediate, STA 3+23 FLOWER POT end. The source-location conflict is closed.)
 
 ## Current next gates (each separately authorized; NONE started)
-1. **Accountability table** for 50/58 — formalize the drawn / covered-by-sibling / owner-locked-abstain / source-gap
-   breakdown. **← recommended next.**
-2. **Owner-locked abstains** log5/31/38/43 — owner must lift the abstain + supply safe source.
-3. **Source-gap** log15/log16 (sheet-5+ head-end for the unprinted cuts) + log57 (`.FS` drive-decomposition sheet).
-   (log3 + log14 need no gate — log3 WIRED + DRAWN continued-34 `c19b565`; log14 = duplicate of log10.)
+1. **Accountability table** — ✅ DONE (continued-35, `b083b76`): `wiki/trueline_v2_50_of_58_accountability_table.md`
+   (50 drawn / 1 covered / 4 owner-locked / 2 source-gap / 1 missing-sheet). Website-readiness audited (`15e00f7`).
+2. **Website-readiness contract** — schema-pinned `redline_manifest.json` + clean parameterized runner boundary +
+   stable artifact publishing (SHA) + full solve/render benchmark. **← recommended next** (after the remaining
+   repo-hygiene decisions). Safe to start NOW: contract-first mock UI vs the manifest schema (no live engine wiring).
+   See `wiki/trueline_v2_engine_website_readiness_audit.md`.
+3. **Repo-hygiene finish** — commit `gac/*.md` (7) + `run_review_candidate_reasoning_sweep.py`; owner-review
+   `backend/tl_core/` + the 14 proof slices; delete the 27 scratch probes; relocate `trueline-token-reduction-doctrine.md`.
+   (Done: load-bearing solver slice tracked `6f2e4a5`; `.agents/` + `skills-lock.json` ignored `8ea66bc`.)
+4. **Owner-locked abstains** log5/31/38/43 + **source-gap** log15/16 + log57 — unchanged (owner/source input needed).
 
 ## Current known blockers (each a NAMED missing piece, NOT a generic solver limitation)
 - **log14** — RESOLVED continued-33: its only bindable s7 route IS drawn log10's first leg (reset `0+58=0+00`,
