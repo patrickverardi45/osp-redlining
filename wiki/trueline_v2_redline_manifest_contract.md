@@ -268,19 +268,41 @@ a background-job model is comfortable and the publish→serve path is effectivel
 artifacts exist. Benchmark artifact: gitignored
 `…/brenham_c19b565_pipeline_render13_benchmark/_phase2g_render_benchmark.json`.
 
+## Phase 2H — NEW_TARGET sweep benchmark (DONE) · full render-cost picture
+
+`truelinev2/proof/run_redline_manifest_newtargets_sweep_benchmark.py` timed the callout-route-
+assembly sweep (the 37 NEW_TARGETS, single process), then re-validated the full all-50 bundle
+(publish + validate, **no render**). Result: sweep exit 0, **37/37 NEW_TARGETS rendered · 66
+stroke-only artifacts (no crops) · 0 blocked/skipped**; ALREADY_DRAWN / covered / blocked correctly
+**excluded** by the sweep's own `_is_target`; post-sweep all-50 bundle **VALID** (83 artifacts, all
+semantics preserved). Full render-cost picture (local, repo venv):
+
+| phase | seconds | note |
+|---|---|---|
+| 37 NEW_TARGET sweep (1 process) | **299.6** | ~8.1 s/log — dominated by the route-assembly **solve**, not engine reload |
+| 13 ALREADY_DRAWN render (Phase 2G) | 52.2 | ~4 s/log — mostly per-subprocess engine reload |
+| downstream publish + bundle-validate | ~0.13 | negligible |
+| **estimated full-frontier refresh (all 50)** | **~351.9 (~5.9 min)** | entirely render-bound |
+
+**Takeaway:** a full 50-log refresh is **~6 minutes and entirely render-bound**; assemble + publish
++ validate is ~0.13 s. This confirms the offline/background-job architecture (render offline →
+publish a bundle → serve statically) with **no synchronous-web-render risk**. A warm-engine /
+single-process unified runner could cut the ~6 min sharply if refresh latency ever matters.
+Benchmark artifact: gitignored
+`…/brenham_c19b565_newtargets_sweep_benchmark/_phase2h_newtargets_sweep_benchmark.json`.
+
 ## Not yet built (explicit Phase boundary)
 
-Phases 1–2G delivered the **contract, example, mock UI, artifact publisher, unified render
+Phases 1–2H delivered the **contract, example, mock UI, artifact publisher, unified render
 registry, a real published all-50 manifest, a validated published-bundle contract, a one-command
-local pipeline runner, and a render-phase benchmark**. Still **not** built:
+local pipeline runner, and a complete render-cost benchmark (13 + 37)**. Still **not** built:
 
-- a **37 NEW_TARGET sweep wall-clock benchmark** (the 13-log re-render is measured at ~52 s; the
-  single-process 37-log sweep timing is separate and not yet captured — not authorized in 2G);
 - a **durable published store** with retention/versioning (today the validated bundle lives only in
   gitignored `data/outputs/`);
 - **website/backend wiring** to serve the bundle (the Phase-1 mock UI could now consume a real
   bundle as the first integration test) — still no live wiring;
 - any deploy.
+- *(optional)* a **warm-engine / single-process unified runner** to collapse the ~6 min full refresh.
 
 Safe next work against this contract: a **contract-first mock UI** that consumes the
 example manifest (status/provenance chips, blocked-log CTAs, the “50 of 58 accounted”
