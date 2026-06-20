@@ -179,3 +179,21 @@ display names. Layout unchanged; no upload/backend wiring; the real `RedlineMani
 are untouched. Internal ids (`p-cedar-ridge`) and deep mock **street names** (`Cedar Ridge Rd` in plan-sheet titles /
 playback / Hero-Map road label) are intentionally left as mock content (a street name, not the project identity). Verified:
 `tsc --noEmit` + `contracts:check` + `npm run build` PASS. NO engine/render/placement change; no Vercel/env/domain change by agent.
+
+## Staging UX — mock portfolio shell → real v2 proof-viewer (2026-06-19)
+
+`TRUELINE_V2_FABLE_STAGING_REMOVE_MOCK_DATA_SHELL` — Fable `main` **`f753b1a`** (pushed; 3 files, +78/−172, no PNGs).
+Staging still showed a mock multi-project portfolio with fake customer KPIs above the real durable-manifest panel — not
+demo-safe. Converted staging into an honest, read-only **v2 proof-viewer**:
+- **Dashboard (`/`)** rewritten to a single **`Brenham PH5 — v2 staging`** summary driven by the REAL committed durable
+  manifest (58 logs / 50 drawn / 1 covered / 7 blocked / 83 artifacts, bundle `brenham-c19b565-ddfffff7cbe7`, render
+  `c19b565`) + a "what is real vs demo" note. Removed the portfolio KPI strip (`N projects · M active · mock data`),
+  multi-project cards, and the mock field-activity / open-issues sections.
+- **Global shell banner** (`layout.tsx`): `Read-only v2 staging · no upload / live render yet · some panels are UI demo
+  only` — labels every route at once.
+- **`/redlines`** now leads with the real `RedlineManifestPanel`; the mock review queue moved into a collapsed, dashed
+  **`Mock UI demo queue — not engine data`** section below the engine panels.
+
+**Upload / live engine processing remains a future backend / job-runner lane** (NOT built here). No upload/backend wiring;
+manifest schema untouched; the prebuild artifact fetch and the real durable-manifest panel are intact. Verified: `tsc` +
+`contracts:check` + `npm run build` PASS. NO engine/render/placement change; no Vercel/env/domain change by agent.
