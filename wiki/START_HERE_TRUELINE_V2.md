@@ -1,7 +1,7 @@
 # START HERE — TrueLine v2 Canonical Bootstrap
 
 > Single source of current working truth. Read THIS file first, in full — it is small on purpose.
-> Snapshot below is current as of **2026-06-19 (continued 38 — bootstrap drift fixed → HEAD `e35cd26`; Phase 2J static bundle consumer + Fable UI preserve/retire + repo-architecture plan + Fable remote-init P1 DONE; NO render-truth change; frontier 50/58)**. For the absolute-latest
+> Snapshot below is current as of **2026-06-19 (continued 39 — P4 staging-plan persisted + Fable branch hygiene: clean `main` is the GitHub default; HEAD `16295d4`; NO render-truth change; frontier 50/58)**. For the absolute-latest
 > state, read ONLY the top ~35 lines of `C:/Nova/knowledge/TrueLine-Wiki/wiki/hot.md` — never the whole file.
 > **Do NOT load history/archive files** (`log.md`, `current-sprint.md`, full `hot.md`) unless explicitly
 > asked or investigating a specific historical decision.
@@ -23,14 +23,21 @@ review" buckets are not progress until they become drawn strokes.
 - Isolated track: monolith / Render / Vercel UNTOUCHED; nothing merged or deployed.
 
 ## HEAD / remote state (verify with `git` before trusting this snapshot)
-- Last RENDER commit: **`c19b565`** (log3 wired + DRAWN, 49→50/58 — UNCHANGED). Local HEAD = **`e35cd26`**
-  (continued-38; pushed → `origin/feat/truelinev2` = `e35cd26`; clean tree, 0/0). Continued-38 arc on the continued-37 save `0c0ff20`:
-  `841960f` (Phase 2J read-only static bundle consumer, website READ side) → `0fd3228` (Fable UI preserve / mock-UI retire)
-  → `eecf2ef` (legacy-extraction & repo-architecture plan) → `e35cd26` (Fable remote-init P1 DONE save). NO render-truth change.
-  Continued-37 lineage (12 commits on `744d88c`, then save `0c0ff20`): `a0a490f`→`505a9a2`→`bccfdc8`→`4c11722`→`f7a616b`→`c0498d4`→`06c734a`→`f7988ab`→`cbeb9be`→`aaa8952`→`9ed6c98`→`81f3cd3`.
+- Last RENDER commit: **`c19b565`** (log3 wired + DRAWN, 49→50/58 — UNCHANGED). Local HEAD = **`16295d4`**
+  (continued-39 work = the P4 staging-plan doc; pushed → `origin/feat/truelinev2` = `16295d4`; this docs save sits one commit above it). Continued-39 (docs/git-hygiene only):
+  `16295d4` (add `wiki/trueline_v2_fable_vercel_staging_plan.md`); + Fable web branch hygiene in the SEPARATE `trueline-web-experience` repo
+  (clean `main` created + pushed @ `51dcbf7`, now the GitHub default; `feat/2k-static-bundle-adapter` preserved @ `51dcbf7`; tag `fable-v2-ui-bones-2026-06-19` intact). NO engine/render-truth change.
+  Continued-38 arc (on save `0c0ff20`): `841960f` (Phase 2J) → `0fd3228` (Fable UI preserve/retire) → `eecf2ef` (repo-arch plan) → `e35cd26` (Fable remote-init P1) → save `bdbc3b1`.
   ARCHIVE (recovery): branch/tag `archive-v2-continued-35-superseded-scratch` = **`d8508b9`** (superseded `backend/tl_core/**` + 14 proof slices). `origin/main`: **`068a279`** (untouched).
 
-## Latest — continued 38 (2026-06-19): bootstrap drift fixed → HEAD `e35cd26`; Phase 2J static bundle consumer + Fable UI preserve/retire + repo-architecture plan + Fable remote-init P1 DONE; NO render-truth change; frontier 50/58
+## Latest — continued 39 (2026-06-19): P4 staging-plan persisted + Fable branch hygiene (clean `main` is the GitHub default); NO render-truth change; frontier 50/58
+**continued 39 — docs + git-hygiene only; NO engine/renderer/fixture/anchor/corpus/census/parent-model/placement/flag change; frontier UNCHANGED 50/58; render commit stays `c19b565`; engine work HEAD `16295d4` (this docs save sits one commit above it).** Two safe prep lanes after the continued-38 Fable remote-init:
+- **P4 staging plan PERSISTED (`16295d4`, path-scoped, pushed → `origin/feat/truelinev2`).** `wiki/trueline_v2_fable_vercel_staging_plan.md`: recommended Vercel slug `trueline-web-staging`, repo `github.com/patrickverardi45/trueline-web-experience`, branch strategy (+ clean `main`), Next.js/npm/`next build` + default Vercel Next output + Node 20.x/22.x, env (`NEXT_PUBLIC_TL2_REDLINE_MANIFEST=1`, `…_SERVED` OFF), manifest/status-only artifact plan (no 50 MB PNGs; object-store + prebuild later), first staging objective (read-only shell, `/redlines` 50/58 manifest, no render/upload/data/domain-swap), risks, and the future execution checklist. **PLANNING ONLY — nothing on Vercel.**
+- **Fable web branch hygiene DONE (separate `trueline-web-experience` repo).** Clean **`main`** created from `51dcbf7` and pushed (`* [new branch] main -> main`, upstream tracking); the **GitHub default branch is now `main`** (owner flipped it in the UI; verified live `ls-remote --symref` → `refs/heads/main`). `feat/2k-static-bundle-adapter` PRESERVED @ `51dcbf7` (not deleted / not force-pushed); tag `fable-v2-ui-bones-2026-06-19 → 7e3b392` intact; no old branches (`master`, `codex/*`) pushed; no code change. **`.vercel/` absent — not linked; no deploy/Vercel/domain/env change; `osp-redlining` / Render / `origin/main` `068a279` untouched.**
+
+Frontier UNCHANGED **50/58**; render commit `c19b565`; v2 suite **1392 passed / 2 skipped**. **Next lane: `TRUELINE_V2_FABLE_VERCEL_STAGING_STANDUP`** — execute the staging-plan checklist (Vercel project creation is an owner dashboard action; the agent does not run `vercel`); point it at `main`. Detail: [[current-sprint]] / [[log]] continued 39.
+
+### Prior — continued 38 (2026-06-19): bootstrap drift fixed → HEAD `e35cd26`; Phase 2J static bundle consumer + Fable UI preserve/retire + repo-architecture plan + Fable remote-init P1 DONE; NO render-truth change; frontier 50/58
 **continued 38 — bootstrap re-canonicalized + website-READ-side / UI-base / architecture arc; NO engine/renderer/fixture/anchor/corpus/census/parent-model/placement/flag change; frontier UNCHANGED 50/58; render commit stays `c19b565`; HEAD `e35cd26`.** The continued-37 save left START_HERE + `hot.md` pinned at `81f3cd3` while four real commits landed after it; this save bumps the snapshot to git truth (`feat/truelinev2 @ e35cd26`, pushed; `origin/main` `068a279` untouched; clean tree) and records the arc. Lineage on the continued-37 save `0c0ff20`:
 - **`841960f` — Phase 2J: read-only static bundle CONSUMER (website READ side).** `truelinev2/contracts/published_bundle_consumer.py` + proof `run_redline_manifest_static_consumer_proof.py` + contract test (+620 LOC). Consumes the durable store's `latest_valid` bundle as a pure static read (checksum + in-root path-safety verified); NO live render, NO backend, NO write path.
 - **`0fd3228` — Fable UI preserve / contract mock-UI retire.** The Fable v2 repos (`trueline-web-experience` web, `trueline-field-mobile` mobile) are the AUTHORITATIVE v2 UI/design/function base; the temporary `truelinev2/contracts/mock_ui/` is SUPERSEDED → historical contract fixture only (`_DEPRECATED.md`; its fidelity test still guards manifest↔fixture). Future web integration ADAPTS Fable to the durable manifest contract — never rebuilds a new UI. Canonical: `wiki/ui/fable_v2_ui_bones.md`.
@@ -157,12 +164,12 @@ log5, log15, log16, log31, log38, log43, log57 — all owner/source-gated:
   Woodson s10+13 run; AP-158/2+45 intermediate, STA 3+23 FLOWER POT end. The source-location conflict is closed.)
 
 ## Current next gates (each separately authorized; NONE started)
-1. **`TRUELINE_V2_FABLE_VERCEL_STAGING_PLAN` (P4) — PLANNING ONLY ← recommended next.** Plan a NEW Fable
-   Vercel/staging project on a fresh slug (mock/read-only) — NOT a production swap, no domain move, no
-   `osp-redlining` / Vercel / Render / env change. The website READ side already landed (continued-38): Phase 2J
-   static bundle consumer (`841960f`) + Fable Phase-2K static-bundle adapter (`feat/2k-static-bundle-adapter @ 51dcbf7`,
-   visually accepted, default-OFF gate `NEXT_PUBLIC_TL2_REDLINE_MANIFEST`); Fable remote-init P1 DONE (`e35cd26`).
-   Canonical: `wiki/trueline_v2_legacy_extraction_and_repo_architecture_plan.md` (P4) + `wiki/ui/fable_v2_ui_bones.md`.
+1. **`TRUELINE_V2_FABLE_VERCEL_STAGING_STANDUP` ← recommended next (owner dashboard action).** Stand up a NEW Fable
+   Vercel/staging project (slug `trueline-web-staging`, point at `main`), mock/read-only — NOT a production swap, no
+   domain move, no `osp-redlining` / Vercel / Render / env change; the agent does NOT run `vercel`. **Prep DONE:** P4 plan
+   persisted `wiki/trueline_v2_fable_vercel_staging_plan.md` (`16295d4`); website READ side landed continued-38 (Phase 2J
+   `841960f` + Fable Phase-2K `51dcbf7`, default-OFF `NEXT_PUBLIC_TL2_REDLINE_MANIFEST`); Fable remote-init P1 (`e35cd26`);
+   clean `main` is the GitHub default (continued-39). Execute the plan's §9 checklist (start with a local `npm run build` preflight).
    Later (each separately gated): P5 v2 backend/API with EXTERNAL auth → P6 parity → P7 engine split → P8 retire v1.
 2. **`TRUELINE_V2_REDLINEMANIFEST_SCHEMA_AND_RUNNER_CONTRACT`** — ✅ DONE (continued-37, Phases 2A–2I, `a0a490f`→`81f3cd3`):
    schema + 50/58 example + mock UI + publisher + unified render registry + real all-50 manifest + published-bundle contract +
