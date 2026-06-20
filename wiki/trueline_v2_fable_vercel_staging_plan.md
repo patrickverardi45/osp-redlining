@@ -129,8 +129,10 @@ clean-`main` branch creation in the Fable repo (separate repo; never `osp-redlin
 ## Standup result — DONE (2026-06-19)
 
 `TRUELINE_V2_FABLE_VERCEL_STAGING_STANDUP` executed by the owner in the Vercel dashboard (the agent ran no
-`vercel` / deploy / env / code action). The Fable web app loads on Vercel from repo
-`patrickverardi45/trueline-web-experience`, branch **`main`**, commit **`51dcbf7`**; `/redlines` renders with the
+`vercel` / deploy / env / code action). The Fable web app is **live at
+`https://trueline-web-experience.vercel.app/`** (Vercel project **`trueline-web-experience`**, owner-provided
+2026-06-19 — the project reuses the repo name rather than the earlier-recommended slug `trueline-web-staging`),
+from repo `patrickverardi45/trueline-web-experience`, branch **`main`**, commit **`51dcbf7`**; `/redlines` renders with the
 existing Fable UI intact and the **v2 redline manifest (durable bundle)** panel showing **50/58**, bundle
 **`brenham-c19b565-ddfffff7cbe7`**, render/source **`c19b565`**, **83 FINAL_REDLINE_PNG**, **`served: false`**.
 This is **manifest/status-only** staging (Option D) — no live render, no upload flow, no client data, no production
