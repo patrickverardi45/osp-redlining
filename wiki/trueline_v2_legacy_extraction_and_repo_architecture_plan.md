@@ -89,8 +89,10 @@ not extended.
 - **P0 — Preserve (safety net):** tags + bundles for all repos/branches. *(Mostly done: Fable
   preservation tags + bundles, Phase-2K bundle, v2 archive tag. Gap: snapshot v1 `origin/main` + deploy
   config.)*
-- **P1 — Establish the v2 UI repo:** `TRUELINE_V2_FABLE_REMOTE_INIT` — give Fable a remote. Additive,
-  zero risk to v1. **← immediate next action.**
+- **P1 — Establish the v2 UI repo:** `TRUELINE_V2_FABLE_REMOTE_INIT` — give Fable a remote. ✅ **DONE
+  2026-06-19** — `origin = https://github.com/patrickverardi45/trueline-web-experience`; pushed branch
+  `feat/2k-static-bundle-adapter @ 51dcbf7` (tracking) + tag `fable-v2-ui-bones-2026-06-19 → 7e3b392`;
+  old branches not pushed; `osp-redlining`/Vercel/Render/deploy untouched.
 - **P2 — Keep the v2 engine stable:** continue engine work in `TrueLine_Beta`; **no split yet**.
 - **P3 — Document backend keepers as v2 interfaces:** read-only mining of v1 → capability specs
   (export / closeout / upload / PDF-serving) + the v2 API contract surface. Extract clean cores, not glue.
@@ -119,11 +121,15 @@ not extended.
 
 ## Immediate next action
 
-**`TRUELINE_V2_FABLE_REMOTE_INIT`** — establish the Fable repo on its own remote so it becomes the
-official v2 UI repo. Unblocks P4 (new Vercel project) and is fully additive / zero risk to v1. Needs one
-input: a destination GitHub repo URL for `trueline-web-experience`; then
-`git remote add origin <url>` + `git push -u origin feat/2k-static-bundle-adapter`, with no touch to
-`osp-redlining` / Vercel / Render / deploy.
+**P1 (`TRUELINE_V2_FABLE_REMOTE_INIT`) is ✅ DONE** (2026-06-19) — the Fable web repo now has its own
+remote `origin = https://github.com/patrickverardi45/trueline-web-experience`, with branch
+`feat/2k-static-bundle-adapter @ 51dcbf7` (upstream tracking) + tag `fable-v2-ui-bones-2026-06-19 →
+7e3b392` pushed; old local branches (`master`, `codex/*`) intentionally NOT pushed;
+`osp-redlining`/Vercel/Render/deploy untouched.
+
+**Next = P4 PLANNING (not execution): a NEW Fable Vercel/staging project** on a fresh slug (separate from
+`osp-redlining`), still mock/read-only — **NOT** a production swap, no domain move, no `osp-redlining`
+change.
 
 ## Brand/domain note
 

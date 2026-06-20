@@ -26,6 +26,8 @@ guards manifest↔fixture fidelity); it is **not** the product UI direction. See
 | Working tree at capture | clean |
 | Archive bundle | `C:\Nova\archives\trueline_fable_ui_preserve_2026-06-19\trueline-web-experience.git.bundle` |
 | Archive metadata | `…\trueline-web-experience.git-head.txt` / `.git-status.txt` / `.git-log.txt` |
+| Remote (2026-06-19) | `origin = https://github.com/patrickverardi45/trueline-web-experience` |
+| Active branch | `feat/2k-static-bundle-adapter` @ `51dcbf7` (Phase 2K; tracks `origin`, pushed) |
 
 ### What the Fable website contains (surfaces)
 
@@ -76,9 +78,19 @@ These three repos are **separate** and are **not** merged. This record lives in 
 (`TrueLine_Beta`) purely as a pointer + directive. No deploy, no backend/web bundle-serving wiring,
 no engine/render/fixture/census change was made to create it.
 
-## Next (Phase 2K — gated, not started)
+## Status — Phase 2K DONE + Fable remote init DONE (2026-06-19)
 
-Adapt the **`trueline-web-experience`** surfaces (above) to read the Phase-2I durable bundle store via
-the Phase-2J read-only consumer (`truelinev2/contracts/published_bundle_consumer.py`): the website
-reads `latest_valid` → serves `redline_manifest.json` + `FINAL_REDLINE_PNG` artifacts statically. No
-new UI; adapt the existing Fable surfaces. Canonical contract: `wiki/trueline_v2_redline_manifest_contract.md`.
+- **Phase 2K (`TRUELINE_V2_PHASE_2K_FABLE_STATIC_BUNDLE_ADAPTER`) — visually ACCEPTED.** Read-only
+  `v2RedlineManifest.ts` adapter + `RedlineManifestPanel` consume the durable bundle on `/redlines`
+  (default-OFF gate `NEXT_PUBLIC_TL2_REDLINE_MANIFEST`). No new site, no redesign, no deploy, no Vercel,
+  no backend upload/session/MRQ flow. Branch `feat/2k-static-bundle-adapter @ 51dcbf7`; bundle backup
+  `C:\Nova\archives\trueline_fable_ui_phase2k_2026-06-19\trueline-web-experience-phase2k-static-bundle-adapter.git.bundle`.
+- **Fable remote init (`TRUELINE_V2_FABLE_REMOTE_INIT`) — DONE.** `origin =
+  https://github.com/patrickverardi45/trueline-web-experience`; pushed branch
+  `feat/2k-static-bundle-adapter @ 51dcbf7` (tracking) + tag `fable-v2-ui-bones-2026-06-19 → 7e3b392`.
+  Old local branches (`master`, `codex/*`) intentionally NOT pushed. **Old `osp-redlining`
+  repo/project/domain untouched; no Vercel/deploy/domain change.**
+- **Next gate (PLANNING, not execution): a NEW Fable Vercel/staging project** on a fresh slug (separate
+  from `osp-redlining`), still mock/read-only — NOT a production swap. See
+  `trueline_v2_legacy_extraction_and_repo_architecture_plan.md` (P4). Contract:
+  `trueline_v2_redline_manifest_contract.md`.
