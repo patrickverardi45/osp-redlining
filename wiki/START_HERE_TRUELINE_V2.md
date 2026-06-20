@@ -173,14 +173,16 @@ log5, log15, log16, log31, log38, log43, log57 — all owner/source-gated:
   Woodson s10+13 run; AP-158/2+45 intermediate, STA 3+23 FLOWER POT end. The source-location conflict is closed.)
 
 ## Current next gates (each separately authorized; NONE started)
-1. **`TRUELINE_V2_FABLE_VERCEL_STAGING_ARTIFACT_HOSTING` ← recommended next (planning-first).** Host the durable bundle's
-   redline PNGs WITHOUT committing the ~50 MB pile to GitHub — object/static storage, a Vercel prebuild fetch/copy into
-   `public/redline-bundle/`, or backend static serving later — then flip `NEXT_PUBLIC_TL2_REDLINE_MANIFEST_SERVED=1` so strokes
-   render on staging. Canonical plan: `wiki/trueline_v2_fable_artifact_hosting_plan.md` (GitHub Release asset + Vercel prebuild
-   fetch; no PNGs in git, no schema change; impl lane `TRUELINE_V2_FABLE_STAGING_ARTIFACT_HOSTING_IMPL`). No production/domain
-   change; the agent does NOT run `vercel`. **`…_STAGING_STANDUP` ✅ DONE (continued-40,
-   `a4b8590`):** Fable web is live on Vercel (`main @ 51dcbf7`, `/redlines` manifest/status-only 50/58, bundle
-   `brenham-c19b565-ddfffff7cbe7`, render `c19b565`, 83 FINAL_REDLINE_PNG, `served:false`) at `https://trueline-web-experience.vercel.app/` (project `trueline-web-experience`).
+1. **`TRUELINE_V2_FABLE_STAGING_ARTIFACT_HOSTING_VERIFY` ← recommended next (owner action, then agent verify).**
+   Artifact-hosting IMPL CODE is ✅ DONE (Fable `main` `3ab0c80`, pushed): `scripts/fetch-redline-bundle.mjs` wired as
+   `prebuild` downloads the bundle from `TL2_REDLINE_BUNDLE_URL`, extracts to `public/redline-bundle/<id>/`, and
+   sha256-verifies all 83 vs the committed manifest — no PNGs in git, no schema change; locally proven (tsc/contracts/build
+   PASS, served build 83/83, count+sha tamper fail). **Remaining (owner; `gh` unavailable to agent):** upload the 48 MB
+   archive (sha256 `864c657c…`) as a GitHub Release asset (tag `redline-bundle-brenham-c19b565-ddfffff7cbe7`) → set Vercel
+   `TL2_REDLINE_BUNDLE_URL=<asset>` + `NEXT_PUBLIC_TL2_REDLINE_MANIFEST_SERVED=1` → redeploy → confirm `/redlines` renders
+   strokes + `served:true`. Canonical: `wiki/trueline_v2_fable_artifact_hosting_plan.md`. The agent does NOT run `vercel`.
+   **`…_STAGING_STANDUP` ✅ DONE (continued-40, `a4b8590`):** Fable live at `https://trueline-web-experience.vercel.app/`
+   (`main`, `/redlines` 50/58, bundle `brenham-c19b565-ddfffff7cbe7`, render `c19b565`, 83 FINAL_REDLINE_PNG, `served:false`).
    Later (each separately gated): P5 v2 backend/API with EXTERNAL auth → P6 parity → P7 engine split → P8 retire v1.
 2. **`TRUELINE_V2_REDLINEMANIFEST_SCHEMA_AND_RUNNER_CONTRACT`** — ✅ DONE (continued-37, Phases 2A–2I, `a0a490f`→`81f3cd3`):
    schema + 50/58 example + mock UI + publisher + unified render registry + real all-50 manifest + published-bundle contract +

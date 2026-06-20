@@ -131,8 +131,46 @@ matching `public/` paths at build time.
 - **CDN caching + content-keyed cache-busting**; **automated publish** (engine `published_bundle_store` → object store →
   Fable picks up `latest_valid` in CI), removing the manual archive upload.
 
+## Implementation status — code DONE (2026-06-19, lane `TRUELINE_V2_FABLE_STAGING_ARTIFACT_HOSTING_IMPL`)
+
+**Fable web `main` `3ab0c80`** (pushed → `origin/main`; `feat/2k-static-bundle-adapter @ 51dcbf7` preserved, tag
+`fable-v2-ui-bones-2026-06-19 → 7e3b392` intact): adds `scripts/fetch-redline-bundle.mjs` (+172), wires it as `prebuild`,
+adds a `fetch:redline-bundle` convenience script, ignores `/.release-staging/`. **No PNGs / no archive committed** (3 files).
+
+- **Archive (immutable, deterministic):** `redline-bundle-brenham-c19b565-ddfffff7cbe7.tgz` — the bundle's `artifacts/`
+  tree only; **50,268,315 bytes (48 MB)**; **sha256 `864c657c7c22daf7d32e3c63b167dd56c71a2030eb6def608e392e411edc1eb0`**;
+  83 PNGs; reproducible (sorted entries, fixed mtime, `gzip -n` — rebuilt-identical). Built locally at
+  `trueline-web-experience/.release-staging/` (gitignored); source = the on-disk durable bundle (§3).
+- **Script behavior:** no-op unless `NEXT_PUBLIC_TL2_REDLINE_MANIFEST_SERVED=1` or `--force`; reads `TL2_REDLINE_BUNDLE_URL`
+  (https | file:// | local path); validates archive entries (path-escape / off-layout → fail); extracts into
+  `public/redline-bundle/<bundleId>/`; verifies all 83 PNGs against the committed `redline_manifest.v1.json` sha256; fails
+  loudly on missing URL, download failure, count != 83, or any sha mismatch. `tar` is driven via `-f -` (stdin) for
+  Windows/Linux portability. **No manifest rewrite, no schema change** (URL is built at runtime by the adapter).
+- **Local verification (all PASS):** `tsc --noEmit` · `contracts:check` · no-op path (SERVED unset, exit 0) · served
+  extract+verify **83/83** · missing-URL fail · count-mismatch fail · **sha256-tamper fail** (caught
+  `artifacts/log11/log11_s5_redline_stroke.png`) · `npm run build` PASS with SERVED=0 (prebuild no-op) **and** SERVED=1
+  (prebuild fetch+verify 83/83 → `next build` → `/redlines` built, 83 PNGs in build input). The pre-existing lint finding
+  `react-hooks/set-state-in-effect` at `src/app/packet/SummaryRail.tsx:43` is unrelated and does NOT block the Next-16 build.
+
+### Remaining (owner / manual — agent does NOT run `vercel`, and `gh` is unavailable in the agent env)
+1. **Upload the archive as a GitHub Release asset** (creates the immutable URL). Suggested tag
+   `redline-bundle-brenham-c19b565-ddfffff7cbe7`. Run in the Fable repo:
+   ```sh
+   gh release create redline-bundle-brenham-c19b565-ddfffff7cbe7 \
+     ".release-staging/redline-bundle-brenham-c19b565-ddfffff7cbe7.tgz" \
+     --title "Redline bundle brenham-c19b565-ddfffff7cbe7" \
+     --notes "Immutable artifacts/ tree: 83 FINAL_REDLINE_PNG, 48 MB, sha256 864c657c…"
+   gh release view redline-bundle-brenham-c19b565-ddfffff7cbe7 --json assets -q '.assets[0].url'   # → TL2_REDLINE_BUNDLE_URL
+   ```
+   (Public repo ⇒ the asset URL is anonymously fetchable, no token. Private repo ⇒ the Vercel build also needs a read token,
+   or use Vercel Blob instead.)
+2. **Set Vercel env (project `trueline-web-experience`) + redeploy from the dashboard:**
+   `TL2_REDLINE_BUNDLE_URL` = the asset URL from step 1; `NEXT_PUBLIC_TL2_REDLINE_MANIFEST_SERVED` = `1`.
+3. **Verify after redeploy** (Next lane below).
+
 ## Next lane
 
-**`TRUELINE_V2_FABLE_STAGING_ARTIFACT_HOSTING_IMPL`** — execute §6 in the Fable repo (coding lane): add the prebuild
-fetch script + archive upload, then set the two env vars in Vercel and redeploy. No production/domain change; the agent
-does not run `vercel` (env + redeploy are owner dashboard actions).
+**`TRUELINE_V2_FABLE_STAGING_ARTIFACT_HOSTING_VERIFY`** (after the owner uploads the release asset, sets the two env vars,
+and redeploys): load `https://trueline-web-experience.vercel.app/redlines`, expand the panel, confirm the 83 stroke PNGs
+render from `/redline-bundle/brenham-c19b565-ddfffff7cbe7/artifacts/...`, the header reads `served: true`, and the Vercel
+build log shows `[fetch-redline-bundle] OK: 83/83`. No production/domain change; the agent does not run `vercel`.

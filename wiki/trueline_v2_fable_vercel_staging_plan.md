@@ -164,4 +164,6 @@ prebuild fetch for the PNGs) so `…_SERVED=1` can render strokes on staging. Pl
 The Vercel project itself stands; the agent does not run `vercel`. **Canonical plan:
 [`trueline_v2_fable_artifact_hosting_plan.md`](trueline_v2_fable_artifact_hosting_plan.md)** (recommends a GitHub Release
 asset + a Vercel build-time prebuild fetch into `public/redline-bundle/<id>/`; no PNGs in git, no manifest-schema change;
-next coding lane `TRUELINE_V2_FABLE_STAGING_ARTIFACT_HOSTING_IMPL`).
+next coding lane `TRUELINE_V2_FABLE_STAGING_ARTIFACT_HOSTING_IMPL`). **IMPL CODE ✅ DONE (Fable `main` `3ab0c80`)** — prebuild
+fetch script + sha256 verify, locally proven; remaining = owner uploads the release asset + sets Vercel `TL2_REDLINE_BUNDLE_URL`
++ `NEXT_PUBLIC_TL2_REDLINE_MANIFEST_SERVED=1` + redeploys, then `TRUELINE_V2_FABLE_STAGING_ARTIFACT_HOSTING_VERIFY`.
