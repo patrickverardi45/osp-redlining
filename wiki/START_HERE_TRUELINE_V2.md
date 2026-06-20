@@ -176,7 +176,9 @@ log5, log15, log16, log31, log38, log43, log57 — all owner/source-gated:
 1. **`TRUELINE_V2_FABLE_VERCEL_STAGING_ARTIFACT_HOSTING` ← recommended next (planning-first).** Host the durable bundle's
    redline PNGs WITHOUT committing the ~50 MB pile to GitHub — object/static storage, a Vercel prebuild fetch/copy into
    `public/redline-bundle/`, or backend static serving later — then flip `NEXT_PUBLIC_TL2_REDLINE_MANIFEST_SERVED=1` so strokes
-   render on staging. No production/domain change; the agent does NOT run `vercel`. **`…_STAGING_STANDUP` ✅ DONE (continued-40,
+   render on staging. Canonical plan: `wiki/trueline_v2_fable_artifact_hosting_plan.md` (GitHub Release asset + Vercel prebuild
+   fetch; no PNGs in git, no schema change; impl lane `TRUELINE_V2_FABLE_STAGING_ARTIFACT_HOSTING_IMPL`). No production/domain
+   change; the agent does NOT run `vercel`. **`…_STAGING_STANDUP` ✅ DONE (continued-40,
    `a4b8590`):** Fable web is live on Vercel (`main @ 51dcbf7`, `/redlines` manifest/status-only 50/58, bundle
    `brenham-c19b565-ddfffff7cbe7`, render `c19b565`, 83 FINAL_REDLINE_PNG, `served:false`) at `https://trueline-web-experience.vercel.app/` (project `trueline-web-experience`).
    Later (each separately gated): P5 v2 backend/API with EXTERNAL auth → P6 parity → P7 engine split → P8 retire v1.

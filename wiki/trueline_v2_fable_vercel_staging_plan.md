@@ -161,4 +161,7 @@ source-of-truth that a `main @ 51dcbf7` build serves —
 
 **`TRUELINE_V2_FABLE_VERCEL_STAGING_ARTIFACT_HOSTING`** — unresolved item 1 above (object/static storage or a Vercel
 prebuild fetch for the PNGs) so `…_SERVED=1` can render strokes on staging. Planning-first; no production/domain change.
-The Vercel project itself stands; the agent does not run `vercel`.
+The Vercel project itself stands; the agent does not run `vercel`. **Canonical plan:
+[`trueline_v2_fable_artifact_hosting_plan.md`](trueline_v2_fable_artifact_hosting_plan.md)** (recommends a GitHub Release
+asset + a Vercel build-time prebuild fetch into `public/redline-bundle/<id>/`; no PNGs in git, no manifest-schema change;
+next coding lane `TRUELINE_V2_FABLE_STAGING_ARTIFACT_HOSTING_IMPL`).
