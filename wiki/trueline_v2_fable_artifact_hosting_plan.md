@@ -174,3 +174,34 @@ adds a `fetch:redline-bundle` convenience script, ignores `/.release-staging/`. 
 and redeploys): load `https://trueline-web-experience.vercel.app/redlines`, expand the panel, confirm the 83 stroke PNGs
 render from `/redline-bundle/brenham-c19b565-ddfffff7cbe7/artifacts/...`, the header reads `served: true`, and the Vercel
 build log shows `[fetch-redline-bundle] OK: 83/83`. No production/domain change; the agent does not run `vercel`.
+
+## Env-debug patch — fetch made unconditional + diagnostics (2026-06-19)
+
+`TRUELINE_V2_FABLE_ARTIFACT_FETCH_ENV_DEBUG` — Fable `main` **`16c7095`** (pushed; 2 files, no PNGs). Symptom: with the
+owner's env set, staging still showed `served:false` and the Vercel build log had **no `[fetch-redline-bundle]` line** — the
+npm **`prebuild`** lifecycle wasn't firing the script on Vercel.
+
+- **Root cause (confirmed): NO env-var mismatch.** The fetch script (`scripts/fetch-redline-bundle.mjs`) and the UI served
+  flag (`src/lib/api/client.ts:40`) BOTH gate on `NEXT_PUBLIC_TL2_REDLINE_MANIFEST_SERVED === '1'`; the adapter reads no env
+  directly. The failure was the **build not invoking the fetch** (prebuild lifecycle), not the flag name.
+- **Fix:** `package.json` build = **`node scripts/fetch-redline-bundle.mjs && next build`** (was `next build` + a separate
+  `prebuild`); removed `prebuild` (no double-run, no lifecycle ambiguity). The fetch now runs **unconditionally** from
+  `npm run build`; if served is on and the URL is missing / a sha mismatches, the `&&` short-circuits and the build **fails
+  loudly** (won't deploy a broken served build).
+- **Diagnostics (no secrets):** the script always prints an `env:` line — the flag value **quoted** (reveals stray
+  whitespace or a wrong value like `"true"`) + `TL2_REDLINE_BUNDLE_URL=present(len=N) | <missing>` (length only, never the URL).
+
+**Exact Vercel build-log lines to expect** (under `> node scripts/fetch-redline-bundle.mjs && next build`):
+- env correctly set →
+  `[fetch-redline-bundle] env: NEXT_PUBLIC_TL2_REDLINE_MANIFEST_SERVED="1" (served=true); TL2_REDLINE_BUNDLE_URL=present(len=N); force=false`
+  → `[fetch-redline-bundle] archive <bytes> bytes; validating entries`
+  → `[fetch-redline-bundle] OK: 83/83 FINAL_REDLINE_PNG verified -> public/redline-bundle/brenham-c19b565-ddfffff7cbe7/artifacts/...`
+- SERVED not `1` → `…SERVED=<unset> (served=false); TL2_REDLINE_BUNDLE_URL=<missing>…` → `served mode OFF — skipping…`
+- SERVED=`1` but URL missing → `…SERVED="1" (served=true); TL2_REDLINE_BUNDLE_URL=<missing>…` →
+  `ERROR: served mode requested but TL2_REDLINE_BUNDLE_URL is not set` → **build fails**.
+
+**Owner next step:** in Vercel, confirm `NEXT_PUBLIC_TL2_REDLINE_MANIFEST_SERVED=1` (exactly `1`, no trailing space) +
+`TL2_REDLINE_BUNDLE_URL` are set for the **Production** environment, then **Redeploy WITHOUT build cache** (Deployments →
+⋯ → Redeploy → uncheck "Use existing build cache") and read the build log for the `env:` + `OK: 83/83` lines, then re-run
+`TRUELINE_V2_FABLE_STAGING_ARTIFACT_HOSTING_VERIFY`. Verified locally: tsc + contracts:check + `npm run build` PASS (no-op
+shows `served=false`/skip; served build with the local archive shows the diagnostic + `OK: 83/83`).
