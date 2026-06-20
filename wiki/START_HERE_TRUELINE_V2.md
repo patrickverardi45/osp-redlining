@@ -1,7 +1,7 @@
 # START HERE — TrueLine v2 Canonical Bootstrap
 
 > Single source of current working truth. Read THIS file first, in full — it is small on purpose.
-> Snapshot below is current as of **2026-06-19 (continued 37 — redline-manifest engine→website CONTRACT pipeline COMPLETE, Phases 2A–2I; NO render-truth change; frontier 50/58)**. For the absolute-latest
+> Snapshot below is current as of **2026-06-19 (continued 38 — bootstrap drift fixed → HEAD `e35cd26`; Phase 2J static bundle consumer + Fable UI preserve/retire + repo-architecture plan + Fable remote-init P1 DONE; NO render-truth change; frontier 50/58)**. For the absolute-latest
 > state, read ONLY the top ~35 lines of `C:/Nova/knowledge/TrueLine-Wiki/wiki/hot.md` — never the whole file.
 > **Do NOT load history/archive files** (`log.md`, `current-sprint.md`, full `hot.md`) unless explicitly
 > asked or investigating a specific historical decision.
@@ -23,12 +23,23 @@ review" buckets are not progress until they become drawn strokes.
 - Isolated track: monolith / Render / Vercel UNTOUCHED; nothing merged or deployed.
 
 ## HEAD / remote state (verify with `git` before trusting this snapshot)
-- Last RENDER commit: **`c19b565`** (log3 wired + DRAWN, 49→50/58 — UNCHANGED). Local HEAD = **`81f3cd3`**
-  (continued-37 redline-manifest CONTRACT pipeline complete; pushed → `origin/feat/truelinev2` = `81f3cd3`). Continued-37
-  12-commit proof/contract lineage on the continued-36 save `744d88c`: `a0a490f`→`505a9a2`→`bccfdc8`→`4c11722`→`f7a616b`→`c0498d4`→`06c734a`→`f7988ab`→`cbeb9be`→`aaa8952`→`9ed6c98`→`81f3cd3` (NO render-truth change).
+- Last RENDER commit: **`c19b565`** (log3 wired + DRAWN, 49→50/58 — UNCHANGED). Local HEAD = **`e35cd26`**
+  (continued-38; pushed → `origin/feat/truelinev2` = `e35cd26`; clean tree, 0/0). Continued-38 arc on the continued-37 save `0c0ff20`:
+  `841960f` (Phase 2J read-only static bundle consumer, website READ side) → `0fd3228` (Fable UI preserve / mock-UI retire)
+  → `eecf2ef` (legacy-extraction & repo-architecture plan) → `e35cd26` (Fable remote-init P1 DONE save). NO render-truth change.
+  Continued-37 lineage (12 commits on `744d88c`, then save `0c0ff20`): `a0a490f`→`505a9a2`→`bccfdc8`→`4c11722`→`f7a616b`→`c0498d4`→`06c734a`→`f7988ab`→`cbeb9be`→`aaa8952`→`9ed6c98`→`81f3cd3`.
   ARCHIVE (recovery): branch/tag `archive-v2-continued-35-superseded-scratch` = **`d8508b9`** (superseded `backend/tl_core/**` + 14 proof slices). `origin/main`: **`068a279`** (untouched).
 
-## Latest — continued 37 (2026-06-19): redline-manifest engine→website CONTRACT pipeline COMPLETE (Phases 2A–2I); NO render-truth change; frontier 50/58
+## Latest — continued 38 (2026-06-19): bootstrap drift fixed → HEAD `e35cd26`; Phase 2J static bundle consumer + Fable UI preserve/retire + repo-architecture plan + Fable remote-init P1 DONE; NO render-truth change; frontier 50/58
+**continued 38 — bootstrap re-canonicalized + website-READ-side / UI-base / architecture arc; NO engine/renderer/fixture/anchor/corpus/census/parent-model/placement/flag change; frontier UNCHANGED 50/58; render commit stays `c19b565`; HEAD `e35cd26`.** The continued-37 save left START_HERE + `hot.md` pinned at `81f3cd3` while four real commits landed after it; this save bumps the snapshot to git truth (`feat/truelinev2 @ e35cd26`, pushed; `origin/main` `068a279` untouched; clean tree) and records the arc. Lineage on the continued-37 save `0c0ff20`:
+- **`841960f` — Phase 2J: read-only static bundle CONSUMER (website READ side).** `truelinev2/contracts/published_bundle_consumer.py` + proof `run_redline_manifest_static_consumer_proof.py` + contract test (+620 LOC). Consumes the durable store's `latest_valid` bundle as a pure static read (checksum + in-root path-safety verified); NO live render, NO backend, NO write path.
+- **`0fd3228` — Fable UI preserve / contract mock-UI retire.** The Fable v2 repos (`trueline-web-experience` web, `trueline-field-mobile` mobile) are the AUTHORITATIVE v2 UI/design/function base; the temporary `truelinev2/contracts/mock_ui/` is SUPERSEDED → historical contract fixture only (`_DEPRECATED.md`; its fidelity test still guards manifest↔fixture). Future web integration ADAPTS Fable to the durable manifest contract — never rebuilds a new UI. Canonical: `wiki/ui/fable_v2_ui_bones.md`.
+- **`eecf2ef` — legacy-extraction & repo-architecture plan (canonical).** `wiki/trueline_v2_legacy_extraction_and_repo_architecture_plan.md`: v1 = legacy prototype / reference spec / algorithm parts-bin (NOT sacred); v2 product = v2 engine (`truelinev2/`) + `redline_manifest` durable-bundle contract + Fable UI; PDF-first before KMZ; v1 auth REFERENCE-ONLY (external provider replaces it — only the tenant-isolation requirement survives); P0–P8 migration phases; the one hard caution = `truelinev2/` lives INSIDE `TrueLine_Beta` (`osp-redlining`), never wipe / `git add -A` until the intentional P7 split.
+- **`e35cd26` — Fable remote-init P1 DONE (save).** `TRUELINE_V2_FABLE_REMOTE_INIT` complete: Fable web repo `origin = https://github.com/patrickverardi45/trueline-web-experience`; pushed branch `feat/2k-static-bundle-adapter @ 51dcbf7` (tracking) + tag `fable-v2-ui-bones-2026-06-19 → 7e3b392`; old local branches (`master`, `codex/*`) intentionally NOT pushed. Phase 2K (static-bundle adapter on `/redlines`, default-OFF gate `NEXT_PUBLIC_TL2_REDLINE_MANIFEST`) visually ACCEPTED + git-bundle backed up. **No deploy, no Vercel, no domain change; `osp-redlining` / Render / `origin/main` untouched.**
+
+Frontier UNCHANGED **50/58** (log14 COVERED by log10; 7 owner/source-gated: log5/31/38/43 owner-locked abstain, log15/16 source-gap, log57 `.FS`); render commit `c19b565`; v2 suite **1392 passed / 2 skipped**. **Next lane: `TRUELINE_V2_FABLE_VERCEL_STAGING_PLAN` (P4) — PLANNING ONLY** (a NEW Fable Vercel/staging project on a fresh slug, mock/read-only; NOT a production swap, no domain move). Detail: [[current-sprint]] / [[log]] continued 38.
+
+### Prior — continued 37 (2026-06-19): redline-manifest engine→website CONTRACT pipeline COMPLETE (Phases 2A–2I); NO render-truth change; frontier 50/58
 **continued 37 — 12-commit proof/CONTRACT arc; NO engine/renderer/fixture/anchor/corpus/census/parent-model/flag change;
 frontier UNCHANGED 50/58; render commit stays `c19b565`; HEAD `81f3cd3`.** Built + proved the entire engine→website
 redline-manifest pipeline, all generated artifacts GITIGNORED under `data/outputs/` (NONE committed): schema-pinned
@@ -146,10 +157,13 @@ log5, log15, log16, log31, log38, log43, log57 — all owner/source-gated:
   Woodson s10+13 run; AP-158/2+45 intermediate, STA 3+23 FLOWER POT end. The source-location conflict is closed.)
 
 ## Current next gates (each separately authorized; NONE started)
-1. **Website / backend wiring** — read the durable store's `latest_valid` bundle (Phase 2I) + serve `redline_manifest.json`
-   + artifacts statically; point the Phase-1 mock UI at a REAL served bundle as the first integration test (NO live render).
-   **← recommended next**, but GATED: crosses into `web/`/`backend/` (currently forbidden — needs explicit authorization).
-   Then a cloud/object-store adapter behind the store contract; then deploy. Canonical: `wiki/trueline_v2_redline_manifest_contract.md`.
+1. **`TRUELINE_V2_FABLE_VERCEL_STAGING_PLAN` (P4) — PLANNING ONLY ← recommended next.** Plan a NEW Fable
+   Vercel/staging project on a fresh slug (mock/read-only) — NOT a production swap, no domain move, no
+   `osp-redlining` / Vercel / Render / env change. The website READ side already landed (continued-38): Phase 2J
+   static bundle consumer (`841960f`) + Fable Phase-2K static-bundle adapter (`feat/2k-static-bundle-adapter @ 51dcbf7`,
+   visually accepted, default-OFF gate `NEXT_PUBLIC_TL2_REDLINE_MANIFEST`); Fable remote-init P1 DONE (`e35cd26`).
+   Canonical: `wiki/trueline_v2_legacy_extraction_and_repo_architecture_plan.md` (P4) + `wiki/ui/fable_v2_ui_bones.md`.
+   Later (each separately gated): P5 v2 backend/API with EXTERNAL auth → P6 parity → P7 engine split → P8 retire v1.
 2. **`TRUELINE_V2_REDLINEMANIFEST_SCHEMA_AND_RUNNER_CONTRACT`** — ✅ DONE (continued-37, Phases 2A–2I, `a0a490f`→`81f3cd3`):
    schema + 50/58 example + mock UI + publisher + unified render registry + real all-50 manifest + published-bundle contract +
    one-command pipeline runner + render-cost benchmark (full refresh ~5.9 min, render-bound) + adapter-neutral durable bundle
