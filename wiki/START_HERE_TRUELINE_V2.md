@@ -1,7 +1,7 @@
 # START HERE — TrueLine v2 Canonical Bootstrap
 
 > Single source of current working truth. Read THIS file first, in full — it is small on purpose.
-> Snapshot below is current as of **2026-06-19 (continued 39 — P4 staging-plan persisted + Fable branch hygiene: clean `main` is the GitHub default; HEAD `16295d4`; NO render-truth change; frontier 50/58)**. For the absolute-latest
+> Snapshot below is current as of **2026-06-19 (continued 40 — Fable Vercel staging STANDUP succeeded, manifest/status-only on `main @ 51dcbf7`; HEAD `a4b8590`; NO render-truth change; frontier 50/58)**. For the absolute-latest
 > state, read ONLY the top ~35 lines of `C:/Nova/knowledge/TrueLine-Wiki/wiki/hot.md` — never the whole file.
 > **Do NOT load history/archive files** (`log.md`, `current-sprint.md`, full `hot.md`) unless explicitly
 > asked or investigating a specific historical decision.
@@ -23,14 +23,23 @@ review" buckets are not progress until they become drawn strokes.
 - Isolated track: monolith / Render / Vercel UNTOUCHED; nothing merged or deployed.
 
 ## HEAD / remote state (verify with `git` before trusting this snapshot)
-- Last RENDER commit: **`c19b565`** (log3 wired + DRAWN, 49→50/58 — UNCHANGED). Local HEAD = **`16295d4`**
-  (continued-39 work = the P4 staging-plan doc; pushed → `origin/feat/truelinev2` = `16295d4`; this docs save sits one commit above it). Continued-39 (docs/git-hygiene only):
-  `16295d4` (add `wiki/trueline_v2_fable_vercel_staging_plan.md`); + Fable web branch hygiene in the SEPARATE `trueline-web-experience` repo
-  (clean `main` created + pushed @ `51dcbf7`, now the GitHub default; `feat/2k-static-bundle-adapter` preserved @ `51dcbf7`; tag `fable-v2-ui-bones-2026-06-19` intact). NO engine/render-truth change.
-  Continued-38 arc (on save `0c0ff20`): `841960f` (Phase 2J) → `0fd3228` (Fable UI preserve/retire) → `eecf2ef` (repo-arch plan) → `e35cd26` (Fable remote-init P1) → save `bdbc3b1`.
+- Last RENDER commit: **`c19b565`** (log3 wired + DRAWN, 49→50/58 — UNCHANGED). Local HEAD = **`a4b8590`**
+  (continued-40 work = the staging-standup-result doc; pushed → `origin/feat/truelinev2` = `a4b8590`; this docs save sits one commit above it). Continued-40 (docs only):
+  `a4b8590` (record the Fable Vercel staging standup result in `wiki/trueline_v2_fable_vercel_staging_plan.md`). The staging project is LIVE
+  (Fable web on Vercel, `main @ 51dcbf7`, `/redlines` manifest/status-only 50/58) but stands in the SEPARATE `trueline-web-experience` repo — no `.vercel/` in THIS repo. NO engine/render-truth change.
+  Continued-39 (`16295d4`): P4 staging plan doc + Fable clean `main` (now GitHub default). Continued-38 (save `bdbc3b1`): Phase 2J + Fable UI preserve/retire + repo-arch plan + remote-init P1.
   ARCHIVE (recovery): branch/tag `archive-v2-continued-35-superseded-scratch` = **`d8508b9`** (superseded `backend/tl_core/**` + 14 proof slices). `origin/main`: **`068a279`** (untouched).
 
-## Latest — continued 39 (2026-06-19): P4 staging-plan persisted + Fable branch hygiene (clean `main` is the GitHub default); NO render-truth change; frontier 50/58
+## Latest — continued 40 (2026-06-19): Fable Vercel staging STANDUP succeeded (manifest/status-only on `main @ 51dcbf7`); NO render-truth change; frontier 50/58
+**continued 40 — docs only (records a successful owner-run Vercel standup); NO engine/renderer/fixture/anchor/corpus/census/parent-model/placement/flag change; frontier UNCHANGED 50/58; render commit stays `c19b565`; engine work HEAD `a4b8590` (this docs save sits one commit above it).**
+- **Fable Vercel staging STANDUP SUCCEEDED (owner-run; agent ran no `vercel`/deploy).** Fable web loads on Vercel from `patrickverardi45/trueline-web-experience`, branch **`main`**, commit **`51dcbf7`**; `/redlines` renders with the Fable UI intact + the **v2 redline manifest (durable bundle)** panel: **50/58**, bundle **`brenham-c19b565-ddfffff7cbe7`**, render/source **`c19b565`**, **83 FINAL_REDLINE_PNG**, **`served: false`** (manifest/status-only — PNG serving off + PNGs gitignored/local-only). NO live render, NO upload flow, NO client data, NO production swap; `osp-redlining` project/domain + Render/domain/env untouched.
+- **Result recorded (`a4b8590`, docs-only path-scoped, pushed).** `wiki/trueline_v2_fable_vercel_staging_plan.md` gained a "Standup result — DONE" section (every observed value VERIFIED read-only against the committed fixtures `redline_manifest.v1.json` + `redline_store_index.v1.json` that a `main @ 51dcbf7` build serves) + a "Next unresolved work" list.
+- **Staging URL / project name: NOT YET PROVIDED → TO BE FILLED IN** (recommended slug `trueline-web-staging` → `trueline-web-staging.vercel.app`; the real project name/URL is owner-supplied and not discoverable from this repo — no committed `.vercel/`).
+- **Fable web repo state:** default branch **`main @ 51dcbf7`**; feature branch `feat/2k-static-bundle-adapter @ 51dcbf7` PRESERVED; tag `fable-v2-ui-bones-2026-06-19 → 7e3b392` intact.
+
+Frontier UNCHANGED **50/58**; render commit `c19b565`; v2 suite **1392 passed / 2 skipped**. **Next lane: `TRUELINE_V2_FABLE_VERCEL_STAGING_ARTIFACT_HOSTING` (planning-first)** — host the redline PNGs WITHOUT committing the ~50 MB pile to GitHub (object/static storage, a Vercel prebuild fetch/copy, or backend static serving later), then flip `NEXT_PUBLIC_TL2_REDLINE_MANIFEST_SERVED=1` so strokes render. No production/domain change. Detail: [[current-sprint]] / [[log]] continued 40.
+
+### Prior — continued 39 (2026-06-19): P4 staging-plan persisted + Fable branch hygiene (clean `main` is the GitHub default); NO render-truth change; frontier 50/58
 **continued 39 — docs + git-hygiene only; NO engine/renderer/fixture/anchor/corpus/census/parent-model/placement/flag change; frontier UNCHANGED 50/58; render commit stays `c19b565`; engine work HEAD `16295d4` (this docs save sits one commit above it).** Two safe prep lanes after the continued-38 Fable remote-init:
 - **P4 staging plan PERSISTED (`16295d4`, path-scoped, pushed → `origin/feat/truelinev2`).** `wiki/trueline_v2_fable_vercel_staging_plan.md`: recommended Vercel slug `trueline-web-staging`, repo `github.com/patrickverardi45/trueline-web-experience`, branch strategy (+ clean `main`), Next.js/npm/`next build` + default Vercel Next output + Node 20.x/22.x, env (`NEXT_PUBLIC_TL2_REDLINE_MANIFEST=1`, `…_SERVED` OFF), manifest/status-only artifact plan (no 50 MB PNGs; object-store + prebuild later), first staging objective (read-only shell, `/redlines` 50/58 manifest, no render/upload/data/domain-swap), risks, and the future execution checklist. **PLANNING ONLY — nothing on Vercel.**
 - **Fable web branch hygiene DONE (separate `trueline-web-experience` repo).** Clean **`main`** created from `51dcbf7` and pushed (`* [new branch] main -> main`, upstream tracking); the **GitHub default branch is now `main`** (owner flipped it in the UI; verified live `ls-remote --symref` → `refs/heads/main`). `feat/2k-static-bundle-adapter` PRESERVED @ `51dcbf7` (not deleted / not force-pushed); tag `fable-v2-ui-bones-2026-06-19 → 7e3b392` intact; no old branches (`master`, `codex/*`) pushed; no code change. **`.vercel/` absent — not linked; no deploy/Vercel/domain/env change; `osp-redlining` / Render / `origin/main` `068a279` untouched.**
@@ -164,12 +173,12 @@ log5, log15, log16, log31, log38, log43, log57 — all owner/source-gated:
   Woodson s10+13 run; AP-158/2+45 intermediate, STA 3+23 FLOWER POT end. The source-location conflict is closed.)
 
 ## Current next gates (each separately authorized; NONE started)
-1. **`TRUELINE_V2_FABLE_VERCEL_STAGING_STANDUP` ← recommended next (owner dashboard action).** Stand up a NEW Fable
-   Vercel/staging project (slug `trueline-web-staging`, point at `main`), mock/read-only — NOT a production swap, no
-   domain move, no `osp-redlining` / Vercel / Render / env change; the agent does NOT run `vercel`. **Prep DONE:** P4 plan
-   persisted `wiki/trueline_v2_fable_vercel_staging_plan.md` (`16295d4`); website READ side landed continued-38 (Phase 2J
-   `841960f` + Fable Phase-2K `51dcbf7`, default-OFF `NEXT_PUBLIC_TL2_REDLINE_MANIFEST`); Fable remote-init P1 (`e35cd26`);
-   clean `main` is the GitHub default (continued-39). Execute the plan's §9 checklist (start with a local `npm run build` preflight).
+1. **`TRUELINE_V2_FABLE_VERCEL_STAGING_ARTIFACT_HOSTING` ← recommended next (planning-first).** Host the durable bundle's
+   redline PNGs WITHOUT committing the ~50 MB pile to GitHub — object/static storage, a Vercel prebuild fetch/copy into
+   `public/redline-bundle/`, or backend static serving later — then flip `NEXT_PUBLIC_TL2_REDLINE_MANIFEST_SERVED=1` so strokes
+   render on staging. No production/domain change; the agent does NOT run `vercel`. **`…_STAGING_STANDUP` ✅ DONE (continued-40,
+   `a4b8590`):** Fable web is live on Vercel (`main @ 51dcbf7`, `/redlines` manifest/status-only 50/58, bundle
+   `brenham-c19b565-ddfffff7cbe7`, render `c19b565`, 83 FINAL_REDLINE_PNG, `served:false`); URL/project name TO BE FILLED IN.
    Later (each separately gated): P5 v2 backend/API with EXTERNAL auth → P6 parity → P7 engine split → P8 retire v1.
 2. **`TRUELINE_V2_REDLINEMANIFEST_SCHEMA_AND_RUNNER_CONTRACT`** — ✅ DONE (continued-37, Phases 2A–2I, `a0a490f`→`81f3cd3`):
    schema + 50/58 example + mock UI + publisher + unified render registry + real all-50 manifest + published-bundle contract +
