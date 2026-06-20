@@ -126,7 +126,37 @@ project/domain/route. The Fable web/mobile app code and the `TrueLine_Beta` engi
 census/placement) are untouched. The only actions taken under this lane are **docs** (this file) and a **git-only**
 clean-`main` branch creation in the Fable repo (separate repo; never `osp-redlining`).
 
+## Standup result — DONE (2026-06-19)
+
+`TRUELINE_V2_FABLE_VERCEL_STAGING_STANDUP` executed by the owner in the Vercel dashboard (the agent ran no
+`vercel` / deploy / env / code action). The Fable web app loads on Vercel from repo
+`patrickverardi45/trueline-web-experience`, branch **`main`**, commit **`51dcbf7`**; `/redlines` renders with the
+existing Fable UI intact and the **v2 redline manifest (durable bundle)** panel showing **50/58**, bundle
+**`brenham-c19b565-ddfffff7cbe7`**, render/source **`c19b565`**, **83 FINAL_REDLINE_PNG**, **`served: false`**.
+This is **manifest/status-only** staging (Option D) — no live render, no upload flow, no client data, no production
+swap; the old `osp-redlining` project/domain is untouched.
+
+**Verification (agent, read-only — no `vercel`, no deploy):** every observed value reconciles with the committed
+source-of-truth that a `main @ 51dcbf7` build serves —
+- branch/commit: live default branch = `refs/heads/main`, `origin/main = 51dcbf7` → a Vercel project on `main` builds `51dcbf7`;
+- `50/58` = `src/lib/api/fixtures/redline_manifest.v1.json` `summary.frontier`; render/source `c19b565` = its `engine.render_commit`; `mock_example: false`;
+- bundle id `brenham-c19b565-ddfffff7cbe7` = `src/lib/api/fixtures/redline_store_index.v1.json` `latest_valid` (both fixtures committed → travel with `main`);
+- `83 FINAL_REDLINE_PNG` = 83 artifact entries (a raw grep returns 84: 83 artifacts + 1 textual mention in `consumption_rules`);
+- `served: false` because `NEXT_PUBLIC_TL2_REDLINE_MANIFEST_SERVED` is unset (no committed `.env` forces it) and the `public/redline-bundle/` PNGs are gitignored/local-only.
+
+## Next unresolved work (each separately gated; none started)
+
+1. **Artifact hosting for PNGs without committing 50 MB into GitHub** — publish the durable bundle's
+   `FINAL_REDLINE_PNG`s to **object/static storage**, or a **Vercel prebuild fetch/copy** into `public/redline-bundle/`,
+   then flip `NEXT_PUBLIC_TL2_REDLINE_MANIFEST_SERVED=1` so strokes render (the engine's `published_bundle_store` is
+   adapter-neutral by design). Until then staging stays manifest/status-only.
+2. **Backend / API serving** — a clean v2 backend serves the durable bundle + salvaged capabilities (architecture-plan P5).
+3. **External auth / security** — v2 uses an external established provider; v1 auth is reference-only (P5).
+4. **Production domain / cutover** — a real domain on the v2 project, retiring `osp-redlining` **last**, only after
+   v2 UI + backend parity (P6 → P8). No domain swap before then.
+
 ## Next lane
 
-**`TRUELINE_V2_FABLE_VERCEL_STAGING_STANDUP`** — execute the checklist above (Vercel project creation is a
-dashboard action the owner performs; the agent does not run `vercel`).
+**`TRUELINE_V2_FABLE_VERCEL_STAGING_ARTIFACT_HOSTING`** — unresolved item 1 above (object/static storage or a Vercel
+prebuild fetch for the PNGs) so `…_SERVED=1` can render strokes on staging. Planning-first; no production/domain change.
+The Vercel project itself stands; the agent does not run `vercel`.
