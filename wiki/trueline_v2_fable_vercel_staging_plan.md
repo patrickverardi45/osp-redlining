@@ -167,3 +167,15 @@ asset + a Vercel build-time prebuild fetch into `public/redline-bundle/<id>/`; n
 next coding lane `TRUELINE_V2_FABLE_STAGING_ARTIFACT_HOSTING_IMPL`). **IMPL CODE ✅ DONE (Fable `main` `3ab0c80`)** — prebuild
 fetch script + sha256 verify, locally proven; remaining = owner uploads the release asset + sets Vercel `TL2_REDLINE_BUNDLE_URL`
 + `NEXT_PUBLIC_TL2_REDLINE_MANIFEST_SERVED=1` + redeploys, then `TRUELINE_V2_FABLE_STAGING_ARTIFACT_HOSTING_VERIFY`.
+
+## Staging UX — Cedar Ridge mock framing cleared (2026-06-19)
+
+`TRUELINE_V2_FABLE_STAGING_REMOVE_CEDAR_RIDGE_CONFUSION` — Fable `main` **`85682bb`** (pushed; 6 files, pure label swaps,
+no PNGs). The staging shell read as a "Cedar Ridge FTTH" mock project even though the real v2 Brenham durable-manifest panel
+is present. Relabeled the **staging-facing project identity** to **`Brenham PH5 — v2 staging`**: Topbar project selector,
+flagship project name + location (`Brenham, TX`), the `/redlines` header (now `mock review queue (N) · v2 durable redline
+manifest = real engine data`), the EngineReviewPanel "Cedar Ridge queue" → "mock review queue", and the packet/closeout
+display names. Layout unchanged; no upload/backend wiring; the real `RedlineManifestPanel` and the prebuild artifact fetch
+are untouched. Internal ids (`p-cedar-ridge`) and deep mock **street names** (`Cedar Ridge Rd` in plan-sheet titles /
+playback / Hero-Map road label) are intentionally left as mock content (a street name, not the project identity). Verified:
+`tsc --noEmit` + `contracts:check` + `npm run build` PASS. NO engine/render/placement change; no Vercel/env/domain change by agent.
