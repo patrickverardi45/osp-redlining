@@ -23,6 +23,7 @@ PIPELINE_MODULES = [
     CONTRACTS / "upload_pipeline.py",
     CONTRACTS / "extracted_row.py",
     CONTRACTS / "reviewed_bore_log.py",
+    CONTRACTS / "manifest_handoff.py",
 ]
 
 
