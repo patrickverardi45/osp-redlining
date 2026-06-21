@@ -25,6 +25,7 @@ PIPELINE_MODULES = [
     CONTRACTS / "reviewed_bore_log.py",
     CONTRACTS / "manifest_handoff.py",
     CONTRACTS / "kmz_export.py",
+    CONTRACTS / "closeout_review.py",
 ]
 
 
