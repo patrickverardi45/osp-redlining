@@ -10,6 +10,7 @@ from typing import Tuple
 # truelinev2/config.py -> truelinev2/ -> repo root
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _OUT = _REPO_ROOT / "data" / "outputs" / "truelinev2"
+_PRODUCT_STORE = _OUT / "product_store"
 _DESIGN_STROKE_DIR = (
     _REPO_ROOT / "data" / "outputs" / "symbol_conduit_lane_sweep"
 )
@@ -46,6 +47,9 @@ class Settings:
     # the run-assembly route is not mounted unless explicitly enabled. Independent of
     # reviewer_api_optin so the run-assembly surface can be enabled/inert on its own.
     run_assembly_api_optin: bool = False
+    # Slice 1: local-only generic product-pipeline API (project/job foundation routes). DEFAULT OFF --
+    # the /v2/product routes are not mounted unless explicitly enabled.
+    product_pipeline_api_optin: bool = False
     # OWNER-PACKET-2 activation: consume the reviewed manual adjudication artifact
     # during ingest/resolution. DEFAULT OFF -- OFF is byte-identical (the frozen
     # M8.27 census is unchanged); ON overlays the reviewed corrections/abstains onto
@@ -55,6 +59,9 @@ class Settings:
     manual_adjudications_optin: bool = False
     # Approved design-stroke PNG source for the reviewer API asset route.
     design_stroke_dir: Path = _DESIGN_STROKE_DIR
+    # Slice 1: filesystem root for the generic product-pipeline store (customer_projects/<id>/...).
+    # Under the gitignored v2 outputs area; never committed.
+    product_store_root: Path = _PRODUCT_STORE
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -73,9 +80,13 @@ class Settings:
             symbol_conduit_lane_optin=os.getenv("TL2_SYMBOL_CONDUIT_LANE_OPTIN", "0") == "1",
             reviewer_api_optin=os.getenv("TL2_REVIEWER_API_OPTIN", "0") == "1",
             run_assembly_api_optin=os.getenv("TL2_RUN_ASSEMBLY_API_OPTIN", "0") == "1",
+            product_pipeline_api_optin=os.getenv("TL2_PRODUCT_PIPELINE_API_OPTIN", "0") == "1",
             manual_adjudications_optin=os.getenv("TRUELINE_MANUAL_ADJUDICATIONS", "0") == "1",
             design_stroke_dir=Path(
                 os.getenv("TL2_DESIGN_STROKE_DIR", str(_DESIGN_STROKE_DIR))
+            ),
+            product_store_root=Path(
+                os.getenv("TL2_PRODUCT_STORE_ROOT", str(_PRODUCT_STORE))
             ),
         )
 

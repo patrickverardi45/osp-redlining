@@ -42,4 +42,8 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         from truelinev2.api.run_assembly_routes import router as run_assembly_router
 
         app.include_router(run_assembly_router)
+    if settings.product_pipeline_api_optin:
+        from truelinev2.api.product_pipeline_routes import router as product_pipeline_router
+
+        app.include_router(product_pipeline_router)
     return app
