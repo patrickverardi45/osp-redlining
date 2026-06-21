@@ -19,8 +19,10 @@ implemented here. No engine, renderer, fixtures, web/backend wiring, AI/OCR, dep
 from __future__ import annotations
 
 import base64
+import json
 import re
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -84,6 +86,32 @@ from truelinev2.contracts.published_bundle_consumer import (
     BundleNotReadableError,
     ConsumerError,
     StaticBundleConsumer,
+)
+from truelinev2.contracts.kmz_export import evaluate_export
+from truelinev2.contracts.closeout_review import (
+    CloseoutNotFoundError,
+    CloseoutReviewError,
+    CloseoutStateError,
+    closeout_summary,
+    create_closeout_review,
+    evaluate_closeout,
+    load_closeout_review,
+)
+from truelinev2.contracts.billing_summary import (
+    BillingSummaryError,
+    BillingSummaryNotFoundError,
+    billing_summary_view,
+    compute_billing_summary,
+    create_billing_summary,
+    load_billing_summary,
+)
+from truelinev2.contracts.export_package import (
+    ExportPackageError,
+    ExportPackageNotFoundError,
+    assemble_export_package,
+    create_export_package,
+    export_package_view,
+    load_export_package,
 )
 
 router = APIRouter(prefix="/v2/product")
@@ -171,9 +199,11 @@ def _to_http(exc: Exception) -> HTTPException:
     NotFound / state-conflict subclasses are caught before the contract base errors fall through to 400)."""
     if isinstance(exc, (ProjectNotFoundError, JobNotFoundError, ReviewedBoreLogNotFoundError,
                         RowNotFoundError, GroupNotFoundError, HandoffNotFoundError,
-                        BundleNotReadableError, ArtifactNotServableError)):
+                        BundleNotReadableError, ArtifactNotServableError, CloseoutNotFoundError,
+                        BillingSummaryNotFoundError, ExportPackageNotFoundError)):
         return HTTPException(status_code=404, detail=str(exc))
-    if isinstance(exc, (IllegalTransitionError, UploadsClosedError, HandoffStateError)):  # state conflicts
+    if isinstance(exc, (IllegalTransitionError, UploadsClosedError, HandoffStateError,
+                        CloseoutStateError)):                           # state conflicts
         return HTTPException(status_code=409, detail=str(exc))
     if isinstance(exc, (CrossProjectAccessError, IsolationError)):
         return HTTPException(status_code=403, detail=str(exc))
@@ -183,7 +213,8 @@ def _to_http(exc: Exception) -> HTTPException:
 # Every contract-error base this router translates to HTTP via _to_http (which dispatches by the specific
 # subclass). A non-contract error is left to propagate (a real 500 — never masked as a 400).
 _CONTRACT_ERRORS = (CustomerProjectError, ProcessingJobError, UploadError, ExtractedRowError,
-                    ReviewedBoreLogError, ManifestHandoffError, ConsumerError, IsolationError)
+                    ReviewedBoreLogError, ManifestHandoffError, ConsumerError, CloseoutReviewError,
+                    BillingSummaryError, ExportPackageError, IsolationError)
 
 
 @router.post("/project")
@@ -511,3 +542,133 @@ def get_artifact(job_id: str, artifact_path: str,
     except _CONTRACT_ERRORS as exc:
         raise _to_http(exc)
     return FileResponse(str(bundle.bundle_root / desc["path"]), media_type=desc["content_type"])
+
+
+# --------------------------------------------------------------------------- #
+# Slice 4 — downstream status spine (KMZ safety / closeout / billing / export package): server-derived
+# reads + safe server actions only. NO privileged closeout transitions (lock/approve/close/reject/reopen).
+# --------------------------------------------------------------------------- #
+def _server_cost_rule_set(settings) -> dict:
+    """Load the deployment's versioned billing cost-rule set from SERVER config (never the client). The path
+    is `product_billing_cost_rules_path` (env TL2_PRODUCT_BILLING_COST_RULES); rates live in deployment data,
+    never baked in code and never trusted from a request. Structural validation is the billing contract's."""
+    path = settings.product_billing_cost_rules_path
+    if not path:
+        raise HTTPException(status_code=400, detail="billing cost rules are not configured")
+    try:
+        return json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        raise HTTPException(status_code=400, detail="billing cost rules are not loadable")
+
+
+@router.get("/jobs/{job_id}/kmz-export")
+def get_kmz_export(job_id: str,
+                   ctx: RequestContext = Depends(get_context),
+                   c: Container = Depends(get_container)) -> dict:
+    """Evaluate KMZ/KML geometry-export SAFETY for the job's approved redline output (READ-ONLY; persists
+    nothing). Today's real (sheet/station/pixel) manifests return BLOCKED[UNSUPPORTED_PIXEL_ONLY] — the
+    system abstains rather than fake coordinates. 404 if the job is missing."""
+    cp, store = ctx.tenant.value, _store_root(c)
+    try:
+        return evaluate_export(store, cp, job_id)
+    except _CONTRACT_ERRORS as exc:
+        raise _to_http(exc)
+
+
+@router.post("/jobs/{job_id}/closeout/evaluate")
+def evaluate_closeout_route(job_id: str,
+                            ctx: RequestContext = Depends(get_context),
+                            c: Container = Depends(get_container)) -> dict:
+    """Evaluate/refresh the job's ONE server-authoritative closeout status from trusted contracts (creates the
+    record on first call). NOT a privileged transition — no lock/approve/close/reject/reopen here. 404 if the
+    job is missing; 409 if the closeout is CLOSED (terminal)."""
+    cp, store, now = ctx.tenant.value, _store_root(c), _now()
+    try:
+        try:
+            load_closeout_review(store, cp, job_id)
+        except CloseoutNotFoundError:
+            create_closeout_review(store, cp, job_id, at=now, by=ctx.session_id)   # idempotent init
+        return evaluate_closeout(store, cp, job_id, at=now, by=ctx.session_id)
+    except _CONTRACT_ERRORS as exc:
+        raise _to_http(exc)
+
+
+@router.get("/jobs/{job_id}/closeout")
+def get_closeout(job_id: str,
+                 ctx: RequestContext = Depends(get_context),
+                 c: Container = Depends(get_container)) -> dict:
+    """Read the job's closeout_review record + the derived summary (the single value all readiness UI should
+    render). 404 if no closeout_review has been evaluated yet."""
+    cp, store = ctx.tenant.value, _store_root(c)
+    try:
+        record = load_closeout_review(store, cp, job_id)
+    except _CONTRACT_ERRORS as exc:
+        raise _to_http(exc)
+    return {**record, "summary": closeout_summary(record)}
+
+
+@router.post("/jobs/{job_id}/billing/compute")
+def compute_billing_route(job_id: str,
+                          ctx: RequestContext = Depends(get_context),
+                          c: Container = Depends(get_container)) -> dict:
+    """Compute the job's ONE server-authoritative billing summary from TRUSTED product state + the SERVER
+    cost-rule set (creates the record on first call). The client supplies NO rates and NO itemized lines —
+    billing is derived entirely server-side. 404 if the job is missing; 400 if cost rules are not
+    configured/loadable/valid."""
+    cp, store, now = ctx.tenant.value, _store_root(c), _now()
+    cost_rule_set = _server_cost_rule_set(c.settings)       # server-sourced; never client-supplied
+    try:
+        try:
+            load_billing_summary(store, cp, job_id)
+        except BillingSummaryNotFoundError:
+            create_billing_summary(store, cp, job_id, at=now, by=ctx.session_id)   # idempotent init
+        return compute_billing_summary(store, cp, job_id, cost_rule_set=cost_rule_set,
+                                       at=now, by=ctx.session_id)
+    except _CONTRACT_ERRORS as exc:
+        raise _to_http(exc)
+
+
+@router.get("/jobs/{job_id}/billing")
+def get_billing(job_id: str,
+                ctx: RequestContext = Depends(get_context),
+                c: Container = Depends(get_container)) -> dict:
+    """Read the job's billing_summary record + the derived view. 404 if none has been computed yet."""
+    cp, store = ctx.tenant.value, _store_root(c)
+    try:
+        record = load_billing_summary(store, cp, job_id)
+    except _CONTRACT_ERRORS as exc:
+        raise _to_http(exc)
+    return {**record, "view": billing_summary_view(record)}
+
+
+@router.post("/jobs/{job_id}/export-package/assemble")
+def assemble_export_package_route(job_id: str,
+                                  ctx: RequestContext = Depends(get_context),
+                                  c: Container = Depends(get_container)) -> dict:
+    """Assemble the job's export-package DESCRIPTOR (a manifest-of-references) from trusted outputs (creates
+    the record on first call). NO PDF/HTML/binary/export file is generated; billing is included by snapshot
+    reference only. Closeout controls readiness/finality — there is no package-approve action. 404 if the job
+    is missing."""
+    cp, store, now = ctx.tenant.value, _store_root(c), _now()
+    try:
+        try:
+            load_export_package(store, cp, job_id)
+        except ExportPackageNotFoundError:
+            create_export_package(store, cp, job_id, at=now, by=ctx.session_id)    # idempotent init
+        return assemble_export_package(store, cp, job_id, at=now, by=ctx.session_id)
+    except _CONTRACT_ERRORS as exc:
+        raise _to_http(exc)
+
+
+@router.get("/jobs/{job_id}/export-package")
+def get_export_package(job_id: str,
+                       ctx: RequestContext = Depends(get_context),
+                       c: Container = Depends(get_container)) -> dict:
+    """Read the job's export_package descriptor record + the derived view (included/omitted sections,
+    blockers, content hash). 404 if none has been assembled yet."""
+    cp, store = ctx.tenant.value, _store_root(c)
+    try:
+        record = load_export_package(store, cp, job_id)
+    except _CONTRACT_ERRORS as exc:
+        raise _to_http(exc)
+    return {**record, "view": export_package_view(record)}

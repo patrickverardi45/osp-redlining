@@ -23,7 +23,16 @@ from truelinev2.config import Settings
 from truelinev2.context import require_context
 from truelinev2.contracts.extracted_row import CONFIRMED, UNREVIEWED
 from truelinev2.contracts.manifest_handoff import ATTEMPTED, FAILED, REJECTED, SUCCEEDED
-from truelinev2.contracts.processing_job import CREATED, EXTRACTING, UPLOADING, job_dir
+from truelinev2.contracts.processing_job import (
+    AWAITING_REVIEW,
+    CLOSEOUT_REVIEW,
+    CREATED,
+    EXTRACTING,
+    PLACED,
+    PLACING,
+    UPLOADING,
+    job_dir,
+)
 from truelinev2.contracts.reviewed_bore_log import (
     GROUPING_CONFIRMED,
     SEPARATE_BORE,
@@ -50,6 +59,14 @@ PRODUCT_PATHS = {
     "/v2/product/jobs/{job_id}/redline-manifest",
     "/v2/product/jobs/{job_id}/artifacts",
     "/v2/product/jobs/{job_id}/artifacts/{artifact_path:path}",
+    # Slice 4 — downstream status spine (kmz safety / closeout / billing / export package)
+    "/v2/product/jobs/{job_id}/kmz-export",
+    "/v2/product/jobs/{job_id}/closeout/evaluate",
+    "/v2/product/jobs/{job_id}/closeout",
+    "/v2/product/jobs/{job_id}/billing/compute",
+    "/v2/product/jobs/{job_id}/billing",
+    "/v2/product/jobs/{job_id}/export-package/assemble",
+    "/v2/product/jobs/{job_id}/export-package",
 }
 
 
@@ -61,6 +78,7 @@ def _settings(tmp_path: Path, *, enabled: bool) -> Settings:
         db_path=tmp_path / "truelinev2.db",
         product_pipeline_api_optin=enabled,
         product_store_root=tmp_path / "product_store",
+        product_billing_cost_rules_path=tmp_path / "cost_rules.json",
     )
 
 
@@ -83,15 +101,19 @@ def _ctx(tenant: str, session: str = "sess-1"):
 def test_settings_default_off_and_env_paths(monkeypatch):
     monkeypatch.delenv("TL2_PRODUCT_PIPELINE_API_OPTIN", raising=False)
     monkeypatch.delenv("TL2_PRODUCT_STORE_ROOT", raising=False)
+    monkeypatch.delenv("TL2_PRODUCT_BILLING_COST_RULES", raising=False)
     default = Settings.from_env()
     assert default.product_pipeline_api_optin is False
     assert default.product_store_root.name == "product_store"
+    assert default.product_billing_cost_rules_path is None      # billing unavailable until configured
 
     monkeypatch.setenv("TL2_PRODUCT_PIPELINE_API_OPTIN", "1")
     monkeypatch.setenv("TL2_PRODUCT_STORE_ROOT", "C:/tmp/ps")
+    monkeypatch.setenv("TL2_PRODUCT_BILLING_COST_RULES", "C:/tmp/rules.json")
     enabled = Settings.from_env()
     assert enabled.product_pipeline_api_optin is True
     assert enabled.product_store_root == Path("C:/tmp/ps")
+    assert enabled.product_billing_cost_rules_path == Path("C:/tmp/rules.json")
 
 
 def test_flag_off_routes_are_dormant(tmp_path):
@@ -734,3 +756,177 @@ def test_slice3_tenant_isolation_b_cannot_address_a(tmp_path):
     assert e_art.value.status_code == 404
     # A still reads its own bundle
     assert ppr.list_artifacts("job-1", ctx=ctx_a, c=c)["artifacts"][0]["log_id"] == "logA"
+
+
+# --------------------------------------------------------------------------- #
+# Slice 4 helpers (advance the job lifecycle into the billing/closeout range; server cost rules).
+# --------------------------------------------------------------------------- #
+def _advance_job_to(c, ctx, target, *, job_id="job-1"):
+    """Walk the job lifecycle forward to `target` via the transition route (uploads must already be done)."""
+    for st in (UPLOADING, EXTRACTING, AWAITING_REVIEW, PLACING, PLACED, CLOSEOUT_REVIEW):
+        ppr.transition_processing_job(job_id, ppr.JobTransition(to_status=st), ctx=ctx, c=c)
+        if st == target:
+            return
+
+
+def _write_cost_rules(c, *, base_unit_cost="2.50"):
+    """Write a deployment cost-rule fixture to the server-configured path (the 'server fixture' pattern)."""
+    rules = {"version": "v1", "currency": "USD", "minor_unit_digits": 2,
+             "rules": [{"code": "BASE_FOOTAGE", "kind": "BASE", "unit": "ft",
+                        "unit_cost": base_unit_cost, "label": "Base footage"}]}
+    Path(c.settings.product_billing_cost_rules_path).write_text(json.dumps(rules), encoding="utf-8")
+
+
+# --------------------------------------------------------------------------- #
+# Slice 4 — KMZ export safety (read/evaluate; never fakes coordinates).
+# --------------------------------------------------------------------------- #
+def test_kmz_export_pixel_only_is_blocked_no_coords(tmp_path):
+    c, ctx = _container(tmp_path), _ctx("cp-aaa")
+    _finalized_job(c, ctx)                                   # attaches a validated pixel-only manifest
+    rec = ppr.get_kmz_export("job-1", ctx=ctx, c=c)
+    assert rec["status"] == "BLOCKED"
+    assert "UNSUPPORTED_PIXEL_ONLY" in {b["code"] for b in rec["blockers"]}
+    assert rec["kml"] is None and rec["crs"] is None and rec["features"] == []   # no invented coordinates
+
+
+def test_kmz_export_missing_manifest_slot_is_blocked(tmp_path):
+    c, ctx = _container(tmp_path), _ctx("cp-aaa")
+    _seed_job(c, ctx)                                        # no handoff -> no output slots
+    rec = ppr.get_kmz_export("job-1", ctx=ctx, c=c)
+    assert rec["status"] == "BLOCKED"
+    assert "MISSING_MANIFEST_SLOT" in {b["code"] for b in rec["blockers"]}
+
+
+# --------------------------------------------------------------------------- #
+# Slice 4 — closeout evaluate/read (server-derived status; NO privileged transitions).
+# --------------------------------------------------------------------------- #
+def test_closeout_evaluate_creates_and_is_server_derived(tmp_path):
+    c, ctx = _container(tmp_path), _ctx("cp-aaa")
+    _seed_job(c, ctx)                                        # job CREATED -> not in closeout range
+    rec = ppr.evaluate_closeout_route("job-1", ctx=ctx, c=c)
+    assert rec["status"] == "BLOCKED"                        # derived from the server gate, not the client
+    assert "JOB_NOT_IN_CLOSEOUT_RANGE" in {b["code"] for b in rec["gate"]["hard_blockers"]}
+
+
+def test_closeout_read_returns_record_and_summary(tmp_path):
+    c, ctx = _container(tmp_path), _ctx("cp-aaa")
+    _seed_job(c, ctx)
+    ppr.evaluate_closeout_route("job-1", ctx=ctx, c=c)
+    out = ppr.get_closeout("job-1", ctx=ctx, c=c)
+    assert out["status"] == "BLOCKED" and out["summary"]["status"] == "BLOCKED"
+    assert out["summary"]["is_blocked"] is True
+
+
+def test_closeout_read_missing_is_404(tmp_path):
+    c, ctx = _container(tmp_path), _ctx("cp-aaa")
+    _seed_job(c, ctx)
+    with pytest.raises(HTTPException) as exc:
+        ppr.get_closeout("job-1", ctx=ctx, c=c)
+    assert exc.value.status_code == 404
+
+
+def test_no_privileged_closeout_routes(tmp_path):
+    # ONLY evaluate + read closeout routes exist — no lock/approve/close/reject/reopen/unlock surface.
+    app = create_app(_settings(tmp_path, enabled=True))
+    closeout_paths = {r.path for r in _product_routes(app) if "/closeout" in r.path}
+    assert closeout_paths == {"/v2/product/jobs/{job_id}/closeout",
+                              "/v2/product/jobs/{job_id}/closeout/evaluate"}
+
+
+# --------------------------------------------------------------------------- #
+# Slice 4 — billing compute/read (server-side cost rules only; never client billing truth).
+# --------------------------------------------------------------------------- #
+def test_billing_compute_uses_server_cost_rules(tmp_path):
+    c, ctx = _container(tmp_path), _ctx("cp-aaa")
+    _finalized_job(c, ctx)
+    _advance_job_to(c, ctx, PLACED)                          # into the billing range
+    _write_cost_rules(c, base_unit_cost="2.50")
+    rec = ppr.compute_billing_route("job-1", ctx=ctx, c=c)
+    assert rec["status"] == "COMPUTED"                       # no hard blockers; closeout missing -> not FINAL
+    cur = next(r for r in rec["revisions"] if r["revision_id"] == rec["current_revision_id"])
+    base = next(cl for cl in cur["charge_lines"] if cl["kind"] == "BASE")
+    assert base["unit_cost"] == "2.50"                       # the SERVER fixture rate (client supplies none)
+    assert rec["currency"] == "USD"
+
+
+def test_billing_compute_unconfigured_is_400(tmp_path):
+    settings = dataclasses.replace(_settings(tmp_path, enabled=True), product_billing_cost_rules_path=None)
+    c, ctx = create_app(settings).state.tl2, _ctx("cp-aaa")
+    _seed_job(c, ctx)
+    with pytest.raises(HTTPException) as exc:                # billing refuses without server-configured rules
+        ppr.compute_billing_route("job-1", ctx=ctx, c=c)
+    assert exc.value.status_code == 400
+
+
+def test_billing_read_after_compute(tmp_path):
+    c, ctx = _container(tmp_path), _ctx("cp-aaa")
+    _finalized_job(c, ctx)
+    _advance_job_to(c, ctx, PLACED)
+    _write_cost_rules(c)
+    ppr.compute_billing_route("job-1", ctx=ctx, c=c)
+    out = ppr.get_billing("job-1", ctx=ctx, c=c)
+    assert out["view"]["status"] == "COMPUTED" and out["view"]["currency"] == "USD"
+
+
+def test_billing_read_missing_is_404(tmp_path):
+    c, ctx = _container(tmp_path), _ctx("cp-aaa")
+    _seed_job(c, ctx)
+    with pytest.raises(HTTPException) as exc:
+        ppr.get_billing("job-1", ctx=ctx, c=c)
+    assert exc.value.status_code == 404
+
+
+# --------------------------------------------------------------------------- #
+# Slice 4 — export package assemble/read (descriptor of references; never generates files).
+# --------------------------------------------------------------------------- #
+def test_export_package_assemble_is_descriptor_no_files(tmp_path):
+    c, ctx = _container(tmp_path), _ctx("cp-aaa")
+    _finalized_job(c, ctx)
+    _advance_job_to(c, ctx, PLACED)
+    rec = ppr.assemble_export_package_route("job-1", ctx=ctx, c=c)
+    assert rec["status"] == "ASSEMBLED" and rec["current_revision_id"]   # closeout missing -> not READY/FINAL
+    view = ppr.get_export_package("job-1", ctx=ctx, c=c)["view"]
+    assert "REDLINE_MANIFEST" in view["included_sections"]
+    assert "CLOSEOUT_REVIEW" in view["omitted_sections"]
+    # the package is a DESCRIPTOR — no rendered/exported binary is generated anywhere under the job
+    jdir = job_dir(c.settings.product_store_root, "cp-aaa", "job-1")
+    generated = [p.name for p in jdir.rglob("*")
+                 if p.suffix.lower() in (".pdf", ".html", ".zip", ".kmz", ".docx")]
+    assert generated == []
+
+
+def test_export_package_read_missing_is_404(tmp_path):
+    c, ctx = _container(tmp_path), _ctx("cp-aaa")
+    _seed_job(c, ctx)
+    with pytest.raises(HTTPException) as exc:
+        ppr.get_export_package("job-1", ctx=ctx, c=c)
+    assert exc.value.status_code == 404
+
+
+# --------------------------------------------------------------------------- #
+# Slice 4 — tenant isolation across the whole status/closeout/billing/export surface.
+# --------------------------------------------------------------------------- #
+def test_slice4_tenant_isolation_b_cannot_address_a(tmp_path):
+    c = _container(tmp_path)
+    ctx_a, ctx_b = _ctx("cp-aaa"), _ctx("cp-bbb")
+    _finalized_job(c, ctx_a)
+    _advance_job_to(c, ctx_a, PLACED)
+    _write_cost_rules(c)
+    ppr.evaluate_closeout_route("job-1", ctx=ctx_a, c=c)
+    ppr.compute_billing_route("job-1", ctx=ctx_a, c=c)
+    ppr.assemble_export_package_route("job-1", ctx=ctx_a, c=c)
+    # B (empty scope) cannot touch A's job-1 via any Slice 4 route
+    for call in (
+        lambda: ppr.get_kmz_export("job-1", ctx=ctx_b, c=c),
+        lambda: ppr.evaluate_closeout_route("job-1", ctx=ctx_b, c=c),
+        lambda: ppr.get_closeout("job-1", ctx=ctx_b, c=c),
+        lambda: ppr.compute_billing_route("job-1", ctx=ctx_b, c=c),
+        lambda: ppr.get_billing("job-1", ctx=ctx_b, c=c),
+        lambda: ppr.assemble_export_package_route("job-1", ctx=ctx_b, c=c),
+        lambda: ppr.get_export_package("job-1", ctx=ctx_b, c=c),
+    ):
+        with pytest.raises(HTTPException) as exc:
+            call()
+        assert exc.value.status_code == 404
+    # A still reads its own
+    assert ppr.get_closeout("job-1", ctx=ctx_a, c=c)["status"] in ("BLOCKED", "READY_FOR_APPROVAL")

@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Tuple
+from typing import Optional, Tuple
 
 # truelinev2/config.py -> truelinev2/ -> repo root
 _REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -62,6 +62,10 @@ class Settings:
     # Slice 1: filesystem root for the generic product-pipeline store (customer_projects/<id>/...).
     # Under the gitignored v2 outputs area; never committed.
     product_store_root: Path = _PRODUCT_STORE
+    # Slice 4: deployment-provided versioned billing cost-rule set (JSON) for server-side billing
+    # computation. DEFAULT None -- billing compute is unavailable until a deployment points this at a
+    # rules file. Rates are deployment data, NEVER baked into code and NEVER trusted from a client request.
+    product_billing_cost_rules_path: Optional[Path] = None
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -87,6 +91,10 @@ class Settings:
             ),
             product_store_root=Path(
                 os.getenv("TL2_PRODUCT_STORE_ROOT", str(_PRODUCT_STORE))
+            ),
+            product_billing_cost_rules_path=(
+                Path(os.environ["TL2_PRODUCT_BILLING_COST_RULES"])
+                if os.getenv("TL2_PRODUCT_BILLING_COST_RULES") else None
             ),
         )
 
