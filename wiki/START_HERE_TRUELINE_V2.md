@@ -1,7 +1,7 @@
 # START HERE — TrueLine v2 Canonical Bootstrap
 
 > Single source of current working truth. Read THIS file first, in full — it is small on purpose.
-> Snapshot below is current as of **2026-06-21 (continued 45 — kmz_export geometry-safety contract landed (pixel-only manifests BLOCKED, never fake coords, +10 tests); spine upload→review→handoff→export-safety; HEAD `2f70e22`; NO render-truth change; frontier 50/58)**. For the absolute-latest
+> Snapshot below is current as of **2026-06-21 (continued 46 — closeout_review ONE-status model landed (one durable server-authoritative status per job; OPEN_ENGINE_BLOCKERS hard, KMZ pixel-only = warning, +20 tests); spine upload→review→handoff→export-safety→closeout; HEAD `43a8501`; NO render-truth change; frontier 50/58)**. For the absolute-latest
 > state, read ONLY the top ~35 lines of `C:/Nova/knowledge/TrueLine-Wiki/wiki/hot.md` — never the whole file.
 > **Do NOT load history/archive files** (`log.md`, `current-sprint.md`, full `hot.md`) unless explicitly
 > asked or investigating a specific historical decision.
@@ -18,19 +18,32 @@ review" buckets are not progress until they become drawn strokes.
 
 ## Repo / branch state
 - Repo: `C:/Nova/projects/TrueLine/TrueLine_Beta`  ·  Branch: `feat/truelinev2`
-- Product lives in `truelinev2/` (clean-room, zero old-app imports). v2 suite: **1392 passed / 2 skipped**
-  (log3/log44 added assertions to the existing sweep e2e — no new test). Callout-sweep e2e **31 passed / 1 skipped**.
+- Product lives in `truelinev2/` (clean-room, zero old-app imports). v2 suite: **1570 passed / 4 skipped**
+  (continued-46: +20 closeout_review one-status tests). Callout-sweep e2e **31 passed / 1 skipped**.
 - Isolated track: monolith / Render / Vercel UNTOUCHED; nothing merged or deployed.
 
 ## HEAD / remote state (verify with `git` before trusting this snapshot)
-- Last RENDER commit: **`c19b565`** (log3 wired + DRAWN, 49→50/58 — UNCHANGED). Local HEAD = **`2f70e22`**
-  (continued-45; kmz_export geometry-safety — `contracts: add kmz export geometry-safety contract`, 3 files/+493, pushed → `origin/feat/truelinev2` = `2f70e22`; tree clean). Prior: continued-44 handoff `2013879`; continued-43 gate `6048ef1`; continued-42 Slice 1 `2193a0e`; continued-41 `a4bf2a5` (docs/audit). Continued-41 engine-repo arc (7 commits on the continued-40 save `021561c`):
+- Last RENDER commit: **`c19b565`** (log3 wired + DRAWN, 49→50/58 — UNCHANGED). Engine/contract HEAD = **`43a8501`**
+  (continued-46; closeout_review one-status — `contracts: add closeout review one-status model`, 3 files/+906, pushed → `origin/feat/truelinev2` = `43a8501`; tree clean; the continued-46 docs re-canonicalization sits one commit above). Prior: continued-45 kmz_export `2f70e22`; continued-44 handoff `2013879`; continued-43 gate `6048ef1`; continued-42 Slice 1 `2193a0e`; continued-41 `a4bf2a5` (docs/audit). Continued-41 engine-repo arc (7 commits on the continued-40 save `021561c`):
   `b9fd9cf` (staging URL) → `09fc469` (artifact-hosting plan) → `e886de2` (hosting IMPL recorded) → `377536d` (Cedar Ridge→Brenham relabel) → `5211102` (mock-shell→proof-viewer) → `2a559bd` (artifact-fetch env-debug) → `a4bf2a5` (v1 salvage audit + v2 pipeline contract). NO engine/render-truth change.
   Fable web (SEPARATE `trueline-web-experience` repo): `main` `51dcbf7`→**`16c7095`** (`3ab0c80` prebuild fetch → `85682bb` relabel → `f753b1a` proof-viewer shell → `16c7095` build-chain+diagnostic); default branch = `main`; LIVE at `https://trueline-web-experience.vercel.app/`.
   Prior saves: continued-40 `a4b8590`/`021561c` (staging standup); continued-39 `16295d4` (P4 plan + Fable clean main); continued-38 `bdbc3b1` (Phase 2J + Fable UI preserve/retire + repo-arch + remote-init P1).
   ARCHIVE (recovery): branch/tag `archive-v2-continued-35-superseded-scratch` = **`d8508b9`** (superseded `backend/tl_core/**` + 14 proof slices). `origin/main`: **`068a279`** (untouched).
 
-## Latest — continued 45 (2026-06-21): kmz_export geometry-safety contract landed (pixel-only manifests BLOCKED, never fake coords); NO render-truth change; frontier 50/58
+## Latest — continued 46 (2026-06-21): closeout_review ONE-status model landed (one durable server-authoritative status per job); NO render-truth change; frontier 50/58
+**continued 46 — the FIFTH permanent product-pipeline slice (the ONE authoritative closeout status); NO engine/renderer/fixture/anchor/corpus/census/parent-model/placement/flag change; frontier UNCHANGED 50/58; render commit stays `c19b565`; engine/contract HEAD `43a8501`; v2 suite 1570 passed / 4 skipped.**
+- **Closeout review one-status LANDED (lane `TRUELINE_PRODUCT_CLOSEOUT_REVIEW_ONE_STATUS`, HEAD/origin `43a8501`).** Commit `43a8501` `contracts: add closeout review one-status model` (3 files / +906; staged explicitly, NO `git add -A`; pushed, HEAD = origin = `43a8501`, tree clean). One GENERIC, contract-only, pure-stdlib module + its test + the +1-line guard extension. Fixes v1's core defect (a client `billingApprovalStatus` React state never persisted + a readiness checklist computed in 3 disagreeing places + an in-memory lock the lock endpoint never validated — salvage audit 4c/4d/5a).
+  - `truelinev2/contracts/closeout_review.py` — ONE durable `_closeout_review.json` per job (singleton → structurally one status). Status set `OPEN · BLOCKED · READY_FOR_APPROVAL · LOCKED · APPROVED · REJECTED · CLOSED` (LOCKED kept DISTINCT, owner decision A). The gate is SERVER-evaluated from TRUSTED CONTRACTS ONLY (job lifecycle+slots, the sha256-verified durable manifest, the reviewed_bore_log resolved via the manifest-handoff chain for §6 freshness, read-only `kmz_export`) and STORED (a snapshot), not recomputed per render. `approve`/`lock` RE-EVALUATE the gate and REFUSE (leaving BLOCKED) if any hard blocker; LOCKED/APPROVED auto-invalidate → BLOCKED when trusted inputs break (§6). Privileged transitions (lock/unlock/approve/reopen/close) are permission-gated (`actor_role ∈ authorized_roles`, both injected — no baked roles); every transition audited; never touches `export_package`.
+  - **Owner decisions baked in:** A = `LOCKED` is a distinct status. B(corrected) = `OPEN_ENGINE_BLOCKERS` is a HARD blocker (a closeout must never read "approved" while known engine/redline blockers remain open; approve-with-exceptions is a future SEPARATE audited waiver lane, deliberately NOT sneaked in here), while `KMZ_EXPORT_BLOCKED` from the current pixel-only manifests is a WARNING (PDF-first closeout does not require geospatial export). Other hard blockers: JOB_NOT_IN_CLOSEOUT_RANGE / MISSING_MANIFEST / MISSING_ARTIFACT_BUNDLE / UNTRUSTED_OUTPUT / MANIFEST_NOT_RESOLVABLE / REVIEWED_BORE_LOG_NOT_READY / UNRESOLVED_REVIEW_ITEMS / SOURCE_CONFLICT.
+  - Tests: `test_closeout_review_one_status_contract.py` (20); the generic no-specific-names guard extended to all 8 pipeline modules (+1 line). Verify: targeted 20 ✓; sibling pipeline + naming guard 91 in one run; naming guard with operator `NAME_TOKENS` (real customer/location tokens) ✓ zero leakage; **full v2 suite 1570 passed / 4 skipped** (delta exactly +20 vs the committed 1550/4 baseline). NO artifacts committed (tmp_path; `data/`+`outputs/` gitignored); NO generated `.kmz`/`.kml`/`.png`/`.json`; NO deploy; NO mobile; NO engine/render/fixture/coordinate change; `origin/main` `068a279` untouched.
+
+**CLOSEOUT INVARIANTS:** ONE durable server-authoritative status per job (no client flag / UI boolean may override it); the gate is server-evaluated from trusted contracts + STORED (not recomputed per render); OPEN_ENGINE_BLOCKERS / missing-or-untrusted-or-unresolvable outputs / reviewed_bore_log-not-ready / source-conflict are HARD blockers; KMZ pixel-only export-blocked is a WARNING; approve/lock re-evaluate + refuse on any hard blocker; approved/locked auto-invalidate to BLOCKED if trusted inputs break; LOCKED is a distinct durable state; transitions are permission-gated + audited; this lane does NOT touch `export_package`/billing/backend/web/UI/engine; this slice does NOT drive the job's `CLOSEOUT_REVIEW→CLOSED` transition (future integration).
+
+**PERMANENT SPINE now includes closeout:** `upload_pipeline → reviewed_bore_log → manifest_handoff → kmz_export safety → closeout_review (one status)`. Pipeline state: artifact serving DONE (served:true, continued-42) · upload/job foundation `2193a0e` · reviewed bore-log gate `6048ef1` · manifest handoff `2013879` · KMZ geometry-safety `2f70e22` · closeout one-status `43a8501`; NO backend/web/UI/AI-OCR-provider/engine execution wired yet.
+
+**Next recommended lane (separately authorized; NOT started):** `billing_summary` server-computed model (§6 — server-computed/persisted totals, client renders never overrides, PART OF the closeout status model, input change after approval invalidates approval). Alternate: the `export_package` stored/versioned/checksummed/reproducible packet (§8). Detail: [[current-sprint]] / [[log]] continued 46.
+
+### Prior — continued 45 (2026-06-21): kmz_export geometry-safety contract landed (pixel-only manifests BLOCKED, never fake coords); NO render-truth change; frontier 50/58
 **continued 45 — the FOURTH permanent product-pipeline slice (KMZ/KML geometry safety); NO engine/renderer/fixture/anchor/corpus/census/parent-model/placement/flag change; frontier UNCHANGED 50/58; render commit stays `c19b565`; engine HEAD `2f70e22`; v2 suite 1550 passed / 4 skipped.**
 - **KMZ export geometry-safety LANDED (lane `TRUELINE_PRODUCT_KMZ_EXPORT_GEOMETRY_SAFETY`, HEAD/origin `2f70e22`).** Commit `2f70e22` `contracts: add kmz export geometry-safety contract` (3 files / +493; staged explicitly, NO `git add -A`; pushed, HEAD = origin = `2f70e22`, tree clean). One GENERIC, contract-only, pure-stdlib module + its test + the +1-line guard extension. **Decisive finding:** the v2 redline manifest has NO geospatial basis (only `source_sheets`/`span` stations/`closure` footage/PNG `artifacts`; schema `additionalProperties:false`), so every REAL manifest classifies `UNSUPPORTED_PIXEL_ONLY` and the export is BLOCKED — the system abstains rather than fake coordinates.
   - `truelinev2/contracts/kmz_export.py` — geometry-basis classifier (`GEOSPATIAL_COORDINATES`/`GEOREFERENCED_SHEET`/`UNSUPPORTED_PIXEL_ONLY`; NEVER treats stations/sheets/pixels as geospatial), a named blocker taxonomy (10 codes incl. `MISSING_MANIFEST_SLOT`/`UNTRUSTED_HANDOFF`/`MANIFEST_NOT_RESOLVABLE`/`UNSUPPORTED_PIXEL_ONLY`/`AMBIGUOUS_CRS`/`COORDINATE_UNCERTAINTY`/`SOURCE_CONFLICT`), a deterministic red-styled KML builder (text + traceability ExtendedData; KMZ = interface descriptor only, no binary), and `evaluate_export` — READ-ONLY over the job's trusted `redline_manifest` + `artifact_bundle` slots (resolves + sha256-verifies the durably-stored manifest), returns an export record (EXPORTABLE/BLOCKED). Persists nothing; never touches `export_package`; never reads `job["uploads"]`.
@@ -232,14 +245,15 @@ log5, log15, log16, log31, log38, log43, log57 — all owner/source-gated:
   Woodson s10+13 run; AP-158/2+45 intermediate, STA 3+23 FLOWER POT end. The source-location conflict is closed.)
 
 ## Current next gates (each separately authorized; NONE started)
-1. **`closeout_review` ONE-status model ← recommended next (separately authorized; NOT started).**
-   A single persisted `closeout_review.status` per job (`OPEN → READY_FOR_REVIEW → BLOCKED → LOCKED → APPROVED`,
-   server-authoritative + audited); ALL readiness UI renders THIS value — no panel-local readiness, no client flag may
-   override it (v1's core defect: 3 disagreeing readiness signals). A server-side gate checklist (design loaded, reviewed
-   bore logs approved, manifest present, evidence attached, …) evaluated once + stored, not recomputed per render; LOCKED/
-   APPROVED are permission-gated audited transitions; lock state durable (survives restart). Contract §5. Alternates:
-   `billing_summary` server-computed (§6) or the `export_package` stored/versioned/reproducible packet (§8). Builds on the
-   continued-42→45 spine (HEAD `2f70e22`). Contract-first; generic names; no backend/UI/deploy.
+1. **`billing_summary` server-computed model ← recommended next (separately authorized; NOT started).**
+   Server-computed + persisted billing (`effective_footage`, `cost_per_unit`, `base_total`, itemized `exceptions[]`,
+   `exception_total`, `final_total`, `derived_at`, `inputs_hash`); the client RENDERS the server totals, never computes or
+   overrides them; `billing_summary` is PART OF the closeout status model, not a parallel flag — a change to inputs after
+   approval invalidates approval (re-review). Contract §6. Alternate: the `export_package` stored/versioned/checksummed/
+   reproducible packet (§8; generation gated on closeout ≥ READY_FOR_APPROVAL, share/billing-grade requires APPROVED).
+   Builds on the continued-42→46 spine (HEAD `43a8501`). Contract-first; generic names; no backend/UI/deploy.
+   - **`TRUELINE_PRODUCT_CLOSEOUT_REVIEW_ONE_STATUS` — ✅ DONE (continued-46, `43a8501`).** one durable server-authoritative
+     `closeout_review` status per job; OPEN_ENGINE_BLOCKERS hard, KMZ pixel-only = warning; approve/lock re-evaluate + refuse on hard blockers; +20 tests. See Latest above.
    - **`TRUELINE_PRODUCT_KMZ_EXPORT_GEOMETRY_SAFETY` — ✅ DONE (continued-45, `2f70e22`).** `kmz_export`: pixel-only manifests
      BLOCKED with named reasons (never fake coords); read-only over trusted slots; `export_package` untouched; +10 tests. See Latest above.
    - **`TRUELINE_PRODUCT_MANIFEST_HANDOFF` — ✅ DONE (continued-44, `2013879`).** gated validate→durably store→attach slots; +12 tests.
