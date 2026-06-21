@@ -1,7 +1,7 @@
 # START HERE — TrueLine v2 Canonical Bootstrap
 
 > Single source of current working truth. Read THIS file first, in full — it is small on purpose.
-> Snapshot below is current as of **2026-06-21 (continued 43 — reviewed_bore_log engine-eligibility GATE landed (extracted_row + reviewed_bore_log, +23 tests); upload/job foundation `2193a0e` + gate `6048ef1`; HEAD `6048ef1`; NO render-truth change; frontier 50/58)**. For the absolute-latest
+> Snapshot below is current as of **2026-06-21 (continued 44 — manifest_handoff engine-output attachment landed (validate→durably store→attach to job slots, +12 tests); core spine upload→review→handoff complete; HEAD `2013879`; NO render-truth change; frontier 50/58)**. For the absolute-latest
 > state, read ONLY the top ~35 lines of `C:/Nova/knowledge/TrueLine-Wiki/wiki/hot.md` — never the whole file.
 > **Do NOT load history/archive files** (`log.md`, `current-sprint.md`, full `hot.md`) unless explicitly
 > asked or investigating a specific historical decision.
@@ -23,14 +23,26 @@ review" buckets are not progress until they become drawn strokes.
 - Isolated track: monolith / Render / Vercel UNTOUCHED; nothing merged or deployed.
 
 ## HEAD / remote state (verify with `git` before trusting this snapshot)
-- Last RENDER commit: **`c19b565`** (log3 wired + DRAWN, 49→50/58 — UNCHANGED). Local HEAD = **`6048ef1`**
-  (continued-43; reviewed bore-log gate — `contracts: add reviewed bore-log engine-eligibility gate`, 5 files/+783, pushed → `origin/feat/truelinev2` = `6048ef1`; tree clean). Prior: continued-42 Slice 1 `2193a0e` (upload/job foundation); continued-41 `a4bf2a5` (docs/audit). Continued-41 engine-repo arc (7 commits on the continued-40 save `021561c`):
+- Last RENDER commit: **`c19b565`** (log3 wired + DRAWN, 49→50/58 — UNCHANGED). Local HEAD = **`2013879`**
+  (continued-44; manifest handoff — `contracts: add manifest handoff engine-output attachment`, 3 files/+467, pushed → `origin/feat/truelinev2` = `2013879`; tree clean). Prior: continued-43 gate `6048ef1` (reviewed_bore_log); continued-42 Slice 1 `2193a0e` (upload/job foundation); continued-41 `a4bf2a5` (docs/audit). Continued-41 engine-repo arc (7 commits on the continued-40 save `021561c`):
   `b9fd9cf` (staging URL) → `09fc469` (artifact-hosting plan) → `e886de2` (hosting IMPL recorded) → `377536d` (Cedar Ridge→Brenham relabel) → `5211102` (mock-shell→proof-viewer) → `2a559bd` (artifact-fetch env-debug) → `a4bf2a5` (v1 salvage audit + v2 pipeline contract). NO engine/render-truth change.
   Fable web (SEPARATE `trueline-web-experience` repo): `main` `51dcbf7`→**`16c7095`** (`3ab0c80` prebuild fetch → `85682bb` relabel → `f753b1a` proof-viewer shell → `16c7095` build-chain+diagnostic); default branch = `main`; LIVE at `https://trueline-web-experience.vercel.app/`.
   Prior saves: continued-40 `a4b8590`/`021561c` (staging standup); continued-39 `16295d4` (P4 plan + Fable clean main); continued-38 `bdbc3b1` (Phase 2J + Fable UI preserve/retire + repo-arch + remote-init P1).
   ARCHIVE (recovery): branch/tag `archive-v2-continued-35-superseded-scratch` = **`d8508b9`** (superseded `backend/tl_core/**` + 14 proof slices). `origin/main`: **`068a279`** (untouched).
 
-## Latest — continued 43 (2026-06-21): reviewed_bore_log engine-eligibility GATE landed (extracted_row + reviewed_bore_log); NO render-truth change; frontier 50/58
+## Latest — continued 44 (2026-06-21): manifest_handoff engine-output attachment landed (validate→durably store→attach to job slots); NO render-truth change; frontier 50/58
+**continued 44 — the THIRD permanent product-pipeline slice (engine-output handoff); NO engine/renderer/fixture/anchor/corpus/census/parent-model/placement/flag change; frontier UNCHANGED 50/58; render commit stays `c19b565`; engine HEAD `2013879`; v2 suite 1540 passed / 4 skipped.**
+- **Manifest handoff LANDED (lane `TRUELINE_PRODUCT_MANIFEST_HANDOFF`, HEAD/origin `2013879`).** Commit `2013879` `contracts: add manifest handoff engine-output attachment` (3 files / +467; staged explicitly, NO `git add -A`; pushed, HEAD = origin = `2013879`, tree clean). One GENERIC, contract-only, pure-stdlib module + its test + the +1-line guard extension. NOT engine execution / render / export — the engine output bundle is a GIVEN input; ALL validation + durable storage REUSES existing machinery (no new validator):
+  - `truelinev2/contracts/manifest_handoff.py` — records an engine-output handoff and, gated, validates + durably stores the engine output bundle and attaches content-addressed refs to the job's output slots. State machine `ATTEMPTED → SUCCEEDED | FAILED | REJECTED` (all terminal; re-finalize raises `HandoffStateError`). `record_handoff_attempt` (verifies job + reviewed_bore_log exist/in-scope; opaque `engine_run_status`; rejects duplicate `engine_run_id`). `finalize_handoff` = gate (`reviewed_bore_log.is_engine_ready`) → REJECTED on fail; else `store_bundle` into the job-scoped `bundle_store/` (validates via `admission_errors` + content-keys + copies) → FAILED on `BundleRejectedError`; else build `redline_manifest` + `artifact_bundle` attachments (bundle_id / manifest_sha256 / counts / `validation_status:"VALIDATED"`) + `set_output_slot` (reused as-is). Stored at `…/processing_jobs/<job>/handoffs/<engine_run_id>/_manifest_handoff.json`; durable bundle at `…/bundle_store/bundles/<bundle_id>/`.
+  - Tests: `test_manifest_handoff_contract.py` (12); the generic no-specific-names guard extended to all 6 pipeline modules (+1 line). Verify: targeted 12 ✓; Slice 1 + reviewed-bore-log gate + published-bundle contracts + repo-wide guards ✓ (84 in one run); **full v2 suite 1540 passed / 4 skipped** (delta exactly +12 vs the committed 1528/4 baseline). NO artifacts committed (tmp_path; `data/`+`outputs/` gitignored); NO deploy; NO mobile; NO engine/render/fixture/coordinate change; `origin/main` `068a279` untouched.
+
+**HANDOFF INVARIANTS:** reviewed_bore_log must be engine-ready before finalize; the engine output bundle must validate through the existing published-bundle machinery; the validated bundle is durably stored via `store_bundle`; output slots are attached ONLY after validation/storage succeeds; `REJECTED`/`FAILED` leave slots UNTOUCHED; success attaches ONLY `redline_manifest` + `artifact_bundle` (`export_package` untouched); terminal handoffs are immutable; the term "engine" = the TrueLine placement engine only (never AI/OCR/extraction). No engine execution / render / KMZ / backend / UI in this lane.
+
+**PERMANENT CORE SPINE now exists:** `upload_pipeline → reviewed_bore_log → manifest_handoff → redline_manifest/artifact_bundle slots`. Pipeline state: artifact serving DONE (served:true, continued-42) · upload/job foundation `2193a0e` · reviewed bore-log gate `6048ef1` · manifest handoff `2013879`; NO backend/web/UI/AI-OCR-provider/engine execution wired yet. RULE (memory `generic-naming-reusable-code`): reusable identifiers stay generic; real names only runtime data / historical audit docs.
+
+**Next recommended lane (separately authorized; NOT started):** `kmz_export` geometry-safety contract (approved-manifest geometry only, CRS header `EPSG:4326`/WGS84, per-coordinate `source`+`confidence`, abstain-not-fake, export is a checksummed `artifact_bundle` member; contract §7). Alternates: `closeout_review` ONE-status model (§5) or the `export_package` stored/versioned/reproducible packet (§8). Detail: [[current-sprint]] / [[log]] continued 44.
+
+### Prior — continued 43 (2026-06-21): reviewed_bore_log engine-eligibility GATE landed (extracted_row + reviewed_bore_log); NO render-truth change; frontier 50/58
 **continued 43 — the SECOND permanent product-pipeline slice (the EXTRACTING→PLACING review gate); NO engine/renderer/fixture/anchor/corpus/census/parent-model/placement/flag change; frontier UNCHANGED 50/58; render commit stays `c19b565`; engine HEAD `6048ef1`; v2 suite 1528 passed / 4 skipped.**
 - **Reviewed bore-log gate LANDED (lane `TRUELINE_PRODUCT_REVIEWED_BORE_LOG_GATE`, HEAD/origin `6048ef1`).** Commit `6048ef1` `contracts: add reviewed bore-log engine-eligibility gate` (5 files / +783; staged explicitly, NO `git add -A`; pushed, HEAD = origin = `6048ef1`, tree clean). Two GENERIC, contract-only, pure-stdlib modules + the mandatory EXTRACTING→PLACING gate (contract §3):
   - `truelinev2/contracts/extracted_row.py` — the UNTRUSTED `extracted_row` + per-row review state (UNREVIEWED/CONFIRMED/CORRECTED/REJECTED/NEEDS_CLARIFICATION; CORRECTED needs corrected_values; REJECTED/NEEDS_CLARIFICATION need a reason; re-review allowed + audited). Row-level helpers are REVIEW-only (`row_review_passes`/`row_review_blocks_engine`) — a row ALONE is never engine-eligible. Generic extraction metadata: `extraction_method` ∈ {OCR, TEXT_PARSE, TABLE_IMPORT, MANUAL_ENTRY} + opaque `extractor_name` (no `engine` field; "engine" = the placement engine).
@@ -208,19 +220,18 @@ log5, log15, log16, log31, log38, log43, log57 — all owner/source-gated:
   Woodson s10+13 run; AP-158/2+45 intermediate, STA 3+23 FLOWER POT end. The source-location conflict is closed.)
 
 ## Current next gates (each separately authorized; NONE started)
-1. **`manifest_handoff` / engine output handoff producer ← recommended next (separately authorized; NOT started).**
-   The v2 engine's `redline_manifest` → a durable, checksummed `artifact_bundle` as the ONLY source of redline geometry
-   for downstream consumers (read-only; resolve artifacts by path+sha256; never infer status from filenames; contract §4).
-   Alternate candidate: `kmz_export` geometry-safety contract (approved-manifest geometry only, CRS header, per-coordinate
-   source+confidence, abstain-not-fake; contract §7). Builds on the continued-42/43 foundation (`customer_project` /
-   `processing_job` / `upload_pipeline` / `extracted_row` / `reviewed_bore_log`, HEAD `6048ef1`). Contract-first; generic
-   names; no engine execution / render / deploy.
-   - **`TRUELINE_PRODUCT_REVIEWED_BORE_LOG_GATE` — ✅ DONE (continued-43, `6048ef1`).** `extracted_row` + `reviewed_bore_log`
-     (the EXTRACTING→PLACING review gate): untrusted rows, strict grouping, DERIVED eligibility; +23 tests. See Latest above.
-   - **`TRUELINE_PRODUCT_UPLOAD_PIPELINE_PROCESSING_JOB` — ✅ Slice 1 DONE (continued-42, `2193a0e`).** customer_project +
-     processing_job + upload_pipeline + 4 tests.
-   - **`TRUELINE_V2_FABLE_STAGING_ARTIFACT_HOSTING_VERIFY` — ✅ DONE (continued-42, `served:true`).** Fable web `main` `16c7095`;
-     `/redlines` = `Served · lazy`, `83/83` verified, durable bundle path.
+1. **`kmz_export` geometry-safety contract ← recommended next (separately authorized; NOT started).**
+   Serialize ONLY approved-manifest geometry (reviewed engine output or approved human override) — never the uploaded GIS
+   file, never route/street-snapped or map-display coords. Declare a CRS header (`EPSG:4326`/WGS84); every coordinate carries
+   `source` + `confidence`; ABSTAIN (omit geometry + record a reason) when real coords are unavailable — never fake; the export
+   is itself a checksummed `artifact_bundle` member (contract §7). Alternates: `closeout_review` ONE-status model (§5) or the
+   `export_package` stored/versioned/reproducible packet (§8). Builds on the continued-42/43/44 core spine (HEAD `2013879`).
+   Contract-first; generic names; no engine execution / render / deploy.
+   - **`TRUELINE_PRODUCT_MANIFEST_HANDOFF` — ✅ DONE (continued-44, `2013879`).** `manifest_handoff`: gated validate→durably
+     store (`store_bundle`)→attach `redline_manifest`+`artifact_bundle` to the job slots; terminal-immutable; +12 tests. See Latest above.
+   - **`TRUELINE_PRODUCT_REVIEWED_BORE_LOG_GATE` — ✅ DONE (continued-43, `6048ef1`).** extracted_row + reviewed_bore_log; +23 tests.
+   - **`TRUELINE_PRODUCT_UPLOAD_PIPELINE_PROCESSING_JOB` — ✅ Slice 1 DONE (continued-42, `2193a0e`).**
+   - **`TRUELINE_V2_FABLE_STAGING_ARTIFACT_HOSTING_VERIFY` — ✅ DONE (continued-42, `served:true`).** Fable web `main` `16c7095`.
    Later (each separately gated): closeout / billing / `export_package` → P5 v2 backend/API with EXTERNAL auth → P6 parity →
    P7 engine split → P8 retire v1.
 2. **`TRUELINE_V2_REDLINEMANIFEST_SCHEMA_AND_RUNNER_CONTRACT`** — ✅ DONE (continued-37, Phases 2A–2I, `a0a490f`→`81f3cd3`):
