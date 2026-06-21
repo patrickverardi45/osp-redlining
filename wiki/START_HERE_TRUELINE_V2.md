@@ -1,7 +1,7 @@
 # START HERE — TrueLine v2 Canonical Bootstrap
 
 > Single source of current working truth. Read THIS file first, in full — it is small on purpose.
-> Snapshot below is current as of **2026-06-20 (continued 42 — Fable artifact serving ACTIVATED (served:true); Product pipeline Slice 1 LANDED (customer_project + processing_job + upload_pipeline contract, +26 tests); HEAD `2193a0e`; NO render-truth change; frontier 50/58)**. For the absolute-latest
+> Snapshot below is current as of **2026-06-21 (continued 43 — reviewed_bore_log engine-eligibility GATE landed (extracted_row + reviewed_bore_log, +23 tests); upload/job foundation `2193a0e` + gate `6048ef1`; HEAD `6048ef1`; NO render-truth change; frontier 50/58)**. For the absolute-latest
 > state, read ONLY the top ~35 lines of `C:/Nova/knowledge/TrueLine-Wiki/wiki/hot.md` — never the whole file.
 > **Do NOT load history/archive files** (`log.md`, `current-sprint.md`, full `hot.md`) unless explicitly
 > asked or investigating a specific historical decision.
@@ -23,14 +23,27 @@ review" buckets are not progress until they become drawn strokes.
 - Isolated track: monolith / Render / Vercel UNTOUCHED; nothing merged or deployed.
 
 ## HEAD / remote state (verify with `git` before trusting this snapshot)
-- Last RENDER commit: **`c19b565`** (log3 wired + DRAWN, 49→50/58 — UNCHANGED). Local HEAD = **`2193a0e`**
-  (continued-42; product pipeline Slice 1 — `contracts: add product upload pipeline job foundation`, 7 files/+787, pushed → `origin/feat/truelinev2` = `2193a0e`; tree clean). Prior continued-41 HEAD `a4bf2a5` (docs/audit). Continued-41 engine-repo arc (7 commits on the continued-40 save `021561c`):
+- Last RENDER commit: **`c19b565`** (log3 wired + DRAWN, 49→50/58 — UNCHANGED). Local HEAD = **`6048ef1`**
+  (continued-43; reviewed bore-log gate — `contracts: add reviewed bore-log engine-eligibility gate`, 5 files/+783, pushed → `origin/feat/truelinev2` = `6048ef1`; tree clean). Prior: continued-42 Slice 1 `2193a0e` (upload/job foundation); continued-41 `a4bf2a5` (docs/audit). Continued-41 engine-repo arc (7 commits on the continued-40 save `021561c`):
   `b9fd9cf` (staging URL) → `09fc469` (artifact-hosting plan) → `e886de2` (hosting IMPL recorded) → `377536d` (Cedar Ridge→Brenham relabel) → `5211102` (mock-shell→proof-viewer) → `2a559bd` (artifact-fetch env-debug) → `a4bf2a5` (v1 salvage audit + v2 pipeline contract). NO engine/render-truth change.
   Fable web (SEPARATE `trueline-web-experience` repo): `main` `51dcbf7`→**`16c7095`** (`3ab0c80` prebuild fetch → `85682bb` relabel → `f753b1a` proof-viewer shell → `16c7095` build-chain+diagnostic); default branch = `main`; LIVE at `https://trueline-web-experience.vercel.app/`.
   Prior saves: continued-40 `a4b8590`/`021561c` (staging standup); continued-39 `16295d4` (P4 plan + Fable clean main); continued-38 `bdbc3b1` (Phase 2J + Fable UI preserve/retire + repo-arch + remote-init P1).
   ARCHIVE (recovery): branch/tag `archive-v2-continued-35-superseded-scratch` = **`d8508b9`** (superseded `backend/tl_core/**` + 14 proof slices). `origin/main`: **`068a279`** (untouched).
 
-## Latest — continued 42 (2026-06-20): Fable artifact serving ACTIVATED (served:true) + Product pipeline Slice 1 LANDED (customer_project + processing_job + upload_pipeline contract); NO render-truth change; frontier 50/58
+## Latest — continued 43 (2026-06-21): reviewed_bore_log engine-eligibility GATE landed (extracted_row + reviewed_bore_log); NO render-truth change; frontier 50/58
+**continued 43 — the SECOND permanent product-pipeline slice (the EXTRACTING→PLACING review gate); NO engine/renderer/fixture/anchor/corpus/census/parent-model/placement/flag change; frontier UNCHANGED 50/58; render commit stays `c19b565`; engine HEAD `6048ef1`; v2 suite 1528 passed / 4 skipped.**
+- **Reviewed bore-log gate LANDED (lane `TRUELINE_PRODUCT_REVIEWED_BORE_LOG_GATE`, HEAD/origin `6048ef1`).** Commit `6048ef1` `contracts: add reviewed bore-log engine-eligibility gate` (5 files / +783; staged explicitly, NO `git add -A`; pushed, HEAD = origin = `6048ef1`, tree clean). Two GENERIC, contract-only, pure-stdlib modules + the mandatory EXTRACTING→PLACING gate (contract §3):
+  - `truelinev2/contracts/extracted_row.py` — the UNTRUSTED `extracted_row` + per-row review state (UNREVIEWED/CONFIRMED/CORRECTED/REJECTED/NEEDS_CLARIFICATION; CORRECTED needs corrected_values; REJECTED/NEEDS_CLARIFICATION need a reason; re-review allowed + audited). Row-level helpers are REVIEW-only (`row_review_passes`/`row_review_blocks_engine`) — a row ALONE is never engine-eligible. Generic extraction metadata: `extraction_method` ∈ {OCR, TEXT_PARSE, TABLE_IMPORT, MANUAL_ENTRY} + opaque `extractor_name` (no `engine` field; "engine" = the placement engine).
+  - `truelinev2/contracts/reviewed_bore_log.py` — the aggregate gate attached to a `processing_job` + a BORE_LOG upload: extracted_rows + `segment_group`s (relation SEPARATE_BORE/SAME_RUN_SEGMENTS/AMBIGUOUS; grouping_status PENDING/CONFIRMED/SOURCE_CONFLICT), durable JSON under the job scope, aggregate + per-row + per-group audit, a pure `review_queue` view, and the DERIVED eligibility gate. `row_engine_eligible(rbl, row_id)` = review passed AND the row resolves into EXACTLY ONE confirmed, non-ambiguous, non-conflicting group; `is_engine_ready(rbl)` = ≥1 row AND every non-rejected row eligible (empty → never ready).
+  - Tests: `test_extracted_row_review_contract.py` (10) + `test_reviewed_bore_log_gate_contract.py` (13); the generic no-specific-names guard extended to all 5 pipeline modules (+2 lines). Verify: targeted 23 ✓; Slice 1 + repo-wide guards ✓; **full v2 suite 1528 passed / 4 skipped** (delta exactly +23 vs the committed 1505/4 baseline). NO artifacts committed (tmp_path; `data/`+`outputs/` gitignored); NO deploy; NO mobile; NO engine/render/fixture/coordinate change; `origin/main` `068a279` untouched.
+
+**SAFETY INVARIANTS (the gate's contract):** raw AI/OCR/table/manual rows are UNTRUSTED; no raw row is engine-eligible by default; row review alone is NOT enough (grouping required); grouping must be RESOLVED before eligibility; eligibility is DERIVED ONLY (never stored as mutable truth — no `engine_eligible`/`engine_ready` in persisted JSON); rejected / ambiguous / source-conflict / unreviewed / ungrouped / multi-group-drift rows all block placement; extraction metadata uses generic extractor fields (never placement-engine terminology).
+
+**Pipeline state:** artifact serving DONE (served:true, continued-42) · upload/job foundation `2193a0e` · reviewed bore-log gate `6048ef1`; NO backend/web/UI/AI-OCR-provider/engine execution wired yet. RULE (memory `generic-naming-reusable-code`): reusable identifiers stay generic; real names only runtime data / historical audit docs.
+
+**Next recommended lane (separately authorized; NOT started):** plan the next permanent product slice — candidate `manifest_handoff` (the v2 engine `redline_manifest` → durable, checksummed `artifact_bundle` handoff producer; downstream read-only, resolve by path+sha256, never infer status from filenames; contract §4), or alternate `kmz_export` geometry-safety contract (approved-manifest geometry only, CRS header, per-coordinate source+confidence, abstain-not-fake; contract §7). Detail: [[current-sprint]] / [[log]] continued 43.
+
+### Prior — continued 42 (2026-06-20): Fable artifact serving ACTIVATED (served:true) + Product pipeline Slice 1 LANDED (customer_project + processing_job + upload_pipeline contract); NO render-truth change; frontier 50/58
 **continued 42 — owner ACTIVATED Fable artifact serving (served:true) + the FIRST permanent product-pipeline implementation slice; NO engine/renderer/fixture/anchor/corpus/census/parent-model/placement/flag change; frontier UNCHANGED 50/58; render commit stays `c19b565`; engine HEAD `2193a0e`; v2 suite 1505 passed / 4 skipped.** Two threads:
 - **Artifact serving ACTIVATED (Fable web `main` `16c7095`).** The continued-41 artifact-hosting CODE is now LIVE-ACTIVE: owner uploaded the 48 MB GitHub Release asset + set Vercel `TL2_REDLINE_BUNDLE_URL` (present, len=169) + `NEXT_PUBLIC_TL2_REDLINE_MANIFEST_SERVED=1` + redeployed WITHOUT build cache. Verified build log: `served=true`; `archive 50268315 bytes; validating entries`; `OK: 83/83 FINAL_REDLINE_PNG verified -> public/redline-bundle/.../artifacts/...`. Verified live `/redlines`: `Served · lazy`, `83 FINAL_REDLINE_PNG · served: true`, bundle served from the durable artifact path. **The `…_ARTIFACT_HOSTING_VERIFY` gate is CLOSED (served:true).** (The continued-40/41 START_HERE/hot `served:false` was the pre-activation snapshot — now superseded.)
 - **Product pipeline Slice 1 LANDED (engine repo `feat/truelinev2`, HEAD/origin synced `2193a0e`).** Lane `TRUELINE_PRODUCT_UPLOAD_PIPELINE_PROCESSING_JOB` — the FIRST permanent v2 product-foundation implementation. Commit `2193a0e` `contracts: add product upload pipeline job foundation` (7 files / +787; staged explicitly, NO `git add -A`; pushed, HEAD = origin = `2193a0e`, tree clean). Three GENERIC, contract-only, filesystem-shaped + adapter-neutral modules (pure stdlib; no engine/render/web/backend/AI-OCR/KMZ):
@@ -195,20 +208,21 @@ log5, log15, log16, log31, log38, log43, log57 — all owner/source-gated:
   Woodson s10+13 run; AP-158/2+45 intermediate, STA 3+23 FLOWER POT end. The source-location conflict is closed.)
 
 ## Current next gates (each separately authorized; NONE started)
-1. **`reviewed_bore_log` / extraction-review gate ← recommended next (separately authorized; NOT started).**
-   Uploaded or AI/OCR-extracted bore-log rows stay UNTRUSTED until reviewed/confirmed; group multi-segment +
-   unrelated bores BEFORE engine placement (contract §3 — the mandatory `EXTRACTING → PLACING` gate; the engine
-   consumes only `review.status == approved` segments). Builds on the continued-42 Slice 1 foundation
-   (`customer_project` / `processing_job` / `upload_pipeline`, HEAD `2193a0e`). No v1 OCR-into-engine revival;
-   generic names only; AI/OCR stays untrusted; no fake geometry; tests/contracts first.
-   - **`TRUELINE_V2_FABLE_STAGING_ARTIFACT_HOSTING_VERIFY` — ✅ DONE (continued-42, `served:true`).** Owner activated:
-     uploaded the 48 MB Release asset + set Vercel `TL2_REDLINE_BUNDLE_URL` (len=169) + `NEXT_PUBLIC_TL2_REDLINE_MANIFEST_SERVED=1`
-     + redeployed without cache. Build log `OK: 83/83 FINAL_REDLINE_PNG verified`, `archive 50268315 bytes`; live `/redlines` =
-     `Served · lazy`, `served: true`, durable bundle path. Fable web `main` `16c7095`. Canonical: `wiki/trueline_v2_fable_artifact_hosting_plan.md`.
-   - **`TRUELINE_PRODUCT_UPLOAD_PIPELINE_PROCESSING_JOB` — ✅ Slice 1 DONE (continued-42, `2193a0e`).** customer_project + processing_job
-     + upload_pipeline contract modules + 4 tests; see Latest above. Producers (extraction/manifest/closeout/billing/kmz/export) deferred.
-   Later (each separately gated): per-capability pipeline (closeout / billing / `kmz_export` geometry-safety / `export_package`) →
-   P5 v2 backend/API with EXTERNAL auth → P6 parity → P7 engine split → P8 retire v1.
+1. **`manifest_handoff` / engine output handoff producer ← recommended next (separately authorized; NOT started).**
+   The v2 engine's `redline_manifest` → a durable, checksummed `artifact_bundle` as the ONLY source of redline geometry
+   for downstream consumers (read-only; resolve artifacts by path+sha256; never infer status from filenames; contract §4).
+   Alternate candidate: `kmz_export` geometry-safety contract (approved-manifest geometry only, CRS header, per-coordinate
+   source+confidence, abstain-not-fake; contract §7). Builds on the continued-42/43 foundation (`customer_project` /
+   `processing_job` / `upload_pipeline` / `extracted_row` / `reviewed_bore_log`, HEAD `6048ef1`). Contract-first; generic
+   names; no engine execution / render / deploy.
+   - **`TRUELINE_PRODUCT_REVIEWED_BORE_LOG_GATE` — ✅ DONE (continued-43, `6048ef1`).** `extracted_row` + `reviewed_bore_log`
+     (the EXTRACTING→PLACING review gate): untrusted rows, strict grouping, DERIVED eligibility; +23 tests. See Latest above.
+   - **`TRUELINE_PRODUCT_UPLOAD_PIPELINE_PROCESSING_JOB` — ✅ Slice 1 DONE (continued-42, `2193a0e`).** customer_project +
+     processing_job + upload_pipeline + 4 tests.
+   - **`TRUELINE_V2_FABLE_STAGING_ARTIFACT_HOSTING_VERIFY` — ✅ DONE (continued-42, `served:true`).** Fable web `main` `16c7095`;
+     `/redlines` = `Served · lazy`, `83/83` verified, durable bundle path.
+   Later (each separately gated): closeout / billing / `export_package` → P5 v2 backend/API with EXTERNAL auth → P6 parity →
+   P7 engine split → P8 retire v1.
 2. **`TRUELINE_V2_REDLINEMANIFEST_SCHEMA_AND_RUNNER_CONTRACT`** — ✅ DONE (continued-37, Phases 2A–2I, `a0a490f`→`81f3cd3`):
    schema + 50/58 example + mock UI + publisher + unified render registry + real all-50 manifest + published-bundle contract +
    one-command pipeline runner + render-cost benchmark (full refresh ~5.9 min, render-bound) + adapter-neutral durable bundle
