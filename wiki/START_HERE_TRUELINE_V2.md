@@ -1,7 +1,7 @@
 # START HERE — TrueLine v2 Canonical Bootstrap
 
 > Single source of current working truth. Read THIS file first, in full — it is small on purpose.
-> Snapshot below is current as of **2026-06-21 (continued 49 — backend/API Slice 1 Foundation landed: default-OFF `/v2/product` project/job routes (flag `TL2_PRODUCT_PIPELINE_API_OPTIN`, +15 tests) — contract→routes wiring STARTED on the now-complete spine; HEAD `986ae74`; NO render-truth change; frontier 50/58)**. For the absolute-latest
+> Snapshot below is current as of **2026-06-21 (continued 50 — backend/API Slice 2 Inputs + Review Gate landed: default-OFF `/v2/product` uploads + reviewed-bore-log review-gate routes (flag `TL2_PRODUCT_PIPELINE_API_OPTIN`, +17 tests) — contract→routes wiring CONTINUED; HEAD `bd55273`; NO render-truth change; frontier 50/58)**. For the absolute-latest
 > state, read ONLY the top ~35 lines of `C:/Nova/knowledge/TrueLine-Wiki/wiki/hot.md` — never the whole file.
 > **Do NOT load history/archive files** (`log.md`, `current-sprint.md`, full `hot.md`) unless explicitly
 > asked or investigating a specific historical decision.
@@ -18,19 +18,33 @@ review" buckets are not progress until they become drawn strokes.
 
 ## Repo / branch state
 - Repo: `C:/Nova/projects/TrueLine/TrueLine_Beta`  ·  Branch: `feat/truelinev2`
-- Product lives in `truelinev2/` (clean-room, zero old-app imports). v2 suite: **1632 passed / 4 skipped**
-  (continued-49: +15 product-pipeline API Slice-1 tests). Callout-sweep e2e **31 passed / 1 skipped**.
+- Product lives in `truelinev2/` (clean-room, zero old-app imports). v2 suite: **1649 passed / 4 skipped**
+  (continued-50: +17 product-pipeline API Slice-2 tests). Callout-sweep e2e **31 passed / 1 skipped**.
 - Isolated track: monolith / Render / Vercel UNTOUCHED; nothing merged or deployed.
 
 ## HEAD / remote state (verify with `git` before trusting this snapshot)
-- Last RENDER commit: **`c19b565`** (log3 wired + DRAWN, 49→50/58 — UNCHANGED). Engine/contract HEAD = **`986ae74`**
-  (continued-49; backend/API Slice 1 Foundation — `api: add product pipeline foundation routes`, 4 files/+372, pushed → `origin/feat/truelinev2` = `986ae74`; tree clean; the continued-49 docs re-canonicalization sits one commit above). Prior: continued-48 export_package `c5185d5` (docs `0c7eecc`); continued-47 billing `42c6bab` (docs `6b4ae1f`); continued-46 closeout `43a8501` (docs `f7e0772`); continued-45 kmz_export `2f70e22`; continued-44 handoff `2013879`; continued-43 gate `6048ef1`; continued-42 Slice 1 `2193a0e`; continued-41 `a4bf2a5` (docs/audit). Continued-41 engine-repo arc (7 commits on the continued-40 save `021561c`):
+- Last RENDER commit: **`c19b565`** (log3 wired + DRAWN, 49→50/58 — UNCHANGED). Engine/contract HEAD = **`bd55273`**
+  (continued-50; backend/API Slice 2 Inputs + Review Gate — `api: add product input review gate routes`, 2 files/+474/−10, pushed → `origin/feat/truelinev2` = `bd55273`; tree clean; the continued-50 docs re-canonicalization sits one commit above). Prior: continued-49 Slice 1 routes `986ae74` (docs `4c438ed`); continued-48 export_package `c5185d5` (docs `0c7eecc`); continued-47 billing `42c6bab` (docs `6b4ae1f`); continued-46 closeout `43a8501` (docs `f7e0772`); continued-45 kmz_export `2f70e22`; continued-44 handoff `2013879`; continued-43 gate `6048ef1`; continued-42 Slice 1 `2193a0e`; continued-41 `a4bf2a5` (docs/audit). Continued-41 engine-repo arc (7 commits on the continued-40 save `021561c`):
   `b9fd9cf` (staging URL) → `09fc469` (artifact-hosting plan) → `e886de2` (hosting IMPL recorded) → `377536d` (Cedar Ridge→Brenham relabel) → `5211102` (mock-shell→proof-viewer) → `2a559bd` (artifact-fetch env-debug) → `a4bf2a5` (v1 salvage audit + v2 pipeline contract). NO engine/render-truth change.
   Fable web (SEPARATE `trueline-web-experience` repo): `main` `51dcbf7`→**`16c7095`** (`3ab0c80` prebuild fetch → `85682bb` relabel → `f753b1a` proof-viewer shell → `16c7095` build-chain+diagnostic); default branch = `main`; LIVE at `https://trueline-web-experience.vercel.app/`.
   Prior saves: continued-40 `a4b8590`/`021561c` (staging standup); continued-39 `16295d4` (P4 plan + Fable clean main); continued-38 `bdbc3b1` (Phase 2J + Fable UI preserve/retire + repo-arch + remote-init P1).
   ARCHIVE (recovery): branch/tag `archive-v2-continued-35-superseded-scratch` = **`d8508b9`** (superseded `backend/tl_core/**` + 14 proof slices). `origin/main`: **`068a279`** (untouched).
 
-## Latest — continued 49 (2026-06-21): backend/API Slice 1 Foundation landed (default-OFF /v2/product project/job routes) — contract→routes wiring STARTED; NO render-truth change; frontier 50/58
+## Latest — continued 50 (2026-06-21): backend/API Slice 2 Inputs + Review Gate landed (default-OFF /v2/product uploads + reviewed-bore-log review-gate routes) — contract→routes wiring CONTINUED; NO render-truth change; frontier 50/58
+**continued 50 — SECOND backend/API wiring slice (inputs + the reviewed-bore-log review gate); NO engine/renderer/fixture/anchor/corpus/census/parent-model/placement/contract change; frontier UNCHANGED 50/58; render commit stays `c19b565`; HEAD `bd55273`; v2 suite 1649 passed / 4 skipped.** Seven thin, default-OFF route adapters over the existing contracts — the contract spine is UNCHANGED.
+- **Backend/API Slice 2 LANDED (lane `TRUELINE_PRODUCT_BACKEND_API_SLICE_2_INPUTS_REVIEW_GATE`, Slice 2; HEAD/origin `bd55273`).** Commit `bd55273` `api: add product input review gate routes` (2 files / +474 / −10; staged explicitly, NO `git add -A`; pushed, HEAD = origin = `bd55273`, tree clean). Parent docs save `4c438ed`. Default-OFF; nothing activates unless `TL2_PRODUCT_PIPELINE_API_OPTIN=1`.
+  - `truelinev2/api/product_pipeline_routes.py` — +7 Slice 2 routes + 7 Slice 2 request models; extended `_to_http` (adds 404 for ReviewedBoreLogNotFound/RowNotFound/GroupNotFound + 409 for UploadsClosed) + a shared `_CONTRACT_ERRORS` tuple used by all 7 routes. Thin adapters over `upload_pipeline` + `extracted_row` + `reviewed_bore_log` (truth stays in the contracts). Identity = VERIFIED `X-TL-Tenant` slug → `customer_project_id == ctx.tenant.value`, NEVER from the URL path or request body. GET/POST only; upload bytes via base64-JSON (NO `python-multipart`).
+  - `truelinev2/tests/test_product_pipeline_api.py` — +17 Slice 2 tests; updated `PRODUCT_PATHS` (4→11); extended the no-identity-in-path/body coverage to all 7 Slice 2 request models.
+  - **Routes (ONLY these 7, all under `/v2/product`):** `POST /jobs/{job_id}/uploads` (base64 JSON; stays `extraction_status:"queued"`, raw input UNTRUSTED); `POST /jobs/{job_id}/reviewed-bore-logs`; `POST …/reviewed-bore-logs/{reviewed_bore_log_id}/rows`; `POST …/rows/{row_id}/review`; `POST …/groups`; `POST …/groups/{group_id}/status`; `GET …/review-queue` (exposes the DERIVED `engine_eligible_row_ids` + `engine_ready`).
+  - **Verify:** targeted product-pipeline API 32 ✓ (15 Slice 1 + 17 Slice 2); mounting-affected API group (reviewer + run-assembly + product) + naming guard 70 ✓ (no mounting regression); naming guard with operator `NAME_TOKENS` 3 ✓ + direct grep of both changed files = zero real-name tokens; **full v2 suite 1649 passed / 4 skipped** (delta exactly +17 vs the committed 1632/4 baseline).
+
+**SLICE 2 BOUNDARIES (what it does NOT do):** raw uploads + imported/extracted rows stay UNTRUSTED (`extraction_status:"queued"`; rows start UNREVIEWED) — NO OCR/AI runs; engine eligibility is DERIVED by the `reviewed_bore_log` contract from review + grouping (never stored as mutable truth, never conferred by the API). NO manifest-handoff / proof-artifact / KMZ / closeout / billing / export-package routes (later slices); NO `python-multipart`, NO `httpx`, NO `TestClient`, no new deps; no duplicate backend app; no broad utility layer; no dead routes; no engine/render/fixture/anchor/coordinate change; no web-UI / mobile / deploy / production-`main`; **v1 backend behavior UNTOUCHED** (no v1 snapping, no v1 billing/export); the contract spine is UNCHANGED. Default-OFF. `origin/main` `068a279` untouched.
+
+**ARCHITECTURE (clean-room + modular):** routes live under `truelinev2/api/...`; product contracts stay under `truelinev2/contracts/...`; route adapters are THIN (delegate per call; the `reviewed_bore_log` 409 pre-check mirrors the Slice 1 idiom rather than reimplementing contract logic); product truth stays INSIDE the contracts. Backend/API wiring now has **Slice 1 Foundation (`986ae74`) + Slice 2 Inputs/Review-Gate (`bd55273`)**. The contract spine remains complete: `upload_pipeline → reviewed_bore_log → manifest_handoff → kmz_export safety → closeout_review → billing_summary → export_package`.
+
+**Next recommended lane (separately authorized; NOT started):** `TRUELINE_PRODUCT_BACKEND_API_SLICE_3_MANIFEST_PROOF_READS` — manifest-handoff record/finalize + redline-manifest read + artifact-bundle listing + proof-artifact read/access; everything manifest-backed + tenant-scoped; NO engine execution / renderer / fixture change / fake artifacts; thin adapters over the contracts; same default-OFF flag. Detail: [[current-sprint]] / [[log]] continued 50.
+
+### Prior — continued 49 (2026-06-21): backend/API Slice 1 Foundation landed (default-OFF /v2/product project/job routes) — contract→routes wiring STARTED; NO render-truth change; frontier 50/58
 **continued 49 — FIRST backend/API wiring slice (foundation routes only); NO engine/renderer/fixture/anchor/corpus/census/parent-model/placement/contract change; frontier UNCHANGED 50/58; render commit stays `c19b565`; HEAD `986ae74`; v2 suite 1632 passed / 4 skipped.** First crossing from contracts into routes — but the contract spine is UNCHANGED; this slice only ADDS thin, default-OFF route adapters.
 - **Backend/API Slice 1 Foundation LANDED (lane `TRUELINE_PRODUCT_BACKEND_API_WIRING_PLAN`, Slice 1; HEAD/origin `986ae74`).** Commit `986ae74` `api: add product pipeline foundation routes` (4 files / +372; staged explicitly, NO `git add -A`; pushed, HEAD = origin = `986ae74`, tree clean). Default-OFF; nothing activates unless `TL2_PRODUCT_PIPELINE_API_OPTIN=1`.
   - `truelinev2/config.py` — added `product_pipeline_api_optin` (DEFAULT OFF, env `TL2_PRODUCT_PIPELINE_API_OPTIN`) + `product_store_root` (env `TL2_PRODUCT_STORE_ROOT`, default gitignored `data/outputs/truelinev2/product_store`).
@@ -287,15 +301,20 @@ log5, log15, log16, log31, log38, log43, log57 — all owner/source-gated:
   Woodson s10+13 run; AP-158/2+45 intermediate, STA 3+23 FLOWER POT end. The source-location conflict is closed.)
 
 ## Current next gates (each separately authorized; NONE started)
-1. **`TRUELINE_PRODUCT_BACKEND_API_SLICE_2_INPUTS_REVIEW_GATE` ← recommended next (separately authorized; NOT started).**
-   Slice 2 of the approved backend/API wiring plan (4 slices behind ONE default-OFF flag `TL2_PRODUCT_PIPELINE_API_OPTIN`).
-   Wire `/v2/product` routes for the inputs + review gate: upload/input registration (uploads stay untrusted/`queued`;
-   base64-JSON, NO `python-multipart`) → reviewed-bore-log create → add extracted/imported rows (UNTRUSTED) → row review →
-   segment grouping + status → review-queue view → engine-eligibility gate exposure. Thin route adapters over the existing
-   contracts (truth stays in `truelinev2/contracts/...`); identity = verified `X-TL-Tenant` slug (never path/body); tenant
-   isolation = 403/404; GET/POST only. Generic names; no engine/render/web-UI/mobile/deploy. Slices 3 (handoff + proof reads)
-   and 4 (kmz/closeout/billing/export reads + safe actions) follow; privileged closeout transitions await the verified-role
-   decision. Later (each separately gated): P5 full IMPL → P6 parity → P7 engine split → P8 retire v1.
+1. **`TRUELINE_PRODUCT_BACKEND_API_SLICE_3_MANIFEST_PROOF_READS` ← recommended next (separately authorized; NOT started).**
+   Slice 3 of the approved backend/API wiring plan (4 slices behind ONE default-OFF flag `TL2_PRODUCT_PIPELINE_API_OPTIN`).
+   Wire `/v2/product` routes for the engine-output handoff + proof reads: manifest-handoff record/finalize → redline-manifest
+   read → artifact-bundle listing → proof-artifact read/access. Everything manifest-backed + tenant-scoped; resolve by
+   path + sha256, never infer status from filenames; NO engine execution, NO renderer, NO fixture change, NO fake artifacts.
+   Thin route adapters over the existing contracts (truth stays in `truelinev2/contracts/...`); identity = verified
+   `X-TL-Tenant` slug (never path/body); tenant isolation = 403/404; GET/POST only. Generic names; no web-UI/mobile/deploy.
+   Slice 4 (kmz/closeout/billing/export reads + safe actions) follows; privileged closeout transitions await the
+   verified-role decision. Later (each separately gated): P5 full IMPL → P6 parity → P7 engine split → P8 retire v1.
+   - **`TRUELINE_PRODUCT_BACKEND_API_SLICE_2_INPUTS_REVIEW_GATE` — ✅ DONE (continued-50, `bd55273`).** 7 thin default-OFF
+     `/v2/product` routes: `POST /jobs/{job_id}/uploads` (base64; stays `extraction_status:"queued"`), reviewed-bore-log
+     create, rows add, row review, segment-group define, grouping status, and `GET …/review-queue` (derived
+     `engine_eligible_row_ids` + `engine_ready`). Raw uploads + imported rows stay UNTRUSTED; eligibility is DERIVED by the
+     contract (never stored / never conferred by the API); +17 tests (no httpx/TestClient/python-multipart). See Latest above.
    - **`TRUELINE_PRODUCT_BACKEND_API_WIRING_PLAN` — ✅ APPROVED + Slice 1 DONE (continued-49, `986ae74`).** 4-slice split behind
      one default-OFF flag. **Slice 1 Foundation** landed: `product_pipeline_api_optin` (`TL2_PRODUCT_PIPELINE_API_OPTIN`) +
      `product_store_root` (`TL2_PRODUCT_STORE_ROOT`) in `config.py`; opt-in mount in `api/app.py`; `api/product_pipeline_routes.py`
