@@ -19,10 +19,12 @@ implemented here. No engine, renderer, fixtures, web/backend wiring, AI/OCR, dep
 from __future__ import annotations
 
 import base64
+import re
 from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from truelinev2.api.container import Container
@@ -40,6 +42,7 @@ from truelinev2.contracts.processing_job import (
     JobNotFoundError,
     ProcessingJobError,
     create_job,
+    job_dir,
     load_job,
     transition,
 )
@@ -64,6 +67,23 @@ from truelinev2.contracts.reviewed_bore_log import (
     review_queue,
     review_row_in_log,
     set_grouping_status,
+)
+from truelinev2.contracts.manifest_handoff import (
+    ARTIFACT_BUNDLE_SLOT,
+    BUNDLE_STORE_SUBDIR,
+    MANIFEST_SLOT,
+    HandoffNotFoundError,
+    HandoffStateError,
+    ManifestHandoffError,
+    finalize_handoff,
+    load_handoff,
+    record_handoff_attempt,
+)
+from truelinev2.contracts.published_bundle_consumer import (
+    ArtifactNotServableError,
+    BundleNotReadableError,
+    ConsumerError,
+    StaticBundleConsumer,
 )
 
 router = APIRouter(prefix="/v2/product")
@@ -126,6 +146,18 @@ class GroupingStatus(BaseModel):
     reason: Optional[str] = None
 
 
+# --- Slice 3 request bodies (none carries identity — the tenant is the verified context) ------------- #
+class ManifestHandoffRecord(BaseModel):
+    reviewed_bore_log_id: str
+    engine_run_id: str
+    engine_run_status: str
+    warnings: Optional[list] = None
+
+
+class ManifestHandoffFinalize(BaseModel):
+    bundle_ref: str
+
+
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -138,9 +170,10 @@ def _to_http(exc: Exception) -> HTTPException:
     """Map a contract / isolation exception to the repo's HTTP convention (order matters: the specific
     NotFound / state-conflict subclasses are caught before the contract base errors fall through to 400)."""
     if isinstance(exc, (ProjectNotFoundError, JobNotFoundError, ReviewedBoreLogNotFoundError,
-                        RowNotFoundError, GroupNotFoundError)):
+                        RowNotFoundError, GroupNotFoundError, HandoffNotFoundError,
+                        BundleNotReadableError, ArtifactNotServableError)):
         return HTTPException(status_code=404, detail=str(exc))
-    if isinstance(exc, (IllegalTransitionError, UploadsClosedError)):    # state conflicts
+    if isinstance(exc, (IllegalTransitionError, UploadsClosedError, HandoffStateError)):  # state conflicts
         return HTTPException(status_code=409, detail=str(exc))
     if isinstance(exc, (CrossProjectAccessError, IsolationError)):
         return HTTPException(status_code=403, detail=str(exc))
@@ -149,8 +182,8 @@ def _to_http(exc: Exception) -> HTTPException:
 
 # Every contract-error base this router translates to HTTP via _to_http (which dispatches by the specific
 # subclass). A non-contract error is left to propagate (a real 500 — never masked as a 400).
-_CONTRACT_ERRORS = (CustomerProjectError, ProcessingJobError, UploadError,
-                    ExtractedRowError, ReviewedBoreLogError, IsolationError)
+_CONTRACT_ERRORS = (CustomerProjectError, ProcessingJobError, UploadError, ExtractedRowError,
+                    ReviewedBoreLogError, ManifestHandoffError, ConsumerError, IsolationError)
 
 
 @router.post("/project")
@@ -355,3 +388,126 @@ def get_review_queue(job_id: str, reviewed_bore_log_id: str,
     except _CONTRACT_ERRORS as exc:
         raise _to_http(exc)
     return review_queue(rbl)
+
+
+# --------------------------------------------------------------------------- #
+# Slice 3 — manifest handoff + proof reads.
+# --------------------------------------------------------------------------- #
+ENGINE_OUTPUTS_SUBDIR = "engine_outputs"   # server-side, job-scoped staging for engine-output bundles
+_BUNDLE_REF_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,62}$")
+
+
+def _staged_bundle_root(store_root, customer_project_id, job_id, bundle_ref):
+    """Resolve a SAFE client-supplied bundle_ref to the server-side engine-output staging path under the
+    tenant's job scope. The ref must be ONE safe path segment (no separators/traversal); the bundle
+    CONTENT is validated by the contract (store_bundle via finalize_handoff), never here."""
+    if not isinstance(bundle_ref, str) or not _BUNDLE_REF_RE.match(bundle_ref):
+        raise HTTPException(status_code=400, detail="invalid bundle_ref")
+    return job_dir(store_root, customer_project_id, job_id) / ENGINE_OUTPUTS_SUBDIR / bundle_ref
+
+
+def _open_job_bundle(store_root, customer_project_id, job_id):
+    """Open the job's attached, validated redline bundle from its durable bundle_store via the read-only
+    consumer (which re-enforces the website read contract). Requires a validated artifact_bundle output
+    slot (set ONLY by a SUCCEEDED handoff) — raises BundleNotReadableError (→ 404) otherwise."""
+    job = load_job(store_root, customer_project_id, job_id)
+    slot = job["slots"].get(ARTIFACT_BUNDLE_SLOT)
+    if not slot:
+        raise BundleNotReadableError("no validated artifact_bundle for this job")
+    bundle_store = job_dir(store_root, customer_project_id, job_id) / BUNDLE_STORE_SUBDIR
+    consumer = StaticBundleConsumer(bundle_store, enable=True)
+    return consumer.open_bundle(slot["ref"]["bundle_id"])
+
+
+@router.post("/jobs/{job_id}/manifest-handoffs")
+def record_manifest_handoff(job_id: str, req: ManifestHandoffRecord,
+                            ctx: RequestContext = Depends(get_context),
+                            c: Container = Depends(get_container)) -> dict:
+    """Record an engine-output handoff ATTEMPT for the tenant's job (does NOT run the engine/renderer — the
+    placement engine's output bundle is a GIVEN, finalized separately). 404 if the job/reviewed_bore_log is
+    missing; 409 if a handoff with that engine_run_id already exists."""
+    cp, store = ctx.tenant.value, _store_root(c)
+    try:
+        load_handoff(store, cp, job_id, req.engine_run_id)
+    except HandoffNotFoundError:
+        pass                                                # expected: not recorded yet
+    except _CONTRACT_ERRORS as exc:                         # e.g. invalid engine_run / job id
+        raise _to_http(exc)
+    else:
+        raise HTTPException(status_code=409, detail="handoff already exists")
+    try:
+        return record_handoff_attempt(store, cp, job_id, req.reviewed_bore_log_id, req.engine_run_id,
+                                      engine_run_status=req.engine_run_status, warnings=req.warnings,
+                                      at=_now(), by=ctx.session_id)
+    except _CONTRACT_ERRORS as exc:
+        raise _to_http(exc)
+
+
+@router.post("/jobs/{job_id}/manifest-handoffs/{engine_run_id}/finalize")
+def finalize_manifest_handoff(job_id: str, engine_run_id: str, req: ManifestHandoffFinalize,
+                              ctx: RequestContext = Depends(get_context),
+                              c: Container = Depends(get_container)) -> dict:
+    """Finalize a recorded handoff THROUGH the contract: validate the staged engine-output bundle + durably
+    store it + attach the redline_manifest / artifact_bundle output slots — ONLY if the reviewed_bore_log is
+    engine-ready AND the bundle validates. The bundle is identified by a SAFE server-side staging ref (never
+    a raw client path); validation is the contract's, never the API's. Returns the terminal record
+    (SUCCEEDED / REJECTED / FAILED). 404 if no such handoff; 409 if already terminal; 400 on an unsafe ref."""
+    cp, store = ctx.tenant.value, _store_root(c)
+    try:
+        bundle_root = _staged_bundle_root(store, cp, job_id, req.bundle_ref)
+        return finalize_handoff(store, cp, job_id, engine_run_id, bundle_root,
+                                at=_now(), by=ctx.session_id)
+    except _CONTRACT_ERRORS as exc:
+        raise _to_http(exc)
+
+
+@router.get("/jobs/{job_id}/redline-manifest")
+def get_redline_manifest(job_id: str,
+                         ctx: RequestContext = Depends(get_context),
+                         c: Container = Depends(get_container)) -> dict:
+    """Read the job's validated redline_manifest output slot (descriptor / state ONLY — manifest_id,
+    sha256, bundle_id, summary counts, validation_status). 404 if no validated handoff has attached it."""
+    cp, store = ctx.tenant.value, _store_root(c)
+    try:
+        job = load_job(store, cp, job_id)
+    except _CONTRACT_ERRORS as exc:
+        raise _to_http(exc)
+    slot = job["slots"].get(MANIFEST_SLOT)
+    if not slot:
+        raise HTTPException(status_code=404, detail="no validated redline_manifest for this job")
+    return slot
+
+
+@router.get("/jobs/{job_id}/artifacts")
+def list_artifacts(job_id: str,
+                   ctx: RequestContext = Depends(get_context),
+                   c: Container = Depends(get_container)) -> dict:
+    """List ONLY the manifest-backed FINAL_REDLINE_PNG artifact references of the job's validated bundle
+    (log_id + manifest path + sha256 + bytes + kind). 404 if no validated handoff has attached a bundle."""
+    cp, store = ctx.tenant.value, _store_root(c)
+    try:
+        bundle = _open_job_bundle(store, cp, job_id)
+    except _CONTRACT_ERRORS as exc:
+        raise _to_http(exc)
+    return {
+        "bundle_id": bundle.bundle_id,
+        "artifacts": [{"log_id": lid, "path": a["path"], "sha256": a.get("sha256"),
+                       "bytes": a.get("bytes"), "kind": a.get("kind")}
+                      for lid, a in bundle.final_artifacts()],
+    }
+
+
+@router.get("/jobs/{job_id}/artifacts/{artifact_path:path}")
+def get_artifact(job_id: str, artifact_path: str,
+                 ctx: RequestContext = Depends(get_context),
+                 c: Container = Depends(get_container)) -> FileResponse:
+    """Serve ONE proof artifact of the job's validated bundle, BY ITS MANIFEST PATH only. The consumer
+    enforces the allowlist + traversal-safety + checksum contract: a path that is not a manifest-listed
+    FINAL_REDLINE_PNG (or is unsafe) is denied. 404 if the artifact is not manifest-backed / not found."""
+    cp, store = ctx.tenant.value, _store_root(c)
+    try:
+        bundle = _open_job_bundle(store, cp, job_id)
+        desc = bundle.resolve_artifact(artifact_path, read_bytes=False)
+    except _CONTRACT_ERRORS as exc:
+        raise _to_http(exc)
+    return FileResponse(str(bundle.bundle_root / desc["path"]), media_type=desc["content_type"])

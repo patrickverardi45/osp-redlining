@@ -8,10 +8,13 @@ from __future__ import annotations
 
 import base64
 import dataclasses
+import hashlib
+import json
 from pathlib import Path
 
 import pytest
 from fastapi import HTTPException
+from fastapi.responses import FileResponse
 from fastapi.routing import APIRoute
 
 from truelinev2.api import product_pipeline_routes as ppr
@@ -19,7 +22,8 @@ from truelinev2.api.app import create_app
 from truelinev2.config import Settings
 from truelinev2.context import require_context
 from truelinev2.contracts.extracted_row import CONFIRMED, UNREVIEWED
-from truelinev2.contracts.processing_job import CREATED, EXTRACTING, UPLOADING
+from truelinev2.contracts.manifest_handoff import ATTEMPTED, FAILED, REJECTED, SUCCEEDED
+from truelinev2.contracts.processing_job import CREATED, EXTRACTING, UPLOADING, job_dir
 from truelinev2.contracts.reviewed_bore_log import (
     GROUPING_CONFIRMED,
     SEPARATE_BORE,
@@ -40,6 +44,12 @@ PRODUCT_PATHS = {
     "/v2/product/jobs/{job_id}/reviewed-bore-logs/{reviewed_bore_log_id}/groups",
     "/v2/product/jobs/{job_id}/reviewed-bore-logs/{reviewed_bore_log_id}/groups/{group_id}/status",
     "/v2/product/jobs/{job_id}/reviewed-bore-logs/{reviewed_bore_log_id}/review-queue",
+    # Slice 3 — manifest handoff + proof reads
+    "/v2/product/jobs/{job_id}/manifest-handoffs",
+    "/v2/product/jobs/{job_id}/manifest-handoffs/{engine_run_id}/finalize",
+    "/v2/product/jobs/{job_id}/redline-manifest",
+    "/v2/product/jobs/{job_id}/artifacts",
+    "/v2/product/jobs/{job_id}/artifacts/{artifact_path:path}",
 }
 
 
@@ -108,10 +118,11 @@ def test_no_customer_project_id_in_path_or_body(tmp_path):
     assert set(ppr.ProjectCreate.model_fields) == {"display_name"}
     assert set(ppr.JobCreate.model_fields) == {"job_id"}
     assert set(ppr.JobTransition.model_fields) == {"to_status", "reason"}
-    # ...nor from any Slice 2 request body (identity is the verified context, never a field)
-    slice2_models = [ppr.UploadRegister, ppr.ReviewedBoreLogCreate, ppr.ExtractedRowInput,
-                     ppr.RowsAdd, ppr.RowReview, ppr.SegmentGroupCreate, ppr.GroupingStatus]
-    for model in slice2_models:
+    # ...nor from any Slice 2/3 request body (identity is the verified context, never a field)
+    body_models = [ppr.UploadRegister, ppr.ReviewedBoreLogCreate, ppr.ExtractedRowInput,
+                   ppr.RowsAdd, ppr.RowReview, ppr.SegmentGroupCreate, ppr.GroupingStatus,
+                   ppr.ManifestHandoffRecord, ppr.ManifestHandoffFinalize]
+    for model in body_models:
         fields = set(model.model_fields)
         assert not (fields & {"customer_project", "customer_project_id", "tenant", "tenant_id"})
 
@@ -462,3 +473,264 @@ def test_slice2_tenant_isolation_b_cannot_address_a(tmp_path):
     assert e_q.value.status_code == 404
     # A still owns its data
     assert ppr.get_review_queue("job-1", "rbl-1", ctx=ctx_a, c=c)["rows_needing_review"] == ["row-1"]
+
+
+# --------------------------------------------------------------------------- #
+# Slice 3 helpers (engine-ready rbl + a valid, server-staged engine-output bundle).
+# --------------------------------------------------------------------------- #
+def _log(lid, status, prov, *, drawn=False, covered=False, blocked=False, artifacts=None):
+    return {"log_id": lid, "parent_id": "b_" + lid, "entry_role": "standalone",
+            "status": status, "provenance": prov, "drawn": drawn, "covered": covered,
+            "blocked": blocked, "drawn_lane": "NEW_TARGETS" if drawn else None,
+            "source_sheets": [1],
+            "span": {"start_station": "0+00", "end_station": "1+00", "label": "0+00->1+00"},
+            "closure": None, "coverage": {"covered_by": "logX"} if covered else None,
+            "blocker": {"category": "OWNER_LOCKED", "name": "n", "unlock_requirement": "owner lifts"}
+            if blocked else None,
+            "artifacts": artifacts or [],
+            "evidence": [{"kind": "ACCOUNTABILITY_LEDGER", "ref": "r"}], "warnings": []}
+
+
+def _build_engine_bundle(dest, *, mock_example=False, tag=b"A"):
+    """Write a minimal VALID engine-output bundle (one drawn log + one FINAL_REDLINE_PNG, one covered, one
+    blocked) at dest. Mirrors the published-bundle shape the store/consumer require; generic names only."""
+    dest = Path(dest)
+    art_dir = dest / "artifacts" / "logA"
+    art_dir.mkdir(parents=True)
+    data = b"FAKE-PNG-" + tag
+    (art_dir / "logA_s1_redline_stroke.png").write_bytes(data)
+    art = {"kind": "FINAL_REDLINE_PNG", "path": "artifacts/logA/logA_s1_redline_stroke.png",
+           "sha256": hashlib.sha256(data).hexdigest(), "bytes": len(data),
+           "published": True, "example_placeholder": False}
+    manifest = {
+        "schema_version": "1.0.0", "mock_example": mock_example, "disclaimer": "t",
+        "project_id": "proj-a", "project_name": "Project A",
+        "engine": {"branch": "feat/truelinev2", "engine_head": "h", "render_commit": "rc-0",
+                   "generated_from": "test"},
+        "summary": {"total_logs": 3, "drawn_count": 1, "covered_count": 1, "blocked_count": 1,
+                    "frontier": "1/3"},
+        "status_counts": {"DRAWN_REDLINE": 1, "COVERED_BY_EXISTING_REDLINE": 1,
+                          "OWNER_LOCKED_ABSTAIN": 1, "SOURCE_GAP_BLOCKED": 0,
+                          "MISSING_SOURCE_SHEET_BLOCKED": 0},
+        "provenance_counts": {"DETERMINISTIC_AUTO": 1, "OWNER_CONFIRMED_HUMAN_ADJUSTABLE": 0,
+                              "COVERED_BY_EXISTING_REDLINE": 1, "BLOCKED_OWNER_LOCKED": 1,
+                              "BLOCKED_SOURCE_GAP": 0, "BLOCKED_MISSING_SOURCE": 0},
+        "consumption_rules": ["consume the manifest"],
+        "logs": [_log("logA", "DRAWN_REDLINE", "DETERMINISTIC_AUTO", drawn=True, artifacts=[art]),
+                 _log("logC", "COVERED_BY_EXISTING_REDLINE", "COVERED_BY_EXISTING_REDLINE", covered=True),
+                 _log("logB", "OWNER_LOCKED_ABSTAIN", "BLOCKED_OWNER_LOCKED", blocked=True)],
+    }
+    (dest / "redline_manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+    return dest
+
+
+ART_PATH = "artifacts/logA/logA_s1_redline_stroke.png"
+
+
+def _ready_rbl(c, ctx, *, job_id="job-1", rbl_id="rbl-1"):
+    """Project + job + BORE_LOG upload + reviewed_bore_log with one CONFIRMED, grouped+confirmed row →
+    engine-ready (so a handoff can finalize). Returns the upload record."""
+    up, _ = _seed_reviewed_bore_log(c, ctx, job_id, rbl_id)
+    _add_one_row(c, ctx, up["upload_id"], job_id=job_id, rbl_id=rbl_id)
+    ppr.review_row_route(job_id, rbl_id, "row-1", ppr.RowReview(to_status=CONFIRMED), ctx=ctx, c=c)
+    ppr.define_group(job_id, rbl_id, ppr.SegmentGroupCreate(
+        group_id="g-1", member_row_ids=["row-1"], relation=SEPARATE_BORE), ctx=ctx, c=c)
+    ppr.set_group_status(job_id, rbl_id, "g-1", ppr.GroupingStatus(to_status=GROUPING_CONFIRMED),
+                         ctx=ctx, c=c)
+    return up
+
+
+def _stage_bundle(c, cp, ref, *, job_id="job-1", **kw):
+    """Build a valid engine-output bundle at the server-side staging path the finalize route resolves."""
+    dest = job_dir(c.settings.product_store_root, cp, job_id) / ppr.ENGINE_OUTPUTS_SUBDIR / ref
+    return _build_engine_bundle(dest, **kw)
+
+
+def _record(c, ctx, *, run="run-1", job_id="job-1", rbl_id="rbl-1"):
+    return ppr.record_manifest_handoff(job_id, ppr.ManifestHandoffRecord(
+        reviewed_bore_log_id=rbl_id, engine_run_id=run, engine_run_status="completed"), ctx=ctx, c=c)
+
+
+def _finalized_job(c, ctx, *, ref="bundle-1", run="run-1", job_id="job-1", rbl_id="rbl-1"):
+    """Engine-ready rbl + recorded handoff + staged valid bundle + SUCCEEDED finalize. Returns the
+    finalize result (the SUCCEEDED handoff record)."""
+    _ready_rbl(c, ctx, job_id=job_id, rbl_id=rbl_id)
+    _record(c, ctx, run=run, job_id=job_id, rbl_id=rbl_id)
+    _stage_bundle(c, ctx.tenant.value, ref, job_id=job_id)
+    return ppr.finalize_manifest_handoff(job_id, run, ppr.ManifestHandoffFinalize(bundle_ref=ref),
+                                         ctx=ctx, c=c)
+
+
+# --------------------------------------------------------------------------- #
+# Slice 3 — manifest handoff record / finalize.
+# --------------------------------------------------------------------------- #
+def test_handoff_record_is_attempted_no_slots(tmp_path):
+    c, ctx = _container(tmp_path), _ctx("cp-aaa")
+    _ready_rbl(c, ctx)
+    h = _record(c, ctx)
+    assert h["status"] == ATTEMPTED and h["engine_run_id"] == "run-1"
+    job = ppr.get_processing_job("job-1", ctx=ctx, c=c)
+    assert job["slots"]["redline_manifest"] is None and job["slots"]["artifact_bundle"] is None
+
+
+def test_handoff_record_requires_rbl_is_404(tmp_path):
+    c, ctx = _container(tmp_path), _ctx("cp-aaa")
+    _seed_job(c, ctx)                                        # job but no reviewed_bore_log
+    with pytest.raises(HTTPException) as exc:
+        ppr.record_manifest_handoff("job-1", ppr.ManifestHandoffRecord(
+            reviewed_bore_log_id="rbl-missing", engine_run_id="run-1", engine_run_status="completed"),
+            ctx=ctx, c=c)
+    assert exc.value.status_code == 404
+
+
+def test_handoff_record_duplicate_is_409(tmp_path):
+    c, ctx = _container(tmp_path), _ctx("cp-aaa")
+    _ready_rbl(c, ctx)
+    _record(c, ctx)
+    with pytest.raises(HTTPException) as exc:
+        _record(c, ctx)
+    assert exc.value.status_code == 409
+
+
+def test_handoff_finalize_success_attaches_slots(tmp_path):
+    c, ctx = _container(tmp_path), _ctx("cp-aaa")
+    h = _finalized_job(c, ctx)
+    assert h["status"] == SUCCEEDED
+    assert h["manifest_attachment"]["validation_status"] == "VALIDATED"
+    bid = h["artifact_bundle_attachment"]["bundle_id"]
+    job = ppr.get_processing_job("job-1", ctx=ctx, c=c)
+    assert job["slots"]["redline_manifest"]["ref"]["bundle_id"] == bid
+    assert job["slots"]["artifact_bundle"]["ref"]["bundle_id"] == bid
+    assert job["slots"]["export_package"] is None           # never touched by this lane
+
+
+def test_handoff_finalize_rejected_when_not_engine_ready(tmp_path):
+    c, ctx = _container(tmp_path), _ctx("cp-aaa")
+    _seed_reviewed_bore_log(c, ctx)                          # rbl exists but is NOT engine-ready
+    _record(c, ctx)
+    _stage_bundle(c, "cp-aaa", "bundle-1")
+    h = ppr.finalize_manifest_handoff("job-1", "run-1", ppr.ManifestHandoffFinalize(bundle_ref="bundle-1"),
+                                      ctx=ctx, c=c)
+    assert h["status"] == REJECTED and h["errors"]
+    job = ppr.get_processing_job("job-1", ctx=ctx, c=c)
+    assert job["slots"]["redline_manifest"] is None and job["slots"]["artifact_bundle"] is None
+
+
+def test_handoff_finalize_failed_on_mock_bundle(tmp_path):
+    c, ctx = _container(tmp_path), _ctx("cp-aaa")
+    _ready_rbl(c, ctx)
+    _record(c, ctx)
+    _stage_bundle(c, "cp-aaa", "bundle-1", mock_example=True)   # fake -> contract rejects -> FAILED
+    h = ppr.finalize_manifest_handoff("job-1", "run-1", ppr.ManifestHandoffFinalize(bundle_ref="bundle-1"),
+                                      ctx=ctx, c=c)
+    assert h["status"] == FAILED and h["errors"]
+    assert ppr.get_processing_job("job-1", ctx=ctx, c=c)["slots"]["artifact_bundle"] is None
+
+
+def test_finalize_unsafe_bundle_ref_is_400(tmp_path):
+    c, ctx = _container(tmp_path), _ctx("cp-aaa")
+    _ready_rbl(c, ctx)
+    _record(c, ctx)
+    with pytest.raises(HTTPException) as exc:                # traversal-shaped ref rejected before any FS use
+        ppr.finalize_manifest_handoff("job-1", "run-1",
+            ppr.ManifestHandoffFinalize(bundle_ref="../escape"), ctx=ctx, c=c)
+    assert exc.value.status_code == 400
+
+
+def test_finalize_missing_handoff_is_404(tmp_path):
+    c, ctx = _container(tmp_path), _ctx("cp-aaa")
+    _ready_rbl(c, ctx)
+    _stage_bundle(c, "cp-aaa", "bundle-1")
+    with pytest.raises(HTTPException) as exc:                # never recorded run-1
+        ppr.finalize_manifest_handoff("job-1", "run-1",
+            ppr.ManifestHandoffFinalize(bundle_ref="bundle-1"), ctx=ctx, c=c)
+    assert exc.value.status_code == 404
+
+
+def test_finalize_terminal_is_409(tmp_path):
+    c, ctx = _container(tmp_path), _ctx("cp-aaa")
+    _finalized_job(c, ctx)                                   # run-1 SUCCEEDED (terminal)
+    with pytest.raises(HTTPException) as exc:
+        ppr.finalize_manifest_handoff("job-1", "run-1",
+            ppr.ManifestHandoffFinalize(bundle_ref="bundle-1"), ctx=ctx, c=c)
+    assert exc.value.status_code == 409
+
+
+# --------------------------------------------------------------------------- #
+# Slice 3 — proof reads (redline manifest, artifact listing, artifact serving).
+# --------------------------------------------------------------------------- #
+def test_redline_manifest_requires_validated_handoff(tmp_path):
+    c, ctx = _container(tmp_path), _ctx("cp-aaa")
+    _ready_rbl(c, ctx)
+    with pytest.raises(HTTPException) as exc:                # nothing finalized yet -> no slot
+        ppr.get_redline_manifest("job-1", ctx=ctx, c=c)
+    assert exc.value.status_code == 404
+    _record(c, ctx)
+    _stage_bundle(c, "cp-aaa", "bundle-1")
+    ppr.finalize_manifest_handoff("job-1", "run-1", ppr.ManifestHandoffFinalize(bundle_ref="bundle-1"),
+                                  ctx=ctx, c=c)
+    slot = ppr.get_redline_manifest("job-1", ctx=ctx, c=c)
+    assert slot["ref"]["validation_status"] == "VALIDATED" and len(slot["ref"]["manifest_sha256"]) == 64
+
+
+def test_artifacts_list_only_manifest_backed(tmp_path):
+    c, ctx = _container(tmp_path), _ctx("cp-aaa")
+    _finalized_job(c, ctx)
+    out = ppr.list_artifacts("job-1", ctx=ctx, c=c)
+    assert out["bundle_id"].startswith("proj-a-rc-0-")
+    assert {a["path"] for a in out["artifacts"]} == {ART_PATH}   # ONLY the drawn FINAL_REDLINE_PNG
+    a = out["artifacts"][0]
+    assert a["log_id"] == "logA" and a["kind"] == "FINAL_REDLINE_PNG" and len(a["sha256"]) == 64
+
+
+def test_artifacts_require_validated_handoff_is_404(tmp_path):
+    c, ctx = _container(tmp_path), _ctx("cp-aaa")
+    _ready_rbl(c, ctx)                                       # no finalize -> no artifact_bundle slot
+    with pytest.raises(HTTPException) as exc:
+        ppr.list_artifacts("job-1", ctx=ctx, c=c)
+    assert exc.value.status_code == 404
+
+
+def test_artifact_serve_manifest_backed(tmp_path):
+    c, ctx = _container(tmp_path), _ctx("cp-aaa")
+    _finalized_job(c, ctx)
+    resp = ppr.get_artifact("job-1", ART_PATH, ctx=ctx, c=c)
+    assert isinstance(resp, FileResponse) and resp.media_type == "image/png"
+    assert Path(resp.path).is_file() and Path(resp.path).name == "logA_s1_redline_stroke.png"
+
+
+def test_artifact_serve_non_manifest_path_is_404(tmp_path):
+    c, ctx = _container(tmp_path), _ctx("cp-aaa")
+    _finalized_job(c, ctx)
+    with pytest.raises(HTTPException) as exc:                # not a manifest-listed artifact path
+        ppr.get_artifact("job-1", "artifacts/logA/not_in_manifest.png", ctx=ctx, c=c)
+    assert exc.value.status_code == 404
+
+
+# --------------------------------------------------------------------------- #
+# Slice 3 — tenant isolation across the whole handoff/proof surface.
+# --------------------------------------------------------------------------- #
+def test_slice3_tenant_isolation_b_cannot_address_a(tmp_path):
+    c = _container(tmp_path)
+    ctx_a, ctx_b = _ctx("cp-aaa"), _ctx("cp-bbb")
+    _finalized_job(c, ctx_a)                                 # A: finalized job-1 with an attached bundle
+    # B addresses A's job-1 / run-1 by the same ids, but B's scope is empty -> 404 everywhere
+    with pytest.raises(HTTPException) as e_rec:
+        ppr.record_manifest_handoff("job-1", ppr.ManifestHandoffRecord(
+            reviewed_bore_log_id="rbl-1", engine_run_id="run-2", engine_run_status="x"), ctx=ctx_b, c=c)
+    assert e_rec.value.status_code == 404
+    with pytest.raises(HTTPException) as e_fin:
+        ppr.finalize_manifest_handoff("job-1", "run-1",
+            ppr.ManifestHandoffFinalize(bundle_ref="bundle-1"), ctx=ctx_b, c=c)
+    assert e_fin.value.status_code == 404
+    with pytest.raises(HTTPException) as e_man:
+        ppr.get_redline_manifest("job-1", ctx=ctx_b, c=c)
+    assert e_man.value.status_code == 404
+    with pytest.raises(HTTPException) as e_list:
+        ppr.list_artifacts("job-1", ctx=ctx_b, c=c)
+    assert e_list.value.status_code == 404
+    with pytest.raises(HTTPException) as e_art:
+        ppr.get_artifact("job-1", ART_PATH, ctx=ctx_b, c=c)
+    assert e_art.value.status_code == 404
+    # A still reads its own bundle
+    assert ppr.list_artifacts("job-1", ctx=ctx_a, c=c)["artifacts"][0]["log_id"] == "logA"
