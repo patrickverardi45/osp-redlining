@@ -1,7 +1,7 @@
 # START HERE — TrueLine v2 Canonical Bootstrap
 
 > Single source of current working truth. Read THIS file first, in full — it is small on purpose.
-> Snapshot below is current as of **2026-06-21 (continued 48 — export_package versioned closeout model landed (durable versioned descriptor-of-references; KMZ only when EXPORTABLE; closeout-gated READY/FINAL; +24 tests) — product spine now CONTRACT-COMPLETE end-to-end + all 3 job output slots produced; HEAD `c5185d5`; NO render-truth change; frontier 50/58)**. For the absolute-latest
+> Snapshot below is current as of **2026-06-21 (continued 49 — backend/API Slice 1 Foundation landed: default-OFF `/v2/product` project/job routes (flag `TL2_PRODUCT_PIPELINE_API_OPTIN`, +15 tests) — contract→routes wiring STARTED on the now-complete spine; HEAD `986ae74`; NO render-truth change; frontier 50/58)**. For the absolute-latest
 > state, read ONLY the top ~35 lines of `C:/Nova/knowledge/TrueLine-Wiki/wiki/hot.md` — never the whole file.
 > **Do NOT load history/archive files** (`log.md`, `current-sprint.md`, full `hot.md`) unless explicitly
 > asked or investigating a specific historical decision.
@@ -18,19 +18,34 @@ review" buckets are not progress until they become drawn strokes.
 
 ## Repo / branch state
 - Repo: `C:/Nova/projects/TrueLine/TrueLine_Beta`  ·  Branch: `feat/truelinev2`
-- Product lives in `truelinev2/` (clean-room, zero old-app imports). v2 suite: **1617 passed / 4 skipped**
-  (continued-48: +24 export_package versioned-closeout tests). Callout-sweep e2e **31 passed / 1 skipped**.
+- Product lives in `truelinev2/` (clean-room, zero old-app imports). v2 suite: **1632 passed / 4 skipped**
+  (continued-49: +15 product-pipeline API Slice-1 tests). Callout-sweep e2e **31 passed / 1 skipped**.
 - Isolated track: monolith / Render / Vercel UNTOUCHED; nothing merged or deployed.
 
 ## HEAD / remote state (verify with `git` before trusting this snapshot)
-- Last RENDER commit: **`c19b565`** (log3 wired + DRAWN, 49→50/58 — UNCHANGED). Engine/contract HEAD = **`c5185d5`**
-  (continued-48; export_package versioned closeout — `contracts: add export package versioned closeout model`, 3 files/+984, pushed → `origin/feat/truelinev2` = `c5185d5`; tree clean; the continued-48 docs re-canonicalization sits one commit above). Prior: continued-47 billing `42c6bab` (docs `6b4ae1f`); continued-46 closeout `43a8501` (docs `f7e0772`); continued-45 kmz_export `2f70e22`; continued-44 handoff `2013879`; continued-43 gate `6048ef1`; continued-42 Slice 1 `2193a0e`; continued-41 `a4bf2a5` (docs/audit). Continued-41 engine-repo arc (7 commits on the continued-40 save `021561c`):
+- Last RENDER commit: **`c19b565`** (log3 wired + DRAWN, 49→50/58 — UNCHANGED). Engine/contract HEAD = **`986ae74`**
+  (continued-49; backend/API Slice 1 Foundation — `api: add product pipeline foundation routes`, 4 files/+372, pushed → `origin/feat/truelinev2` = `986ae74`; tree clean; the continued-49 docs re-canonicalization sits one commit above). Prior: continued-48 export_package `c5185d5` (docs `0c7eecc`); continued-47 billing `42c6bab` (docs `6b4ae1f`); continued-46 closeout `43a8501` (docs `f7e0772`); continued-45 kmz_export `2f70e22`; continued-44 handoff `2013879`; continued-43 gate `6048ef1`; continued-42 Slice 1 `2193a0e`; continued-41 `a4bf2a5` (docs/audit). Continued-41 engine-repo arc (7 commits on the continued-40 save `021561c`):
   `b9fd9cf` (staging URL) → `09fc469` (artifact-hosting plan) → `e886de2` (hosting IMPL recorded) → `377536d` (Cedar Ridge→Brenham relabel) → `5211102` (mock-shell→proof-viewer) → `2a559bd` (artifact-fetch env-debug) → `a4bf2a5` (v1 salvage audit + v2 pipeline contract). NO engine/render-truth change.
   Fable web (SEPARATE `trueline-web-experience` repo): `main` `51dcbf7`→**`16c7095`** (`3ab0c80` prebuild fetch → `85682bb` relabel → `f753b1a` proof-viewer shell → `16c7095` build-chain+diagnostic); default branch = `main`; LIVE at `https://trueline-web-experience.vercel.app/`.
   Prior saves: continued-40 `a4b8590`/`021561c` (staging standup); continued-39 `16295d4` (P4 plan + Fable clean main); continued-38 `bdbc3b1` (Phase 2J + Fable UI preserve/retire + repo-arch + remote-init P1).
   ARCHIVE (recovery): branch/tag `archive-v2-continued-35-superseded-scratch` = **`d8508b9`** (superseded `backend/tl_core/**` + 14 proof slices). `origin/main`: **`068a279`** (untouched).
 
-## Latest — continued 48 (2026-06-21): export_package versioned closeout model landed — product spine now CONTRACT-COMPLETE end-to-end + all 3 job output slots produced; NO render-truth change; frontier 50/58
+## Latest — continued 49 (2026-06-21): backend/API Slice 1 Foundation landed (default-OFF /v2/product project/job routes) — contract→routes wiring STARTED; NO render-truth change; frontier 50/58
+**continued 49 — FIRST backend/API wiring slice (foundation routes only); NO engine/renderer/fixture/anchor/corpus/census/parent-model/placement/contract change; frontier UNCHANGED 50/58; render commit stays `c19b565`; HEAD `986ae74`; v2 suite 1632 passed / 4 skipped.** First crossing from contracts into routes — but the contract spine is UNCHANGED; this slice only ADDS thin, default-OFF route adapters.
+- **Backend/API Slice 1 Foundation LANDED (lane `TRUELINE_PRODUCT_BACKEND_API_WIRING_PLAN`, Slice 1; HEAD/origin `986ae74`).** Commit `986ae74` `api: add product pipeline foundation routes` (4 files / +372; staged explicitly, NO `git add -A`; pushed, HEAD = origin = `986ae74`, tree clean). Default-OFF; nothing activates unless `TL2_PRODUCT_PIPELINE_API_OPTIN=1`.
+  - `truelinev2/config.py` — added `product_pipeline_api_optin` (DEFAULT OFF, env `TL2_PRODUCT_PIPELINE_API_OPTIN`) + `product_store_root` (env `TL2_PRODUCT_STORE_ROOT`, default gitignored `data/outputs/truelinev2/product_store`).
+  - `truelinev2/api/app.py` — mounts the product router ONLY when `settings.product_pipeline_api_optin` (mirrors the reviewer/run-assembly opt-in pattern; +4 lines).
+  - `truelinev2/api/product_pipeline_routes.py` — NEW `/v2/product` foundation router (context-bearing). Routes: `POST/GET /project`, `POST /jobs`, `GET /jobs/{job_id}`, `POST /jobs/{job_id}/transition`. Thin adapters over the `customer_project` + `processing_job` contracts (truth stays in the contracts). Identity = VERIFIED `X-TL-Tenant` slug → `customer_project_id == ctx.tenant.value`, NEVER from the URL path or request body. GET/POST only; server-authoritative lifecycle (illegal transition → 409); errors mapped 404/409/400/403; `at`/`by` server-generated.
+  - `truelinev2/tests/test_product_pipeline_api.py` — 15 tests, repo convention (NO httpx/TestClient): `app.routes` mount inspection (flag-off dormant / flag-on exact paths + GET/POST-only + context dep) + direct route-function calls over a tmp `product_store_root`; project/job create+get+transition happy paths; conflict 409, missing 404, invalid slug 400; **tenant isolation** (B cannot read/transition A's job/project → 404); **no customer_project id accepted from path or body**.
+  - **Verify:** targeted 15 ✓; existing API tests (reviewer + run-assembly + product) 50 in one run ✓ (no mounting regression); naming guard with operator `NAME_TOKENS` ✓ zero leakage; **full v2 suite 1632 passed / 4 skipped** (delta exactly +15 vs the committed 1617/4 baseline).
+
+**SLICE 1 BOUNDARIES (what it does NOT do):** NO upload / reviewed-bore-log / manifest-handoff / proof-artifact / KMZ / closeout / billing / export-package routes (later slices); NO `python-multipart`, NO `httpx`, no new deps; no duplicate backend app; no broad utility layer; no dead route surface; no engine/render/fixture/anchor/coordinate change; no web-UI / mobile / deploy / production-`main`; **v1 backend behavior UNTOUCHED** (no v1 snapping, no v1 billing/export); the contract spine is UNCHANGED. Default-OFF — nothing activates unless `TL2_PRODUCT_PIPELINE_API_OPTIN=1`. `origin/main` `068a279` untouched.
+
+**ARCHITECTURE (clean-room + modular):** routes live under `truelinev2/api/...`; product contracts stay under `truelinev2/contracts/...`; product storage under the v2 `product_store_root`; route adapters are THIN; product truth stays INSIDE the contracts. The contract spine remains complete: `upload_pipeline → reviewed_bore_log → manifest_handoff → kmz_export safety → closeout_review → billing_summary → export_package`. Backend/API wiring has now STARTED (Slice 1 Foundation only).
+
+**Next recommended lane (separately authorized; NOT started):** `TRUELINE_PRODUCT_BACKEND_API_SLICE_2_INPUTS_REVIEW_GATE` — uploads/input registration (untrusted/`queued`; base64-JSON, no `python-multipart`) + reviewed-bore-log create/rows/review/group/status + review-queue + eligibility-gate exposure; thin adapters over the contracts; same default-OFF flag. Detail: [[current-sprint]] / [[log]] continued 49.
+
+### Prior — continued 48 (2026-06-21): export_package versioned closeout model landed — product spine now CONTRACT-COMPLETE end-to-end + all 3 job output slots produced; NO render-truth change; frontier 50/58
 **continued 48 — the SEVENTH (final spine) permanent product-pipeline slice (versioned closeout export package); NO engine/renderer/fixture/anchor/corpus/census/parent-model/placement/flag change; frontier UNCHANGED 50/58; render commit stays `c19b565`; engine/contract HEAD `c5185d5`; v2 suite 1617 passed / 4 skipped.**
 - **Export package versioned closeout LANDED (lane `TRUELINE_PRODUCT_EXPORT_PACKAGE_VERSIONED_CLOSEOUT`, HEAD/origin `c5185d5`).** Commit `c5185d5` `contracts: add export package versioned closeout model` (3 files / +984; staged explicitly, NO `git add -A`; pushed, HEAD = origin = `c5185d5`, tree clean). One GENERIC, contract-only, pure-stdlib module + its test + the +1-line guard extension. Fixes v1's defect (browser `document.write` print, blob URLs, no stored artifact / versioning / audit — salvage audit 6a/6b, DO-NOT-COPY 10) with a durable, content-addressed package DESCRIPTOR.
   - `truelinev2/contracts/export_package.py` — ONE durable `_export_package.json` per job (singleton) with append-only versioned `revisions[]`. Server-authoritative status `DRAFT · BLOCKED · ASSEMBLED · READY · FINAL` (two-tier per §8: READY at closeout ≥ READY_FOR_APPROVAL, FINAL at APPROVED). A DESCRIPTOR / manifest-of-references — NOT a rendered document (no PDF/HTML/binary generated). `assemble_export_package` resolves trusted sources into items (job summary; reviewed_bore_log if engine-eligible; redline manifest + manifest-backed artifacts from the VALIDATED sha256-verified durable bundle; KMZ only when `kmz_export` EXPORTABLE; closeout status; billing snapshot by reference). Reproducible `package_content_hash` over the canonical descriptor (regeneration appends a revision when trusted refs change — prior superseded, retained; identical reassemble revalidates idempotently). On success sets the job `export_package` output slot to a REFERENCE (after the record is written; no lifecycle transition, no completion/delivery, no closeout/billing override).
@@ -272,15 +287,21 @@ log5, log15, log16, log31, log38, log43, log57 — all owner/source-gated:
   Woodson s10+13 run; AP-158/2+45 intermediate, STA 3+23 FLOWER POT end. The source-location conflict is closed.)
 
 ## Current next gates (each separately authorized; NONE started)
-1. **`TRUELINE_PRODUCT_BACKEND_API_WIRING_PLAN` ← recommended next (separately authorized; PLAN-FIRST; NOT started).**
-   The product spine is now CONTRACT-COMPLETE end-to-end (7 slices) and all 3 job output slots are produced, so the
-   next step crosses the contract boundary into backend/API wiring — PLAN ONLY (no code/routes yet). Plan generic,
-   `customer_project`-scoped, EXTERNAL-auth-gated routes that DRIVE the existing contracts: upload project files →
-   create isolated customer_project → create processing_job → accept/review bore-log data → run the reviewed bore-log
-   gate → attach the validated manifest handoff → expose proof artifacts → expose kmz_export safety state → expose
-   closeout_review status → expose billing_summary → expose the export_package descriptor. Every route READS/DRIVES the
-   contracts (never recomputes truth client-side); cross-`customer_project` = 403; no engine/render change; no deploy.
-   Plan-first; generic names. Later (each separately gated): P5 backend/API IMPL → P6 parity → P7 engine split → P8 retire v1.
+1. **`TRUELINE_PRODUCT_BACKEND_API_SLICE_2_INPUTS_REVIEW_GATE` ← recommended next (separately authorized; NOT started).**
+   Slice 2 of the approved backend/API wiring plan (4 slices behind ONE default-OFF flag `TL2_PRODUCT_PIPELINE_API_OPTIN`).
+   Wire `/v2/product` routes for the inputs + review gate: upload/input registration (uploads stay untrusted/`queued`;
+   base64-JSON, NO `python-multipart`) → reviewed-bore-log create → add extracted/imported rows (UNTRUSTED) → row review →
+   segment grouping + status → review-queue view → engine-eligibility gate exposure. Thin route adapters over the existing
+   contracts (truth stays in `truelinev2/contracts/...`); identity = verified `X-TL-Tenant` slug (never path/body); tenant
+   isolation = 403/404; GET/POST only. Generic names; no engine/render/web-UI/mobile/deploy. Slices 3 (handoff + proof reads)
+   and 4 (kmz/closeout/billing/export reads + safe actions) follow; privileged closeout transitions await the verified-role
+   decision. Later (each separately gated): P5 full IMPL → P6 parity → P7 engine split → P8 retire v1.
+   - **`TRUELINE_PRODUCT_BACKEND_API_WIRING_PLAN` — ✅ APPROVED + Slice 1 DONE (continued-49, `986ae74`).** 4-slice split behind
+     one default-OFF flag. **Slice 1 Foundation** landed: `product_pipeline_api_optin` (`TL2_PRODUCT_PIPELINE_API_OPTIN`) +
+     `product_store_root` (`TL2_PRODUCT_STORE_ROOT`) in `config.py`; opt-in mount in `api/app.py`; `api/product_pipeline_routes.py`
+     (`/v2/product` project create/get + jobs create/get + transition; context-bearing, `customer_project_id == ctx.tenant.value`
+     never from path/body; GET/POST only; tenant-isolated; illegal transition 409); 15 tests (no httpx/TestClient). NO upload/
+     review/handoff/proof/kmz/closeout/billing/export routes; NO `python-multipart`/`httpx`; nothing activates unless the flag is on.
    - **`TRUELINE_PRODUCT_EXPORT_PACKAGE_VERSIONED_CLOSEOUT` — ✅ DONE (continued-48, `c5185d5`).** one durable versioned
      `export_package` per job (DRAFT/BLOCKED/ASSEMBLED/READY/FINAL); descriptor / manifest-of-references (NO rendered document); KMZ included only when `kmz_export` EXPORTABLE (pixel-only omits w/ warning, never blocks); closeout-gated readiness/finality; billing snapshot by reference (never recomputed); sets the job `export_package` slot (reference-only, after the record); +24 tests. See Latest above.
    - **`TRUELINE_PRODUCT_BILLING_SUMMARY_SERVER_COMPUTED` — ✅ DONE (continued-47, `42c6bab`).** one durable server-authoritative
