@@ -73,6 +73,9 @@ PRODUCT_PATHS = {
     # M2 — human-confirmed source anchors (record + validate; renders nothing)
     "/v2/product/jobs/{job_id}/source-anchors",
     "/v2/product/jobs/{job_id}/source-anchors/{source_anchor_id}",
+    # M2 — uploaded PLAN_PDF page display (read-only metadata + page raster)
+    "/v2/product/jobs/{job_id}/plan-pages/{plan_upload_id}",
+    "/v2/product/jobs/{job_id}/plan-pages/{plan_upload_id}/{page_number}/raster",
 }
 
 
@@ -1297,3 +1300,101 @@ def test_source_anchor_tenant_isolation_via_route(tmp_path):
         ppr.get_source_anchor_route("job-1", "sa-1", ctx=b, c=c)
     assert exc.value.status_code == 404
     assert ppr.list_source_anchors_route("job-1", ctx=b, c=c) == {"source_anchors": []}
+
+
+# --------------------------------------------------------------------------- #
+# M2 — uploaded PLAN_PDF page display (metadata + raster; no redline, no artifacts).
+# --------------------------------------------------------------------------- #
+def _plan_pdf_only(c, ctx, *, job_id="job-1"):
+    """Project + job + one real PLAN_PDF upload. Returns the PLAN_PDF upload id."""
+    ppr.create_project(ppr.ProjectCreate(display_name="Label"), ctx=ctx, c=c)
+    ppr.create_processing_job(ppr.JobCreate(job_id=job_id), ctx=ctx, c=c)
+    plan = ppr.register_upload(job_id, ppr.UploadRegister(
+        kind="PLAN_PDF", filename="plan.pdf", content_base64=_MINIMAL_PLAN_PDF_B64), ctx=ctx, c=c)
+    return plan["upload_id"]
+
+
+def test_plan_page_metadata_happy(tmp_path):
+    c, ctx = _container(tmp_path), _ctx("cp-aaa")
+    plan = _plan_pdf_only(c, ctx)
+    meta = ppr.get_plan_page_metadata("job-1", plan, ctx=ctx, c=c)
+    assert meta["plan_upload_id"] == plan and meta["page_count"] == 1
+    page = meta["pages"][0]
+    assert page["page_number"] == 1
+    assert page["bounds"] == {"x0": 0.0, "y0": 0.0, "x1": 612.0, "y1": 792.0}
+    assert page["width"] == 612.0 and page["height"] == 792.0
+    assert page["zoom"] == 2.0 and page["raster_width"] == 1224 and page["raster_height"] == 1584
+
+
+def test_plan_page_metadata_wrong_kind_400(tmp_path):
+    c, ctx = _container(tmp_path), _ctx("cp-aaa")
+    bore = _bore_log_upload(c, ctx)                                        # project + job + BORE_LOG
+    with pytest.raises(HTTPException) as exc:
+        ppr.get_plan_page_metadata("job-1", bore, ctx=ctx, c=c)
+    assert exc.value.status_code == 400
+
+
+def test_plan_page_metadata_missing_upload_404(tmp_path):
+    c, ctx = _container(tmp_path), _ctx("cp-aaa")
+    _plan_pdf_only(c, ctx)
+    with pytest.raises(HTTPException) as exc:
+        ppr.get_plan_page_metadata("job-1", "up-nope", ctx=ctx, c=c)
+    assert exc.value.status_code == 404
+
+
+def test_plan_page_metadata_tenant_isolation(tmp_path):
+    c = _container(tmp_path)
+    a, b = _ctx("cp-aaa"), _ctx("cp-bbb")
+    plan = _plan_pdf_only(c, a)
+    ppr.create_project(ppr.ProjectCreate(display_name="B"), ctx=b, c=c)
+    with pytest.raises(HTTPException) as exc:                              # B has no job-1 -> 404
+        ppr.get_plan_page_metadata("job-1", plan, ctx=b, c=c)
+    assert exc.value.status_code == 404
+
+
+def test_plan_page_raster_happy_returns_png(tmp_path):
+    c, ctx = _container(tmp_path), _ctx("cp-aaa")
+    plan = _plan_pdf_only(c, ctx)
+    resp = ppr.get_plan_page_raster("job-1", plan, 1, ctx=ctx, c=c)
+    assert resp.status_code == 200 and resp.media_type == "image/png"
+    assert resp.body[:4] == b"\x89PNG"                                    # real PNG bytes, in-memory
+    # nothing written to disk (the raster is response bytes, not an artifact)
+    assert list(Path(c.settings.product_store_root).rglob("*.png")) == []
+
+
+def test_plan_page_raster_wrong_kind_400(tmp_path):
+    c, ctx = _container(tmp_path), _ctx("cp-aaa")
+    bore = _bore_log_upload(c, ctx)
+    with pytest.raises(HTTPException) as exc:
+        ppr.get_plan_page_raster("job-1", bore, 1, ctx=ctx, c=c)
+    assert exc.value.status_code == 400
+
+
+def test_plan_page_raster_missing_page_404(tmp_path):
+    c, ctx = _container(tmp_path), _ctx("cp-aaa")
+    plan = _plan_pdf_only(c, ctx)
+    with pytest.raises(HTTPException) as exc:
+        ppr.get_plan_page_raster("job-1", plan, 99, ctx=ctx, c=c)         # PDF has 1 page
+    assert exc.value.status_code == 404
+
+
+def test_plan_page_raster_tenant_isolation(tmp_path):
+    c = _container(tmp_path)
+    a, b = _ctx("cp-aaa"), _ctx("cp-bbb")
+    plan = _plan_pdf_only(c, a)
+    ppr.create_project(ppr.ProjectCreate(display_name="B"), ctx=b, c=c)
+    with pytest.raises(HTTPException) as exc:
+        ppr.get_plan_page_raster("job-1", plan, 1, ctx=b, c=c)
+    assert exc.value.status_code == 404
+
+
+def test_plan_pages_create_no_output_or_artifacts(tmp_path):
+    c, ctx = _container(tmp_path), _ctx("cp-aaa")
+    plan = _plan_pdf_only(c, ctx)
+    ppr.get_plan_page_metadata("job-1", plan, ctx=ctx, c=c)
+    ppr.get_plan_page_raster("job-1", plan, 1, ctx=ctx, c=c)
+    job = ppr.get_processing_job("job-1", ctx=ctx, c=c)
+    assert all(v is None for v in job["slots"].values())                  # no output slots
+    jd = job_dir(c.settings.product_store_root, "cp-aaa", "job-1")
+    assert not (jd / "bundle_store").exists() and not (jd / "handoffs").exists()
+    assert list(jd.rglob("*.png")) == []                                  # nothing rendered to disk

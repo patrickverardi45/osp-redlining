@@ -26,7 +26,7 @@ from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel
 
 from truelinev2.api.container import Container
@@ -774,19 +774,25 @@ def get_engine_handoff_readiness(job_id: str,
 # --------------------------------------------------------------------------- #
 # M2 — human-confirmed source-anchor route geometry (record + validate ONLY; renders nothing).
 # --------------------------------------------------------------------------- #
-def _resolve_plan_page_bounds(store, customer_project_id, job_id, plan_upload_id, page_number, job):
-    """Resolve the DISPLAY-space page bounds of the uploaded PLAN_PDF page for source-anchor renderability
-    validation. Read-only: opens the PDF to read page geometry only — rasterizes nothing, draws nothing,
-    writes nothing. Returns (x0,y0,x1,y1), or None when the upload is missing / not a PLAN_PDF / its file
-    or the page is unresolvable (the contract maps a None for an otherwise-valid plan upload to
-    PAGE_NOT_RESOLVABLE)."""
+def _plan_pdf_path(store, customer_project_id, job_id, plan_upload_id, job):
+    """Absolute path to an uploaded PLAN_PDF's file, or None if the id is missing / not a PLAN_PDF / the
+    file is absent. Read-only resolution; opens nothing."""
     upload = next((u for u in job.get("uploads", []) if u.get("upload_id") == plan_upload_id), None)
     if upload is None or upload.get("kind") != PLAN_PDF_KIND:
         return None
-    pdf_path = job_dir(store, customer_project_id, job_id) / upload.get("stored_path", "")
-    if not pdf_path.is_file() or not isinstance(page_number, int) or page_number < 1:
+    path = job_dir(store, customer_project_id, job_id) / upload.get("stored_path", "")
+    return path if path.is_file() else None
+
+
+def _resolve_plan_page_bounds(store, customer_project_id, job_id, plan_upload_id, page_number, job):
+    """Resolve the DISPLAY-space page bounds of the uploaded PLAN_PDF page for source-anchor renderability
+    validation. Read-only: opens the PDF to read page geometry only — rasterizes nothing, draws nothing,
+    writes nothing. Returns (x0,y0,x1,y1), or None when the upload/page is unresolvable (the contract maps
+    a None for an otherwise-valid plan upload to PAGE_NOT_RESOLVABLE)."""
+    path = _plan_pdf_path(store, customer_project_id, job_id, plan_upload_id, job)
+    if path is None or not isinstance(page_number, int) or page_number < 1:
         return None
-    plan = PlanPdf(str(pdf_path))
+    plan = PlanPdf(str(path))
     try:
         if page_number > plan.page_count:
             return None
@@ -855,3 +861,87 @@ def get_source_anchor_route(job_id: str, source_anchor_id: str,
         return load_source_anchor(_store_root(c), ctx.tenant.value, job_id, source_anchor_id)
     except _CONTRACT_ERRORS as exc:
         raise _to_http(exc)
+
+
+# --------------------------------------------------------------------------- #
+# M2 — uploaded PLAN_PDF page DISPLAY (read-only page metadata + page raster for source-anchor capture).
+# Rasterizes the uploaded plan AS-IS for the browser — NO redline drawn, NO artifact/slot/bundle created.
+# --------------------------------------------------------------------------- #
+_PLAN_RASTER_ZOOM = 2.0
+
+
+def _require_plan_upload(job, plan_upload_id):
+    """Return the named PLAN_PDF upload dict, or raise HTTPException (404 missing / 400 wrong kind)."""
+    upload = next((u for u in job.get("uploads", []) if u.get("upload_id") == plan_upload_id), None)
+    if upload is None:
+        raise HTTPException(status_code=404, detail="no upload %r in this job" % (plan_upload_id,))
+    if upload.get("kind") != PLAN_PDF_KIND:
+        raise HTTPException(status_code=400, detail="upload %r is not a PLAN_PDF" % (plan_upload_id,))
+    return upload
+
+
+@router.get("/jobs/{job_id}/plan-pages/{plan_upload_id}")
+def get_plan_page_metadata(job_id: str, plan_upload_id: str,
+                           ctx: RequestContext = Depends(get_context),
+                           c: Container = Depends(get_container)) -> dict:
+    """Read-only page metadata for an uploaded PLAN_PDF: page_count + per-page DISPLAY-space bounds (the
+    coordinate space source-anchor control points use) + width/height + the raster zoom/pixel size. Lets
+    the web map click pixels back to display-space. 404 if the upload is missing, 400 if it is not a
+    PLAN_PDF. Opens the PDF read-only (no rasterization here); creates no artifacts/slots."""
+    cp, store = ctx.tenant.value, _store_root(c)
+    try:
+        job = load_job(store, cp, job_id)
+    except _CONTRACT_ERRORS as exc:
+        raise _to_http(exc)
+    upload = _require_plan_upload(job, plan_upload_id)
+    path = job_dir(store, cp, job_id) / upload.get("stored_path", "")
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="plan file is not available")
+    plan = PlanPdf(str(path))
+    try:
+        pages = []
+        for n in range(1, plan.page_count + 1):
+            bounds = plan.page_bounds_display(n, 0)         # offset 0 -> page_index = page_number - 1
+            if bounds is None:
+                continue
+            x0, y0, x1, y1 = bounds
+            w, h = x1 - x0, y1 - y0
+            pages.append({
+                "page_number": n,
+                "bounds": {"x0": x0, "y0": y0, "x1": x1, "y1": y1},
+                "width": w, "height": h,
+                "zoom": _PLAN_RASTER_ZOOM,
+                "raster_width": round(w * _PLAN_RASTER_ZOOM),
+                "raster_height": round(h * _PLAN_RASTER_ZOOM),
+            })
+        return {"plan_upload_id": plan_upload_id, "page_count": plan.page_count, "pages": pages}
+    finally:
+        plan.close()
+
+
+@router.get("/jobs/{job_id}/plan-pages/{plan_upload_id}/{page_number}/raster")
+def get_plan_page_raster(job_id: str, plan_upload_id: str, page_number: int,
+                         ctx: RequestContext = Depends(get_context),
+                         c: Container = Depends(get_container)) -> Response:
+    """Read-only PNG raster of ONE uploaded PLAN_PDF page (the plan AS-IS — NO redline overlay), returned
+    as image/png bytes for browser display. 404 if the upload/page is missing, 400 if the upload is not a
+    PLAN_PDF. Writes NO PNG to disk, creates no artifacts/slots/bundles, runs no engine."""
+    cp, store = ctx.tenant.value, _store_root(c)
+    try:
+        job = load_job(store, cp, job_id)
+    except _CONTRACT_ERRORS as exc:
+        raise _to_http(exc)
+    upload = _require_plan_upload(job, plan_upload_id)
+    path = job_dir(store, cp, job_id) / upload.get("stored_path", "")
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="plan file is not available")
+    plan = PlanPdf(str(path))
+    try:
+        if page_number < 1 or page_number > plan.page_count:
+            raise HTTPException(status_code=404, detail="page %r not in plan" % (page_number,))
+        png = plan.render_page_png(page_number, 0, zoom=_PLAN_RASTER_ZOOM)
+    finally:
+        plan.close()
+    if png is None:
+        raise HTTPException(status_code=404, detail="page %r not resolvable" % (page_number,))
+    return Response(content=png, media_type="image/png")

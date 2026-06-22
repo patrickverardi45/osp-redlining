@@ -49,6 +49,17 @@ class PlanPdf:
         ys = [p.y for p in corners]
         return (float(min(xs)), float(min(ys)), float(max(xs)), float(max(ys)))
 
+    def render_page_png(self, sheet: int, offset: int, *, zoom: float = 2.0) -> Optional[bytes]:
+        """Full-page PNG raster of ONE page (the uploaded plan AS-IS — NO overlay, NO redline drawn), as
+        in-memory bytes for browser display + human source-anchor capture. Returns None if the page index
+        is out of range. Writes nothing to disk. The pixmap covers the page's display-space rect scaled by
+        ``zoom``, so a raster pixel maps linearly back onto ``page_bounds_display`` for click capture."""
+        page = self._page(sheet, offset)
+        if page is None:
+            return None
+        pix = page.get_pixmap(matrix=fitz.Matrix(zoom, zoom), colorspace=fitz.csRGB, alpha=False)
+        return pix.tobytes("png")
+
     def text_by_index(self, idx: int) -> str:
         if not (0 <= idx < self.page_count):
             return ""
