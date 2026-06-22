@@ -42,6 +42,8 @@ $env:TL2_ALLOWED_ORIGINS = "http://localhost:3000"
 .\venv\Scripts\python.exe -m uvicorn truelinev2.api.app:create_app --factory --host 127.0.0.1 --port 8100
 ```
 
+> Local product-staging (real seed `product_store` + web product mode): see [`docs/runbooks/product_staging_local_wiring.md`](docs/runbooks/product_staging_local_wiring.md).
+
 ## M1 status
 Brenham `bore_log51` placed by v2's own pipeline: `AUTO_SELECT`, sheet 8,
 `0+00->2+99`, 299' — reproduced independently, served as a real PNG over HTTP,
