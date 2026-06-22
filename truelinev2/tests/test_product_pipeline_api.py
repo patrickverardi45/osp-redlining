@@ -21,7 +21,7 @@ from truelinev2.api import product_pipeline_routes as ppr
 from truelinev2.api.app import create_app
 from truelinev2.config import Settings
 from truelinev2.context import require_context
-from truelinev2.contracts.extracted_row import CONFIRMED, UNREVIEWED
+from truelinev2.contracts.extracted_row import CONFIRMED, MANUAL_ENTRY, UNREVIEWED
 from truelinev2.contracts.manifest_handoff import ATTEMPTED, FAILED, REJECTED, SUCCEEDED
 from truelinev2.contracts.processing_job import (
     AWAITING_REVIEW,
@@ -48,6 +48,7 @@ PRODUCT_PATHS = {
     # Slice 2 — inputs + the reviewed-bore-log review gate
     "/v2/product/jobs/{job_id}/uploads",
     "/v2/product/jobs/{job_id}/reviewed-bore-logs",
+    "/v2/product/jobs/{job_id}/reviewed-bore-logs/{reviewed_bore_log_id}",
     "/v2/product/jobs/{job_id}/reviewed-bore-logs/{reviewed_bore_log_id}/rows",
     "/v2/product/jobs/{job_id}/reviewed-bore-logs/{reviewed_bore_log_id}/rows/{row_id}/review",
     "/v2/product/jobs/{job_id}/reviewed-bore-logs/{reviewed_bore_log_id}/groups",
@@ -972,3 +973,101 @@ def test_slice4_tenant_isolation_b_cannot_address_a(tmp_path):
         assert exc.value.status_code == 404
     # A still reads its own
     assert ppr.get_closeout("job-1", ctx=ctx_a, c=c)["status"] in ("BLOCKED", "READY_FOR_APPROVAL")
+
+
+# --------------------------------------------------------------------------- #
+# Slice B — reviewed_bore_log full-record read route + route-driven gate flow.
+# --------------------------------------------------------------------------- #
+def _bore_log_upload(c, ctx, job_id="job-1"):
+    """Project + job + one BORE_LOG upload; returns its upload_id (the rbl source)."""
+    ppr.create_project(ppr.ProjectCreate(display_name="Label"), ctx=ctx, c=c)
+    ppr.create_processing_job(ppr.JobCreate(job_id=job_id), ctx=ctx, c=c)
+    b64 = base64.b64encode(b"row_id,start_station,end_station\n").decode()
+    up = ppr.register_upload(
+        job_id, ppr.UploadRegister(kind="BORE_LOG", filename="bores.csv", content_base64=b64),
+        ctx=ctx, c=c)
+    return up["upload_id"]
+
+
+def _manual_row(row_id, upload_id, start, end):
+    return ppr.ExtractedRowInput(
+        row_id=row_id, source_upload_id=upload_id,
+        raw={"start_station": start, "end_station": end},
+        normalized={"start_station": start, "end_station": end},
+        extraction_method=MANUAL_ENTRY)
+
+
+def test_get_reviewed_bore_log_full_record(tmp_path):
+    c, ctx = _container(tmp_path), _ctx("cp-aaa")
+    up = _bore_log_upload(c, ctx)
+    ppr.create_bore_log_review(
+        "job-1", ppr.ReviewedBoreLogCreate(reviewed_bore_log_id="rbl-main", source_upload_id=up),
+        ctx=ctx, c=c)
+    ppr.add_rows("job-1", "rbl-main", ppr.RowsAdd(rows=[_manual_row("row-1", up, "0+00", "2+99")]),
+                 ctx=ctx, c=c)
+    rec = ppr.get_reviewed_bore_log_record("job-1", "rbl-main", ctx=ctx, c=c)
+    assert rec["reviewed_bore_log_id"] == "rbl-main" and rec["source_upload_id"] == up
+    assert len(rec["rows"]) == 1 and rec["rows"][0]["row_id"] == "row-1"
+    assert rec["rows"][0]["raw"]["start_station"] == "0+00"          # persisted values are returned
+    assert rec["rows"][0]["review"]["status"] == UNREVIEWED
+    assert rec["groups"] == []
+
+
+def test_get_reviewed_bore_log_missing_is_404(tmp_path):
+    c, ctx = _container(tmp_path), _ctx("cp-aaa")
+    _bore_log_upload(c, ctx)
+    with pytest.raises(HTTPException) as exc:
+        ppr.get_reviewed_bore_log_record("job-1", "nope", ctx=ctx, c=c)
+    assert exc.value.status_code == 404
+
+
+def test_get_reviewed_bore_log_tenant_isolation(tmp_path):
+    c = _container(tmp_path)
+    a, b = _ctx("cp-aaa"), _ctx("cp-bbb")
+    up = _bore_log_upload(c, a)
+    ppr.create_bore_log_review(
+        "job-1", ppr.ReviewedBoreLogCreate(reviewed_bore_log_id="rbl-main", source_upload_id=up),
+        ctx=a, c=c)
+    ppr.create_project(ppr.ProjectCreate(display_name="B"), ctx=b, c=c)
+    ppr.create_processing_job(ppr.JobCreate(job_id="job-1"), ctx=b, c=c)
+    with pytest.raises(HTTPException) as exc:                        # B cannot resolve A's rbl
+        ppr.get_reviewed_bore_log_record("job-1", "rbl-main", ctx=b, c=c)
+    assert exc.value.status_code == 404
+
+
+def test_route_flow_reaches_engine_ready_true(tmp_path):
+    c, ctx = _container(tmp_path), _ctx("cp-aaa")
+    up = _bore_log_upload(c, ctx)
+    ppr.create_bore_log_review(
+        "job-1", ppr.ReviewedBoreLogCreate(reviewed_bore_log_id="rbl-main", source_upload_id=up),
+        ctx=ctx, c=c)
+    ppr.add_rows("job-1", "rbl-main", ppr.RowsAdd(rows=[
+        _manual_row("row-1", up, "0+00", "2+99"), _manual_row("row-2", up, "3+00", "5+00")]),
+        ctx=ctx, c=c)
+    for rid in ("row-1", "row-2"):
+        ppr.review_row_route("job-1", "rbl-main", rid, ppr.RowReview(to_status=CONFIRMED), ctx=ctx, c=c)
+    ppr.define_group("job-1", "rbl-main", ppr.SegmentGroupCreate(
+        group_id="grp-1", member_row_ids=["row-1", "row-2"], relation=SEPARATE_BORE), ctx=ctx, c=c)
+    ppr.set_group_status("job-1", "rbl-main", "grp-1",
+                         ppr.GroupingStatus(to_status=GROUPING_CONFIRMED), ctx=ctx, c=c)
+    q = ppr.get_review_queue("job-1", "rbl-main", ctx=ctx, c=c)
+    assert q["engine_ready"] is True
+    assert set(q["engine_eligible_row_ids"]) == {"row-1", "row-2"}
+    assert q["ungrouped_rows"] == [] and q["unresolved_groups"] == [] and q["rows_in_multiple_groups"] == []
+
+
+def test_route_flow_engine_not_ready_with_blockers(tmp_path):
+    c, ctx = _container(tmp_path), _ctx("cp-aaa")
+    up = _bore_log_upload(c, ctx)
+    ppr.create_bore_log_review(
+        "job-1", ppr.ReviewedBoreLogCreate(reviewed_bore_log_id="rbl-main", source_upload_id=up),
+        ctx=ctx, c=c)
+    ppr.add_rows("job-1", "rbl-main", ppr.RowsAdd(rows=[
+        _manual_row("row-1", up, "0+00", "2+99"), _manual_row("row-2", up, "3+00", "5+00")]),
+        ctx=ctx, c=c)
+    ppr.review_row_route("job-1", "rbl-main", "row-1", ppr.RowReview(to_status=CONFIRMED), ctx=ctx, c=c)
+    # row-2 left UNREVIEWED + no group defined -> honest blockers, not ready
+    q = ppr.get_review_queue("job-1", "rbl-main", ctx=ctx, c=c)
+    assert q["engine_ready"] is False
+    assert "row-2" in q["rows_needing_review"]
+    assert set(q["ungrouped_rows"]) == {"row-1", "row-2"}

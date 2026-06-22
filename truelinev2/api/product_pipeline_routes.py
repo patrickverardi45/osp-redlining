@@ -371,6 +371,20 @@ def create_bore_log_review(job_id: str, req: ReviewedBoreLogCreate,
         raise _to_http(exc)
 
 
+@router.get("/jobs/{job_id}/reviewed-bore-logs/{reviewed_bore_log_id}")
+def get_reviewed_bore_log_record(job_id: str, reviewed_bore_log_id: str,
+                                 ctx: RequestContext = Depends(get_context),
+                                 c: Container = Depends(get_container)) -> dict:
+    """Read ONE reviewed_bore_log record in the tenant's job: rows (raw/normalized candidate values +
+    per-row review state/audit) + segment groups. Read-only — no review/grouping mutation, no engine, no
+    OCR. 404 if the reviewed_bore_log is missing; cross-tenant access cannot resolve it (tenant-scoped)."""
+    cp, store = ctx.tenant.value, _store_root(c)
+    try:
+        return load_reviewed_bore_log(store, cp, job_id, reviewed_bore_log_id)
+    except _CONTRACT_ERRORS as exc:
+        raise _to_http(exc)
+
+
 @router.post("/jobs/{job_id}/reviewed-bore-logs/{reviewed_bore_log_id}/rows")
 def add_rows(job_id: str, reviewed_bore_log_id: str, req: RowsAdd,
              ctx: RequestContext = Depends(get_context),
