@@ -48,6 +48,11 @@
         "generated_from": {"type": "string", "description": "How this manifest was produced (runner id / 'hand-authored ...')."}
       }
     },
+    "bundle_origin": {
+      "type": "string",
+      "enum": ["DETERMINISTIC_ENGINE", "HUMAN_CONFIRMED_SOURCE_ANCHOR"],
+      "description": "Optional origin tier. HUMAN_CONFIRMED_SOURCE_ANCHOR marks a bundle drawn from human-confirmed source-anchor control points (NOT solver/renderer output, NOT counted in the deterministic frontier). Absent on legacy / deterministic-engine manifests (which are DETERMINISTIC_ENGINE by default)."
+    },
     "summary": {
       "type": "object",
       "additionalProperties": false,

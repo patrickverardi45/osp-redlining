@@ -73,6 +73,8 @@ PRODUCT_PATHS = {
     # M2 — human-confirmed source anchors (record + validate; renders nothing)
     "/v2/product/jobs/{job_id}/source-anchors",
     "/v2/product/jobs/{job_id}/source-anchors/{source_anchor_id}",
+    # M2 — render a validated source anchor into the job's human-confirmed redline bundle
+    "/v2/product/jobs/{job_id}/source-anchors/{source_anchor_id}/render",
     # M2 — uploaded PLAN_PDF page display (read-only metadata + page raster)
     "/v2/product/jobs/{job_id}/plan-pages/{plan_upload_id}",
     "/v2/product/jobs/{job_id}/plan-pages/{plan_upload_id}/{page_number}/raster",
@@ -1398,3 +1400,93 @@ def test_plan_pages_create_no_output_or_artifacts(tmp_path):
     jd = job_dir(c.settings.product_store_root, "cp-aaa", "job-1")
     assert not (jd / "bundle_store").exists() and not (jd / "handoffs").exists()
     assert list(jd.rglob("*.png")) == []                                  # nothing rendered to disk
+
+
+# --------------------------------------------------------------------------- #
+# M2 — render a validated source anchor into the job's human-confirmed redline bundle.
+# --------------------------------------------------------------------------- #
+def _validated_anchor(c, ctx, *, sa_id="sa-1", points=None):
+    plan = _source_anchor_ready(c, ctx)                                    # job-1 + PLAN_PDF + engine-ready rbl
+    rec = ppr.create_source_anchor_route("job-1", ppr.SourceAnchorCreate(
+        source_anchor_id=sa_id, plan_upload_id=plan, reviewed_bore_log_id="rbl-main",
+        page_number=1, control_points=points or [_cp(100.0, 120.0), _cp(300.0, 340.0)],
+        start_identity=ppr.SourceAnchorIdentity(station="0+00", structure_label="HH")), ctx=ctx, c=c)
+    assert rec["status"] == "VALIDATED"
+    return plan
+
+
+def test_render_route_happy_produces_real_bundle(tmp_path):
+    c, ctx = _container(tmp_path), _ctx("cp-aaa")
+    _validated_anchor(c, ctx)
+    summary = ppr.render_source_anchor_route("job-1", "sa-1", ctx=ctx, c=c)
+    assert summary["status"] == "SUCCEEDED" and summary["bundle_id"]
+    assert summary["bundle_origin"] == "HUMAN_CONFIRMED_SOURCE_ANCHOR"
+    assert summary["artifact_count"] == 1 and summary["source_anchor_ids"] == ["sa-1"]
+    art = summary["artifacts"][0]
+    assert art["kind"] == "FINAL_REDLINE_PNG" and len(art["sha256"]) == 64 and art["bytes"] > 0
+    # job output slots set through the existing handoff
+    job = ppr.get_processing_job("job-1", ctx=ctx, c=c)
+    assert job["slots"]["redline_manifest"] is not None
+    assert job["slots"]["artifact_bundle"] is not None
+    # existing artifact list + serve routes surface the real PNG
+    listed = ppr.list_artifacts("job-1", ctx=ctx, c=c)
+    assert any(a["path"] == art["path"] for a in listed["artifacts"])
+    resp = ppr.get_artifact("job-1", art["path"], ctx=ctx, c=c)
+    assert Path(resp.path).read_bytes()[:4] == b"\x89PNG"                  # real PNG bytes served
+
+
+def test_render_route_rejects_unvalidated_anchor(tmp_path):
+    c, ctx = _container(tmp_path), _ctx("cp-aaa")
+    plan = _source_anchor_ready(c, ctx)
+    ppr.create_source_anchor_route("job-1", ppr.SourceAnchorCreate(   # 1 point -> REJECTED
+        source_anchor_id="sa-bad", plan_upload_id=plan, reviewed_bore_log_id="rbl-main",
+        page_number=1, control_points=[_cp(10.0, 10.0)]), ctx=ctx, c=c)
+    with pytest.raises(HTTPException) as exc:
+        ppr.render_source_anchor_route("job-1", "sa-bad", ctx=ctx, c=c)
+    assert exc.value.status_code == 409
+    job = ppr.get_processing_job("job-1", ctx=ctx, c=c)                    # no slots set on reject
+    assert all(v is None for v in job["slots"].values())
+
+
+def test_render_route_rejects_stale_rbl(tmp_path):
+    c, ctx = _container(tmp_path), _ctx("cp-aaa")
+    _validated_anchor(c, ctx)
+    # make the reviewed bore-log no longer engine-ready: add a second UNREVIEWED row
+    up = next(u["upload_id"] for u in ppr.get_processing_job("job-1", ctx=ctx, c=c)["uploads"]
+              if u["kind"] == "BORE_LOG")
+    ppr.add_rows("job-1", "rbl-main", ppr.RowsAdd(rows=[_manual_row("row-2", up, "3+00", "4+00")]),
+                 ctx=ctx, c=c)
+    with pytest.raises(HTTPException) as exc:
+        ppr.render_source_anchor_route("job-1", "sa-1", ctx=ctx, c=c)
+    assert exc.value.status_code == 409
+    job = ppr.get_processing_job("job-1", ctx=ctx, c=c)
+    assert all(v is None for v in job["slots"].values())                  # no render, no slots
+
+
+def test_render_route_renders_all_validated_anchors(tmp_path):
+    c, ctx = _container(tmp_path), _ctx("cp-aaa")
+    plan = _validated_anchor(c, ctx, sa_id="sa-1")
+    ppr.create_source_anchor_route("job-1", ppr.SourceAnchorCreate(       # second validated anchor
+        source_anchor_id="sa-2", plan_upload_id=plan, reviewed_bore_log_id="rbl-main",
+        page_number=1, control_points=[_cp(50.0, 60.0), _cp(70.0, 80.0)]), ctx=ctx, c=c)
+    summary = ppr.render_source_anchor_route("job-1", "sa-1", ctx=ctx, c=c)   # trigger on sa-1
+    assert summary["status"] == "SUCCEEDED"
+    assert summary["artifact_count"] == 2 and summary["source_anchor_ids"] == ["sa-1", "sa-2"]
+
+
+def test_render_route_missing_anchor_404(tmp_path):
+    c, ctx = _container(tmp_path), _ctx("cp-aaa")
+    _source_anchor_ready(c, ctx)
+    with pytest.raises(HTTPException) as exc:
+        ppr.render_source_anchor_route("job-1", "sa-nope", ctx=ctx, c=c)
+    assert exc.value.status_code == 404
+
+
+def test_render_route_tenant_isolation(tmp_path):
+    c = _container(tmp_path)
+    a, b = _ctx("cp-aaa"), _ctx("cp-bbb")
+    _validated_anchor(c, a)                                                # A owns job-1 + sa-1
+    ppr.create_project(ppr.ProjectCreate(display_name="B"), ctx=b, c=c)
+    with pytest.raises(HTTPException) as exc:                              # B cannot render A's anchor
+        ppr.render_source_anchor_route("job-1", "sa-1", ctx=b, c=c)
+    assert exc.value.status_code == 404

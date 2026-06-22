@@ -46,6 +46,20 @@ MIN_CONTROL_POINTS = 2
 STATUS_VALIDATED = "VALIDATED"
 STATUS_REJECTED = "REJECTED"
 
+# Render-bundle constants. A rendered source-anchor bundle is tagged HUMAN_CONFIRMED_SOURCE_ANCHOR at the
+# manifest top level (the additive optional `bundle_origin`) so it is unambiguously NOT deterministic
+# engine output and NOT part of the 50/58 deterministic frontier. Per-log it uses the EXISTING manifest
+# enums (status DRAWN_REDLINE, provenance OWNER_CONFIRMED_HUMAN_ADJUSTABLE) — no new per-log bucket, so the
+# committed deterministic example/frontier is untouched.
+BUNDLE_ORIGIN_HUMAN_CONFIRMED = "HUMAN_CONFIRMED_SOURCE_ANCHOR"
+_MANIFEST_STATUS_KEYS = ("DRAWN_REDLINE", "COVERED_BY_EXISTING_REDLINE", "OWNER_LOCKED_ABSTAIN",
+                         "SOURCE_GAP_BLOCKED", "MISSING_SOURCE_SHEET_BLOCKED")
+_MANIFEST_PROVENANCE_KEYS = ("DETERMINISTIC_AUTO", "OWNER_CONFIRMED_HUMAN_ADJUSTABLE",
+                             "COVERED_BY_EXISTING_REDLINE", "BLOCKED_OWNER_LOCKED",
+                             "BLOCKED_SOURCE_GAP", "BLOCKED_MISSING_SOURCE")
+MANIFEST_DRAWN_STATUS = "DRAWN_REDLINE"
+MANIFEST_HUMAN_PROVENANCE = "OWNER_CONFIRMED_HUMAN_ADJUSTABLE"
+
 _SA_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,62}$")
 
 # Renderability blocker codes (a record is VALIDATED iff none apply).
@@ -71,6 +85,11 @@ class InvalidSourceAnchorIdError(SourceAnchorError):
 
 class SourceAnchorNotFoundError(SourceAnchorError):
     """No stored record for the requested source_anchor."""
+
+
+class SourceAnchorStateError(SourceAnchorError):
+    """source_anchor is not in a state that permits the requested action (e.g. not VALIDATED/renderable,
+    or its reviewed_bore_log is no longer engine-ready)."""
 
 
 def validate_source_anchor_id(source_anchor_id) -> str:
@@ -290,3 +309,70 @@ def list_source_anchors(store_root, customer_project_id, processing_job_id) -> l
             assert_same_project(customer_project_id, record.get("customer_project_id"))
             out.append(record)
     return out
+
+
+def build_source_anchor_manifest(anchor_entries, *, project_id, project_name, engine_head, render_commit,
+                                 disclaimer) -> dict:
+    """PURE builder (no render, no PDF, no engine): assemble a schema-valid, reconciling redline manifest
+    for human-confirmed source anchors — ONE DRAWN_REDLINE log per anchor, provenance
+    OWNER_CONFIRMED_HUMAN_ADJUSTABLE (an EXISTING manifest enum, never DETERMINISTIC_AUTO), top-level
+    ``bundle_origin = HUMAN_CONFIRMED_SOURCE_ANCHOR``. ``mock_example`` is false; artifact sha256/bytes are
+    filled by the publisher. ``closure``/``coverage`` are null (no station footage is solved or invented).
+    Each entry is {"source_anchor": <record>, "artifact_path": <manifest-relative png>, "sheet": <int>}.
+    Counts derive from the logs, so the published manifest reconciles. Per-job + per-bundle only — never
+    summed into the deterministic 50/58 frontier."""
+    logs = []
+    for entry in anchor_entries:
+        sa = entry["source_anchor"]
+        start = sa.get("start_identity") or {}
+        end = sa.get("end_identity") or {}
+        start_sta = start.get("station") or ""
+        end_sta = end.get("station") or ""
+        label = ("%s->%s" % (start_sta, end_sta)) if (start_sta or end_sta) \
+            else "human-confirmed control-point route"
+        logs.append({
+            "log_id": sa["source_anchor_id"],
+            "parent_id": sa["reviewed_bore_log_id"],
+            "entry_role": "standalone",
+            "status": MANIFEST_DRAWN_STATUS,
+            "provenance": MANIFEST_HUMAN_PROVENANCE,
+            "drawn": True, "covered": False, "blocked": False,
+            "drawn_lane": "NEW_TARGETS",
+            "source_sheets": [int(sa["page_number"])],
+            "span": {"start_station": start_sta, "end_station": end_sta, "label": label},
+            "closure": None,            # no station footage solved or invented
+            "coverage": None,
+            "blocker": None,
+            "artifacts": [{"kind": "FINAL_REDLINE_PNG", "sheet": int(entry["sheet"]),
+                           "path": entry["artifact_path"], "sha256": None,
+                           "example_placeholder": True}],
+            "evidence": [{"kind": "OWNER_REVIEW", "ref": "source_anchor/%s" % sa["source_anchor_id"],
+                          "note": "human-confirmed control points marked on the uploaded plan page"}],
+            "warnings": [],
+        })
+    n = len(logs)
+    status_counts = {k: 0 for k in _MANIFEST_STATUS_KEYS}
+    status_counts[MANIFEST_DRAWN_STATUS] = n
+    provenance_counts = {k: 0 for k in _MANIFEST_PROVENANCE_KEYS}
+    provenance_counts[MANIFEST_HUMAN_PROVENANCE] = n
+    return {
+        "schema_version": "1.0.0",
+        "mock_example": False,
+        "disclaimer": disclaimer,
+        "project_id": project_id,
+        "project_name": project_name,
+        "engine": {"branch": "feat/truelinev2", "engine_head": engine_head,
+                   "render_commit": render_commit,
+                   "generated_from": "human-confirmed source anchors (no solver/renderer placement)"},
+        "bundle_origin": BUNDLE_ORIGIN_HUMAN_CONFIRMED,
+        "summary": {"total_logs": n, "drawn_count": n, "covered_count": 0, "blocked_count": 0,
+                    "frontier": "%d/%d" % (n, n)},
+        "status_counts": status_counts,
+        "provenance_counts": provenance_counts,
+        "consumption_rules": [
+            "Consume only this manifest for this job's human-confirmed drawn redlines.",
+            "Human-confirmed source-anchor bundle (bundle_origin HUMAN_CONFIRMED_SOURCE_ANCHOR): NOT "
+            "deterministic engine output and NOT part of the 50/58 deterministic frontier.",
+        ],
+        "logs": logs,
+    }

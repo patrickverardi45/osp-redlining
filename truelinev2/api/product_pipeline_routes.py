@@ -119,11 +119,13 @@ from truelinev2.contracts.source_anchor import (
     PLAN_PDF_KIND,
     SourceAnchorError,
     SourceAnchorNotFoundError,
+    SourceAnchorStateError,
     create_source_anchor,
     list_source_anchors,
     load_source_anchor,
 )
 from truelinev2.ingest.pdf import PlanPdf
+from truelinev2.render.source_anchor_render import render_job_source_anchors
 
 router = APIRouter(prefix="/v2/product")
 
@@ -255,7 +257,7 @@ def _to_http(exc: Exception) -> HTTPException:
                         SourceAnchorNotFoundError)):
         return HTTPException(status_code=404, detail=str(exc))
     if isinstance(exc, (IllegalTransitionError, UploadsClosedError, HandoffStateError,
-                        CloseoutStateError)):                           # state conflicts
+                        CloseoutStateError, SourceAnchorStateError)):   # state conflicts
         return HTTPException(status_code=409, detail=str(exc))
     if isinstance(exc, (CrossProjectAccessError, IsolationError)):
         return HTTPException(status_code=403, detail=str(exc))
@@ -859,6 +861,23 @@ def get_source_anchor_route(job_id: str, source_anchor_id: str,
     """Load one source-anchor record in the tenant's scope (404 if none)."""
     try:
         return load_source_anchor(_store_root(c), ctx.tenant.value, job_id, source_anchor_id)
+    except _CONTRACT_ERRORS as exc:
+        raise _to_http(exc)
+
+
+@router.post("/jobs/{job_id}/source-anchors/{source_anchor_id}/render")
+def render_source_anchor_route(job_id: str, source_anchor_id: str,
+                               ctx: RequestContext = Depends(get_context),
+                               c: Container = Depends(get_container)) -> dict:
+    """Render the job's VALIDATED human-confirmed source anchors into a real `mock_example:false` redline
+    bundle — dashed REVIEW strokes drawn ONLY from the stored control points — and set the job's
+    redline_manifest + artifact_bundle slots via the existing handoff. The requested anchor must be
+    VALIDATED/renderable (409 otherwise); 404 if the job/anchor is missing. Draws nothing automatic (no
+    geometry inference, no station solving, no engine) and does NOT touch the deterministic 50/58 frontier.
+    Returns a bundle/artifact summary; idempotent for identical content."""
+    cp, store = ctx.tenant.value, _store_root(c)
+    try:
+        return render_job_source_anchors(store, cp, job_id, source_anchor_id, at=_now(), by=ctx.session_id)
     except _CONTRACT_ERRORS as exc:
         raise _to_http(exc)
 
