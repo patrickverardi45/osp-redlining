@@ -145,6 +145,26 @@ def load_reviewed_bore_log(store_root, customer_project_id, processing_job_id,
     return rbl
 
 
+def list_reviewed_bore_logs(store_root, customer_project_id, processing_job_id) -> list:
+    """List every reviewed_bore_log record under one job (tenant + job scoped). Reads ONLY that job's
+    ``reviewed_bore_logs`` directory — never another tenant's — and returns [] if there are none. Each
+    record is re-verified in-scope (defense in depth). Ordered by reviewed_bore_log_id."""
+    validate_customer_project_id(customer_project_id)
+    validate_job_id(processing_job_id)
+    rbls_root = (job_dir(store_root, customer_project_id, processing_job_id)
+                 / REVIEWED_BORE_LOGS_SUBDIR)
+    if not rbls_root.is_dir():
+        return []
+    out = []
+    for child in sorted(rbls_root.iterdir()):
+        rec = child / REVIEWED_BORE_LOG_FILENAME
+        if rec.is_file():
+            rbl = json.loads(rec.read_text(encoding="utf-8"))
+            assert_same_project(customer_project_id, rbl.get("customer_project_id"))
+            out.append(rbl)
+    return out
+
+
 def write_reviewed_bore_log(store_root, rbl) -> str:
     """Persist a record under its OWN (cp, job, rbl) scope (derived from the record, not ambient)."""
     cp = validate_customer_project_id(rbl["customer_project_id"])

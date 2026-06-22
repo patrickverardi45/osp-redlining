@@ -28,6 +28,7 @@ PIPELINE_MODULES = [
     CONTRACTS / "closeout_review.py",
     CONTRACTS / "billing_summary.py",
     CONTRACTS / "export_package.py",
+    CONTRACTS / "engine_handoff_readiness.py",
 ]
 
 

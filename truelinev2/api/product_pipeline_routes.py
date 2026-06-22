@@ -114,6 +114,7 @@ from truelinev2.contracts.export_package import (
     export_package_view,
     load_export_package,
 )
+from truelinev2.contracts.engine_handoff_readiness import evaluate_engine_handoff_readiness
 
 router = APIRouter(prefix="/v2/product")
 
@@ -715,3 +716,21 @@ def get_export_package(job_id: str,
     except _CONTRACT_ERRORS as exc:
         raise _to_http(exc)
     return {**record, "view": export_package_view(record)}
+
+
+# --------------------------------------------------------------------------- #
+# Slice C — uploaded-corpus engine-handoff READINESS (read-only; renders nothing; creates nothing).
+# --------------------------------------------------------------------------- #
+@router.get("/jobs/{job_id}/engine-handoff")
+def get_engine_handoff_readiness(job_id: str,
+                                 ctx: RequestContext = Depends(get_context),
+                                 c: Container = Depends(get_container)) -> dict:
+    """Read-only uploaded-corpus engine-handoff READINESS check: reports whether the job's uploaded inputs
+    (a PLAN_PDF + an engine-ready reviewed_bore_log) are present, and the exact named blockers. Always
+    BLOCKED / runnable:false in this slice — the uploaded-corpus engine adapter is not implemented; this
+    runs no engine, renders nothing, and creates no artifacts/slots/bundles. 404 if the job is missing."""
+    cp, store = ctx.tenant.value, _store_root(c)
+    try:
+        return evaluate_engine_handoff_readiness(store, cp, job_id)
+    except _CONTRACT_ERRORS as exc:
+        raise _to_http(exc)

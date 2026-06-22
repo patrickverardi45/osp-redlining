@@ -68,6 +68,8 @@ PRODUCT_PATHS = {
     "/v2/product/jobs/{job_id}/billing",
     "/v2/product/jobs/{job_id}/export-package/assemble",
     "/v2/product/jobs/{job_id}/export-package",
+    # Slice C — uploaded-corpus engine-handoff readiness (read-only)
+    "/v2/product/jobs/{job_id}/engine-handoff",
 }
 
 
@@ -1071,3 +1073,63 @@ def test_route_flow_engine_not_ready_with_blockers(tmp_path):
     assert q["engine_ready"] is False
     assert "row-2" in q["rows_needing_review"]
     assert set(q["ungrouped_rows"]) == {"row-1", "row-2"}
+
+
+# --------------------------------------------------------------------------- #
+# Slice C — uploaded-corpus engine-handoff readiness route (read-only; renders/creates nothing).
+# --------------------------------------------------------------------------- #
+def test_engine_handoff_readiness_blocked_with_ready_inputs(tmp_path):
+    c, ctx = _container(tmp_path), _ctx("cp-aaa")
+    up = _bore_log_upload(c, ctx)                                          # project + job + BORE_LOG
+    ppr.register_upload(                                                   # + a PLAN_PDF upload
+        "job-1", ppr.UploadRegister(kind="PLAN_PDF", filename="plan.pdf",
+                                    content_base64=base64.b64encode(b"%PDF-1.4 fake").decode()),
+        ctx=ctx, c=c)
+    ppr.create_bore_log_review(
+        "job-1", ppr.ReviewedBoreLogCreate(reviewed_bore_log_id="rbl-main", source_upload_id=up),
+        ctx=ctx, c=c)
+    ppr.add_rows("job-1", "rbl-main", ppr.RowsAdd(rows=[_manual_row("row-1", up, "0+00", "2+99")]),
+                 ctx=ctx, c=c)
+    ppr.review_row_route("job-1", "rbl-main", "row-1", ppr.RowReview(to_status=CONFIRMED), ctx=ctx, c=c)
+    ppr.define_group("job-1", "rbl-main", ppr.SegmentGroupCreate(
+        group_id="grp-1", member_row_ids=["row-1"], relation=SEPARATE_BORE), ctx=ctx, c=c)
+    ppr.set_group_status("job-1", "rbl-main", "grp-1",
+                         ppr.GroupingStatus(to_status=GROUPING_CONFIRMED), ctx=ctx, c=c)
+
+    r = ppr.get_engine_handoff_readiness("job-1", ctx=ctx, c=c)
+    assert r["status"] == "BLOCKED" and r["runnable"] is False
+    assert r["checks"] == {"has_plan_pdf": True, "has_engine_ready_reviewed_bore_log": True}
+    codes = {b["code"] for b in r["blockers"]}
+    assert "ENGINE_HANDOFF_NOT_IMPLEMENTED_FOR_UPLOADED_CORPUS" in codes
+    assert "NO_PLAN_PDF_UPLOAD" not in codes and "NO_ENGINE_READY_REVIEWED_BORE_LOG" not in codes
+    # proves no mutation: output slots stay null (no handoff/bundle/artifact produced)
+    job = ppr.get_processing_job("job-1", ctx=ctx, c=c)
+    assert all(v is None for v in job["slots"].values())
+
+
+def test_engine_handoff_readiness_input_blockers_when_missing(tmp_path):
+    c, ctx = _container(tmp_path), _ctx("cp-aaa")
+    _bore_log_upload(c, ctx)                                               # BORE_LOG only; no PLAN_PDF; no rbl
+    r = ppr.get_engine_handoff_readiness("job-1", ctx=ctx, c=c)
+    assert r["checks"] == {"has_plan_pdf": False, "has_engine_ready_reviewed_bore_log": False}
+    codes = {b["code"] for b in r["blockers"]}
+    assert {"NO_PLAN_PDF_UPLOAD", "NO_ENGINE_READY_REVIEWED_BORE_LOG",
+            "ENGINE_HANDOFF_NOT_IMPLEMENTED_FOR_UPLOADED_CORPUS"} <= codes
+
+
+def test_engine_handoff_readiness_missing_job_404(tmp_path):
+    c, ctx = _container(tmp_path), _ctx("cp-aaa")
+    ppr.create_project(ppr.ProjectCreate(display_name="Label"), ctx=ctx, c=c)
+    with pytest.raises(HTTPException) as exc:
+        ppr.get_engine_handoff_readiness("nope", ctx=ctx, c=c)
+    assert exc.value.status_code == 404
+
+
+def test_engine_handoff_readiness_tenant_isolation(tmp_path):
+    c = _container(tmp_path)
+    a, b = _ctx("cp-aaa"), _ctx("cp-bbb")
+    _bore_log_upload(c, a)                                                 # A owns job-1
+    ppr.create_project(ppr.ProjectCreate(display_name="B"), ctx=b, c=c)
+    with pytest.raises(HTTPException) as exc:                              # B has no job-1 -> 404
+        ppr.get_engine_handoff_readiness("job-1", ctx=b, c=c)
+    assert exc.value.status_code == 404
