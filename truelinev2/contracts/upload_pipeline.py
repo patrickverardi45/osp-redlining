@@ -32,6 +32,9 @@ ACCEPTED_KINDS = {
     "PLAN_PDF": (".pdf",),
     "BORE_LOG": (".csv", ".xlsx", ".pdf"),
     "GIS_ROUTE": (".kmz", ".kml"),
+    # Image evidence (photos): stored as-is like any other upload — NEVER parsed. No extraction, no
+    # image analysis, no fake evidence/proof output; extraction_status stays "queued".
+    "PHOTO": (".jpg", ".jpeg", ".png", ".webp"),
 }
 
 # Uploads land BEFORE extraction begins (contract lifecycle). Once EXTRACTING starts, intake is closed.

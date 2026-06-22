@@ -218,6 +218,48 @@ def test_get_job_missing_is_404(tmp_path):
     assert exc.value.status_code == 404
 
 
+def test_list_jobs_lists_tenant_jobs_with_summary(tmp_path):
+    c, ctx = _container(tmp_path), _ctx("cp-aaa")
+    ppr.create_project(ppr.ProjectCreate(display_name="Label"), ctx=ctx, c=c)
+    ppr.create_processing_job(ppr.JobCreate(job_id="job-1"), ctx=ctx, c=c)
+    ppr.create_processing_job(ppr.JobCreate(job_id="job-2"), ctx=ctx, c=c)
+    out = ppr.list_processing_jobs(ctx=ctx, c=c)
+    assert {j["job_id"] for j in out["jobs"]} == {"job-1", "job-2"}
+    one = out["jobs"][0]
+    assert one["status"] == CREATED and one["upload_count"] == 0
+    assert set(one["slots"]) == {"redline_manifest", "artifact_bundle", "export_package"}
+    assert all(v is False for v in one["slots"].values())          # no output slots filled yet
+    assert "created_at" in one and "updated_at" in one
+
+
+def test_list_jobs_empty_for_tenant_without_jobs(tmp_path):
+    c, ctx = _container(tmp_path), _ctx("cp-empty")                # no project / no jobs
+    assert ppr.list_processing_jobs(ctx=ctx, c=c) == {"jobs": []}
+
+
+def test_list_jobs_no_cross_tenant_leak(tmp_path):
+    c = _container(tmp_path)
+    a, b = _ctx("cp-aaa"), _ctx("cp-bbb")
+    ppr.create_project(ppr.ProjectCreate(display_name="A"), ctx=a, c=c)
+    ppr.create_processing_job(ppr.JobCreate(job_id="job-a"), ctx=a, c=c)
+    ppr.create_project(ppr.ProjectCreate(display_name="B"), ctx=b, c=c)
+    ppr.create_processing_job(ppr.JobCreate(job_id="job-b"), ctx=b, c=c)
+    assert {j["job_id"] for j in ppr.list_processing_jobs(ctx=a, c=c)["jobs"]} == {"job-a"}
+    assert {j["job_id"] for j in ppr.list_processing_jobs(ctx=b, c=c)["jobs"]} == {"job-b"}
+
+
+def test_upload_photo_kind_via_route_stays_queued(tmp_path):
+    c, ctx = _container(tmp_path), _ctx("cp-aaa")
+    ppr.create_project(ppr.ProjectCreate(display_name="Label"), ctx=ctx, c=c)
+    ppr.create_processing_job(ppr.JobCreate(job_id="job-1"), ctx=ctx, c=c)
+    content_b64 = base64.b64encode(b"\x89PNG\r\n\x1a\n not-parsed").decode()
+    rec = ppr.register_upload(
+        "job-1",
+        ppr.UploadRegister(kind="PHOTO", filename="site-photo.png", content_base64=content_b64),
+        ctx=ctx, c=c)
+    assert rec["kind"] == "PHOTO" and rec["extraction_status"] == EXTRACTION_STATUS_QUEUED
+
+
 def test_transition_delegates_to_contract(tmp_path):
     c, ctx = _container(tmp_path), _ctx("cp-aaa")
     ppr.create_project(ppr.ProjectCreate(display_name="Label"), ctx=ctx, c=c)

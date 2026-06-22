@@ -104,5 +104,24 @@ def test_uploads_closed_after_extracting(tmp_path):
 
 
 def test_accepted_kind_inventory_and_validate(tmp_path):
-    assert set(ACCEPTED_KINDS) == {"PLAN_PDF", "BORE_LOG", "GIS_ROUTE"}
+    assert set(ACCEPTED_KINDS) == {"PLAN_PDF", "BORE_LOG", "GIS_ROUTE", "PHOTO"}
     validate_upload("BORE_LOG", "x.xlsx", 10)  # valid -> no raise
+
+
+def test_accepts_photo_kind_image_extensions(tmp_path):
+    _job(tmp_path)
+    for fname in ["a.jpg", "b.jpeg", "c.png", "d.webp"]:
+        content = b"img-bytes-" + fname.encode()
+        rec = accept_upload(tmp_path, "cp-0001", "job-0001", kind="PHOTO", filename=fname,
+                            content=content, stored_at=AT)
+        assert rec["kind"] == "PHOTO"
+        assert rec["extraction_status"] == EXTRACTION_STATUS_QUEUED  # images stored, never parsed
+    assert len(load_job(tmp_path, "cp-0001", "job-0001")["uploads"]) == 4
+
+
+def test_photo_rejects_unsupported_extensions(tmp_path):
+    _job(tmp_path)
+    for bad in ["x.gif", "x.svg", "x.tiff", "x.heic", "x.pdf"]:
+        with pytest.raises(RejectedExtensionError):
+            accept_upload(tmp_path, "cp-0001", "job-0001", kind="PHOTO", filename=bad,
+                          content=b"x", stored_at=AT)

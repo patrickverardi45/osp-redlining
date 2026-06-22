@@ -45,6 +45,7 @@ from truelinev2.contracts.processing_job import (
     ProcessingJobError,
     create_job,
     job_dir,
+    list_jobs,
     load_job,
     transition,
 )
@@ -194,6 +195,21 @@ def _store_root(c: Container):
     return c.settings.product_store_root
 
 
+def _job_summary(job: dict) -> dict:
+    """Lightweight, tenant-safe job summary for the list view (no payload bytes, no audit dump). Output
+    slots are surfaced as booleans (filled-or-not), never their refs."""
+    audit = job.get("audit") or []
+    slots = job.get("slots") or {}
+    return {
+        "job_id": job.get("job_id"),
+        "status": job.get("status"),
+        "created_at": job.get("created_at"),
+        "updated_at": audit[-1].get("at") if audit else job.get("created_at"),
+        "upload_count": len(job.get("uploads") or []),
+        "slots": {name: (slots.get(name) is not None) for name in slots},
+    }
+
+
 def _to_http(exc: Exception) -> HTTPException:
     """Map a contract / isolation exception to the repo's HTTP convention (order matters: the specific
     NotFound / state-conflict subclasses are caught before the contract base errors fall through to 400)."""
@@ -271,6 +287,19 @@ def create_processing_job(req: JobCreate,
         return create_job(store, cp, req.job_id, _now(), ctx.session_id)
     except (ProcessingJobError, IsolationError) as exc:
         raise _to_http(exc)
+
+
+@router.get("/jobs")
+def list_processing_jobs(ctx: RequestContext = Depends(get_context),
+                         c: Container = Depends(get_container)) -> dict:
+    """List the authenticated tenant's processing_jobs (tenant-scoped — only this tenant's project, never
+    another's). Returns a lightweight summary per job (id / status / created+updated / upload count /
+    which output slots are filled). Empty list if the tenant has no jobs yet. Read-only."""
+    try:
+        jobs = list_jobs(_store_root(c), ctx.tenant.value)
+    except (ProcessingJobError, IsolationError) as exc:
+        raise _to_http(exc)
+    return {"jobs": [_job_summary(j) for j in jobs]}
 
 
 @router.get("/jobs/{job_id}")

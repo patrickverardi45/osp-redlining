@@ -136,6 +136,24 @@ def load_job(store_root, customer_project_id, job_id) -> dict:
     return job
 
 
+def list_jobs(store_root, customer_project_id) -> list:
+    """List every processing_job record under one customer_project (tenant-scoped). Reads ONLY that
+    project's ``processing_jobs`` directory — never another tenant's — and returns [] if the project has
+    no jobs yet. Each record is re-verified in-scope (defense in depth). Ordered by job_id."""
+    validate_customer_project_id(customer_project_id)
+    jobs_root = project_root(store_root, customer_project_id) / PROCESSING_JOBS_SUBDIR
+    if not jobs_root.is_dir():
+        return []
+    out = []
+    for child in sorted(jobs_root.iterdir()):
+        rec = child / JOB_RECORD_FILENAME
+        if rec.is_file():
+            job = json.loads(rec.read_text(encoding="utf-8"))
+            assert_same_project(customer_project_id, job.get("customer_project_id"))
+            out.append(job)
+    return out
+
+
 def write_job(store_root, job) -> str:
     """Persist a job record under its OWN (cp, job) scope (derived from the record, not ambient)."""
     cp = validate_customer_project_id(job["customer_project_id"])
