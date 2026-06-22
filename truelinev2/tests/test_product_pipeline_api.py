@@ -70,6 +70,9 @@ PRODUCT_PATHS = {
     "/v2/product/jobs/{job_id}/export-package",
     # Slice C — uploaded-corpus engine-handoff readiness (read-only)
     "/v2/product/jobs/{job_id}/engine-handoff",
+    # M2 — human-confirmed source anchors (record + validate; renders nothing)
+    "/v2/product/jobs/{job_id}/source-anchors",
+    "/v2/product/jobs/{job_id}/source-anchors/{source_anchor_id}",
 }
 
 
@@ -146,7 +149,7 @@ def test_no_customer_project_id_in_path_or_body(tmp_path):
     # ...nor from any Slice 2/3 request body (identity is the verified context, never a field)
     body_models = [ppr.UploadRegister, ppr.ReviewedBoreLogCreate, ppr.ExtractedRowInput,
                    ppr.RowsAdd, ppr.RowReview, ppr.SegmentGroupCreate, ppr.GroupingStatus,
-                   ppr.ManifestHandoffRecord, ppr.ManifestHandoffFinalize]
+                   ppr.ManifestHandoffRecord, ppr.ManifestHandoffFinalize, ppr.SourceAnchorCreate]
     for model in body_models:
         fields = set(model.model_fields)
         assert not (fields & {"customer_project", "customer_project_id", "tenant", "tenant_id"})
@@ -1133,3 +1136,164 @@ def test_engine_handoff_readiness_tenant_isolation(tmp_path):
     with pytest.raises(HTTPException) as exc:                              # B has no job-1 -> 404
         ppr.get_engine_handoff_readiness("job-1", ctx=b, c=c)
     assert exc.value.status_code == 404
+
+
+# --------------------------------------------------------------------------- #
+# M2 — human-confirmed source-anchor routes (record + validate; renders nothing).
+# A minimal valid blank PDF (1 page, US-Letter 612x792, rotation 0), generated once by PyMuPDF. The TEST
+# never imports fitz; it ships these bytes so the route's read-only PlanPdf page-bounds resolution runs on
+# a real PDF (page display-space bounds become (0,0,612,792)).
+# --------------------------------------------------------------------------- #
+_MINIMAL_PLAN_PDF_B64 = (
+    "JVBERi0xLjcKJcK1wrYKJSBXcml0dGVuIGJ5IE11UERGIDEuMjcuMgoKMSAwIG9iago8PC9UeXBlL0NhdGFsb2cvUGFnZXMg"
+    "MiAwIFIvSW5mbzw8L1Byb2R1Y2VyKE11UERGIDEuMjcuMik+Pj4+CmVuZG9iagoKMiAwIG9iago8PC9UeXBlL1BhZ2VzL0Nv"
+    "dW50IDEvS2lkc1s0IDAgUl0+PgplbmRvYmoKCjMgMCBvYmoKPDw+PgplbmRvYmoKCjQgMCBvYmoKPDwvVHlwZS9QYWdlL01l"
+    "ZGlhQm94WzAgMCA2MTIgNzkyXS9Sb3RhdGUgMC9SZXNvdXJjZXMgMyAwIFIvUGFyZW50IDIgMCBSPj4KZW5kb2JqCgp4cmVm"
+    "CjAgNQowMDAwMDAwMDAwIDY1NTM1IGYgCjAwMDAwMDAwNDIgMDAwMDAgbiAKMDAwMDAwMDEyMCAwMDAwMCBuIAowMDAwMDAw"
+    "MTcyIDAwMDAwIG4gCjAwMDAwMDAxOTMgMDAwMDAgbiAKCnRyYWlsZXIKPDwvU2l6ZSA1L1Jvb3QgMSAwIFIvSURbPDI1QzNB"
+    "MjRFNEVDMjgwQzJBQzY1QzM4NEMzQTJDMjg1PjwxQjAyRUMzMkUxRDMwNUYzNDJBRjZFMjI2MkYzNTZDND5dPj4Kc3RhcnR4"
+    "cmVmCjI4NAolJUVPRgo=")
+
+
+def _cp(x, y):
+    return ppr.ControlPoint(x=x, y=y)
+
+
+def _source_anchor_ready(c, ctx, *, job_id="job-1", rbl_id="rbl-main"):
+    """Project + job + a real PLAN_PDF upload + an engine-ready reviewed_bore_log. Returns the PLAN_PDF
+    upload id (the source-anchor's plan_upload_id)."""
+    bore = _bore_log_upload(c, ctx, job_id)                  # creates project + job + a BORE_LOG upload
+    plan = ppr.register_upload(
+        job_id, ppr.UploadRegister(kind="PLAN_PDF", filename="plan.pdf",
+                                   content_base64=_MINIMAL_PLAN_PDF_B64), ctx=ctx, c=c)
+    ppr.create_bore_log_review(
+        job_id, ppr.ReviewedBoreLogCreate(reviewed_bore_log_id=rbl_id, source_upload_id=bore),
+        ctx=ctx, c=c)
+    ppr.add_rows(job_id, rbl_id, ppr.RowsAdd(rows=[_manual_row("row-1", bore, "0+00", "2+99")]),
+                 ctx=ctx, c=c)
+    ppr.review_row_route(job_id, rbl_id, "row-1", ppr.RowReview(to_status=CONFIRMED), ctx=ctx, c=c)
+    ppr.define_group(job_id, rbl_id, ppr.SegmentGroupCreate(
+        group_id="grp-1", member_row_ids=["row-1"], relation=SEPARATE_BORE), ctx=ctx, c=c)
+    ppr.set_group_status(job_id, rbl_id, "grp-1", ppr.GroupingStatus(to_status=GROUPING_CONFIRMED),
+                         ctx=ctx, c=c)
+    return plan["upload_id"]
+
+
+def test_source_anchor_validated_via_route(tmp_path):
+    c, ctx = _container(tmp_path), _ctx("cp-aaa")
+    plan = _source_anchor_ready(c, ctx)
+    rec = ppr.create_source_anchor_route("job-1", ppr.SourceAnchorCreate(
+        source_anchor_id="sa-1", plan_upload_id=plan, reviewed_bore_log_id="rbl-main",
+        page_number=1, control_points=[_cp(100.0, 120.0), _cp(300.0, 340.0)],
+        start_identity=ppr.SourceAnchorIdentity(station="0+00", structure_label="HH")),
+        ctx=ctx, c=c)
+    assert rec["status"] == "VALIDATED" and rec["renderable"] is True and rec["blockers"] == []
+    assert rec["provenance"] == "HUMAN_CONFIRMED_CONTROL_POINTS"
+    assert rec["coordinate_space"] == "pdf_display_space"
+    assert rec["start_identity"] == {"station": "0+00", "structure_label": "HH", "note": None}
+    job = ppr.get_processing_job("job-1", ctx=ctx, c=c)                    # proves no output mutation
+    assert all(v is None for v in job["slots"].values())
+
+
+def test_source_anchor_too_few_points_via_route(tmp_path):
+    c, ctx = _container(tmp_path), _ctx("cp-aaa")
+    plan = _source_anchor_ready(c, ctx)
+    rec = ppr.create_source_anchor_route("job-1", ppr.SourceAnchorCreate(
+        source_anchor_id="sa-1", plan_upload_id=plan, reviewed_bore_log_id="rbl-main",
+        page_number=1, control_points=[_cp(10.0, 10.0)]), ctx=ctx, c=c)
+    assert rec["status"] == "REJECTED"
+    assert "CONTROL_POINTS_TOO_FEW" in {b["code"] for b in rec["blockers"]}
+
+
+def test_source_anchor_out_of_bounds_via_route(tmp_path):
+    c, ctx = _container(tmp_path), _ctx("cp-aaa")
+    plan = _source_anchor_ready(c, ctx)
+    rec = ppr.create_source_anchor_route("job-1", ppr.SourceAnchorCreate(   # page is 612x792
+        source_anchor_id="sa-1", plan_upload_id=plan, reviewed_bore_log_id="rbl-main",
+        page_number=1, control_points=[_cp(10.0, 10.0), _cp(99999.0, 5.0)]), ctx=ctx, c=c)
+    assert "CONTROL_POINT_OUT_OF_BOUNDS" in {b["code"] for b in rec["blockers"]}
+
+
+def test_source_anchor_page_not_resolvable_via_route(tmp_path):
+    c, ctx = _container(tmp_path), _ctx("cp-aaa")
+    plan = _source_anchor_ready(c, ctx)
+    rec = ppr.create_source_anchor_route("job-1", ppr.SourceAnchorCreate(   # PDF has only 1 page
+        source_anchor_id="sa-1", plan_upload_id=plan, reviewed_bore_log_id="rbl-main",
+        page_number=99, control_points=[_cp(10.0, 10.0), _cp(20.0, 20.0)]), ctx=ctx, c=c)
+    assert "PAGE_NOT_RESOLVABLE" in {b["code"] for b in rec["blockers"]}
+
+
+def test_source_anchor_wrong_upload_kind_via_route(tmp_path):
+    c, ctx = _container(tmp_path), _ctx("cp-aaa")
+    _source_anchor_ready(c, ctx)
+    job = ppr.get_processing_job("job-1", ctx=ctx, c=c)
+    bore = next(u["upload_id"] for u in job["uploads"] if u["kind"] == "BORE_LOG")
+    rec = ppr.create_source_anchor_route("job-1", ppr.SourceAnchorCreate(
+        source_anchor_id="sa-1", plan_upload_id=bore, reviewed_bore_log_id="rbl-main",
+        page_number=1, control_points=[_cp(10.0, 10.0), _cp(20.0, 20.0)]), ctx=ctx, c=c)
+    assert "PLAN_UPLOAD_NOT_PLAN_PDF" in {b["code"] for b in rec["blockers"]}
+
+
+def test_source_anchor_rbl_not_ready_via_route(tmp_path):
+    c, ctx = _container(tmp_path), _ctx("cp-aaa")
+    bore = _bore_log_upload(c, ctx)                                        # project + job + BORE_LOG
+    plan = ppr.register_upload("job-1", ppr.UploadRegister(
+        kind="PLAN_PDF", filename="plan.pdf", content_base64=_MINIMAL_PLAN_PDF_B64), ctx=ctx, c=c)
+    ppr.create_bore_log_review("job-1", ppr.ReviewedBoreLogCreate(
+        reviewed_bore_log_id="rbl-main", source_upload_id=bore), ctx=ctx, c=c)
+    ppr.add_rows("job-1", "rbl-main", ppr.RowsAdd(rows=[_manual_row("row-1", bore, "0+00", "2+99")]),
+                 ctx=ctx, c=c)                                             # UNREVIEWED -> not ready
+    rec = ppr.create_source_anchor_route("job-1", ppr.SourceAnchorCreate(
+        source_anchor_id="sa-1", plan_upload_id=plan["upload_id"], reviewed_bore_log_id="rbl-main",
+        page_number=1, control_points=[_cp(10.0, 10.0), _cp(20.0, 20.0)]), ctx=ctx, c=c)
+    assert "REVIEWED_BORE_LOG_NOT_ENGINE_READY" in {b["code"] for b in rec["blockers"]}
+
+
+def test_source_anchor_list_get_and_missing_404(tmp_path):
+    c, ctx = _container(tmp_path), _ctx("cp-aaa")
+    plan = _source_anchor_ready(c, ctx)
+    ppr.create_source_anchor_route("job-1", ppr.SourceAnchorCreate(
+        source_anchor_id="sa-1", plan_upload_id=plan, reviewed_bore_log_id="rbl-main",
+        page_number=1, control_points=[_cp(10.0, 10.0), _cp(20.0, 20.0)]), ctx=ctx, c=c)
+    listed = ppr.list_source_anchors_route("job-1", ctx=ctx, c=c)
+    assert [r["source_anchor_id"] for r in listed["source_anchors"]] == ["sa-1"]
+    assert ppr.get_source_anchor_route("job-1", "sa-1", ctx=ctx, c=c)["source_anchor_id"] == "sa-1"
+    with pytest.raises(HTTPException) as exc:
+        ppr.get_source_anchor_route("job-1", "sa-nope", ctx=ctx, c=c)
+    assert exc.value.status_code == 404
+
+
+def test_source_anchor_duplicate_409_via_route(tmp_path):
+    c, ctx = _container(tmp_path), _ctx("cp-aaa")
+    plan = _source_anchor_ready(c, ctx)
+    body = ppr.SourceAnchorCreate(
+        source_anchor_id="sa-1", plan_upload_id=plan, reviewed_bore_log_id="rbl-main",
+        page_number=1, control_points=[_cp(10.0, 10.0), _cp(20.0, 20.0)])
+    ppr.create_source_anchor_route("job-1", body, ctx=ctx, c=c)
+    with pytest.raises(HTTPException) as exc:
+        ppr.create_source_anchor_route("job-1", body, ctx=ctx, c=c)
+    assert exc.value.status_code == 409
+
+
+def test_source_anchor_missing_job_404(tmp_path):
+    c, ctx = _container(tmp_path), _ctx("cp-aaa")
+    ppr.create_project(ppr.ProjectCreate(display_name="Label"), ctx=ctx, c=c)
+    with pytest.raises(HTTPException) as exc:
+        ppr.create_source_anchor_route("nope", ppr.SourceAnchorCreate(
+            source_anchor_id="sa-1", plan_upload_id="up-x", reviewed_bore_log_id="rbl-main",
+            page_number=1, control_points=[_cp(10.0, 10.0), _cp(20.0, 20.0)]), ctx=ctx, c=c)
+    assert exc.value.status_code == 404
+
+
+def test_source_anchor_tenant_isolation_via_route(tmp_path):
+    c = _container(tmp_path)
+    a, b = _ctx("cp-aaa"), _ctx("cp-bbb")
+    plan = _source_anchor_ready(c, a)                                      # A owns job-1 + sa-1
+    ppr.create_source_anchor_route("job-1", ppr.SourceAnchorCreate(
+        source_anchor_id="sa-1", plan_upload_id=plan, reviewed_bore_log_id="rbl-main",
+        page_number=1, control_points=[_cp(10.0, 10.0), _cp(20.0, 20.0)]), ctx=a, c=c)
+    ppr.create_project(ppr.ProjectCreate(display_name="B"), ctx=b, c=c)
+    with pytest.raises(HTTPException) as exc:                              # B cannot read A's anchor
+        ppr.get_source_anchor_route("job-1", "sa-1", ctx=b, c=c)
+    assert exc.value.status_code == 404
+    assert ppr.list_source_anchors_route("job-1", ctx=b, c=c) == {"source_anchors": []}

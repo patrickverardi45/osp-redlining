@@ -32,6 +32,23 @@ class PlanPdf:
         page = self._page(sheet, offset)
         return int(page.rotation or 0) if page is not None else 0
 
+    def page_bounds_display(self, sheet: int, offset: int
+                            ) -> Optional[Tuple[float, float, float, float]]:
+        """DISPLAY-space bounding rectangle of a page (x0, y0, x1, y1), rotation-mapped exactly the way
+        text/vector coords are (so it lines up with stroke/render coordinates), or None if the page index
+        is out of range. Read-only geometry — opens NO pixmap, rasterizes nothing. Lets a caller validate
+        that supplied display-space points actually fall on the page."""
+        page = self._page(sheet, offset)
+        if page is None:
+            return None
+        rot = page.rotation_matrix
+        r = page.rect
+        corners = [fitz.Point(r.x0, r.y0) * rot, fitz.Point(r.x1, r.y0) * rot,
+                   fitz.Point(r.x1, r.y1) * rot, fitz.Point(r.x0, r.y1) * rot]
+        xs = [p.x for p in corners]
+        ys = [p.y for p in corners]
+        return (float(min(xs)), float(min(ys)), float(max(xs)), float(max(ys)))
+
     def text_by_index(self, idx: int) -> str:
         if not (0 <= idx < self.page_count):
             return ""

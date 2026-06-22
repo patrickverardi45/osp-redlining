@@ -115,6 +115,15 @@ from truelinev2.contracts.export_package import (
     load_export_package,
 )
 from truelinev2.contracts.engine_handoff_readiness import evaluate_engine_handoff_readiness
+from truelinev2.contracts.source_anchor import (
+    PLAN_PDF_KIND,
+    SourceAnchorError,
+    SourceAnchorNotFoundError,
+    create_source_anchor,
+    list_source_anchors,
+    load_source_anchor,
+)
+from truelinev2.ingest.pdf import PlanPdf
 
 router = APIRouter(prefix="/v2/product")
 
@@ -188,6 +197,31 @@ class ManifestHandoffFinalize(BaseModel):
     bundle_ref: str
 
 
+# --- Source-anchor request bodies (M2; none carries identity — the tenant is the verified context) ---- #
+class SourceAnchorIdentity(BaseModel):
+    station: Optional[str] = None
+    structure_label: Optional[str] = None
+    note: Optional[str] = None
+
+
+class ControlPoint(BaseModel):
+    x: float
+    y: float
+
+
+class SourceAnchorCreate(BaseModel):
+    source_anchor_id: str
+    plan_upload_id: str
+    reviewed_bore_log_id: str
+    page_number: int
+    control_points: list[ControlPoint]
+    group_id: Optional[str] = None
+    row_ids: Optional[list[str]] = None
+    start_identity: Optional[SourceAnchorIdentity] = None
+    end_identity: Optional[SourceAnchorIdentity] = None
+    notes: Optional[str] = None
+
+
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -217,7 +251,8 @@ def _to_http(exc: Exception) -> HTTPException:
     if isinstance(exc, (ProjectNotFoundError, JobNotFoundError, ReviewedBoreLogNotFoundError,
                         RowNotFoundError, GroupNotFoundError, HandoffNotFoundError,
                         BundleNotReadableError, ArtifactNotServableError, CloseoutNotFoundError,
-                        BillingSummaryNotFoundError, ExportPackageNotFoundError)):
+                        BillingSummaryNotFoundError, ExportPackageNotFoundError,
+                        SourceAnchorNotFoundError)):
         return HTTPException(status_code=404, detail=str(exc))
     if isinstance(exc, (IllegalTransitionError, UploadsClosedError, HandoffStateError,
                         CloseoutStateError)):                           # state conflicts
@@ -231,7 +266,7 @@ def _to_http(exc: Exception) -> HTTPException:
 # subclass). A non-contract error is left to propagate (a real 500 — never masked as a 400).
 _CONTRACT_ERRORS = (CustomerProjectError, ProcessingJobError, UploadError, ExtractedRowError,
                     ReviewedBoreLogError, ManifestHandoffError, ConsumerError, CloseoutReviewError,
-                    BillingSummaryError, ExportPackageError, IsolationError)
+                    BillingSummaryError, ExportPackageError, SourceAnchorError, IsolationError)
 
 
 @router.post("/project")
@@ -732,5 +767,91 @@ def get_engine_handoff_readiness(job_id: str,
     cp, store = ctx.tenant.value, _store_root(c)
     try:
         return evaluate_engine_handoff_readiness(store, cp, job_id)
+    except _CONTRACT_ERRORS as exc:
+        raise _to_http(exc)
+
+
+# --------------------------------------------------------------------------- #
+# M2 — human-confirmed source-anchor route geometry (record + validate ONLY; renders nothing).
+# --------------------------------------------------------------------------- #
+def _resolve_plan_page_bounds(store, customer_project_id, job_id, plan_upload_id, page_number, job):
+    """Resolve the DISPLAY-space page bounds of the uploaded PLAN_PDF page for source-anchor renderability
+    validation. Read-only: opens the PDF to read page geometry only — rasterizes nothing, draws nothing,
+    writes nothing. Returns (x0,y0,x1,y1), or None when the upload is missing / not a PLAN_PDF / its file
+    or the page is unresolvable (the contract maps a None for an otherwise-valid plan upload to
+    PAGE_NOT_RESOLVABLE)."""
+    upload = next((u for u in job.get("uploads", []) if u.get("upload_id") == plan_upload_id), None)
+    if upload is None or upload.get("kind") != PLAN_PDF_KIND:
+        return None
+    pdf_path = job_dir(store, customer_project_id, job_id) / upload.get("stored_path", "")
+    if not pdf_path.is_file() or not isinstance(page_number, int) or page_number < 1:
+        return None
+    plan = PlanPdf(str(pdf_path))
+    try:
+        if page_number > plan.page_count:
+            return None
+        return plan.page_bounds_display(page_number, 0)     # offset 0 -> page_index = page_number - 1
+    finally:
+        plan.close()
+
+
+@router.post("/jobs/{job_id}/source-anchors")
+def create_source_anchor_route(job_id: str, req: SourceAnchorCreate,
+                               ctx: RequestContext = Depends(get_context),
+                               c: Container = Depends(get_container)) -> dict:
+    """Create + validate a HUMAN-confirmed source-anchor (ordered PDF display-space control points) for a
+    bore route on an uploaded PLAN_PDF page. Records the geometry and returns its renderability state +
+    named blockers (VALIDATED or REJECTED) — it RENDERS NOTHING, runs no engine, and creates no
+    artifacts/slots/bundles. 404 if the job is missing; 409 if the source_anchor id already exists; 400 on
+    an invalid id / malformed control point."""
+    cp, store = ctx.tenant.value, _store_root(c)
+    try:
+        load_source_anchor(store, cp, job_id, req.source_anchor_id)
+    except SourceAnchorNotFoundError:
+        pass                                                # expected: not created yet
+    except _CONTRACT_ERRORS as exc:                         # e.g. invalid source_anchor id
+        raise _to_http(exc)
+    else:
+        raise HTTPException(status_code=409, detail="source_anchor already exists")
+    try:
+        job = load_job(store, cp, job_id)                   # 404 (incl. cross-tenant) before PDF resolution
+    except _CONTRACT_ERRORS as exc:
+        raise _to_http(exc)
+    bounds = _resolve_plan_page_bounds(store, cp, job_id, req.plan_upload_id, req.page_number, job)
+    try:
+        return create_source_anchor(
+            store, cp, job_id,
+            source_anchor_id=req.source_anchor_id,
+            plan_upload_id=req.plan_upload_id,
+            reviewed_bore_log_id=req.reviewed_bore_log_id,
+            page_number=req.page_number,
+            control_points=[{"x": p.x, "y": p.y} for p in req.control_points],
+            group_id=req.group_id,
+            row_ids=req.row_ids,
+            start_identity=(req.start_identity.model_dump() if req.start_identity else None),
+            end_identity=(req.end_identity.model_dump() if req.end_identity else None),
+            notes=req.notes, page_bounds=bounds, at=_now(), by=ctx.session_id)
+    except _CONTRACT_ERRORS as exc:
+        raise _to_http(exc)
+
+
+@router.get("/jobs/{job_id}/source-anchors")
+def list_source_anchors_route(job_id: str,
+                              ctx: RequestContext = Depends(get_context),
+                              c: Container = Depends(get_container)) -> dict:
+    """List the tenant's source-anchors for one job (tenant + job scoped; [] if none). Read-only."""
+    try:
+        return {"source_anchors": list_source_anchors(_store_root(c), ctx.tenant.value, job_id)}
+    except _CONTRACT_ERRORS as exc:
+        raise _to_http(exc)
+
+
+@router.get("/jobs/{job_id}/source-anchors/{source_anchor_id}")
+def get_source_anchor_route(job_id: str, source_anchor_id: str,
+                            ctx: RequestContext = Depends(get_context),
+                            c: Container = Depends(get_container)) -> dict:
+    """Load one source-anchor record in the tenant's scope (404 if none)."""
+    try:
+        return load_source_anchor(_store_root(c), ctx.tenant.value, job_id, source_anchor_id)
     except _CONTRACT_ERRORS as exc:
         raise _to_http(exc)
