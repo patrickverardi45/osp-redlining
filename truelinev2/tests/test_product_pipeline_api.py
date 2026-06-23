@@ -72,6 +72,7 @@ PRODUCT_PATHS = {
     "/v2/product/jobs/{job_id}/billing",
     "/v2/product/jobs/{job_id}/export-package/assemble",
     "/v2/product/jobs/{job_id}/export-package",
+    "/v2/product/jobs/{job_id}/export-package/download",
     # Slice C — uploaded-corpus engine-handoff readiness (read-only)
     "/v2/product/jobs/{job_id}/engine-handoff",
     # Recognized-corpus AUTOMATIC handoff (positive sha256 recognition -> existing deterministic render)

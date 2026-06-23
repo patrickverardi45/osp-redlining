@@ -183,6 +183,19 @@ def test_rejected_review_cannot_be_packaged(tmp_path):
     assert out["assembled"] is False and out["blocker"] == pw.REVIEW_WAS_REJECTED
 
 
+def test_recognized_render_not_blocked_by_stale_abstain(tmp_path, monkeypatch):
+    # A job recognized as a deterministic package must NOT be blocked at closeout by a stale ABSTAINED record
+    # from a prior REVIEW attempt (the Phase 8C job-jsy03x case). The deterministic render is authoritative.
+    reg = _registry(tmp_path, monkeypatch, recognize_plan=True, map_bore=True)
+    _engine_ready_job(tmp_path)
+    out = pw.run_product_redline(tmp_path, CP, JOB, registry=reg, at=AT, by=BY)
+    assert out["path"] == pw.PATH_RECOGNIZED
+    _inject_review_candidate(tmp_path, ra.STATUS_ABSTAINED)        # stale abstain from a prior attempt
+    pkg = pw.assemble_closeout_package(tmp_path, CP, JOB, at=AT, by=BY)
+    assert pkg["assembled"] is True and pkg["blocker"] is None     # not blocked by the stale abstain
+    assert pkg["export_status"] == "READY"
+
+
 def test_review_gate_pure_cases():
     ok, status, code = pw._review_gate([])
     assert ok and code is None
@@ -192,8 +205,13 @@ def test_review_gate_pure_cases():
     assert not ok and code == pw.REVIEW_NOT_ACCEPTED
     ok, status, code = pw._review_gate([{"status": ra.STATUS_REVIEW_REJECTED}])
     assert not ok and code == pw.REVIEW_WAS_REJECTED
+    # ABSTAINED is IGNORED — it never gates a later authoritative render.
     ok, status, code = pw._review_gate([{"status": ra.STATUS_ABSTAINED}])
-    assert not ok and code == pw.REVIEW_ABSTAINED
+    assert ok and code is None
+    # a stale ABSTAINED alongside an accepted REVIEW still passes (abstain filtered out).
+    ok, status, code = pw._review_gate([{"status": ra.STATUS_ABSTAINED},
+                                        {"status": ra.STATUS_REVIEW_ACCEPTED}])
+    assert ok and code is None
 
 
 def test_failed_job_cannot_advance(tmp_path):

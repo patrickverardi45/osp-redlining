@@ -184,10 +184,13 @@ def run_product_redline(store_root, customer_project_id, job_id, *, registry, at
 
 
 def _review_gate(cands) -> tuple:
-    """Decide whether a job's REVIEW redline may be packaged. A recognized/AUTO job has NO review candidate
-    -> passes. A REVIEW candidate must be REVIEW_ACCEPTED; a pending/rejected/abstained candidate blocks
-    closeout (a non-accepted REVIEW redline is never packaged). Returns (ok, review_status, blocker_code)."""
-    statuses = [c.get("status") for c in (cands or [])]
+    """Decide whether a job's REVIEW redline may be packaged. Only an UNRESOLVED RENDERED review (pending or
+    rejected) blocks closeout. An ABSTAINED record (the engine produced NO geometry) is IGNORED: it never
+    gates a later authoritative render — a job recognized as a deterministic package, or one that abstained
+    and has no render at all, is not blocked here (the latter hard-blocks honestly at closeout on the missing
+    manifest, which is the truthful reason). A recognized/AUTO job has no review candidate -> passes. Returns
+    (ok, review_status, blocker_code)."""
+    statuses = [c.get("status") for c in (cands or []) if c.get("status") != STATUS_ABSTAINED]
     if not statuses:
         return True, None, None
     if all(s == STATUS_REVIEW_ACCEPTED for s in statuses):
@@ -196,8 +199,6 @@ def _review_gate(cands) -> tuple:
         return False, STATUS_REVIEW_REJECTED, REVIEW_WAS_REJECTED
     if any(s == STATUS_REVIEW_CANDIDATE for s in statuses):
         return False, STATUS_REVIEW_CANDIDATE, REVIEW_NOT_ACCEPTED
-    if any(s == STATUS_ABSTAINED for s in statuses):
-        return False, STATUS_ABSTAINED, REVIEW_ABSTAINED
     return True, statuses[0], None
 
 

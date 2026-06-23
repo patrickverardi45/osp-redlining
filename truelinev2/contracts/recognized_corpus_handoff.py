@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from pathlib import Path
 
 from truelinev2.contracts.customer_project import validate_customer_project_id
@@ -59,9 +60,16 @@ NO_ENGINE_READY_REVIEWED_BORE_LOG = "NO_ENGINE_READY_REVIEWED_BORE_LOG"
 BORE_LOG_NOT_MAPPED_TO_DETERMINISTIC_LOG = "BORE_LOG_NOT_MAPPED_TO_DETERMINISTIC_LOG"
 NO_DETERMINISTIC_RENDER_FOR_LOG = "NO_DETERMINISTIC_RENDER_FOR_LOG"
 
-# Committed deterministic render outputs (READ-ONLY; the engine's render at commit c19b565). Generic path.
+# Committed deterministic render outputs (READ-ONLY; the engine's render at commit c19b565). Generic paths.
+#  * the callout-route-assembly sweep dir holds the 37 NEW_TARGETS renders;
+#  * the committed all-50 UNION manifest covers the remaining 13 ALREADY_DRAWN logs (each PNG sha256-verified
+#    against the manifest before it is ever served — provenance is the sha256, never a filename guess).
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 _DETERMINISTIC_RENDER_DIR = _REPO_ROOT / "data" / "outputs" / "callout_route_assembly_sweep"
+_DETERMINISTIC_UNION_MANIFEST = (_REPO_ROOT / "data" / "outputs" / "redline_manifest_publish"
+                                 / "brenham_c19b565_all50_real_manifest" / "redline_manifest.json")
+_SHEET_RE = re.compile(r"_s(\d+)")
+_union_cache: dict = {}
 
 
 class RecognizedCorpusError(Exception):
@@ -110,19 +118,57 @@ def _public_corpus_id(corpus, registry):
     return "recognized-corpus-%03d" % (idx + 1)
 
 
+def _sheets_from_name(stem) -> tuple:
+    """Every plan sheet number printed in a render filename (handles a single-PNG cross-sheet render such as
+    ``log65_s10_s9_cross_sheet_stroke`` -> (10, 9), so its second sheet is never silently dropped)."""
+    return tuple(int(s) for s in _SHEET_RE.findall(stem)) or (0,)
+
+
+def _load_union_logs() -> dict:
+    """{log_id: log_record} from the committed all-50 union manifest (cached). {} if absent/unreadable."""
+    if "logs" not in _union_cache:
+        try:
+            m = json.loads(_DETERMINISTIC_UNION_MANIFEST.read_text(encoding="utf-8"))
+            _union_cache["logs"] = {lg["log_id"]: lg for lg in m.get("logs", [])}
+        except (OSError, ValueError):
+            _union_cache["logs"] = {}
+    return _union_cache["logs"]
+
+
+def _union_artifacts(log_id):
+    """(manifest_path, source_png_path, sheets) for ``log_id`` from the committed all-50 union manifest. Each
+    PNG's recomputed sha256 MUST equal the manifest's recorded sha256 before it is served (never a stale /
+    variant render). Empty if the log / its files are absent or fail the checksum gate."""
+    base = _DETERMINISTIC_UNION_MANIFEST.parent
+    log = _load_union_logs().get(log_id)
+    if not log:
+        return []
+    out = []
+    for a in (log.get("artifacts") or []):
+        if a.get("kind") != "FINAL_REDLINE_PNG":
+            continue
+        rel = a.get("path") or ""
+        src = base / rel
+        if not src.is_file() or hashlib.sha256(src.read_bytes()).hexdigest() != a.get("sha256"):
+            continue                                            # provenance gate: sha256 must match exactly
+        name = Path(rel).name
+        out.append(("artifacts/%s/%s" % (log_id, name), src, _sheets_from_name(Path(name).stem)))
+    return out
+
+
 def _deterministic_artifacts(log_id):
-    """(manifest_path, source_png_path, sheet) for each committed render PNG of ``log_id`` — globbed from
-    the committed deterministic render dir. Empty if the log has no drawn deterministic render."""
+    """(manifest_path, source_png_path, sheets) for each committed render PNG of ``log_id``. First the
+    callout-route-assembly sweep dir (the 37 NEW_TARGETS — byte-identical to the existing renders, untouched);
+    else the committed all-50 union manifest (the 13 ALREADY_DRAWN logs, each PNG sha256-verified). Empty if
+    the log has no committed drawn render."""
     out = []
     if not log_id:
         return out
     for png in sorted(_DETERMINISTIC_RENDER_DIR.glob("%s_s*_redline_stroke.png" % log_id)):
-        try:
-            sheet = int(png.stem.split("_s", 1)[1].split("_", 1)[0])
-        except (IndexError, ValueError):
-            continue
-        out.append(("artifacts/%s/%s" % (log_id, png.name), png, sheet))
-    return out
+        out.append(("artifacts/%s/%s" % (log_id, png.name), png, _sheets_from_name(png.stem)))
+    if out:
+        return out
+    return _union_artifacts(log_id)
 
 
 def _recognize(store_root, customer_project_id, job_id, registry, job):
@@ -194,7 +240,7 @@ def evaluate_recognized_corpus_handoff(store_root, customer_project_id, job_id, 
         "recognized_corpus_id": _public_corpus_id(corpus, registry),
         "recognized_package_label": RECOGNIZED_PACKAGE_LABEL if corpus else None,
         "deterministic_log_id": mapped_log if runnable else None,
-        "render_sheets": [s for (_p, _s, s) in artifacts] if runnable else [],
+        "render_sheets": sorted({s for (_p, _src, ss) in artifacts for s in ss}) if runnable else [],
         "render_commit": RECOGNIZED_RENDER_COMMIT if runnable else None,
         "reviewed_bore_log_id": rbl_id if runnable else None,
         "blockers": blockers,
@@ -202,7 +248,7 @@ def evaluate_recognized_corpus_handoff(store_root, customer_project_id, job_id, 
 
 
 def _build_manifest_input(log_id, artifacts, *, project_id, corpus_ref, log_facts) -> dict:
-    sheets = sorted({s for (_m, _src, s) in artifacts})
+    sheets = sorted({s for (_m, _src, ss) in artifacts for s in ss})
     facts = log_facts or {}
     log = {
         "log_id": log_id, "parent_id": facts.get("parent_id", log_id), "entry_role": "standalone",
@@ -211,9 +257,9 @@ def _build_manifest_input(log_id, artifacts, *, project_id, corpus_ref, log_fact
         "source_sheets": sheets,
         "span": facts.get("span", {"start_station": "0+00", "end_station": "0+00", "label": "0+00"}),
         "closure": None, "coverage": None, "blocker": None,
-        "artifacts": [{"kind": "FINAL_REDLINE_PNG", "sheet": s, "path": mpath,
+        "artifacts": [{"kind": "FINAL_REDLINE_PNG", "sheet": ss[0], "path": mpath,
                        "sha256": None, "example_placeholder": True}
-                      for (mpath, _src, s) in artifacts],
+                      for (mpath, _src, ss) in artifacts],
         "evidence": [
             {"kind": "SWEEP_CONSTANT", "ref": "callout_route_assembly_sweep",
              "note": "deterministic engine redline render for recognized corpus log %s (render commit %s)"
@@ -287,7 +333,7 @@ def render_recognized_corpus_handoff(store_root, customer_project_id, job_id, *,
         ev = evaluate_recognized_corpus_handoff(store_root, customer_project_id, job_id, registry=registry)
         raise RecognizedCorpusError("recognized-corpus handoff is not runnable: %s"
                                     % "; ".join(b["code"] for b in ev["blockers"]))
-    artifact_map = {mpath: str(src) for (mpath, src, _s) in artifacts}
+    artifact_map = {mpath: str(src) for (mpath, src, _ss) in artifacts}
     corpus_id = _public_corpus_id(corpus, registry)
 
     key_blob = json.dumps({"corpus": corpus_id, "log": mapped_log,

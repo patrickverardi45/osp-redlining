@@ -119,6 +119,12 @@ from truelinev2.contracts.export_package import (
     export_package_view,
     load_export_package,
 )
+from truelinev2.contracts.export_bundle import (
+    EXPORT_ZIP_MEDIA_TYPE,
+    ExportBundleError,
+    NoRedlineBundleError,
+    build_export_zip,
+)
 from truelinev2.contracts.engine_handoff_readiness import evaluate_engine_handoff_readiness
 from truelinev2.contracts.recognized_corpus_handoff import (
     RecognizedCorpusError,
@@ -305,8 +311,8 @@ def _to_http(exc: Exception) -> HTTPException:
 # subclass). A non-contract error is left to propagate (a real 500 — never masked as a 400).
 _CONTRACT_ERRORS = (CustomerProjectError, ProcessingJobError, UploadError, ExtractedRowError,
                     ReviewedBoreLogError, ManifestHandoffError, ConsumerError, CloseoutReviewError,
-                    BillingSummaryError, ExportPackageError, SourceAnchorError, ReviewAcceptanceError,
-                    IsolationError)
+                    BillingSummaryError, ExportPackageError, ExportBundleError, SourceAnchorError,
+                    ReviewAcceptanceError, IsolationError)
 
 
 @router.post("/project")
@@ -812,6 +818,26 @@ def get_export_package(job_id: str,
     except _CONTRACT_ERRORS as exc:
         raise _to_http(exc)
     return {**record, "view": export_package_view(record)}
+
+
+@router.get("/jobs/{job_id}/export-package/download")
+def download_export_package(job_id: str,
+                            ctx: RequestContext = Depends(get_context),
+                            c: Container = Depends(get_container)) -> Response:
+    """Stream the job's DOWNLOADABLE closeout export bundle (a real .zip: the redline manifest + the
+    sha256-verified FINAL_REDLINE_PNG bytes + closeout/export/KMZ status JSON + reviewed-bore-log metadata,
+    and a valid KMZ only when genuinely geospatially exportable). Assembled from EXISTING trusted output —
+    nothing rendered or faked. 409 if the job has no validated redline bundle yet; 404 if the job is
+    missing."""
+    cp, store = ctx.tenant.value, _store_root(c)
+    try:
+        data, filename = build_export_zip(store, cp, job_id)
+    except NoRedlineBundleError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    except _CONTRACT_ERRORS as exc:
+        raise _to_http(exc)
+    return Response(content=data, media_type=EXPORT_ZIP_MEDIA_TYPE,
+                    headers={"Content-Disposition": 'attachment; filename="%s"' % filename})
 
 
 # --------------------------------------------------------------------------- #
