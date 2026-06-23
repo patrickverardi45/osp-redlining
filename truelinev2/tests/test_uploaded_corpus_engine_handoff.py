@@ -68,27 +68,30 @@ def _job(tmp, *, with_plan=True, with_bore=True, ready=True):
     return bore_id
 
 
-def _bore():
-    return Bore(bore_id="log.xlsx", project=None, source_file="log.xlsx", sheet_refs=[11],
+def _bore(sheet_refs=(11,)):
+    return Bore(bore_id="log.xlsx", project=None, source_file="log.xlsx", sheet_refs=list(sheet_refs),
                 station_start="19+76", station_end="20+47", station_start_ft=1976.0,
                 station_end_ft=2047.0, span_ft=71.0)
 
 
-def _placement(status, *, with_callout=True, reason="DRAWN_EXTENT_COVERS_SPAN_NOT_TIGHT", caveats=()):
+def _placement(status, *, with_callout=True, reason="DRAWN_EXTENT_COVERS_SPAN_NOT_TIGHT", caveats=(),
+               sheets=(11,), callout_sheet=11):
     callouts = []
     if with_callout:
-        callouts = [Callout(sheet=11, page=11, from_sta="19+84", to_sta="20+24", from_ft=1984.0,
-                            to_ft=2024.0, footage=40.0, text="DRAWN DIRECTIONAL BORE 19+84->20+24",
+        callouts = [Callout(sheet=callout_sheet, page=callout_sheet, from_sta="19+84", to_sta="20+24",
+                            from_ft=1984.0, to_ft=2024.0, footage=40.0,
+                            text="DRAWN DIRECTIONAL BORE 19+84->20+24",
                             bbox=[100.0, 200.0, 300.0, 205.0], dialect="generic")]
     return Placement(bore_id="log.xlsx", status=status, tier="t", reason=reason,
-                     sheets=[11], caveats=list(caveats),
+                     sheets=list(sheets), caveats=list(caveats),
                      abstain_reason=("no drawn bore over span" if status == PlacementStatus.ABSTAIN else None),
                      matched_callouts=callouts)
 
 
-def _patch_engine(monkeypatch, *, placement, dialect="generic"):
+def _patch_engine(monkeypatch, *, placement, bore=None, dialect="generic"):
+    b = bore if bore is not None else _bore()
     monkeypatch.setattr(uce, "_run_engine",
-                        lambda plan_path, borelog_path: (_bore(), placement, 0, dialect))
+                        lambda plan_path, borelog_path: (b, placement, 0, dialect))
 
 
 def _patch_render(monkeypatch):
@@ -113,6 +116,8 @@ def test_review_candidate_renders_job_local_bundle(tmp_path, monkeypatch):
     assert ev["candidate"]["placement_status"] == "REVIEW"
     assert ev["candidate"]["render_tier"] == "dashed"
     assert "DRAWN_EXTENT_EXCEEDS_BORE_SPAN" in ev["candidate"]["caveats"]
+    assert "CROSS_SHEET_CONTINUATION_REVIEW" not in ev["candidate"]["caveats"]   # single-sheet bore (71'-like)
+    assert ev["candidate"]["referenced_sheets"] == [11]
 
     summary = uce.render_uploaded_corpus_engine_handoff(tmp_path, CP, JOB, at=AT, by=BY)
     assert summary["status"] == "SUCCEEDED"
@@ -188,3 +193,25 @@ def test_missing_inputs_block_without_running_engine(tmp_path, monkeypatch):
     assert "NO_ENGINE_READY_REVIEWED_BORE_LOG" in codes
     with pytest.raises(uce.UploadedCorpusEngineError):
         uce.render_uploaded_corpus_engine_handoff(tmp_path, CP, JOB, at=AT, by=BY)
+
+
+def test_cross_sheet_bore_gets_continuation_caveat(tmp_path, monkeypatch):
+    # A two-sheet bore ([10,11]) placed on a SINGLE winning sheet (10): the cross-sheet continuation is not
+    # assembled into one per-bore route -> CROSS_SHEET_CONTINUATION_REVIEW caveat (118'/88'-like).
+    _job(tmp_path)
+    bore = _bore(sheet_refs=(10, 11))
+    placement = _placement(PlacementStatus.REVIEW, sheets=(10,), callout_sheet=10)
+    _patch_engine(monkeypatch, placement=placement, bore=bore)
+    _patch_render(monkeypatch)
+
+    ev = uce.evaluate_uploaded_corpus_engine_handoff(tmp_path, CP, JOB)
+    assert ev["runnable"] is True
+    assert "CROSS_SHEET_CONTINUATION_REVIEW" in ev["candidate"]["caveats"]
+    assert ev["candidate"]["referenced_sheets"] == [10, 11]
+    assert ev["candidate"]["sheet"] == 10                              # single winning sheet
+
+    summary = uce.render_uploaded_corpus_engine_handoff(tmp_path, CP, JOB, at=AT, by=BY)
+    mpath = (job_dir(tmp_path, CP, JOB) / "bundle_store" / "bundles"
+             / summary["bundle_id"] / "redline_manifest.json")
+    m = json.loads(mpath.read_text(encoding="utf-8"))
+    assert "CROSS_SHEET_CONTINUATION_REVIEW" in m["logs"][0]["warnings"]   # caveat carried into the manifest

@@ -74,6 +74,12 @@ _PROVENANCE_BY_STATUS = {
     PlacementStatus.AUTO_SELECT.value: "DETERMINISTIC_AUTO",
 }
 
+# Adapter-level REVIEW caveat (NOT an engine caveat, NOT a coordinate/render change): the bore references
+# multiple plan sheets but the engine placed/rendered on a SINGLE winning sheet, so the cross-sheet
+# continuation is not assembled into one per-bore route. Surfaced in the candidate report + manifest
+# warnings so the REVIEW truth is explicit; it never changes geometry and never claims AUTO.
+CROSS_SHEET_CONTINUATION_REVIEW = "CROSS_SHEET_CONTINUATION_REVIEW"
+
 # Named blockers (honest; present when NOT runnable).
 NO_PLAN_PDF_UPLOAD = "NO_PLAN_PDF_UPLOAD"
 NO_ENGINE_READY_REVIEWED_BORE_LOG = "NO_ENGINE_READY_REVIEWED_BORE_LOG"
@@ -157,6 +163,23 @@ def _candidate(placement):
     return placement.matched_callouts[0] if placement.matched_callouts else None
 
 
+def _adapter_caveats(bore, placement):
+    """Adapter-level REVIEW truth annotations derived from (bore, placement) — NOT engine caveats and NOT a
+    coordinate/render change. Currently emits CROSS_SHEET_CONTINUATION_REVIEW when the bore references more
+    than one plan sheet but the engine placed/rendered on a single winning sheet (so the cross-sheet
+    continuation is not assembled into one per-bore route — an honest REVIEW caveat, never an AUTO claim)."""
+    if placement is None:
+        return []
+    referenced = {int(s) for s in (bore.sheet_refs or [])}
+    covered = {int(s) for s in (placement.sheets or [])}
+    if not covered and placement.matched_callouts:
+        covered = {int(placement.matched_callouts[0].sheet)}
+    out = []
+    if len(referenced) > 1 and (referenced - covered):
+        out.append(CROSS_SHEET_CONTINUATION_REVIEW)
+    return out
+
+
 def evaluate_uploaded_corpus_engine_handoff(store_root, customer_project_id, job_id) -> dict:
     """Read-only candidate report: can the ENGINE place a redline for this job's uploaded corpus? Resolves
     the plan + an engine-ready reviewed bore-log, runs the engine, and reports a drawable candidate
@@ -197,8 +220,9 @@ def evaluate_uploaded_corpus_engine_handoff(store_root, customer_project_id, job
         out["candidate"] = {
             "placement_status": placement.status.value,
             "reason": placement.reason,
-            "caveats": list(placement.caveats),
+            "caveats": list(placement.caveats) + _adapter_caveats(bore, placement),
             "sheet": candidate.sheet,
+            "referenced_sheets": list(bore.sheet_refs),
             "drawn_extent": candidate.text,
             "bore_span": "%s->%s" % (bore.station_start, bore.station_end),
             "render_tier": ("solid" if placement.status == PlacementStatus.AUTO_SELECT else "dashed"),
@@ -222,8 +246,9 @@ def _manifest_input(log_id, *, placement, bore, sheet, artifact_path, project_id
         "artifacts": [{"kind": "FINAL_REDLINE_PNG", "sheet": sheet, "path": artifact_path,
                        "sha256": None, "example_placeholder": True}],
         "evidence": [],
-        "warnings": ["engine %s placement (%s); rendered from the plan's own drawn geometry"
-                     % (status_value, placement.reason)] + list(placement.caveats),
+        "warnings": (["engine %s placement (%s); rendered from the plan's own drawn geometry"
+                      % (status_value, placement.reason)]
+                     + list(placement.caveats) + _adapter_caveats(bore, placement)),
     }
     return {
         "schema_version": "1.0.0", "mock_example": False,
