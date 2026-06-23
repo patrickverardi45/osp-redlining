@@ -126,6 +126,16 @@ from truelinev2.contracts.uploaded_corpus_engine_handoff import (
     evaluate_uploaded_corpus_engine_handoff,
     render_uploaded_corpus_engine_handoff,
 )
+from truelinev2.contracts.review_acceptance import (
+    ReviewAcceptanceError,
+    ReviewAcceptanceStateError,
+    ReviewCandidateNotFoundError,
+    accept_review_candidate,
+    generate_review_candidate,
+    list_review_candidates,
+    load_review_candidate,
+    reject_review_candidate,
+)
 from truelinev2.contracts.source_anchor import (
     PLAN_PDF_KIND,
     SourceAnchorError,
@@ -235,6 +245,11 @@ class SourceAnchorCreate(BaseModel):
     notes: Optional[str] = None
 
 
+# --- Phase 6 REVIEW acceptance request body (no identity — the tenant is the verified context) --------- #
+class ReviewReject(BaseModel):
+    reason: str
+
+
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -265,10 +280,11 @@ def _to_http(exc: Exception) -> HTTPException:
                         RowNotFoundError, GroupNotFoundError, HandoffNotFoundError,
                         BundleNotReadableError, ArtifactNotServableError, CloseoutNotFoundError,
                         BillingSummaryNotFoundError, ExportPackageNotFoundError,
-                        SourceAnchorNotFoundError)):
+                        SourceAnchorNotFoundError, ReviewCandidateNotFoundError)):
         return HTTPException(status_code=404, detail=str(exc))
     if isinstance(exc, (IllegalTransitionError, UploadsClosedError, HandoffStateError,
-                        CloseoutStateError, SourceAnchorStateError)):   # state conflicts
+                        CloseoutStateError, SourceAnchorStateError,
+                        ReviewAcceptanceStateError)):   # state conflicts
         return HTTPException(status_code=409, detail=str(exc))
     if isinstance(exc, (CrossProjectAccessError, IsolationError)):
         return HTTPException(status_code=403, detail=str(exc))
@@ -279,7 +295,8 @@ def _to_http(exc: Exception) -> HTTPException:
 # subclass). A non-contract error is left to propagate (a real 500 — never masked as a 400).
 _CONTRACT_ERRORS = (CustomerProjectError, ProcessingJobError, UploadError, ExtractedRowError,
                     ReviewedBoreLogError, ManifestHandoffError, ConsumerError, CloseoutReviewError,
-                    BillingSummaryError, ExportPackageError, SourceAnchorError, IsolationError)
+                    BillingSummaryError, ExportPackageError, SourceAnchorError, ReviewAcceptanceError,
+                    IsolationError)
 
 
 @router.post("/project")
@@ -862,6 +879,84 @@ def render_uploaded_corpus_engine_handoff_route(job_id: str,
         return render_uploaded_corpus_engine_handoff(store, cp, job_id, at=_now(), by=ctx.session_id)
     except UploadedCorpusEngineError as exc:
         raise HTTPException(status_code=409, detail=str(exc))
+    except _CONTRACT_ERRORS as exc:
+        raise _to_http(exc)
+
+
+# --------------------------------------------------------------------------- #
+# Phase 6 — REVIEW acceptance lane: the engine generates a source-supported REVIEW redline candidate; a
+# human ACCEPTS or REJECTS it (never draws geometry). REVIEW is a first-class product output, never AUTO.
+# --------------------------------------------------------------------------- #
+@router.post("/jobs/{job_id}/review-candidates/generate")
+def generate_review_candidate_route(job_id: str,
+                                    ctx: RequestContext = Depends(get_context),
+                                    c: Container = Depends(get_container)) -> dict:
+    """Ask the uploaded-corpus engine for this job's redline candidate and record its honest tier: a REVIEW
+    candidate is RENDERED (real dashed FINAL_REDLINE_PNG) and held as REVIEW_CANDIDATE for human
+    accept/reject; an AUTO placement is rendered deterministically (no acceptance gate); an engine ABSTAIN
+    is recorded ABSTAINED with its named blocker (renders nothing); missing inputs report blockers with no
+    record. Never promotes REVIEW to AUTO. Idempotent (an existing decision is preserved). 409 if a runnable
+    candidate fails to render; 404 if the job is missing."""
+    cp, store = ctx.tenant.value, _store_root(c)
+    try:
+        return generate_review_candidate(store, cp, job_id, at=_now(), by=ctx.session_id)
+    except UploadedCorpusEngineError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    except _CONTRACT_ERRORS as exc:
+        raise _to_http(exc)
+
+
+@router.get("/jobs/{job_id}/review-candidates")
+def list_review_candidates_route(job_id: str,
+                                 ctx: RequestContext = Depends(get_context),
+                                 c: Container = Depends(get_container)) -> dict:
+    """List the tenant's engine REVIEW-acceptance records for one job (tenant + job scoped; [] if none).
+    Read-only — each record carries its tier/status, evidence, caveats, why-not-AUTO, and bundle refs."""
+    try:
+        return {"review_candidates": list_review_candidates(_store_root(c), ctx.tenant.value, job_id)}
+    except _CONTRACT_ERRORS as exc:
+        raise _to_http(exc)
+
+
+@router.get("/jobs/{job_id}/review-candidates/{candidate_id}")
+def get_review_candidate_route(job_id: str, candidate_id: str,
+                              ctx: RequestContext = Depends(get_context),
+                              c: Container = Depends(get_container)) -> dict:
+    """Load one REVIEW-acceptance record (evidence + caveats + provenance + bundle refs) in the tenant's
+    scope. 404 if the candidate is missing."""
+    try:
+        return load_review_candidate(_store_root(c), ctx.tenant.value, job_id, candidate_id)
+    except _CONTRACT_ERRORS as exc:
+        raise _to_http(exc)
+
+
+@router.post("/jobs/{job_id}/review-candidates/{candidate_id}/accept")
+def accept_review_candidate_route(job_id: str, candidate_id: str,
+                                  ctx: RequestContext = Depends(get_context),
+                                  c: Container = Depends(get_container)) -> dict:
+    """ACCEPT the engine-generated REVIEW candidate as-is (no geometry drawn): REVIEW_CANDIDATE ->
+    REVIEW_ACCEPTED, provenance ENGINE_GENERATED_HUMAN_ACCEPTED_REVIEW (never DETERMINISTIC_AUTO). The
+    rendered FINAL_REDLINE_PNG artifacts are unchanged. Idempotent on an already-accepted candidate; 409 if
+    it was rejected/abstained; 404 if the candidate is missing."""
+    cp, store = ctx.tenant.value, _store_root(c)
+    try:
+        return accept_review_candidate(store, cp, job_id, candidate_id, at=_now(), by=ctx.session_id)
+    except _CONTRACT_ERRORS as exc:
+        raise _to_http(exc)
+
+
+@router.post("/jobs/{job_id}/review-candidates/{candidate_id}/reject")
+def reject_review_candidate_route(job_id: str, candidate_id: str, req: ReviewReject,
+                                  ctx: RequestContext = Depends(get_context),
+                                  c: Container = Depends(get_container)) -> dict:
+    """REJECT the engine-generated REVIEW candidate (needs correction) with a required reason:
+    REVIEW_CANDIDATE -> REVIEW_REJECTED. A rejected candidate stays rejected (can never be silently
+    accepted). Idempotent on an already-rejected candidate; 409 if it was accepted/abstained; 400 if the
+    reason is empty; 404 if the candidate is missing."""
+    cp, store = ctx.tenant.value, _store_root(c)
+    try:
+        return reject_review_candidate(store, cp, job_id, candidate_id, reason=req.reason,
+                                       at=_now(), by=ctx.session_id)
     except _CONTRACT_ERRORS as exc:
         raise _to_http(exc)
 

@@ -32,6 +32,7 @@ PIPELINE_MODULES = [
     CONTRACTS / "source_anchor.py",
     CONTRACTS / "recognized_corpus_handoff.py",
     CONTRACTS / "uploaded_corpus_engine_handoff.py",
+    CONTRACTS / "review_acceptance.py",
 ]
 
 

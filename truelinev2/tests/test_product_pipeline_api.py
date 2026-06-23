@@ -39,6 +39,9 @@ from truelinev2.contracts.reviewed_bore_log import (
     SOURCE_CONFLICT,
 )
 from truelinev2.contracts.upload_pipeline import EXTRACTION_STATUS_QUEUED
+from truelinev2.contracts import review_acceptance as ra
+from truelinev2.contracts import uploaded_corpus_engine_handoff as uce
+from truelinev2.schema.models import Bore, Callout, Placement, PlacementStatus
 
 PRODUCT_PATHS = {
     "/v2/product/project",
@@ -76,6 +79,12 @@ PRODUCT_PATHS = {
     # Uploaded-corpus ENGINE handoff (run the engine on the job's own plan + reviewed bore-log)
     "/v2/product/jobs/{job_id}/uploaded-corpus-engine-handoff",
     "/v2/product/jobs/{job_id}/uploaded-corpus-engine-handoff/render",
+    # Phase 6 — REVIEW acceptance lane (engine generates a candidate; human accepts/rejects)
+    "/v2/product/jobs/{job_id}/review-candidates/generate",
+    "/v2/product/jobs/{job_id}/review-candidates",
+    "/v2/product/jobs/{job_id}/review-candidates/{candidate_id}",
+    "/v2/product/jobs/{job_id}/review-candidates/{candidate_id}/accept",
+    "/v2/product/jobs/{job_id}/review-candidates/{candidate_id}/reject",
     # M2 — human-confirmed source anchors (record + validate; renders nothing)
     "/v2/product/jobs/{job_id}/source-anchors",
     "/v2/product/jobs/{job_id}/source-anchors/{source_anchor_id}",
@@ -160,7 +169,8 @@ def test_no_customer_project_id_in_path_or_body(tmp_path):
     # ...nor from any Slice 2/3 request body (identity is the verified context, never a field)
     body_models = [ppr.UploadRegister, ppr.ReviewedBoreLogCreate, ppr.ExtractedRowInput,
                    ppr.RowsAdd, ppr.RowReview, ppr.SegmentGroupCreate, ppr.GroupingStatus,
-                   ppr.ManifestHandoffRecord, ppr.ManifestHandoffFinalize, ppr.SourceAnchorCreate]
+                   ppr.ManifestHandoffRecord, ppr.ManifestHandoffFinalize, ppr.SourceAnchorCreate,
+                   ppr.ReviewReject]
     for model in body_models:
         fields = set(model.model_fields)
         assert not (fields & {"customer_project", "customer_project_id", "tenant", "tenant_id"})
@@ -1495,4 +1505,140 @@ def test_render_route_tenant_isolation(tmp_path):
     ppr.create_project(ppr.ProjectCreate(display_name="B"), ctx=b, c=c)
     with pytest.raises(HTTPException) as exc:                              # B cannot render A's anchor
         ppr.render_source_anchor_route("job-1", "sa-1", ctx=b, c=c)
+    assert exc.value.status_code == 404
+
+
+# --------------------------------------------------------------------------- #
+# Phase 6 — REVIEW acceptance lane routes (engine generates candidate; human accepts/rejects).
+# The heavy engine + renderer are monkeypatched (uce flows through), so the route wiring + state machine
+# are exercised over real product-store records. Name-free.
+# --------------------------------------------------------------------------- #
+_RA_PDF = base64.b64decode(
+    "JVBERi0xLjcKJcK1wrYKJSBXcml0dGVuIGJ5IE11UERGIDEuMjcuMgoKMSAwIG9iago8PC9UeXBlL0NhdGFsb2cvUGFnZXMg"
+    "MiAwIFIvSW5mbzw8L1Byb2R1Y2VyKE11UERGIDEuMjcuMik+Pj4+CmVuZG9iagoKMiAwIG9iago8PC9UeXBlL1BhZ2VzL0Nv"
+    "dW50IDEvS2lkc1s0IDAgUl0+PgplbmRvYmoKCjMgMCBvYmoKPDw+PgplbmRvYmoKCjQgMCBvYmoKPDwvVHlwZS9QYWdlL01l"
+    "ZGlhQm94WzAgMCA2MTIgNzkyXS9Sb3RhdGUgMC9SZXNvdXJjZXMgMyAwIFIvUGFyZW50IDIgMCBSPj4KZW5kb2JqCgp4cmVm"
+    "CjAgNQowMDAwMDAwMDAwIDY1NTM1IGYgCjAwMDAwMDAwNDIgMDAwMDAgbiAKMDAwMDAwMDEyMCAwMDAwMCBuIAowMDAwMDAw"
+    "MTcyIDAwMDAwIG4gCjAwMDAwMDAxOTMgMDAwMDAgbiAKCnRyYWlsZXIKPDwvU2l6ZSA1L1Jvb3QgMSAwIFIvSURbPDI1QzNB"
+    "MjRFNEVDMjgwQzJBQzY1QzM4NEMzQTJDMjg1PjwxQjAyRUMzMkUxRDMwNUYzNDJBRjZFMjI2MkYzNTZDND5dPj4Kc3RhcnR4"
+    "cmVmCjI4NAolJUVPRgo=")
+
+
+def _fake_render_png(plan, bore_id, sheet, offset, stroke_points, *, status, reason, out_dir):
+    import os
+    os.makedirs(out_dir, exist_ok=True)
+    p = os.path.join(out_dir, "%s_s%d_redline_stroke.png" % (bore_id, sheet))
+    with open(p, "wb") as f:
+        f.write(b"\x89PNG\r\n\x1a\n" + b"r(%s)" % status.encode())
+    return p
+
+
+def _engine_ready_job(c, ctx, monkeypatch, *, placement_status=PlacementStatus.REVIEW, with_callout=True):
+    """Build an engine-ready job via the ROUTES, then monkeypatch the engine + renderer so the acceptance
+    routes exercise a deterministic REVIEW/ABSTAIN candidate."""
+    ppr.create_project(ppr.ProjectCreate(display_name="L"), ctx=ctx, c=c)
+    ppr.create_processing_job(ppr.JobCreate(job_id="job-1"), ctx=ctx, c=c)
+    ppr.register_upload("job-1", ppr.UploadRegister(
+        kind="PLAN_PDF", filename="plan.pdf", content_base64=base64.b64encode(_RA_PDF).decode()), ctx=ctx, c=c)
+    bore_up = ppr.register_upload("job-1", ppr.UploadRegister(
+        kind="BORE_LOG", filename="log.xlsx", content_base64=base64.b64encode(b"bore").decode()), ctx=ctx, c=c)
+    ppr.create_bore_log_review("job-1", ppr.ReviewedBoreLogCreate(
+        reviewed_bore_log_id="rbl-1", source_upload_id=bore_up["upload_id"]), ctx=ctx, c=c)
+    ppr.add_rows("job-1", "rbl-1", ppr.RowsAdd(rows=[ppr.ExtractedRowInput(
+        row_id="row-1", source_upload_id=bore_up["upload_id"], raw={"s": "0+00"},
+        normalized={"s": "0+00"}, extraction_method=MANUAL_ENTRY)]), ctx=ctx, c=c)
+    ppr.review_row_route("job-1", "rbl-1", "row-1", ppr.RowReview(to_status=CONFIRMED), ctx=ctx, c=c)
+    ppr.define_group("job-1", "rbl-1", ppr.SegmentGroupCreate(
+        group_id="g-1", member_row_ids=["row-1"], relation=SEPARATE_BORE), ctx=ctx, c=c)
+    ppr.set_group_status("job-1", "rbl-1", "g-1", ppr.GroupingStatus(to_status=GROUPING_CONFIRMED),
+                         ctx=ctx, c=c)
+
+    bore = Bore(bore_id="log.xlsx", project=None, source_file="log.xlsx", sheet_refs=[11],
+                station_start="19+76", station_end="20+47", station_start_ft=1976.0,
+                station_end_ft=2047.0, span_ft=71.0)
+    callouts = []
+    if with_callout:
+        callouts = [Callout(sheet=11, page=11, from_sta="19+84", to_sta="20+24", from_ft=1984.0,
+                            to_ft=2024.0, footage=40.0, text="DRAWN DIRECTIONAL BORE",
+                            bbox=[100.0, 200.0, 300.0, 205.0], dialect="generic")]
+    placement = Placement(bore_id="log.xlsx", status=placement_status, tier="t",
+                          reason="DRAWN_EXTENT_COVERS_SPAN_NOT_TIGHT", sheets=[11], caveats=[],
+                          abstain_reason=("no drawn bore" if placement_status == PlacementStatus.ABSTAIN
+                                          else None),
+                          matched_callouts=callouts)
+    na = {"verdict": "N/A", "caveats": [], "evidence": []}
+    monkeypatch.setattr(uce, "_run_engine",
+                        lambda p, bl: (bore, placement, 0, "generic", [], na))
+    monkeypatch.setattr(uce, "render_redline_stroke", _fake_render_png)
+
+
+def test_generate_review_candidate_route_renders_and_records(tmp_path, monkeypatch):
+    c, ctx = _container(tmp_path), _ctx("cp-aaa")
+    _engine_ready_job(c, ctx, monkeypatch)
+    out = ppr.generate_review_candidate_route("job-1", ctx=ctx, c=c)
+    assert out["tier"] == "REVIEW" and out["runnable"] is True
+    assert out["record"]["status"] == "REVIEW_CANDIDATE"
+    assert out["record"]["provenance"] == "ENGINE_GENERATED_REVIEW_CANDIDATE"
+    assert out["record"]["bundle"]["artifact_count"] == 1
+
+
+def test_review_candidate_list_and_get_routes(tmp_path, monkeypatch):
+    c, ctx = _container(tmp_path), _ctx("cp-aaa")
+    _engine_ready_job(c, ctx, monkeypatch)
+    ppr.generate_review_candidate_route("job-1", ctx=ctx, c=c)
+    listed = ppr.list_review_candidates_route("job-1", ctx=ctx, c=c)
+    assert [r["candidate_id"] for r in listed["review_candidates"]] == ["rc-rbl-1"]
+    got = ppr.get_review_candidate_route("job-1", "rc-rbl-1", ctx=ctx, c=c)
+    assert got["status"] == "REVIEW_CANDIDATE"
+
+
+def test_get_review_candidate_missing_is_404(tmp_path, monkeypatch):
+    c, ctx = _container(tmp_path), _ctx("cp-aaa")
+    _engine_ready_job(c, ctx, monkeypatch)
+    with pytest.raises(HTTPException) as exc:
+        ppr.get_review_candidate_route("job-1", "rc-nope", ctx=ctx, c=c)
+    assert exc.value.status_code == 404
+
+
+def test_accept_route_confers_human_accepted_review(tmp_path, monkeypatch):
+    c, ctx = _container(tmp_path), _ctx("cp-aaa")
+    _engine_ready_job(c, ctx, monkeypatch)
+    ppr.generate_review_candidate_route("job-1", ctx=ctx, c=c)
+    accepted = ppr.accept_review_candidate_route("job-1", "rc-rbl-1", ctx=ctx, c=c)
+    assert accepted["status"] == "REVIEW_ACCEPTED"
+    assert accepted["provenance"] == "ENGINE_GENERATED_HUMAN_ACCEPTED_REVIEW"
+    assert accepted["provenance"] != "DETERMINISTIC_AUTO"        # never relabeled as AUTO
+
+
+def test_reject_route_requires_reason_and_is_terminal(tmp_path, monkeypatch):
+    c, ctx = _container(tmp_path), _ctx("cp-aaa")
+    _engine_ready_job(c, ctx, monkeypatch)
+    ppr.generate_review_candidate_route("job-1", ctx=ctx, c=c)
+    with pytest.raises(HTTPException) as exc:                    # empty reason -> 400
+        ppr.reject_review_candidate_route("job-1", "rc-rbl-1", ppr.ReviewReject(reason="  "), ctx=ctx, c=c)
+    assert exc.value.status_code == 400
+    rejected = ppr.reject_review_candidate_route(
+        "job-1", "rc-rbl-1", ppr.ReviewReject(reason="needs correction"), ctx=ctx, c=c)
+    assert rejected["status"] == "REVIEW_REJECTED"
+    with pytest.raises(HTTPException) as exc:                    # rejected cannot be accepted -> 409
+        ppr.accept_review_candidate_route("job-1", "rc-rbl-1", ctx=ctx, c=c)
+    assert exc.value.status_code == 409
+
+
+def test_engine_abstain_route_records_abstained(tmp_path, monkeypatch):
+    c, ctx = _container(tmp_path), _ctx("cp-aaa")
+    _engine_ready_job(c, ctx, monkeypatch, placement_status=PlacementStatus.ABSTAIN, with_callout=False)
+    out = ppr.generate_review_candidate_route("job-1", ctx=ctx, c=c)
+    assert out["tier"] == "ABSTAIN" and out["record"]["status"] == "ABSTAINED"
+    assert "ENGINE_ABSTAINED" in {b["code"] for b in out["record"]["blockers"]}
+
+
+def test_review_candidate_routes_tenant_isolation(tmp_path, monkeypatch):
+    c = _container(tmp_path)
+    a, b = _ctx("cp-aaa"), _ctx("cp-bbb")
+    _engine_ready_job(c, a, monkeypatch)
+    ppr.generate_review_candidate_route("job-1", ctx=a, c=c)
+    ppr.create_project(ppr.ProjectCreate(display_name="B"), ctx=b, c=c)
+    with pytest.raises(HTTPException) as exc:                    # B cannot read A's candidate
+        ppr.get_review_candidate_route("job-1", "rc-rbl-1", ctx=b, c=c)
     assert exc.value.status_code == 404
