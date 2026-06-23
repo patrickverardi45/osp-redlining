@@ -88,7 +88,12 @@ from truelinev2.contracts.published_bundle_consumer import (
     ConsumerError,
     StaticBundleConsumer,
 )
-from truelinev2.contracts.kmz_export import evaluate_export
+from truelinev2.contracts.kmz_export import (
+    EXPORTABLE as KMZ_EXPORTABLE,
+    KMZ_MEDIA_TYPE,
+    build_kmz_bytes,
+    evaluate_export,
+)
 from truelinev2.contracts.closeout_review import (
     CloseoutNotFoundError,
     CloseoutReviewError,
@@ -135,6 +140,11 @@ from truelinev2.contracts.review_acceptance import (
     list_review_candidates,
     load_review_candidate,
     reject_review_candidate,
+)
+from truelinev2.contracts.product_workflow import (
+    ProductWorkflowError,
+    assemble_closeout_package,
+    run_product_redline,
 )
 from truelinev2.contracts.source_anchor import (
     PLAN_PDF_KIND,
@@ -684,6 +694,27 @@ def get_kmz_export(job_id: str,
         raise _to_http(exc)
 
 
+@router.get("/jobs/{job_id}/kmz-export/download")
+def download_kmz_export(job_id: str,
+                        ctx: RequestContext = Depends(get_context),
+                        c: Container = Depends(get_container)) -> Response:
+    """Serve the job's redline KMZ as a downloadable application/vnd.google-earth.kmz file — ONLY when the
+    redline manifest carries VERIFIED geospatial geometry (EXPORTABLE). Today's real (sheet/station/pixel)
+    redline manifests have no coordinates, so this is honestly 409 with the named blocker (e.g.
+    UNSUPPORTED_PIXEL_ONLY) — never a faked KMZ. 404 if the job is missing."""
+    cp, store = ctx.tenant.value, _store_root(c)
+    try:
+        record = evaluate_export(store, cp, job_id)
+    except _CONTRACT_ERRORS as exc:
+        raise _to_http(exc)
+    if record.get("status") != KMZ_EXPORTABLE or not record.get("kml"):
+        codes = ", ".join(sorted({b["code"] for b in record.get("blockers", [])})) or "NOT_EXPORTABLE"
+        raise HTTPException(status_code=409, detail="kmz export not available (%s)" % codes)
+    data = build_kmz_bytes(record["kml"])
+    return Response(content=data, media_type=KMZ_MEDIA_TYPE,
+                    headers={"Content-Disposition": 'attachment; filename="redline_export.kmz"'})
+
+
 @router.post("/jobs/{job_id}/closeout/evaluate")
 def evaluate_closeout_route(job_id: str,
                             ctx: RequestContext = Depends(get_context),
@@ -957,6 +988,61 @@ def reject_review_candidate_route(job_id: str, candidate_id: str, req: ReviewRej
     try:
         return reject_review_candidate(store, cp, job_id, candidate_id, reason=req.reason,
                                        at=_now(), by=ctx.session_id)
+    except _CONTRACT_ERRORS as exc:
+        raise _to_http(exc)
+
+
+# --------------------------------------------------------------------------- #
+# Phase 9 — product workflow orchestrator: choose among the 3 redline paths (recognized deterministic ->
+# uploaded REVIEW/AUTO -> abstain) IN ORDER, then assemble the closeout/export package. Drives the EXISTING
+# contracts read-only; runs no engine here; never fakes AUTO / coordinates.
+# --------------------------------------------------------------------------- #
+def _optional_cost_rule_set(settings) -> Optional[dict]:
+    """Load the server billing cost-rule set if configured + loadable, else None (billing is OPTIONAL in the
+    workflow — it never blocks the export package)."""
+    path = settings.product_billing_cost_rules_path
+    if not path:
+        return None
+    try:
+        return json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+
+
+@router.post("/jobs/{job_id}/workflow/redline")
+def run_product_redline_route(job_id: str,
+                              ctx: RequestContext = Depends(get_context),
+                              c: Container = Depends(get_container)) -> dict:
+    """Run the correct redline path for the job's uploaded package, IN ORDER: a recognized deterministic
+    package serves the EXISTING committed engine render (real PNGs, DETERMINISTIC_AUTO); else a supported
+    uploaded package produces an engine REVIEW candidate (never faked AUTO); else ABSTAIN with the SPECIFIC
+    recognition + engine reasons (never a bare ENGINE_ABSTAINED). A successful render advances the job to
+    PLACED. 409 if the recognition/engine render fails or the job is FAILED; 404 if the job is missing."""
+    cp, store = ctx.tenant.value, _store_root(c)
+    registry = load_registry(c.settings.recognized_corpus_registry_path)
+    try:
+        return run_product_redline(store, cp, job_id, registry=registry, at=_now(), by=ctx.session_id)
+    except (RecognizedCorpusError, UploadedCorpusEngineError, ProductWorkflowError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    except _CONTRACT_ERRORS as exc:
+        raise _to_http(exc)
+
+
+@router.post("/jobs/{job_id}/workflow/closeout")
+def assemble_closeout_package_route(job_id: str,
+                                    ctx: RequestContext = Depends(get_context),
+                                    c: Container = Depends(get_container)) -> dict:
+    """Drive the closeout/export chain for a job whose redline is placed: gate on REVIEW acceptance, advance
+    to CLOSEOUT_REVIEW, evaluate the closeout + KMZ-export safety, optionally compute billing (only when
+    server cost-rules are configured), and assemble the export-package descriptor. Returns a unified summary
+    ({assembled, closeout_status, export_status, kmz_status, ...}). 409 if a REVIEW candidate is not accepted
+    or the job is FAILED; 404 if the job is missing."""
+    cp, store = ctx.tenant.value, _store_root(c)
+    try:
+        return assemble_closeout_package(store, cp, job_id, at=_now(), by=ctx.session_id,
+                                         cost_rule_set=_optional_cost_rule_set(c.settings))
+    except ProductWorkflowError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
     except _CONTRACT_ERRORS as exc:
         raise _to_http(exc)
 

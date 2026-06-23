@@ -20,6 +20,10 @@ AI/OCR, billing/closeout, or deploy. The redline manifest schema is NOT modified
 from __future__ import annotations
 
 import hashlib
+import io
+import re
+import xml.etree.ElementTree as ET
+import zipfile
 from pathlib import Path
 
 from truelinev2.contracts.processing_job import job_dir, load_job
@@ -162,6 +166,89 @@ def build_kml(features, *, source_manifest_id, source_artifact_bundle_id) -> str
                      % (_xml_escape(f["feature_id"]), ext, inner))
     parts.append('</Document></kml>')
     return "\n".join(parts)
+
+
+# --------------------------------------------------------------------------- #
+# Layer A2 — binary KMZ packaging + structural validation (the file Google Earth opens). These NEVER
+# synthesize coordinates: ``build_kmz_bytes`` only packs KML that ``build_kml`` already produced from
+# VERIFIED geospatial features, and ``validate_kmz_bytes`` is read-only structural checking.
+# --------------------------------------------------------------------------- #
+KMZ_MEDIA_TYPE = "application/vnd.google-earth.kmz"
+KMZ_KML_MEMBER = "doc.kml"          # the conventional root document Google Earth opens first
+_WGS84_LON = (-180.0, 180.0)
+_WGS84_LAT = (-90.0, 90.0)
+
+
+def build_kmz_bytes(kml_text) -> bytes:
+    """Pack already-built KML text into a valid KMZ (a zip whose root document is ``doc.kml``) — the exact
+    container Google Earth opens. Deterministic: a fixed member name + a fixed (1980-01-01) zip timestamp =>
+    byte-stable output for identical KML. No coordinates are synthesized here; the KML is built upstream from
+    VERIFIED geospatial features only (a pixel-only manifest never reaches this)."""
+    if not isinstance(kml_text, str) or not kml_text.strip():
+        raise ValueError("build_kmz_bytes requires non-empty KML text")
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr(zipfile.ZipInfo(KMZ_KML_MEMBER), kml_text)     # ZipInfo => fixed 1980 date => reproducible
+    return buf.getvalue()
+
+
+def _strip_kml_ns(text) -> str:
+    text = re.sub(r'xmlns(:\w+)?="[^"]+"', "", text)
+    text = re.sub(r"(</?)\w+:", r"\1", text)
+    return re.sub(r"\s\w+:(\w+=)", r" \1", text)
+
+
+def validate_kmz_bytes(data) -> dict:
+    """Read-only STRUCTURAL validation of a KMZ blob (the basis for any 'Google Earth can load this' claim
+    short of a manual open): it must be a valid zip with an intact KML member that parses, carries >=1
+    Placemark, and whose every coordinate is a well-formed WGS84 lon,lat. Returns
+    {valid, errors, kml_member, members, placemark_count, coordinate_count, geometry_kinds}."""
+    out = {"valid": False, "errors": [], "kml_member": None, "members": [],
+           "placemark_count": 0, "coordinate_count": 0, "geometry_kinds": []}
+    try:
+        zf = zipfile.ZipFile(io.BytesIO(data))
+    except (zipfile.BadZipFile, TypeError):
+        out["errors"].append("not a valid zip archive")
+        return out
+    out["members"] = zf.namelist()
+    if zf.testzip() is not None:
+        out["errors"].append("corrupt zip member")
+    kml_member = next((n for n in out["members"] if n.lower().endswith(".kml")), None)
+    out["kml_member"] = kml_member
+    if kml_member is None:
+        out["errors"].append("no .kml member in the KMZ")
+        return out
+    try:
+        root = ET.fromstring(_strip_kml_ns(zf.read(kml_member).decode("utf-8", "replace")))
+    except ET.ParseError as exc:
+        out["errors"].append("kml does not parse: %s" % exc)
+        return out
+    kinds = set()
+    for pm in root.iter("Placemark"):
+        out["placemark_count"] += 1
+        for kind in ("LineString", "Point", "Polygon"):
+            if pm.find(".//" + kind) is not None:
+                kinds.add(kind)
+    out["geometry_kinds"] = sorted(kinds)
+    for cel in root.iter("coordinates"):
+        for tok in (cel.text or "").split():
+            parts = tok.split(",")
+            if len(parts) < 2:
+                continue
+            try:
+                lon, lat = float(parts[0]), float(parts[1])
+            except ValueError:
+                out["errors"].append("non-numeric coordinate %r" % (tok,))
+                continue
+            out["coordinate_count"] += 1
+            if not (_WGS84_LON[0] <= lon <= _WGS84_LON[1] and _WGS84_LAT[0] <= lat <= _WGS84_LAT[1]):
+                out["errors"].append("coordinate out of WGS84 range: %s,%s" % (lon, lat))
+    if out["placemark_count"] == 0:
+        out["errors"].append("no Placemark elements")
+    if out["coordinate_count"] == 0:
+        out["errors"].append("no coordinates")
+    out["valid"] = not out["errors"]
+    return out
 
 
 # --------------------------------------------------------------------------- #

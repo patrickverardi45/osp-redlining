@@ -65,6 +65,7 @@ PRODUCT_PATHS = {
     "/v2/product/jobs/{job_id}/artifacts/{artifact_path:path}",
     # Slice 4 — downstream status spine (kmz safety / closeout / billing / export package)
     "/v2/product/jobs/{job_id}/kmz-export",
+    "/v2/product/jobs/{job_id}/kmz-export/download",
     "/v2/product/jobs/{job_id}/closeout/evaluate",
     "/v2/product/jobs/{job_id}/closeout",
     "/v2/product/jobs/{job_id}/billing/compute",
@@ -79,6 +80,9 @@ PRODUCT_PATHS = {
     # Uploaded-corpus ENGINE handoff (run the engine on the job's own plan + reviewed bore-log)
     "/v2/product/jobs/{job_id}/uploaded-corpus-engine-handoff",
     "/v2/product/jobs/{job_id}/uploaded-corpus-engine-handoff/render",
+    # Phase 9 — product workflow orchestrator (3-path redline decision + closeout/export assembly)
+    "/v2/product/jobs/{job_id}/workflow/redline",
+    "/v2/product/jobs/{job_id}/workflow/closeout",
     # Phase 6 — REVIEW acceptance lane (engine generates a candidate; human accepts/rejects)
     "/v2/product/jobs/{job_id}/review-candidates/generate",
     "/v2/product/jobs/{job_id}/review-candidates",
@@ -895,11 +899,13 @@ def test_closeout_read_missing_is_404(tmp_path):
 
 
 def test_no_privileged_closeout_routes(tmp_path):
-    # ONLY evaluate + read closeout routes exist — no lock/approve/close/reject/reopen/unlock surface.
+    # ONLY evaluate + read closeout routes exist (plus the Phase 9 workflow orchestrator, which EVALUATES
+    # closeout — NOT a privileged transition) — no lock/approve/close/reject/reopen/unlock surface.
     app = create_app(_settings(tmp_path, enabled=True))
     closeout_paths = {r.path for r in _product_routes(app) if "/closeout" in r.path}
     assert closeout_paths == {"/v2/product/jobs/{job_id}/closeout",
-                              "/v2/product/jobs/{job_id}/closeout/evaluate"}
+                              "/v2/product/jobs/{job_id}/closeout/evaluate",
+                              "/v2/product/jobs/{job_id}/workflow/closeout"}
 
 
 # --------------------------------------------------------------------------- #
