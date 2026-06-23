@@ -88,10 +88,14 @@ def _placement(status, *, with_callout=True, reason="DRAWN_EXTENT_COVERS_SPAN_NO
                      matched_callouts=callouts)
 
 
-def _patch_engine(monkeypatch, *, placement, bore=None, extra_legs=(), dialect="generic"):
+_NA_MATCHLINE = {"verdict": "N/A", "caveats": [], "evidence": []}
+
+
+def _patch_engine(monkeypatch, *, placement, bore=None, extra_legs=(), matchline=None, dialect="generic"):
     b = bore if bore is not None else _bore()
+    ml = matchline if matchline is not None else _NA_MATCHLINE
     monkeypatch.setattr(uce, "_run_engine",
-                        lambda plan_path, borelog_path: (b, placement, 0, dialect, list(extra_legs)))
+                        lambda plan_path, borelog_path: (b, placement, 0, dialect, list(extra_legs), ml))
 
 
 def _patch_render(monkeypatch):
@@ -175,7 +179,7 @@ def test_engine_abstain_blocks_and_renders_nothing(tmp_path, monkeypatch):
 def test_no_dialect_blocks(tmp_path, monkeypatch):
     _job(tmp_path)
     monkeypatch.setattr(uce, "_run_engine",
-                        lambda plan_path, borelog_path: (_bore(), None, 0, None, []))
+                        lambda plan_path, borelog_path: (_bore(), None, 0, None, [], _NA_MATCHLINE))
     ev = uce.evaluate_uploaded_corpus_engine_handoff(tmp_path, CP, JOB)
     assert ev["status"] == "BLOCKED"
     assert "NO_PLAN_DIALECT_RECOGNIZED" in {b["code"] for b in ev["blockers"]}
@@ -249,3 +253,101 @@ def test_partial_cross_sheet_review_labeled_honestly(tmp_path, monkeypatch):
     m = json.loads(mpath.read_text(encoding="utf-8"))
     assert m["logs"][0]["source_sheets"] == [10]
     assert "PARTIAL_CROSS_SHEET_REVIEW" in m["logs"][0]["warnings"]
+
+
+# --- Phase 5: matchline continuity (read-only printed-matchline validation) ----------------------------- #
+
+class _FakePlan:
+    """Minimal plan stub exposing only .lines(sheet, offset) for the matchline-continuity unit tests."""
+    def __init__(self, by_sheet):
+        self._by = by_sheet
+
+    def lines(self, sheet, offset):
+        return self._by.get(sheet, [])
+
+
+def _two_sheet_bore(lo_ft, hi_ft):
+    return Bore(bore_id="x", project=None, source_file="x", sheet_refs=[10, 11],
+                station_start="14+20", station_end="15+38",
+                station_start_ft=lo_ft, station_end_ft=hi_ft, span_ft=hi_ft - lo_ft)
+
+
+def test_matchline_continuity_confirmed_with_boundary_station():
+    # Both sheets print the SAME matchline boundary STATION inside the bore span -> CONFIRMED.
+    plan = _FakePlan({10: ["MATCHLINE STA 15+00 - SEE SHEET 11"],
+                      11: ["MATCHLINE STA 15+00 - SEE SHEET 10"]})
+    r = uce._matchline_continuity(plan, 0, _two_sheet_bore(1420.0, 1538.0), [10, 11])
+    assert r["verdict"] == "CONFIRMED"
+    assert "MATCHLINE_CONTINUATION_CONFIRMED_REVIEW" in r["caveats"]
+    assert r["evidence"][0]["shared_boundary_station_ft"] == 1500.0
+
+
+def test_matchline_continuity_adjacency_only_is_unverified():
+    # Mutual SEE-SHEET adjacency printed but NO boundary station (the real two-sheet, no-station case) ->
+    # UNVERIFIED + adjacency confirmed; never faked-confirmed.
+    plan = _FakePlan({10: ["MATCHLINE: SEE SHEET 11"], 11: ["MATCHLINE: SEE SHEET 10"]})
+    r = uce._matchline_continuity(plan, 0, _two_sheet_bore(1420.0, 1538.0), [10, 11])
+    assert r["verdict"] == "UNVERIFIED"
+    assert "MATCHLINE_CONTINUATION_UNVERIFIED" in r["caveats"]
+    assert "MATCHLINE_SHEET_ADJACENCY_CONFIRMED" in r["caveats"]
+    assert "MATCHLINE_CONTINUATION_CONFIRMED_REVIEW" not in r["caveats"]
+
+
+def test_matchline_continuity_no_evidence_unverified():
+    # No matchline text at all -> UNVERIFIED, and NO adjacency claim (nothing printed to support it).
+    plan = _FakePlan({10: ["EOP"], 11: ["ROW"]})
+    r = uce._matchline_continuity(plan, 0, _two_sheet_bore(1420.0, 1538.0), [10, 11])
+    assert r["verdict"] == "UNVERIFIED"
+    assert "MATCHLINE_CONTINUATION_UNVERIFIED" in r["caveats"]
+    assert "MATCHLINE_SHEET_ADJACENCY_CONFIRMED" not in r["caveats"]
+
+
+def test_matchline_continuity_single_sheet_na():
+    # Single rendered sheet -> not applicable (71'-like); no matchline caveat.
+    plan = _FakePlan({11: ["MATCHLINE: SEE SHEET 10"]})
+    r = uce._matchline_continuity(plan, 0, _bore(sheet_refs=(11,)), [11])
+    assert r["verdict"] == "N/A" and r["caveats"] == []
+
+
+def test_unverified_matchline_flows_to_report_and_manifest(tmp_path, monkeypatch):
+    # The UNVERIFIED verdict (two-sheet, no-station shape) reaches evaluate + the manifest; CROSS_SHEET stays.
+    _job(tmp_path)
+    bore = _bore(sheet_refs=(10, 11))
+    placement = _placement(PlacementStatus.REVIEW, sheets=(10,), callout_sheet=10)
+    extra = [{"sheet": 11, "stroke_points": [(110.0, 300.0), (260.0, 302.0)]}]
+    ml = {"verdict": "UNVERIFIED",
+          "caveats": ["MATCHLINE_CONTINUATION_UNVERIFIED", "MATCHLINE_SHEET_ADJACENCY_CONFIRMED"],
+          "evidence": [{"pair": [10, 11], "shared_boundary_station_ft": None}]}
+    _patch_engine(monkeypatch, placement=placement, bore=bore, extra_legs=extra, matchline=ml)
+    _patch_render(monkeypatch)
+
+    ev = uce.evaluate_uploaded_corpus_engine_handoff(tmp_path, CP, JOB)
+    assert ev["candidate"]["matchline_continuity"] == "UNVERIFIED"
+    caveats = ev["candidate"]["caveats"]
+    assert "MATCHLINE_CONTINUATION_UNVERIFIED" in caveats
+    assert "MATCHLINE_SHEET_ADJACENCY_CONFIRMED" in caveats
+    assert "CROSS_SHEET_CONTINUATION_REVIEW" in caveats              # kept (legs still separate per-sheet)
+    assert "MATCHLINE_CONTINUATION_CONFIRMED_REVIEW" not in caveats
+
+    summary = uce.render_uploaded_corpus_engine_handoff(tmp_path, CP, JOB, at=AT, by=BY)
+    m = json.loads((job_dir(tmp_path, CP, JOB) / "bundle_store" / "bundles"
+                    / summary["bundle_id"] / "redline_manifest.json").read_text(encoding="utf-8"))
+    assert "MATCHLINE_CONTINUATION_UNVERIFIED" in m["logs"][0]["warnings"]
+    assert m["logs"][0]["provenance"] == "OWNER_CONFIRMED_HUMAN_ADJUSTABLE"   # AUTO not promoted
+
+
+def test_confirmed_matchline_stays_review_not_auto(tmp_path, monkeypatch):
+    # A CONFIRMED continuity adds the confirmed caveat but stays REVIEW (dashed) — never promoted to AUTO.
+    _job(tmp_path)
+    bore = _bore(sheet_refs=(10, 11))
+    placement = _placement(PlacementStatus.REVIEW, sheets=(10,), callout_sheet=10)
+    extra = [{"sheet": 11, "stroke_points": [(110.0, 300.0), (260.0, 302.0)]}]
+    ml = {"verdict": "CONFIRMED", "caveats": ["MATCHLINE_CONTINUATION_CONFIRMED_REVIEW"],
+          "evidence": [{"pair": [10, 11], "shared_boundary_station_ft": 1500.0}]}
+    _patch_engine(monkeypatch, placement=placement, bore=bore, extra_legs=extra, matchline=ml)
+    _patch_render(monkeypatch)
+
+    ev = uce.evaluate_uploaded_corpus_engine_handoff(tmp_path, CP, JOB)
+    assert ev["candidate"]["matchline_continuity"] == "CONFIRMED"
+    assert "MATCHLINE_CONTINUATION_CONFIRMED_REVIEW" in ev["candidate"]["caveats"]
+    assert ev["candidate"]["placement_status"] == "REVIEW" and ev["candidate"]["render_tier"] == "dashed"

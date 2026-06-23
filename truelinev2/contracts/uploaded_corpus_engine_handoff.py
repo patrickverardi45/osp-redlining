@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from pathlib import Path
 
 from truelinev2.contracts.customer_project import validate_customer_project_id
@@ -58,6 +59,8 @@ from truelinev2.extract.registry import select_dialect
 from truelinev2.match.engine import run_match
 from truelinev2.render.crop import render_redline_stroke
 from truelinev2.schema.models import PlacementStatus
+from truelinev2.extract.matchline_join import see_sheet_crossings
+from truelinev2.stations import parse_station
 
 PLAN_PDF_KIND = "PLAN_PDF"
 BORE_LOG_KIND = "BORE_LOG"
@@ -81,6 +84,19 @@ _PROVENANCE_BY_STATUS = {
 #  * PARTIAL_CROSS_SHEET_REVIEW — some referenced sheet has no source-supported leg, so coverage is partial.
 CROSS_SHEET_CONTINUATION_REVIEW = "CROSS_SHEET_CONTINUATION_REVIEW"
 PARTIAL_CROSS_SHEET_REVIEW = "PARTIAL_CROSS_SHEET_REVIEW"
+
+# Matchline-continuity caveats (Phase 5; truthfulness only — never geometry, never AUTO):
+#  * MATCHLINE_CONTINUATION_CONFIRMED_REVIEW — a printed matchline boundary-STATION equation links the
+#    rendered legs across the matchline (both sheets print the SAME boundary station inside the bore span).
+#  * MATCHLINE_CONTINUATION_UNVERIFIED — the station-level cross-matchline join is NOT proven.
+#  * MATCHLINE_SHEET_ADJACENCY_CONFIRMED — the sheets DO print mutual matchline SEE-SHEET cross-references
+#    (adjacency proven) even when no boundary station is printed (so continuity stays UNVERIFIED).
+MATCHLINE_CONTINUATION_CONFIRMED_REVIEW = "MATCHLINE_CONTINUATION_CONFIRMED_REVIEW"
+MATCHLINE_CONTINUATION_UNVERIFIED = "MATCHLINE_CONTINUATION_UNVERIFIED"
+MATCHLINE_SHEET_ADJACENCY_CONFIRMED = "MATCHLINE_SHEET_ADJACENCY_CONFIRMED"
+# Convention-neutral matchline label substring; the SEE-SHEET grammar carries the partner sheet number.
+_MATCHLINE_KEYWORD = "MATCH"
+_SEE_SHEET_RE = re.compile(r"SEE\s*SH(?:EE)?T\s*0*(\d+)", re.I)
 
 # Named blockers (honest; present when NOT runnable).
 NO_PLAN_PDF_UPLOAD = "NO_PLAN_PDF_UPLOAD"
@@ -143,22 +159,28 @@ def _resolve_inputs(store_root, customer_project_id, job_id, job):
 
 def _run_engine(plan_path, borelog_path):
     """Run the shipped engine on the resolved files. Returns (bore, placement, offset, dialect_name,
-    extra_legs). The DEFAULT (all-off) match path is used — no opt-in gates — so this mirrors the
+    extra_legs, matchline). The DEFAULT (all-off) match path is used — no opt-in gates — so this mirrors the
     deterministic engine's default behavior. ``extra_legs`` are source-supported drawn legs on REFERENCED
-    sheets OTHER than the winner's sheet (cross-sheet REVIEW coverage); the winner's sheet keeps its existing
-    single-callout render. Caller owns no plan handle (it is opened + closed here)."""
+    sheets OTHER than the winner's sheet (cross-sheet REVIEW coverage). ``matchline`` is the read-only
+    printed-matchline continuity verdict over the rendered sheets. Caller owns no plan handle (opened/closed
+    here)."""
+    _na = {"verdict": "N/A", "caveats": [], "evidence": []}
     bore = load_borelog(str(borelog_path))
     plan = PlanPdf(str(plan_path))
     try:
         dialect = select_dialect(plan)
         if dialect is None:
-            return bore, None, _DEFAULT_OFFSET, None, []
+            return bore, None, _DEFAULT_OFFSET, None, [], _na
         offset = dialect.calibrate(plan, _DEFAULT_OFFSET)
         placement = run_match(bore, plan, dialect, offset)
         cand = _candidate(placement)
-        extra_legs = (_extra_sheet_legs(plan, dialect, offset, bore, cand.sheet)
-                      if cand is not None and cand.bbox else [])
-        return bore, placement, offset, getattr(dialect, "name", None), extra_legs
+        if cand is not None and cand.bbox:
+            extra_legs = _extra_sheet_legs(plan, dialect, offset, bore, cand.sheet)
+            render_sheets = {int(cand.sheet)} | {int(l["sheet"]) for l in extra_legs}
+            matchline = _matchline_continuity(plan, offset, bore, render_sheets)
+        else:
+            extra_legs, matchline = [], _na
+        return bore, placement, offset, getattr(dialect, "name", None), extra_legs, matchline
     finally:
         plan.close()
 
@@ -210,6 +232,62 @@ def _adapter_caveats(bore, rendered_sheets):
     return out
 
 
+def _sheet_sees(lines, partner) -> bool:
+    """True iff this sheet prints a matchline cross-reference to ``partner`` (e.g. 'MATCHLINE: SEE SHEET N').
+    Read-only text grammar; no station required (the no-station adjacency case)."""
+    for ln in lines:
+        if _MATCHLINE_KEYWORD in (ln or "").upper():
+            m = _SEE_SHEET_RE.search(ln or "")
+            if m and int(m.group(1)) == partner:
+                return True
+    return False
+
+
+def _shared_boundary_station(cross_ab, cross_ba, lo, hi):
+    """The boundary STATION (ft) printed by BOTH sheets' matchline equations and falling inside the bore span,
+    else None. ``cross_*`` are see_sheet_crossings outputs (tuples of printed station tokens)."""
+    a = {parse_station(s) for tup in cross_ab for s in tup if parse_station(s) is not None}
+    b = {parse_station(s) for tup in cross_ba for s in tup if parse_station(s) is not None}
+    for s in sorted(a & b):
+        if lo - 1.0 <= s <= hi + 1.0:
+            return s
+    return None
+
+
+def _matchline_continuity(plan, offset, bore, render_sheets) -> dict:
+    """Validate, from PRINTED matchline evidence ONLY, whether the rendered per-sheet legs are continuous
+    across the matchline. Read-only: reuses ``see_sheet_crossings`` for printed boundary-STATION equations
+    (the strict CONFIRMED tier) and a SEE-SHEET adjacency check for the no-station case. Never fakes
+    continuity, never changes geometry. Returns {verdict, caveats, evidence}."""
+    sheets = sorted({int(s) for s in (render_sheets or [])})
+    if len(sheets) < 2:
+        return {"verdict": "N/A", "caveats": [], "evidence": []}
+    lo, hi = bore.station_start_ft, bore.station_end_ft
+    evidence, confirmed, adjacent = [], 0, 0
+    for a, b in zip(sheets, sheets[1:]):
+        la, lb = plan.lines(a, offset), plan.lines(b, offset)
+        cross_ab = see_sheet_crossings(la, b, _MATCHLINE_KEYWORD)
+        cross_ba = see_sheet_crossings(lb, a, _MATCHLINE_KEYWORD)
+        shared = _shared_boundary_station(cross_ab, cross_ba, lo, hi)
+        sees = _sheet_sees(la, b) and _sheet_sees(lb, a)
+        if shared is not None:
+            confirmed += 1
+        elif sees:
+            adjacent += 1
+        evidence.append({"pair": [a, b], "see_sheet_a_to_b": _sheet_sees(la, b),
+                         "see_sheet_b_to_a": _sheet_sees(lb, a),
+                         "shared_boundary_station_ft": shared})
+    pairs = len(sheets) - 1
+    caveats = []
+    if confirmed == pairs:                       # every adjacent rendered pair has a printed boundary station
+        verdict, caveats = "CONFIRMED", [MATCHLINE_CONTINUATION_CONFIRMED_REVIEW]
+    else:
+        verdict, caveats = "UNVERIFIED", [MATCHLINE_CONTINUATION_UNVERIFIED]
+        if confirmed or adjacent:                # mutual SEE-SHEET adjacency printed (no boundary station)
+            caveats.append(MATCHLINE_SHEET_ADJACENCY_CONFIRMED)
+    return {"verdict": verdict, "caveats": caveats, "evidence": evidence}
+
+
 def evaluate_uploaded_corpus_engine_handoff(store_root, customer_project_id, job_id) -> dict:
     """Read-only candidate report: can the ENGINE place a redline for this job's uploaded corpus? Resolves
     the plan + an engine-ready reviewed bore-log, runs the engine, and reports a drawable candidate
@@ -223,8 +301,9 @@ def evaluate_uploaded_corpus_engine_handoff(store_root, customer_project_id, job
     placement = bore = offset = dialect_name = None
     candidate = None
     extra_legs = []
+    matchline = {"verdict": "N/A", "caveats": [], "evidence": []}
     if plan_path is not None and borelog_path is not None:
-        bore, placement, offset, dialect_name, extra_legs = _run_engine(plan_path, borelog_path)
+        bore, placement, offset, dialect_name, extra_legs, matchline = _run_engine(plan_path, borelog_path)
         if placement is None:
             blockers.append({"code": NO_PLAN_DIALECT_RECOGNIZED,
                              "reason": "No registered plan dialect recognized this plan."})
@@ -252,7 +331,7 @@ def evaluate_uploaded_corpus_engine_handoff(store_root, customer_project_id, job
         out["candidate"] = {
             "placement_status": placement.status.value,
             "reason": placement.reason,
-            "caveats": list(placement.caveats) + _adapter_caveats(bore, render_sheets),
+            "caveats": list(placement.caveats) + _adapter_caveats(bore, render_sheets) + matchline["caveats"],
             "sheet": candidate.sheet,
             "referenced_sheets": list(bore.sheet_refs),
             "render_sheets": render_sheets,
@@ -260,14 +339,17 @@ def evaluate_uploaded_corpus_engine_handoff(store_root, customer_project_id, job
             "drawn_extent": candidate.text,
             "bore_span": "%s->%s" % (bore.station_start, bore.station_end),
             "render_tier": ("solid" if placement.status == PlacementStatus.AUTO_SELECT else "dashed"),
+            "matchline_continuity": matchline["verdict"],
+            "matchline_evidence": matchline["evidence"],
         }
     return out
 
 
-def _manifest_input(log_id, *, placement, bore, legs, project_id) -> dict:
+def _manifest_input(log_id, *, placement, bore, legs, project_id, matchline_caveats=()) -> dict:
     """Job-local single-log manifest for the engine-rendered redline (mock_example:false). ``legs`` is a list
     of {sheet, artifact_path}: one FINAL_REDLINE_PNG per rendered sheet (the winner's sheet plus any
-    cross-sheet legs). One log (one bore) with one artifact per sheet; source_sheets = all rendered sheets."""
+    cross-sheet legs). One log (one bore) with one artifact per sheet; source_sheets = all rendered sheets.
+    ``matchline_caveats`` are the read-only printed-matchline continuity annotations (metadata only)."""
     status_value = placement.status.value
     provenance = _PROVENANCE_BY_STATUS.get(status_value, "OWNER_CONFIRMED_HUMAN_ADJUSTABLE")
     auto = status_value == PlacementStatus.AUTO_SELECT.value
@@ -285,7 +367,7 @@ def _manifest_input(log_id, *, placement, bore, legs, project_id) -> dict:
         "evidence": [],
         "warnings": (["engine %s placement (%s); rendered from the plan's own drawn geometry on %d sheet(s)"
                       % (status_value, placement.reason, len(sheets))]
-                     + list(placement.caveats) + _adapter_caveats(bore, sheets)),
+                     + list(placement.caveats) + _adapter_caveats(bore, sheets) + list(matchline_caveats)),
     }
     return {
         "schema_version": "1.0.0", "mock_example": False,
@@ -349,7 +431,7 @@ def render_uploaded_corpus_engine_handoff(store_root, customer_project_id, job_i
     if plan_path is None or borelog_path is None or rbl is None:
         raise UploadedCorpusEngineError("not runnable: %s" % "; ".join(b["code"] for b in blockers))
 
-    bore, placement, offset, dialect_name, extra_legs = _run_engine(plan_path, borelog_path)
+    bore, placement, offset, dialect_name, extra_legs, matchline = _run_engine(plan_path, borelog_path)
     candidate = _candidate(placement)
     if candidate is None or not candidate.bbox:
         ev = evaluate_uploaded_corpus_engine_handoff(store_root, customer_project_id, job_id)
@@ -404,7 +486,7 @@ def render_uploaded_corpus_engine_handoff(store_root, customer_project_id, job_i
     manifest_input = _manifest_input(
         log_id, placement=placement, bore=bore,
         legs=[{"sheet": r["sheet"], "artifact_path": r["artifact_path"]} for r in rendered],
-        project_id=customer_project_id)
+        project_id=customer_project_id, matchline_caveats=matchline["caveats"])
     input_path = render_src / "_input_manifest.json"
     input_path.write_text(json.dumps(manifest_input, indent=2), encoding="utf-8")
 
