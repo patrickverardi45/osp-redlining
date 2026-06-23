@@ -50,8 +50,8 @@
     },
     "bundle_origin": {
       "type": "string",
-      "enum": ["DETERMINISTIC_ENGINE", "HUMAN_CONFIRMED_SOURCE_ANCHOR", "DETERMINISTIC_RECOGNIZED_CORPUS"],
-      "description": "Optional origin tier. HUMAN_CONFIRMED_SOURCE_ANCHOR marks a bundle drawn from human-confirmed source-anchor control points (NOT solver/renderer output, NOT counted in the deterministic frontier). DETERMINISTIC_RECOGNIZED_CORPUS marks a job-local bundle that serves the EXISTING deterministic engine render for a POSITIVELY-recognized known corpus (engine-derived, NOT human-clicked; a separate job-local bundle, NOT re-counted in the committed deterministic frontier). Absent on legacy / deterministic-engine manifests (which are DETERMINISTIC_ENGINE by default)."
+      "enum": ["DETERMINISTIC_ENGINE", "HUMAN_CONFIRMED_SOURCE_ANCHOR", "DETERMINISTIC_RECOGNIZED_CORPUS", "UPLOADED_CORPUS_ENGINE"],
+      "description": "Optional origin tier. HUMAN_CONFIRMED_SOURCE_ANCHOR marks a bundle drawn from human-confirmed source-anchor control points (NOT solver/renderer output, NOT counted in the deterministic frontier). DETERMINISTIC_RECOGNIZED_CORPUS marks a job-local bundle that serves the EXISTING deterministic engine render for a POSITIVELY-recognized known corpus (engine-derived, NOT human-clicked; a separate job-local bundle, NOT re-counted in the committed deterministic frontier). UPLOADED_CORPUS_ENGINE marks a job-local bundle produced by RUNNING the engine on a job's own uploaded plan + reviewed bore-log (engine-derived from the plan's drawn geometry; a separate job-local bundle, NOT re-counted in the committed deterministic frontier). Absent on legacy / deterministic-engine manifests (which are DETERMINISTIC_ENGINE by default)."
     },
     "summary": {
       "type": "object",

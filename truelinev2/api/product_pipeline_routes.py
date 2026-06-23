@@ -121,6 +121,11 @@ from truelinev2.contracts.recognized_corpus_handoff import (
     load_registry,
     render_recognized_corpus_handoff,
 )
+from truelinev2.contracts.uploaded_corpus_engine_handoff import (
+    UploadedCorpusEngineError,
+    evaluate_uploaded_corpus_engine_handoff,
+    render_uploaded_corpus_engine_handoff,
+)
 from truelinev2.contracts.source_anchor import (
     PLAN_PDF_KIND,
     SourceAnchorError,
@@ -816,6 +821,46 @@ def render_recognized_corpus_handoff_route(job_id: str,
     try:
         return render_recognized_corpus_handoff(store, cp, job_id, registry=registry, at=_now(), by=ctx.session_id)
     except RecognizedCorpusError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    except _CONTRACT_ERRORS as exc:
+        raise _to_http(exc)
+
+
+# --------------------------------------------------------------------------- #
+# Uploaded-corpus ENGINE handoff (NO manual clicks, NO recognized-corpus replay). Runs the shipped engine on
+# the job's OWN uploaded plan + reviewed bore-log; renders the redline from the plan's drawn geometry, or
+# returns the engine's named blocker. Name-free (dialect chosen by pattern). Separate job-local bundle.
+# --------------------------------------------------------------------------- #
+@router.get("/jobs/{job_id}/uploaded-corpus-engine-handoff")
+def get_uploaded_corpus_engine_handoff(job_id: str,
+                                       ctx: RequestContext = Depends(get_context),
+                                       c: Container = Depends(get_container)) -> dict:
+    """Read-only candidate report: can the ENGINE place a redline for this job's uploaded corpus? Resolves
+    the uploaded PLAN_PDF + an engine-ready reviewed_bore_log's source BORE_LOG, runs the engine, and reports
+    a drawable candidate (RUNNABLE) or a named blocker (BLOCKED) — NO_PLAN_PDF_UPLOAD /
+    NO_ENGINE_READY_REVIEWED_BORE_LOG / NO_PLAN_DIALECT_RECOGNIZED / ENGINE_ABSTAINED (+ the engine's own
+    reason). Mutates/creates nothing. 404 if the job is missing."""
+    cp, store = ctx.tenant.value, _store_root(c)
+    try:
+        return evaluate_uploaded_corpus_engine_handoff(store, cp, job_id)
+    except _CONTRACT_ERRORS as exc:
+        raise _to_http(exc)
+
+
+@router.post("/jobs/{job_id}/uploaded-corpus-engine-handoff/render")
+def render_uploaded_corpus_engine_handoff_route(job_id: str,
+                                                ctx: RequestContext = Depends(get_context),
+                                                c: Container = Depends(get_container)) -> dict:
+    """Run the uploaded-corpus engine handoff: if the engine places a drawable candidate, render the redline
+    stroke along the plan's DRAWN route and publish it as a job-local FINAL_REDLINE_PNG bundle (bundle_origin
+    UPLOADED_CORPUS_ENGINE; REVIEW => dashed/human-adjustable, AUTO => solid/deterministic) and set the job's
+    redline_manifest + artifact_bundle slots. 409 if not runnable (engine abstained / inputs missing); 404 if
+    the job is missing. Does NOT touch the deterministic 50/58 frontier (a separate job-local bundle).
+    Idempotent for identical content."""
+    cp, store = ctx.tenant.value, _store_root(c)
+    try:
+        return render_uploaded_corpus_engine_handoff(store, cp, job_id, at=_now(), by=ctx.session_id)
+    except UploadedCorpusEngineError as exc:
         raise HTTPException(status_code=409, detail=str(exc))
     except _CONTRACT_ERRORS as exc:
         raise _to_http(exc)
