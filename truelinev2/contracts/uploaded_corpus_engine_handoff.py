@@ -74,11 +74,13 @@ _PROVENANCE_BY_STATUS = {
     PlacementStatus.AUTO_SELECT.value: "DETERMINISTIC_AUTO",
 }
 
-# Adapter-level REVIEW caveat (NOT an engine caveat, NOT a coordinate/render change): the bore references
-# multiple plan sheets but the engine placed/rendered on a SINGLE winning sheet, so the cross-sheet
-# continuation is not assembled into one per-bore route. Surfaced in the candidate report + manifest
-# warnings so the REVIEW truth is explicit; it never changes geometry and never claims AUTO.
+# Adapter-level REVIEW caveats (NOT engine caveats, NOT a coordinate/render change; never claim AUTO):
+#  * CROSS_SHEET_CONTINUATION_REVIEW — the bore references multiple plan sheets; legs are rendered PER-SHEET
+#    from each sheet's OWN drawn geometry and the cross-sheet continuation is NOT drawn as one connected /
+#    validated route.
+#  * PARTIAL_CROSS_SHEET_REVIEW — some referenced sheet has no source-supported leg, so coverage is partial.
 CROSS_SHEET_CONTINUATION_REVIEW = "CROSS_SHEET_CONTINUATION_REVIEW"
+PARTIAL_CROSS_SHEET_REVIEW = "PARTIAL_CROSS_SHEET_REVIEW"
 
 # Named blockers (honest; present when NOT runnable).
 NO_PLAN_PDF_UPLOAD = "NO_PLAN_PDF_UPLOAD"
@@ -140,18 +142,23 @@ def _resolve_inputs(store_root, customer_project_id, job_id, job):
 
 
 def _run_engine(plan_path, borelog_path):
-    """Run the shipped engine on the resolved files. Returns (bore, placement, offset, dialect_name). The
-    DEFAULT (all-off) match path is used — no opt-in gates — so this mirrors the deterministic engine's
-    default behavior. Caller owns no plan handle (it is opened + closed here)."""
+    """Run the shipped engine on the resolved files. Returns (bore, placement, offset, dialect_name,
+    extra_legs). The DEFAULT (all-off) match path is used — no opt-in gates — so this mirrors the
+    deterministic engine's default behavior. ``extra_legs`` are source-supported drawn legs on REFERENCED
+    sheets OTHER than the winner's sheet (cross-sheet REVIEW coverage); the winner's sheet keeps its existing
+    single-callout render. Caller owns no plan handle (it is opened + closed here)."""
     bore = load_borelog(str(borelog_path))
     plan = PlanPdf(str(plan_path))
     try:
         dialect = select_dialect(plan)
         if dialect is None:
-            return bore, None, _DEFAULT_OFFSET, None
+            return bore, None, _DEFAULT_OFFSET, None, []
         offset = dialect.calibrate(plan, _DEFAULT_OFFSET)
         placement = run_match(bore, plan, dialect, offset)
-        return bore, placement, offset, getattr(dialect, "name", None)
+        cand = _candidate(placement)
+        extra_legs = (_extra_sheet_legs(plan, dialect, offset, bore, cand.sheet)
+                      if cand is not None and cand.bbox else [])
+        return bore, placement, offset, getattr(dialect, "name", None), extra_legs
     finally:
         plan.close()
 
@@ -163,20 +170,43 @@ def _candidate(placement):
     return placement.matched_callouts[0] if placement.matched_callouts else None
 
 
-def _adapter_caveats(bore, placement):
-    """Adapter-level REVIEW truth annotations derived from (bore, placement) — NOT engine caveats and NOT a
-    coordinate/render change. Currently emits CROSS_SHEET_CONTINUATION_REVIEW when the bore references more
-    than one plan sheet but the engine placed/rendered on a single winning sheet (so the cross-sheet
-    continuation is not assembled into one per-bore route — an honest REVIEW caveat, never an AUTO claim)."""
-    if placement is None:
-        return []
+def _extra_sheet_legs(plan, dialect, offset, bore, winner_sheet):
+    """Source-supported drawn legs on REFERENCED sheets OTHER than the winner's sheet — the cross-sheet
+    REVIEW coverage. A leg = the drawn bore-layer extents on that sheet that overlap the bore's station span,
+    with a stroke polyline along them (page coords). NEVER a connecting segment across sheets: each leg is
+    built only from that sheet's OWN drawn geometry; a sheet with no overlapping drawn extent yields no leg
+    (honest partial coverage). The winner's own sheet keeps its existing single-callout render."""
+    lo, hi = bore.station_start_ft, bore.station_end_ft
+    legs = []
+    for sheet in sorted({int(s) for s in (bore.sheet_refs or [])} - {int(winner_sheet)}):
+        callouts = [c for c in dialect.extract_callouts(plan, sheet, offset)
+                    if c.bbox and c.to_ft >= lo and c.from_ft <= hi]
+        if not callouts:
+            continue
+        callouts.sort(key=lambda c: c.from_ft)
+        pts = []
+        for c in callouts:
+            bx0, by0, bx1, by1 = c.bbox
+            pts += [(float(bx0), float(by0)), (float(bx1), float(by1))]
+        legs.append({"sheet": sheet,
+                     "from_ft": round(min(c.from_ft for c in callouts), 1),
+                     "to_ft": round(max(c.to_ft for c in callouts), 1),
+                     "stroke_points": pts})
+    return legs
+
+
+def _adapter_caveats(bore, rendered_sheets):
+    """Adapter-level REVIEW truth annotations (NOT engine caveats, NOT a coordinate/render change; never an
+    AUTO claim): CROSS_SHEET_CONTINUATION_REVIEW for any bore that references multiple plan sheets (legs are
+    rendered per-sheet; the cross-sheet continuation is NOT drawn as one connected/validated route), plus
+    PARTIAL_CROSS_SHEET_REVIEW when some referenced sheet has no rendered leg (partial coverage)."""
     referenced = {int(s) for s in (bore.sheet_refs or [])}
-    covered = {int(s) for s in (placement.sheets or [])}
-    if not covered and placement.matched_callouts:
-        covered = {int(placement.matched_callouts[0].sheet)}
+    rendered = {int(s) for s in (rendered_sheets or [])}
     out = []
-    if len(referenced) > 1 and (referenced - covered):
+    if len(referenced) > 1:
         out.append(CROSS_SHEET_CONTINUATION_REVIEW)
+        if referenced - rendered:
+            out.append(PARTIAL_CROSS_SHEET_REVIEW)
     return out
 
 
@@ -192,8 +222,9 @@ def evaluate_uploaded_corpus_engine_handoff(store_root, customer_project_id, job
 
     placement = bore = offset = dialect_name = None
     candidate = None
+    extra_legs = []
     if plan_path is not None and borelog_path is not None:
-        bore, placement, offset, dialect_name = _run_engine(plan_path, borelog_path)
+        bore, placement, offset, dialect_name, extra_legs = _run_engine(plan_path, borelog_path)
         if placement is None:
             blockers.append({"code": NO_PLAN_DIALECT_RECOGNIZED,
                              "reason": "No registered plan dialect recognized this plan."})
@@ -217,12 +248,15 @@ def evaluate_uploaded_corpus_engine_handoff(store_root, customer_project_id, job
         "blockers": blockers,
     }
     if runnable:
+        render_sheets = sorted({candidate.sheet} | {int(l["sheet"]) for l in extra_legs})
         out["candidate"] = {
             "placement_status": placement.status.value,
             "reason": placement.reason,
-            "caveats": list(placement.caveats) + _adapter_caveats(bore, placement),
+            "caveats": list(placement.caveats) + _adapter_caveats(bore, render_sheets),
             "sheet": candidate.sheet,
             "referenced_sheets": list(bore.sheet_refs),
+            "render_sheets": render_sheets,
+            "extra_leg_sheets": [int(l["sheet"]) for l in extra_legs],
             "drawn_extent": candidate.text,
             "bore_span": "%s->%s" % (bore.station_start, bore.station_end),
             "render_tier": ("solid" if placement.status == PlacementStatus.AUTO_SELECT else "dashed"),
@@ -230,25 +264,28 @@ def evaluate_uploaded_corpus_engine_handoff(store_root, customer_project_id, job
     return out
 
 
-def _manifest_input(log_id, *, placement, bore, sheet, artifact_path, project_id) -> dict:
-    """Job-local single-log manifest for the engine-rendered redline (mock_example:false)."""
+def _manifest_input(log_id, *, placement, bore, legs, project_id) -> dict:
+    """Job-local single-log manifest for the engine-rendered redline (mock_example:false). ``legs`` is a list
+    of {sheet, artifact_path}: one FINAL_REDLINE_PNG per rendered sheet (the winner's sheet plus any
+    cross-sheet legs). One log (one bore) with one artifact per sheet; source_sheets = all rendered sheets."""
     status_value = placement.status.value
     provenance = _PROVENANCE_BY_STATUS.get(status_value, "OWNER_CONFIRMED_HUMAN_ADJUSTABLE")
     auto = status_value == PlacementStatus.AUTO_SELECT.value
+    sheets = sorted({int(l["sheet"]) for l in legs})
     log = {
         "log_id": log_id, "parent_id": log_id, "entry_role": "standalone",
         "status": "DRAWN_REDLINE", "provenance": provenance,
         "drawn": True, "covered": False, "blocked": False, "drawn_lane": "NEW_TARGETS",
-        "source_sheets": [sheet],
+        "source_sheets": sheets,
         "span": {"start_station": bore.station_start, "end_station": bore.station_end,
                  "label": "%s->%s" % (bore.station_start, bore.station_end)},
         "closure": None, "coverage": None, "blocker": None,
-        "artifacts": [{"kind": "FINAL_REDLINE_PNG", "sheet": sheet, "path": artifact_path,
-                       "sha256": None, "example_placeholder": True}],
+        "artifacts": [{"kind": "FINAL_REDLINE_PNG", "sheet": int(l["sheet"]), "path": l["artifact_path"],
+                       "sha256": None, "example_placeholder": True} for l in legs],
         "evidence": [],
-        "warnings": (["engine %s placement (%s); rendered from the plan's own drawn geometry"
-                      % (status_value, placement.reason)]
-                     + list(placement.caveats) + _adapter_caveats(bore, placement)),
+        "warnings": (["engine %s placement (%s); rendered from the plan's own drawn geometry on %d sheet(s)"
+                      % (status_value, placement.reason, len(sheets))]
+                     + list(placement.caveats) + _adapter_caveats(bore, sheets)),
     }
     return {
         "schema_version": "1.0.0", "mock_example": False,
@@ -312,7 +349,7 @@ def render_uploaded_corpus_engine_handoff(store_root, customer_project_id, job_i
     if plan_path is None or borelog_path is None or rbl is None:
         raise UploadedCorpusEngineError("not runnable: %s" % "; ".join(b["code"] for b in blockers))
 
-    bore, placement, offset, dialect_name = _run_engine(plan_path, borelog_path)
+    bore, placement, offset, dialect_name, extra_legs = _run_engine(plan_path, borelog_path)
     candidate = _candidate(placement)
     if candidate is None or not candidate.bbox:
         ev = evaluate_uploaded_corpus_engine_handoff(store_root, customer_project_id, job_id)
@@ -320,14 +357,18 @@ def render_uploaded_corpus_engine_handoff(store_root, customer_project_id, job_i
                                         % "; ".join(b["code"] for b in ev["blockers"]))
 
     log_id = rbl["reviewed_bore_log_id"]                       # generic, name-free artifact/log id
-    sheet = candidate.sheet
-    x0, y0, x1, y1 = candidate.bbox
-    stroke_points = [(float(x0), float(y0)), (float(x1), float(y1))]
+    wx0, wy0, wx1, wy1 = candidate.bbox
+    # Leg list: the winner's sheet keeps its EXISTING single-callout render (preserved); each extra referenced
+    # sheet adds a per-sheet leg from that sheet's OWN drawn geometry (no connecting segment across sheets).
+    legs = [{"sheet": int(candidate.sheet),
+             "stroke_points": [(float(wx0), float(wy0)), (float(wx1), float(wy1))]}]
+    legs += [{"sheet": int(l["sheet"]), "stroke_points": l["stroke_points"]} for l in extra_legs]
 
-    # Idempotent content key over (plan, bore-log, placement geometry): identical content -> same bundle.
+    # Idempotent content key over (plan, bore-log, status, ALL leg geometry): identical content -> same bundle.
     key_blob = json.dumps({"plan": plan_path.name, "bore": borelog_path.name, "log": log_id,
-                           "sheet": sheet, "extent": [x0, y0, x1, y1],
-                           "status": placement.status.value}, sort_keys=True).encode("utf-8")
+                           "status": placement.status.value,
+                           "legs": [[l["sheet"], l["stroke_points"]] for l in legs]},
+                          sort_keys=True).encode("utf-8")
     engine_run_id = "uce-render-%s" % hashlib.sha256(key_blob).hexdigest()[:16]
 
     try:
@@ -344,18 +385,25 @@ def render_uploaded_corpus_engine_handoff(store_root, customer_project_id, job_i
 
     plan = PlanPdf(str(plan_path))
     try:
-        png = render_redline_stroke(
-            plan, bore_id=log_id, sheet=sheet, offset=offset, stroke_points=stroke_points,
-            status=placement.status.value, reason=placement.reason, out_dir=str(render_src))
+        rendered = []                                          # one FINAL_REDLINE_PNG per rendered sheet leg
+        for leg in legs:
+            png = render_redline_stroke(
+                plan, bore_id=log_id, sheet=leg["sheet"], offset=offset,
+                stroke_points=leg["stroke_points"], status=placement.status.value,
+                reason=placement.reason, out_dir=str(render_src))
+            if png:
+                rendered.append({"sheet": leg["sheet"],
+                                 "artifact_path": "artifacts/%s/%s" % (log_id, Path(png).name),
+                                 "png": png})
     finally:
         plan.close()
-    if not png:
+    if not rendered:
         raise UploadedCorpusEngineError("renderer produced no stroke for the engine candidate")
 
-    artifact_path = "artifacts/%s/%s" % (log_id, Path(png).name)
-    artifact_map = {artifact_path: png}
+    artifact_map = {r["artifact_path"]: r["png"] for r in rendered}
     manifest_input = _manifest_input(
-        log_id, placement=placement, bore=bore, sheet=sheet, artifact_path=artifact_path,
+        log_id, placement=placement, bore=bore,
+        legs=[{"sheet": r["sheet"], "artifact_path": r["artifact_path"]} for r in rendered],
         project_id=customer_project_id)
     input_path = render_src / "_input_manifest.json"
     input_path.write_text(json.dumps(manifest_input, indent=2), encoding="utf-8")

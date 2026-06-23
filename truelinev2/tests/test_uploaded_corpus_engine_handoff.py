@@ -88,10 +88,10 @@ def _placement(status, *, with_callout=True, reason="DRAWN_EXTENT_COVERS_SPAN_NO
                      matched_callouts=callouts)
 
 
-def _patch_engine(monkeypatch, *, placement, bore=None, dialect="generic"):
+def _patch_engine(monkeypatch, *, placement, bore=None, extra_legs=(), dialect="generic"):
     b = bore if bore is not None else _bore()
     monkeypatch.setattr(uce, "_run_engine",
-                        lambda plan_path, borelog_path: (b, placement, 0, dialect))
+                        lambda plan_path, borelog_path: (b, placement, 0, dialect, list(extra_legs)))
 
 
 def _patch_render(monkeypatch):
@@ -175,7 +175,7 @@ def test_engine_abstain_blocks_and_renders_nothing(tmp_path, monkeypatch):
 def test_no_dialect_blocks(tmp_path, monkeypatch):
     _job(tmp_path)
     monkeypatch.setattr(uce, "_run_engine",
-                        lambda plan_path, borelog_path: (_bore(), None, 0, None))
+                        lambda plan_path, borelog_path: (_bore(), None, 0, None, []))
     ev = uce.evaluate_uploaded_corpus_engine_handoff(tmp_path, CP, JOB)
     assert ev["status"] == "BLOCKED"
     assert "NO_PLAN_DIALECT_RECOGNIZED" in {b["code"] for b in ev["blockers"]}
@@ -195,23 +195,57 @@ def test_missing_inputs_block_without_running_engine(tmp_path, monkeypatch):
         uce.render_uploaded_corpus_engine_handoff(tmp_path, CP, JOB, at=AT, by=BY)
 
 
-def test_cross_sheet_bore_gets_continuation_caveat(tmp_path, monkeypatch):
-    # A two-sheet bore ([10,11]) placed on a SINGLE winning sheet (10): the cross-sheet continuation is not
-    # assembled into one per-bore route -> CROSS_SHEET_CONTINUATION_REVIEW caveat (118'/88'-like).
+def test_cross_sheet_both_legs_render_multiple_artifacts(tmp_path, monkeypatch):
+    # Two-sheet bore ([10,11]): winner sheet 10 + a source-supported leg on sheet 11 -> TWO FINAL_REDLINE_PNG
+    # artifacts (full cross-sheet REVIEW coverage). CROSS_SHEET_CONTINUATION_REVIEW present; NOT partial; the
+    # winner's own sheet keeps its existing single-callout render.
     _job(tmp_path)
     bore = _bore(sheet_refs=(10, 11))
     placement = _placement(PlacementStatus.REVIEW, sheets=(10,), callout_sheet=10)
-    _patch_engine(monkeypatch, placement=placement, bore=bore)
+    extra = [{"sheet": 11, "stroke_points": [(110.0, 300.0), (260.0, 302.0)]}]
+    _patch_engine(monkeypatch, placement=placement, bore=bore, extra_legs=extra)
     _patch_render(monkeypatch)
 
     ev = uce.evaluate_uploaded_corpus_engine_handoff(tmp_path, CP, JOB)
     assert ev["runnable"] is True
-    assert "CROSS_SHEET_CONTINUATION_REVIEW" in ev["candidate"]["caveats"]
     assert ev["candidate"]["referenced_sheets"] == [10, 11]
-    assert ev["candidate"]["sheet"] == 10                              # single winning sheet
+    assert ev["candidate"]["render_sheets"] == [10, 11]
+    assert ev["candidate"]["extra_leg_sheets"] == [11]
+    assert "CROSS_SHEET_CONTINUATION_REVIEW" in ev["candidate"]["caveats"]
+    assert "PARTIAL_CROSS_SHEET_REVIEW" not in ev["candidate"]["caveats"]   # both sheets render
 
     summary = uce.render_uploaded_corpus_engine_handoff(tmp_path, CP, JOB, at=AT, by=BY)
+    assert summary["artifact_count"] == 2
+    assert all(a["kind"] == "FINAL_REDLINE_PNG" for a in summary["artifacts"])
     mpath = (job_dir(tmp_path, CP, JOB) / "bundle_store" / "bundles"
              / summary["bundle_id"] / "redline_manifest.json")
     m = json.loads(mpath.read_text(encoding="utf-8"))
-    assert "CROSS_SHEET_CONTINUATION_REVIEW" in m["logs"][0]["warnings"]   # caveat carried into the manifest
+    assert sorted(m["logs"][0]["source_sheets"]) == [10, 11]
+    assert len(m["logs"][0]["artifacts"]) == 2
+    assert "CROSS_SHEET_CONTINUATION_REVIEW" in m["logs"][0]["warnings"]
+    assert "PARTIAL_CROSS_SHEET_REVIEW" not in m["logs"][0]["warnings"]
+    assert m["logs"][0]["provenance"] == "OWNER_CONFIRMED_HUMAN_ADJUSTABLE"   # AUTO not promoted
+
+
+def test_partial_cross_sheet_review_labeled_honestly(tmp_path, monkeypatch):
+    # Two-sheet bore ([10,11]) but only the winner sheet (10) has a source-supported leg (no leg on 11):
+    # ONE artifact + CROSS_SHEET_CONTINUATION_REVIEW + PARTIAL_CROSS_SHEET_REVIEW (honest partial coverage).
+    _job(tmp_path)
+    bore = _bore(sheet_refs=(10, 11))
+    placement = _placement(PlacementStatus.REVIEW, sheets=(10,), callout_sheet=10)
+    _patch_engine(monkeypatch, placement=placement, bore=bore, extra_legs=[])   # no leg on sheet 11
+    _patch_render(monkeypatch)
+
+    ev = uce.evaluate_uploaded_corpus_engine_handoff(tmp_path, CP, JOB)
+    assert ev["candidate"]["render_sheets"] == [10]
+    caveats = ev["candidate"]["caveats"]
+    assert "CROSS_SHEET_CONTINUATION_REVIEW" in caveats
+    assert "PARTIAL_CROSS_SHEET_REVIEW" in caveats
+
+    summary = uce.render_uploaded_corpus_engine_handoff(tmp_path, CP, JOB, at=AT, by=BY)
+    assert summary["artifact_count"] == 1
+    mpath = (job_dir(tmp_path, CP, JOB) / "bundle_store" / "bundles"
+             / summary["bundle_id"] / "redline_manifest.json")
+    m = json.loads(mpath.read_text(encoding="utf-8"))
+    assert m["logs"][0]["source_sheets"] == [10]
+    assert "PARTIAL_CROSS_SHEET_REVIEW" in m["logs"][0]["warnings"]
