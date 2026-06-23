@@ -115,6 +115,12 @@ from truelinev2.contracts.export_package import (
     load_export_package,
 )
 from truelinev2.contracts.engine_handoff_readiness import evaluate_engine_handoff_readiness
+from truelinev2.contracts.recognized_corpus_handoff import (
+    RecognizedCorpusError,
+    evaluate_recognized_corpus_handoff,
+    load_registry,
+    render_recognized_corpus_handoff,
+)
 from truelinev2.contracts.source_anchor import (
     PLAN_PDF_KIND,
     SourceAnchorError,
@@ -769,6 +775,48 @@ def get_engine_handoff_readiness(job_id: str,
     cp, store = ctx.tenant.value, _store_root(c)
     try:
         return evaluate_engine_handoff_readiness(store, cp, job_id)
+    except _CONTRACT_ERRORS as exc:
+        raise _to_http(exc)
+
+
+# --------------------------------------------------------------------------- #
+# Recognized-corpus AUTOMATIC handoff (NO manual source-anchor clicks). Narrow + honest: fires only for a
+# POSITIVELY-recognized known corpus; serves the EXISTING deterministic engine render. Unknown -> blocked.
+# --------------------------------------------------------------------------- #
+@router.get("/jobs/{job_id}/recognized-corpus-handoff")
+def get_recognized_corpus_handoff(job_id: str,
+                                  ctx: RequestContext = Depends(get_context),
+                                  c: Container = Depends(get_container)) -> dict:
+    """Read-only: is this job's RECOGNIZED uploaded corpus eligible for an AUTOMATIC deterministic redline
+    (no manual point-clicking)? RUNNABLE only when the uploaded PLAN_PDF is positively recognized (exact
+    sha256) as a known corpus AND an engine-ready reviewed_bore_log's source BORE_LOG maps to a DRAWN
+    deterministic log with committed render artifacts; otherwise BLOCKED with named blockers
+    (UPLOADED_CORPUS_NOT_RECOGNIZED / BORE_LOG_NOT_MAPPED_TO_DETERMINISTIC_LOG / ...). Renders/creates
+    nothing. 404 if the job is missing."""
+    cp, store = ctx.tenant.value, _store_root(c)
+    registry = load_registry(c.settings.recognized_corpus_registry_path)
+    try:
+        return evaluate_recognized_corpus_handoff(store, cp, job_id, registry=registry)
+    except _CONTRACT_ERRORS as exc:
+        raise _to_http(exc)
+
+
+@router.post("/jobs/{job_id}/recognized-corpus-handoff/render")
+def render_recognized_corpus_handoff_route(job_id: str,
+                                           ctx: RequestContext = Depends(get_context),
+                                           c: Container = Depends(get_container)) -> dict:
+    """Run the recognized-corpus auto-handoff: if RUNNABLE, publish the EXISTING deterministic engine render
+    PNG(s) for the recognized log as a job-local FINAL_REDLINE_PNG bundle (bundle_origin
+    DETERMINISTIC_RECOGNIZED_CORPUS — engine-derived, NOT human-clicked, NOT arbitrary upload support) and
+    set the job's redline_manifest + artifact_bundle slots via the existing handoff. 409 if not
+    recognized/runnable; 404 if the job is missing. Does NOT touch the deterministic 50/58 frontier (a
+    separate job-local bundle). Idempotent for identical recognized content."""
+    cp, store = ctx.tenant.value, _store_root(c)
+    registry = load_registry(c.settings.recognized_corpus_registry_path)
+    try:
+        return render_recognized_corpus_handoff(store, cp, job_id, registry=registry, at=_now(), by=ctx.session_id)
+    except RecognizedCorpusError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
     except _CONTRACT_ERRORS as exc:
         raise _to_http(exc)
 

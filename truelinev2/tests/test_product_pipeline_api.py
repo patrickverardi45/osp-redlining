@@ -70,6 +70,9 @@ PRODUCT_PATHS = {
     "/v2/product/jobs/{job_id}/export-package",
     # Slice C — uploaded-corpus engine-handoff readiness (read-only)
     "/v2/product/jobs/{job_id}/engine-handoff",
+    # Recognized-corpus AUTOMATIC handoff (positive sha256 recognition -> existing deterministic render)
+    "/v2/product/jobs/{job_id}/recognized-corpus-handoff",
+    "/v2/product/jobs/{job_id}/recognized-corpus-handoff/render",
     # M2 — human-confirmed source anchors (record + validate; renders nothing)
     "/v2/product/jobs/{job_id}/source-anchors",
     "/v2/product/jobs/{job_id}/source-anchors/{source_anchor_id}",

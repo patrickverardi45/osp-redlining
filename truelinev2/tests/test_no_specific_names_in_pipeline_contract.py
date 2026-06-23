@@ -30,6 +30,7 @@ PIPELINE_MODULES = [
     CONTRACTS / "export_package.py",
     CONTRACTS / "engine_handoff_readiness.py",
     CONTRACTS / "source_anchor.py",
+    CONTRACTS / "recognized_corpus_handoff.py",
 ]
 
 

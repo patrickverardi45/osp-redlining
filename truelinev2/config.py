@@ -66,6 +66,12 @@ class Settings:
     # computation. DEFAULT None -- billing compute is unavailable until a deployment points this at a
     # rules file. Rates are deployment data, NEVER baked into code and NEVER trusted from a client request.
     product_billing_cost_rules_path: Optional[Path] = None
+    # Recognized-corpus auto-handoff registry (JSON): deployment-provided set of recognized corpora (each
+    # corpus's display name + exact plan/bore-log content sha256 fingerprints + a bore-log->deterministic
+    # log id map). DEFAULT None -- nothing is recognized (the auto-handoff stays BLOCKED) until a deployment
+    # points this at a registry file. Real corpus NAMES + fingerprints are deployment DATA, never baked in
+    # code. Env var: TL2_RECOGNIZED_CORPUS_REGISTRY.
+    recognized_corpus_registry_path: Optional[Path] = None
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -95,6 +101,10 @@ class Settings:
             product_billing_cost_rules_path=(
                 Path(os.environ["TL2_PRODUCT_BILLING_COST_RULES"])
                 if os.getenv("TL2_PRODUCT_BILLING_COST_RULES") else None
+            ),
+            recognized_corpus_registry_path=(
+                Path(os.environ["TL2_RECOGNIZED_CORPUS_REGISTRY"])
+                if os.getenv("TL2_RECOGNIZED_CORPUS_REGISTRY") else None
             ),
         )
 
