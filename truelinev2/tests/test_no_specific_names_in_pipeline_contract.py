@@ -29,6 +29,7 @@ PIPELINE_MODULES = [
     CONTRACTS / "billing_summary.py",
     CONTRACTS / "export_package.py",
     CONTRACTS / "closeout_pdf.py",
+    CONTRACTS / "gis_route.py",
     CONTRACTS / "engine_handoff_readiness.py",
     CONTRACTS / "source_anchor.py",
     CONTRACTS / "recognized_corpus_handoff.py",

@@ -74,6 +74,7 @@ PRODUCT_PATHS = {
     "/v2/product/jobs/{job_id}/export-package",
     "/v2/product/jobs/{job_id}/export-package/download",
     "/v2/product/jobs/{job_id}/export-package/pdf",
+    "/v2/product/jobs/{job_id}/gis-route",
     # Slice C — uploaded-corpus engine-handoff readiness (read-only)
     "/v2/product/jobs/{job_id}/engine-handoff",
     # Recognized-corpus AUTOMATIC handoff (positive sha256 recognition -> existing deterministic render)
@@ -991,6 +992,18 @@ def test_closeout_pdf_route_not_ready_without_bundle_is_409(tmp_path):
     assert "no validated redline bundle" in str(exc.value.detail)
 
 
+def test_gis_route_route_honest_when_absent(tmp_path):
+    """The gis-route read returns an honest NO_GIS_ROUTE_UPLOADED state (never invents) for a job with no
+    GIS_ROUTE upload, and 404 for a missing job."""
+    c, ctx = _container(tmp_path), _ctx("cp-aaa")
+    _seed_job(c, ctx)
+    r = ppr.get_gis_route("job-1", ctx=ctx, c=c)
+    assert r["present"] is False and r["reason"] == "NO_GIS_ROUTE_UPLOADED" and r["features"] == []
+    with pytest.raises(HTTPException) as exc:
+        ppr.get_gis_route("nope", ctx=ctx, c=c)
+    assert exc.value.status_code == 404
+
+
 # --------------------------------------------------------------------------- #
 # Slice 4 — tenant isolation across the whole status/closeout/billing/export surface.
 # --------------------------------------------------------------------------- #
@@ -1013,6 +1026,7 @@ def test_slice4_tenant_isolation_b_cannot_address_a(tmp_path):
         lambda: ppr.assemble_export_package_route("job-1", ctx=ctx_b, c=c),
         lambda: ppr.get_export_package("job-1", ctx=ctx_b, c=c),
         lambda: ppr.download_closeout_pdf("job-1", ctx=ctx_b, c=c),
+        lambda: ppr.get_gis_route("job-1", ctx=ctx_b, c=c),
     ):
         with pytest.raises(HTTPException) as exc:
             call()

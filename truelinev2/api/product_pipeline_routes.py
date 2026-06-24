@@ -131,6 +131,7 @@ from truelinev2.contracts.closeout_pdf import (
     NoCloseoutPdfError,
     build_closeout_pdf,
 )
+from truelinev2.contracts.gis_route import GisRouteError, load_job_gis_route
 from truelinev2.contracts.engine_handoff_readiness import evaluate_engine_handoff_readiness
 from truelinev2.contracts.recognized_corpus_handoff import (
     RecognizedCorpusError,
@@ -318,7 +319,7 @@ def _to_http(exc: Exception) -> HTTPException:
 _CONTRACT_ERRORS = (CustomerProjectError, ProcessingJobError, UploadError, ExtractedRowError,
                     ReviewedBoreLogError, ManifestHandoffError, ConsumerError, CloseoutReviewError,
                     BillingSummaryError, ExportPackageError, ExportBundleError, CloseoutPdfError,
-                    SourceAnchorError, ReviewAcceptanceError, IsolationError)
+                    GisRouteError, SourceAnchorError, ReviewAcceptanceError, IsolationError)
 
 
 @router.post("/project")
@@ -866,6 +867,22 @@ def download_closeout_pdf(job_id: str,
         raise _to_http(exc)
     return Response(content=data, media_type=PDF_MEDIA_TYPE,
                     headers={"Content-Disposition": 'attachment; filename="%s"' % filename})
+
+
+@router.get("/jobs/{job_id}/gis-route")
+def get_gis_route(job_id: str,
+                  ctx: RequestContext = Depends(get_context),
+                  c: Container = Depends(get_container)) -> dict:
+    """Read-only: parse the job's uploaded GIS_ROUTE (.kmz/.kml) into REAL WGS84 geometry (LineString /
+    Point / Polygon) + a bbox, so the workspace Map can show route CONTEXT from the operator's own upload.
+    Dialect-free; reads ONLY the stored GIS_ROUTE upload; invents nothing (no geocoding / no street-name
+    synthesis / no snapping). Honest NAMED states when there is no GIS_ROUTE upload, the file is missing or
+    unparseable, or no coordinates are present. 404 if the job is missing."""
+    cp, store = ctx.tenant.value, _store_root(c)
+    try:
+        return load_job_gis_route(store, cp, job_id)
+    except _CONTRACT_ERRORS as exc:
+        raise _to_http(exc)
 
 
 # --------------------------------------------------------------------------- #
