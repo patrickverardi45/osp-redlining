@@ -125,6 +125,12 @@ from truelinev2.contracts.export_bundle import (
     NoRedlineBundleError,
     build_export_zip,
 )
+from truelinev2.contracts.closeout_pdf import (
+    PDF_MEDIA_TYPE,
+    CloseoutPdfError,
+    NoCloseoutPdfError,
+    build_closeout_pdf,
+)
 from truelinev2.contracts.engine_handoff_readiness import evaluate_engine_handoff_readiness
 from truelinev2.contracts.recognized_corpus_handoff import (
     RecognizedCorpusError,
@@ -311,8 +317,8 @@ def _to_http(exc: Exception) -> HTTPException:
 # subclass). A non-contract error is left to propagate (a real 500 — never masked as a 400).
 _CONTRACT_ERRORS = (CustomerProjectError, ProcessingJobError, UploadError, ExtractedRowError,
                     ReviewedBoreLogError, ManifestHandoffError, ConsumerError, CloseoutReviewError,
-                    BillingSummaryError, ExportPackageError, ExportBundleError, SourceAnchorError,
-                    ReviewAcceptanceError, IsolationError)
+                    BillingSummaryError, ExportPackageError, ExportBundleError, CloseoutPdfError,
+                    SourceAnchorError, ReviewAcceptanceError, IsolationError)
 
 
 @router.post("/project")
@@ -837,6 +843,28 @@ def download_export_package(job_id: str,
     except _CONTRACT_ERRORS as exc:
         raise _to_http(exc)
     return Response(content=data, media_type=EXPORT_ZIP_MEDIA_TYPE,
+                    headers={"Content-Disposition": 'attachment; filename="%s"' % filename})
+
+
+@router.get("/jobs/{job_id}/export-package/pdf")
+def download_closeout_pdf(job_id: str,
+                          ctx: RequestContext = Depends(get_context),
+                          c: Container = Depends(get_container)) -> Response:
+    """Stream the job's server-rendered closeout PACKET PDF (a real PDF: FieldRoute header, job/closeout
+    summary, deliverable QUANTITIES, the sha256-verified FINAL_REDLINE_PNG evidence EMBEDDED as image
+    XObjects, artifact metadata, reviewed-bore-log + export-package section summary, honest KMZ status, and
+    a billing section that shows DOLLARS only when billing is server-COMPUTED from configured cost rules —
+    else 'omitted, no server cost rules configured'). Rendered from EXISTING trusted output — nothing
+    faked. 409 (specific not-ready) if the job has no validated redline bundle yet; 404 if the job is
+    missing."""
+    cp, store = ctx.tenant.value, _store_root(c)
+    try:
+        data, filename = build_closeout_pdf(store, cp, job_id)
+    except NoCloseoutPdfError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    except _CONTRACT_ERRORS as exc:
+        raise _to_http(exc)
+    return Response(content=data, media_type=PDF_MEDIA_TYPE,
                     headers={"Content-Disposition": 'attachment; filename="%s"' % filename})
 
 

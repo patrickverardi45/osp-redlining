@@ -73,6 +73,7 @@ PRODUCT_PATHS = {
     "/v2/product/jobs/{job_id}/export-package/assemble",
     "/v2/product/jobs/{job_id}/export-package",
     "/v2/product/jobs/{job_id}/export-package/download",
+    "/v2/product/jobs/{job_id}/export-package/pdf",
     # Slice C — uploaded-corpus engine-handoff readiness (read-only)
     "/v2/product/jobs/{job_id}/engine-handoff",
     # Recognized-corpus AUTOMATIC handoff (positive sha256 recognition -> existing deterministic render)
@@ -979,6 +980,17 @@ def test_export_package_read_missing_is_404(tmp_path):
     assert exc.value.status_code == 404
 
 
+def test_closeout_pdf_route_not_ready_without_bundle_is_409(tmp_path):
+    """The closeout PDF route returns a SPECIFIC not-ready 409 (never a fake packet) when the job has no
+    validated redline bundle yet."""
+    c, ctx = _container(tmp_path), _ctx("cp-aaa")
+    _seed_job(c, ctx)
+    with pytest.raises(HTTPException) as exc:
+        ppr.download_closeout_pdf("job-1", ctx=ctx, c=c)
+    assert exc.value.status_code == 409
+    assert "no validated redline bundle" in str(exc.value.detail)
+
+
 # --------------------------------------------------------------------------- #
 # Slice 4 — tenant isolation across the whole status/closeout/billing/export surface.
 # --------------------------------------------------------------------------- #
@@ -1000,6 +1012,7 @@ def test_slice4_tenant_isolation_b_cannot_address_a(tmp_path):
         lambda: ppr.get_billing("job-1", ctx=ctx_b, c=c),
         lambda: ppr.assemble_export_package_route("job-1", ctx=ctx_b, c=c),
         lambda: ppr.get_export_package("job-1", ctx=ctx_b, c=c),
+        lambda: ppr.download_closeout_pdf("job-1", ctx=ctx_b, c=c),
     ):
         with pytest.raises(HTTPException) as exc:
             call()
