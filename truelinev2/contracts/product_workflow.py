@@ -159,19 +159,29 @@ def run_product_redline(store_root, customer_project_id, job_id, *, registry, at
         }
 
     # --- Path B: uploaded supported package (engine places a candidate -> REVIEW, never faked AUTO) ---- #
+    # generate_review_candidate is IDEMPOTENT — it PRESERVES a prior decision, so calling it again for a job
+    # whose candidate was already accepted (e.g. from the Review panel) returns that ACCEPTED record. Echo the
+    # candidate's current acceptance status back so the caller never has to re-accept and is never stranded:
+    # an already-accepted REVIEW reports requires_acceptance=False (ready to assemble), not a fresh gate.
     gen = generate_review_candidate(store_root, customer_project_id, job_id, at=at, by=by)
     tier = gen.get("tier")
     if tier in (TIER_REVIEW, TIER_AUTO):
         _advance_to(store_root, customer_project_id, job_id, PLACED,
                     at=at, by=by, reason="workflow: uploaded-corpus engine redline placed")
         is_auto = tier == TIER_AUTO
+        review_status = (gen.get("record") or {}).get("status")
+        review_accepted = review_status == STATUS_REVIEW_ACCEPTED
+        review_rejected = review_status == STATUS_REVIEW_REJECTED
         return {
             "path": PATH_UPLOADED_AUTO if is_auto else PATH_UPLOADED_REVIEW,
             "runnable": True, "rendered": True,
             "provenance": PROVENANCE_DETERMINISTIC_AUTO if is_auto else PROVENANCE_REVIEW_CANDIDATE,
             "recognized_corpus_id": None, "deterministic_log_id": None,
             "candidate_id": gen.get("candidate_id"), "review": gen, "bundle": gen.get("bundle"),
-            "requires_acceptance": not is_auto, "blockers": [],
+            # An AUTO render needs no acceptance; a REVIEW needs it ONLY while still pending (not yet accepted).
+            "requires_acceptance": (not is_auto) and not review_accepted,
+            "review_status": review_status, "review_accepted": review_accepted,
+            "review_rejected": review_rejected, "blockers": [],
         }
 
     # --- Path C: abstain with SPECIFIC, preserved reasons (recognition + engine), accept stays blocked - #

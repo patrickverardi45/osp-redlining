@@ -221,3 +221,65 @@ def test_failed_job_cannot_advance(tmp_path):
     transition(tmp_path, CP, JOB, "FAILED", at=AT, by=BY, reason="test")
     with pytest.raises(pw.ProductWorkflowError):
         pw._advance_to(tmp_path, CP, JOB, PLACED, at=AT, by=BY, reason="x")
+
+
+# --------------------------------------------------------------------------- #
+# B(2). Uploaded REVIEW — accept then RE-RUN: the owner-reported state-sync bug. After a REVIEW candidate is
+#       accepted (in ANY panel), the workflow must report it ACCEPTED + ready to assemble, never re-gate the
+#       user behind a fresh acceptance and never mint a duplicate candidate.
+# --------------------------------------------------------------------------- #
+def _generic_review_job(tmp):
+    """A job whose uploaded plan matches NO named dialect (so the generic-geometry fallback places a REVIEW
+    candidate from its OWN drawn geometry) + an engine-ready reviewed bore-log. Self-contained: a station-tick
+    row + ONE drawn run over the bore span, built in-process (no real CAD plan / customer corpus)."""
+    import io
+    import fitz
+    import openpyxl
+    doc = fitz.open()
+    page = doc.new_page(width=612, height=792)
+    for ft in range(1000, 1401, 100):                          # ticks 10+00..14+00 (axis station_at(x)~=x+900)
+        x = 100 + (ft - 1000) / 100 * 100
+        page.draw_line((x, 400), (x, 412), color=(0, 0, 0), width=0.8)
+        page.insert_text((x - 12, 426), "%d+%02d" % (ft // 100, ft % 100), fontsize=8)
+    page.draw_line((250, 392), (350, 392), color=(1, 0, 0), width=1.8)   # the proposed bore ~11+50..12+50
+    pbytes = io.BytesIO(); doc.save(pbytes); doc.close()
+    wb = openpyxl.Workbook(); ws = wb.active
+    ws.append(["station", "depth", "print"]); ws.append(["11+50", 5.0, "1"]); ws.append(["12+50", 5.0, "1"])
+    bbytes = io.BytesIO(); wb.save(bbytes)
+
+    create_customer_project(tmp, CP, "Label", AT)
+    create_job(tmp, CP, JOB, AT, BY)
+    accept_upload(tmp, CP, JOB, kind="PLAN_PDF", filename="plan.pdf", content=pbytes.getvalue(), stored_at=AT)
+    bore = accept_upload(tmp, CP, JOB, kind="BORE_LOG", filename="bore.xlsx", content=bbytes.getvalue(),
+                         stored_at=AT)
+    create_reviewed_bore_log(tmp, CP, JOB, bore["upload_id"], RBL, at=AT, by=BY)
+    row = new_extracted_row("row-1", bore["upload_id"], raw={"s": "x"}, normalized={"s": "x"},
+                            extraction_method=MANUAL_ENTRY, at=AT, by=BY)
+    add_extracted_rows(tmp, CP, JOB, RBL, [row], at=AT, by=BY)
+    review_row_in_log(tmp, CP, JOB, RBL, "row-1", CONFIRMED, at=AT, by=BY)
+    define_segment_group(tmp, CP, JOB, RBL, "g-1", ["row-1"], SEPARATE_BORE, at=AT, by=BY)
+    set_grouping_status(tmp, CP, JOB, RBL, "g-1", GROUPING_CONFIRMED, at=AT, by=BY)
+
+
+def test_uploaded_review_after_accept_is_ready_to_package(tmp_path):
+    _generic_review_job(tmp_path)
+    reg = {"corpora": [], "configured": True}
+
+    first = pw.run_product_redline(tmp_path, CP, JOB, registry=reg, at=AT, by=BY)
+    assert first["path"] == pw.PATH_UPLOADED_REVIEW
+    assert first["requires_acceptance"] is True and first["review_accepted"] is False
+    cid = first["candidate_id"]
+    assert cid
+
+    ra.accept_review_candidate(tmp_path, CP, JOB, cid, at=AT, by=BY)
+
+    # Re-running the redline path (e.g. the owner lands on Redlines after accepting in Review) must now report
+    # the SAME candidate as ACCEPTED + ready to assemble — no duplicate, no fresh acceptance gate.
+    again = pw.run_product_redline(tmp_path, CP, JOB, registry=reg, at=AT, by=BY)
+    assert again["candidate_id"] == cid                        # no duplicate candidate
+    assert again["review_accepted"] is True and again["review_status"] == ra.STATUS_REVIEW_ACCEPTED
+    assert again["requires_acceptance"] is False               # ready to assemble — user not stranded
+
+    pkg = pw.assemble_closeout_package(tmp_path, CP, JOB, at=AT, by=BY)
+    assert pkg["assembled"] is True and pkg["blocker"] is None
+    assert pkg["export_status"] == "READY"
