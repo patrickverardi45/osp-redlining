@@ -74,6 +74,33 @@ def _plan_pdf_bytes() -> bytes:
     return out.getvalue()
 
 
+def _ambiguous_plan_pdf_bytes() -> bytes:
+    """A name-free plan with SEVERAL co-linear drawn lines over the SAME bore span (no single line is clearly
+    the bore) — the real-plan ambiguity, made safe and self-contained. The honest generic lane reports LOW +
+    correction-recommended (it must NOT confidently pick one of several plausible lines), so the workspace
+    surfaces the 'Correct redline placement' step. Same tick axis as ``_plan_pdf_bytes`` (station_at(x)~=x+880;
+    bore-log span 11+75..13+25 = x 295..445)."""
+    doc = fitz.open()
+    page = doc.new_page(width=792, height=612)
+    page.insert_text((60, 60), "PLAN & PROFILE  -  ALIGNMENT 10+00 thru 16+00 (demo, ambiguous)", fontsize=11)
+    for gx in range(120, 721, 50):
+        page.draw_line((gx, 300), (gx, 360), color=(0.8, 0.8, 0.8), width=0.4)
+    for gy in range(300, 361, 20):
+        page.draw_line((120, gy), (720, gy), color=(0.8, 0.8, 0.8), width=0.4)
+    for ft in range(1000, 1601, 100):
+        x = 120 + (ft - 1000) / 100 * 100
+        page.draw_line((x, 400), (x, 412), color=(0, 0, 0), width=0.8)
+        page.insert_text((x - 12, 426), "%d+%02d" % (ft // 100, ft % 100), fontsize=8)
+    page.draw_line((120, 400), (720, 400), color=(0, 0, 0), width=0.7)        # full-sheet baseline
+    page.draw_line((295, 378), (445, 378), color=(0, 0, 0), width=1.4)        # rival A (full span, black)
+    page.draw_line((295, 392), (445, 392), color=(1, 0, 0), width=1.6)        # rival B (full span, red ROW-like)
+    page.draw_line((310, 406), (445, 406), color=(0, 0, 0), width=1.4)        # rival C (near-full span)
+    out = io.BytesIO()
+    doc.save(out)
+    doc.close()
+    return out.getvalue()
+
+
 def _borelog_xlsx_bytes() -> bytes:
     """A Brenham-flat bore-log: span 11+75 -> 13+25 (150 ft) on plan sheet 1 — sits under the drawn red run."""
     wb = openpyxl.Workbook()
