@@ -94,8 +94,10 @@ _NA_MATCHLINE = {"verdict": "N/A", "caveats": [], "evidence": []}
 def _patch_engine(monkeypatch, *, placement, bore=None, extra_legs=(), matchline=None, dialect="generic"):
     b = bore if bore is not None else _bore()
     ml = matchline if matchline is not None else _NA_MATCHLINE
+    # 7th value = the dialect OBJECT used (None here -> no traced centerline / no confidence signals,
+    # so the stub renders the bbox-extent exactly as before; the string ``dialect`` stays the name label).
     monkeypatch.setattr(uce, "_run_engine",
-                        lambda plan_path, borelog_path: (b, placement, 0, dialect, list(extra_legs), ml))
+                        lambda plan_path, borelog_path: (b, placement, 0, dialect, list(extra_legs), ml, None))
 
 
 def _patch_render(monkeypatch):
@@ -179,7 +181,7 @@ def test_engine_abstain_blocks_and_renders_nothing(tmp_path, monkeypatch):
 def test_no_dialect_blocks(tmp_path, monkeypatch):
     _job(tmp_path)
     monkeypatch.setattr(uce, "_run_engine",
-                        lambda plan_path, borelog_path: (_bore(), None, 0, None, [], _NA_MATCHLINE))
+                        lambda plan_path, borelog_path: (_bore(), None, 0, None, [], _NA_MATCHLINE, None))
     ev = uce.evaluate_uploaded_corpus_engine_handoff(tmp_path, CP, JOB)
     assert ev["status"] == "BLOCKED"
     assert "NO_PLAN_DIALECT_RECOGNIZED" in {b["code"] for b in ev["blockers"]}

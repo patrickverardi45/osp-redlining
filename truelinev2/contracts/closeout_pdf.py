@@ -38,6 +38,7 @@ from truelinev2.contracts.export_package import (
 )
 from truelinev2.contracts.kmz_export import EXPORTABLE as KMZ_EXPORTABLE_STATUS, evaluate_export
 from truelinev2.contracts.reviewed_bore_log import list_reviewed_bore_logs
+from truelinev2.contracts.export_bundle import placement_candidate_summary
 from truelinev2.contracts.billing_summary import (
     COMPUTED as BILLING_COMPUTED, FINAL as BILLING_FINAL,
     BillingSummaryNotFoundError, billing_summary_view, load_billing_summary,
@@ -245,12 +246,22 @@ def build_closeout_pdf(store_root, customer_project_id, job_id) -> tuple:
     except BillingSummaryNotFoundError:
         billing = None
     rbls = list_reviewed_bore_logs(store_root, customer_project_id, job_id)
+    candidates = placement_candidate_summary(store_root, customer_project_id, job_id, manifest)
 
     d = _Pdf()
 
     # Header + disclaimer
     d.title(PDF_TITLE)
     d.small(DISCLAIMER, color=_RED, font="hebo")
+
+    # REVIEW-candidate banner — prominent + honest when this packet carries general-upload REVIEW candidates
+    # that are not all accepted (never shown for a recognized deterministic package, which has no candidates).
+    if candidates["candidate_count"] and candidates["review_required"]:
+        d.heading("REVIEW REQUIRED — candidate placement from uploaded project evidence", color=_RED)
+        d.text("This packet includes %d REVIEW placement candidate(s) (%d accepted) generated from uploaded "
+               "project evidence. They are NOT deterministic AUTO/FINAL truth: each carries a confidence band "
+               "and must be reviewed/accepted (and corrected if needed) before construction or billing use."
+               % (candidates["candidate_count"], candidates["accepted_count"]), color=_RED)
 
     # 1. Job / project summary
     d.heading("1. Job / Project Summary")
@@ -332,6 +343,22 @@ def build_closeout_pdf(store_root, customer_project_id, job_id) -> tuple:
         d.text("This redline came through the engine REVIEW lane: an engine-generated candidate that a human "
                "ACCEPTED before publishing (never auto-promoted). Provenance is carried per-log in the "
                "manifest above.", color=_BLACK)
+        for c in candidates["candidates"]:
+            state_color = _GREEN if c["state"] == "ACCEPTED" else (_RED if c["state"] == "REJECTED" else _GRAY)
+            basis = ("generic-geometry fallback" if c.get("generic_fallback")
+                     else (c.get("dialect") or "engine"))
+            d.kv("Candidate %s" % c["log_id"],
+                 "%s · confidence %s%s · %s" % (
+                     c["state"], c.get("confidence") or "ungraded",
+                     (" (%.2f)" % c["confidence_score"]) if c.get("confidence_score") is not None else "",
+                     basis),
+                 color=state_color)
+            for r in (c.get("reasons") or []):
+                d.bullet("why: %s" % r, color=_GRAY)
+            for w in (c.get("warnings") or []):
+                d.bullet("caution: %s" % w, color=_RED)
+            if c.get("rejection_reason"):
+                d.bullet("rejected: %s" % c["rejection_reason"], color=_RED)
     elif origin in _DETERMINISTIC_LANE_ORIGINS:
         d.heading("7. Engine Path")
         d.text("Recognized deterministic package: the system served the EXISTING proven engine redline for "

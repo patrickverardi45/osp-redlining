@@ -56,9 +56,10 @@ from truelinev2.contracts.published_bundle_consumer import StaticBundleConsumer
 from truelinev2.ingest.normalize import load_borelog
 from truelinev2.ingest.pdf import PlanPdf
 from truelinev2.extract.registry import select_dialect
+from truelinev2.extract.generic_geometry import GenericGeometryDialect
 from truelinev2.match.engine import run_match
 from truelinev2.render.crop import render_redline_stroke
-from truelinev2.schema.models import PlacementStatus
+from truelinev2.schema.models import Placement, PlacementStatus
 from truelinev2.extract.matchline_join import see_sheet_crossings
 from truelinev2.stations import parse_station
 
@@ -94,6 +95,13 @@ PARTIAL_CROSS_SHEET_REVIEW = "PARTIAL_CROSS_SHEET_REVIEW"
 MATCHLINE_CONTINUATION_CONFIRMED_REVIEW = "MATCHLINE_CONTINUATION_CONFIRMED_REVIEW"
 MATCHLINE_CONTINUATION_UNVERIFIED = "MATCHLINE_CONTINUATION_UNVERIFIED"
 MATCHLINE_SHEET_ADJACENCY_CONFIRMED = "MATCHLINE_SHEET_ADJACENCY_CONFIRMED"
+
+# Generic-geometry fallback caveats (Phase: general uploaded-project placement). The name-free
+# GenericGeometryDialect reconstructs a plausible run from generic plan geometry when NO named dialect
+# recognizes the plan; it is REVIEW by construction (a human confirms the inferred run) and NEVER AUTO.
+GENERIC_GEOMETRY_REVIEW = "GENERIC_GEOMETRY_REVIEW"     # placement came from the name-free fallback
+GENERIC_CAP_REVIEW = "GENERIC_CAP_REVIEW"               # a tight generic extent is still capped to REVIEW
+_GENERIC_DIALECT_NAME = "generic"
 # Convention-neutral matchline label substring; the SEE-SHEET grammar carries the partner sheet number.
 _MATCHLINE_KEYWORD = "MATCH"
 _SEE_SHEET_RE = re.compile(r"SEE\s*SH(?:EE)?T\s*0*(\d+)", re.I)
@@ -157,30 +165,113 @@ def _resolve_inputs(store_root, customer_project_id, job_id, job):
     return plan_path, borelog_path, rbl, blockers
 
 
+def _cap_review(placement):
+    """Force a generic-geometry placement to REVIEW (never AUTO) and tag it. The name-free fallback is
+    REVIEW by construction: it reconstructs a plausible run from generic plan geometry, which a human must
+    confirm — even if ``decide_by_extent`` happened to return a tight AUTO_SELECT, the generic dialect is
+    never source-tight enough to claim AUTO."""
+    caveats = list(placement.caveats)
+    if GENERIC_GEOMETRY_REVIEW not in caveats:
+        caveats.append(GENERIC_GEOMETRY_REVIEW)
+    if placement.status == PlacementStatus.AUTO_SELECT and GENERIC_CAP_REVIEW not in caveats:
+        caveats.append(GENERIC_CAP_REVIEW)
+    return placement.model_copy(update={"status": PlacementStatus.REVIEW, "caveats": caveats})
+
+
+def _confidence(placement, candidate, bore, signals):
+    """A graded 0..1 REVIEW confidence + HIGH/MEDIUM/LOW band + human reasons + warnings. Reflects how well
+    the inferred run is supported by source evidence — it NEVER promotes to AUTO (capped < 1.0). For the
+    named-dialect path ``signals`` is empty, so the band reflects only the engine reason. For the generic
+    fallback, ``signals`` carries the station-axis residual, tick count, red-bucket flag, and rival-run
+    count from GenericGeometryDialect.signals_for()."""
+    score = 0.5
+    reasons, warnings = [], []
+    span = float(getattr(bore, "span_ft", 0.0) or 0.0)
+    ext = float(getattr(candidate, "footage", 0.0) or 0.0)
+
+    resid = signals.get("axis_residual_ft")
+    if resid is not None:
+        if resid <= 2.0:
+            score += 0.18; reasons.append("station axis fits tightly (residual %.1fft)" % resid)
+        elif resid <= 6.0:
+            score += 0.08; reasons.append("station axis fits (residual %.1fft)" % resid)
+        else:
+            score -= 0.10; warnings.append("NOISY_STATION_AXIS")
+    ticks = signals.get("axis_ticks")
+    if ticks is not None and ticks >= 8:
+        score += 0.08; reasons.append("%d station labels anchor the axis" % ticks)
+    if signals.get("is_red"):
+        score += 0.15; reasons.append("inferred run is drawn red (proposed-construction color)")
+    rivals = signals.get("rival_runs")
+    if rivals is not None:
+        if rivals <= 5:
+            score += 0.10; reasons.append("few competing runs near the alignment")
+        elif rivals >= 150:
+            score -= 0.30; warnings.append("MANY_RIVAL_RUNS")
+        elif rivals >= 60:
+            score -= 0.18; warnings.append("MANY_RIVAL_RUNS")
+    if span > 0 and ext > 0 and ext < 0.5 * span:
+        score -= 0.10; warnings.append("SHORT_DRAWN_EXTENT")
+    if placement is not None and placement.reason == "DRAWN_EXTENT_COVERS_SPAN_NOT_TIGHT":
+        reasons.append("drawn geometry covers the span but is not a per-bore tight match (REVIEW)")
+
+    score = max(0.05, min(0.95, score))                     # REVIEW confidence never reaches AUTO (1.0)
+    band = "HIGH" if score >= 0.70 else ("MEDIUM" if score >= 0.45 else "LOW")
+    if band == "LOW":
+        warnings.append("LOW_CONFIDENCE_REVIEW_VERIFY_PLACEMENT")
+    return {"score": round(score, 2), "band": band, "reasons": reasons, "warnings": warnings}
+
+
 def _run_engine(plan_path, borelog_path):
     """Run the shipped engine on the resolved files. Returns (bore, placement, offset, dialect_name,
-    extra_legs, matchline). The DEFAULT (all-off) match path is used — no opt-in gates — so this mirrors the
-    deterministic engine's default behavior. ``extra_legs`` are source-supported drawn legs on REFERENCED
-    sheets OTHER than the winner's sheet (cross-sheet REVIEW coverage). ``matchline`` is the read-only
-    printed-matchline continuity verdict over the rendered sheets. Caller owns no plan handle (opened/closed
-    here)."""
+    extra_legs, matchline, dialect). The DEFAULT (all-off) match path is used — no opt-in gates — so this
+    mirrors the deterministic engine's default behavior for a RECOGNIZED plan.
+
+    GENERIC FALLBACK: when no named (Brenham/ODOT) dialect recognizes the plan, OR the named engine
+    abstains / places nothing drawable, the name-free GenericGeometryDialect is tried. It reconstructs a
+    plausible drawn run from generic geometry + the station-label axis and runs through the SAME
+    ``run_match`` + ``decide_by_extent`` (so it inherits their span-coverage + uniqueness gates), capped to
+    REVIEW. This NEVER fires for a recognized plan that places — the deterministic ODOT/Brenham paths are
+    byte-identical. The returned ``dialect`` instance lets the renderer read back the traced centerline.
+
+    ``extra_legs`` are source-supported drawn legs on REFERENCED sheets OTHER than the winner's sheet
+    (cross-sheet REVIEW coverage). ``matchline`` is the read-only printed-matchline continuity verdict over
+    the rendered sheets. Caller owns no plan handle (opened/closed here)."""
     _na = {"verdict": "N/A", "caveats": [], "evidence": []}
     bore = load_borelog(str(borelog_path))
     plan = PlanPdf(str(plan_path))
     try:
         dialect = select_dialect(plan)
-        if dialect is None:
-            return bore, None, _DEFAULT_OFFSET, None, [], _na
-        offset = dialect.calibrate(plan, _DEFAULT_OFFSET)
-        placement = run_match(bore, plan, dialect, offset)
+        used = dialect
+        offset = _DEFAULT_OFFSET
+        placement = None
+        if dialect is not None:
+            offset = dialect.calibrate(plan, _DEFAULT_OFFSET)
+            placement = run_match(bore, plan, dialect, offset)
+
+        # Generic fallback — only when the named path produced no drawable candidate. Reordering is
+        # impossible (named dialects are tried first and win whenever they place), so a recognized plan is
+        # never routed here and its render stays byte-identical.
+        named_cand = _candidate(placement)
+        if named_cand is None or not getattr(named_cand, "bbox", None):
+            generic = GenericGeometryDialect()
+            if generic.detect(plan):
+                gen_off = generic.calibrate(plan, _DEFAULT_OFFSET)
+                gen_pl = run_match(bore, plan, generic, gen_off)
+                gen_cand = _candidate(gen_pl)
+                if gen_cand is not None and gen_cand.bbox:
+                    placement = _cap_review(gen_pl)
+                    used = generic
+                    offset = gen_off
+
         cand = _candidate(placement)
         if cand is not None and cand.bbox:
-            extra_legs = _extra_sheet_legs(plan, dialect, offset, bore, cand.sheet)
+            extra_legs = _extra_sheet_legs(plan, used, offset, bore, cand.sheet)
             render_sheets = {int(cand.sheet)} | {int(l["sheet"]) for l in extra_legs}
             matchline = _matchline_continuity(plan, offset, bore, render_sheets)
         else:
             extra_legs, matchline = [], _na
-        return bore, placement, offset, getattr(dialect, "name", None), extra_legs, matchline
+        return bore, placement, offset, getattr(used, "name", None), extra_legs, matchline, used
     finally:
         plan.close()
 
@@ -208,8 +299,12 @@ def _extra_sheet_legs(plan, dialect, offset, bore, winner_sheet):
         callouts.sort(key=lambda c: c.from_ft)
         pts = []
         for c in callouts:
-            bx0, by0, bx1, by1 = c.bbox
-            pts += [(float(bx0), float(by0)), (float(bx1), float(by1))]
+            cl = dialect.centerline_for(c) if hasattr(dialect, "centerline_for") else None
+            if cl and len(cl) >= 2:                           # generic dialect: traced centerline
+                pts += [(float(p[0]), float(p[1])) for p in cl]
+            else:                                             # named dialect: bbox-corner extent
+                bx0, by0, bx1, by1 = c.bbox
+                pts += [(float(bx0), float(by0)), (float(bx1), float(by1))]
         legs.append({"sheet": sheet,
                      "from_ft": round(min(c.from_ft for c in callouts), 1),
                      "to_ft": round(max(c.to_ft for c in callouts), 1),
@@ -301,9 +396,11 @@ def evaluate_uploaded_corpus_engine_handoff(store_root, customer_project_id, job
     placement = bore = offset = dialect_name = None
     candidate = None
     extra_legs = []
+    used = None
     matchline = {"verdict": "N/A", "caveats": [], "evidence": []}
     if plan_path is not None and borelog_path is not None:
-        bore, placement, offset, dialect_name, extra_legs, matchline = _run_engine(plan_path, borelog_path)
+        bore, placement, offset, dialect_name, extra_legs, matchline, used = _run_engine(
+            plan_path, borelog_path)
         if placement is None:
             blockers.append({"code": NO_PLAN_DIALECT_RECOGNIZED,
                              "reason": "No registered plan dialect recognized this plan."})
@@ -328,9 +425,12 @@ def evaluate_uploaded_corpus_engine_handoff(store_root, customer_project_id, job
     }
     if runnable:
         render_sheets = sorted({candidate.sheet} | {int(l["sheet"]) for l in extra_legs})
+        signals = used.signals_for(candidate) if hasattr(used, "signals_for") else {}
         out["candidate"] = {
             "placement_status": placement.status.value,
             "reason": placement.reason,
+            "dialect": dialect_name,
+            "generic_fallback": dialect_name == _GENERIC_DIALECT_NAME,
             "caveats": list(placement.caveats) + _adapter_caveats(bore, render_sheets) + matchline["caveats"],
             "sheet": candidate.sheet,
             "referenced_sheets": list(bore.sheet_refs),
@@ -342,18 +442,46 @@ def evaluate_uploaded_corpus_engine_handoff(store_root, customer_project_id, job
             "matchline_continuity": matchline["verdict"],
             "matchline_evidence": matchline["evidence"],
         }
+        # Confidence is the GENERIC fallback's graded REVIEW signal; the named-dialect path emits none
+        # (signals empty -> output byte-identical to the proven ODOT/Brenham REVIEW path).
+        if signals:
+            out["candidate"]["confidence"] = _confidence(placement, candidate, bore, signals)
     return out
 
 
-def _manifest_input(log_id, *, placement, bore, legs, project_id, matchline_caveats=()) -> dict:
+def _placement_candidate_block(confidence, dialect) -> dict:
+    """The additive per-log placement_candidate block (general uploaded-project REVIEW state). The manifest
+    is published at render time, so state is CANDIDATE; the live accept/reject lives in the review-acceptance
+    record and is overlaid by the export/closeout reader. ``confidence`` is None on a named-dialect candidate
+    (ungraded), present (graded) on the generic fallback."""
+    return {
+        "state": "CANDIDATE",
+        "confidence": confidence.get("band") if confidence else None,
+        "confidence_score": confidence.get("score") if confidence else None,
+        "reasons": list(confidence.get("reasons") or []) if confidence else [],
+        "warnings": list(confidence.get("warnings") or []) if confidence else [],
+        "dialect": dialect,
+        "generic_fallback": dialect == _GENERIC_DIALECT_NAME,
+    }
+
+
+def _manifest_input(log_id, *, placement, bore, legs, project_id, matchline_caveats=(),
+                    confidence=None, dialect=None) -> dict:
     """Job-local single-log manifest for the engine-rendered redline (mock_example:false). ``legs`` is a list
     of {sheet, artifact_path}: one FINAL_REDLINE_PNG per rendered sheet (the winner's sheet plus any
     cross-sheet legs). One log (one bore) with one artifact per sheet; source_sheets = all rendered sheets.
-    ``matchline_caveats`` are the read-only printed-matchline continuity annotations (metadata only)."""
+    ``matchline_caveats`` are the read-only printed-matchline continuity annotations (metadata only).
+    ``confidence`` (when supplied) is the graded REVIEW confidence — surfaced in the free-form warnings (the
+    structured per-log placement_candidate block + its schema are an additive follow-on)."""
     status_value = placement.status.value
     provenance = _PROVENANCE_BY_STATUS.get(status_value, "OWNER_CONFIRMED_HUMAN_ADJUSTABLE")
     auto = status_value == PlacementStatus.AUTO_SELECT.value
     sheets = sorted({int(l["sheet"]) for l in legs})
+    conf_warnings = []
+    if confidence is not None:
+        conf_warnings.append("placement confidence %s (%.2f)"
+                             % (confidence.get("band"), confidence.get("score", 0.0)))
+        conf_warnings += list(confidence.get("warnings") or [])
     log = {
         "log_id": log_id, "parent_id": log_id, "entry_role": "standalone",
         "status": "DRAWN_REDLINE", "provenance": provenance,
@@ -367,7 +495,9 @@ def _manifest_input(log_id, *, placement, bore, legs, project_id, matchline_cave
         "evidence": [],
         "warnings": (["engine %s placement (%s); rendered from the plan's own drawn geometry on %d sheet(s)"
                       % (status_value, placement.reason, len(sheets))]
-                     + list(placement.caveats) + _adapter_caveats(bore, sheets) + list(matchline_caveats)),
+                     + list(placement.caveats) + _adapter_caveats(bore, sheets) + list(matchline_caveats)
+                     + conf_warnings),
+        "placement_candidate": _placement_candidate_block(confidence, dialect),
     }
     return {
         "schema_version": "1.0.0", "mock_example": False,
@@ -431,7 +561,8 @@ def render_uploaded_corpus_engine_handoff(store_root, customer_project_id, job_i
     if plan_path is None or borelog_path is None or rbl is None:
         raise UploadedCorpusEngineError("not runnable: %s" % "; ".join(b["code"] for b in blockers))
 
-    bore, placement, offset, dialect_name, extra_legs, matchline = _run_engine(plan_path, borelog_path)
+    bore, placement, offset, dialect_name, extra_legs, matchline, used = _run_engine(
+        plan_path, borelog_path)
     candidate = _candidate(placement)
     if candidate is None or not candidate.bbox:
         ev = evaluate_uploaded_corpus_engine_handoff(store_root, customer_project_id, job_id)
@@ -440,10 +571,15 @@ def render_uploaded_corpus_engine_handoff(store_root, customer_project_id, job_i
 
     log_id = rbl["reviewed_bore_log_id"]                       # generic, name-free artifact/log id
     wx0, wy0, wx1, wy1 = candidate.bbox
-    # Leg list: the winner's sheet keeps its EXISTING single-callout render (preserved); each extra referenced
-    # sheet adds a per-sheet leg from that sheet's OWN drawn geometry (no connecting segment across sheets).
-    legs = [{"sheet": int(candidate.sheet),
-             "stroke_points": [(float(wx0), float(wy0)), (float(wx1), float(wy1))]}]
+    # Leg list: the winner's sheet renders the traced centerline when the generic dialect supplies one
+    # (a real route polyline, not a bbox diagonal); a named dialect has no centerline so the existing
+    # single-callout bbox-extent render is preserved BYTE-IDENTICAL. Each extra referenced sheet adds a
+    # per-sheet leg from that sheet's OWN drawn geometry (no connecting segment across sheets).
+    winner_centerline = used.centerline_for(candidate) if hasattr(used, "centerline_for") else None
+    winner_points = ([(float(p[0]), float(p[1])) for p in winner_centerline]
+                     if winner_centerline and len(winner_centerline) >= 2
+                     else [(float(wx0), float(wy0)), (float(wx1), float(wy1))])
+    legs = [{"sheet": int(candidate.sheet), "stroke_points": winner_points}]
     legs += [{"sheet": int(l["sheet"]), "stroke_points": l["stroke_points"]} for l in extra_legs]
 
     # Idempotent content key over (plan, bore-log, status, ALL leg geometry): identical content -> same bundle.
@@ -483,10 +619,13 @@ def render_uploaded_corpus_engine_handoff(store_root, customer_project_id, job_i
         raise UploadedCorpusEngineError("renderer produced no stroke for the engine candidate")
 
     artifact_map = {r["artifact_path"]: r["png"] for r in rendered}
+    signals = used.signals_for(candidate) if hasattr(used, "signals_for") else {}
+    confidence = _confidence(placement, candidate, bore, signals) if signals else None
     manifest_input = _manifest_input(
         log_id, placement=placement, bore=bore,
         legs=[{"sheet": r["sheet"], "artifact_path": r["artifact_path"]} for r in rendered],
-        project_id=customer_project_id, matchline_caveats=matchline["caveats"])
+        project_id=customer_project_id, matchline_caveats=matchline["caveats"],
+        confidence=confidence, dialect=dialect_name)
     input_path = render_src / "_input_manifest.json"
     input_path.write_text(json.dumps(manifest_input, indent=2), encoding="utf-8")
 

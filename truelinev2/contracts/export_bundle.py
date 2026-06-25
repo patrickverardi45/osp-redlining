@@ -34,6 +34,10 @@ from truelinev2.contracts.kmz_export import (
     EXPORTABLE as KMZ_EXPORTABLE_STATUS, build_kmz_bytes, evaluate_export,
 )
 from truelinev2.contracts.reviewed_bore_log import list_reviewed_bore_logs
+from truelinev2.contracts.review_acceptance import (
+    STATUS_ABSTAINED, STATUS_REVIEW_ACCEPTED, STATUS_REVIEW_CANDIDATE, STATUS_REVIEW_REJECTED,
+    list_review_candidates,
+)
 
 EXPORT_ZIP_MEDIA_TYPE = "application/zip"
 EXPORT_ZIP_FILENAME = "redline_export_%s.zip"
@@ -43,6 +47,51 @@ MANIFEST_MEMBER = "redline_manifest.json"
 README_MEMBER = "README.txt"
 STATUS_DIR = "status/"
 KMZ_MEMBER = "redline_export.kmz"            # included ONLY when the KMZ export is genuinely EXPORTABLE
+
+
+# Live review-state -> short candidate state (the ZIP/PDF candidate vocabulary).
+_REVIEW_STATE = {
+    STATUS_REVIEW_CANDIDATE: "CANDIDATE",
+    STATUS_REVIEW_ACCEPTED: "ACCEPTED",
+    STATUS_REVIEW_REJECTED: "REJECTED",
+    STATUS_ABSTAINED: "ABSTAINED",
+}
+
+
+def placement_candidate_summary(store_root, customer_project_id, job_id, manifest) -> dict:
+    """The per-log REVIEW placement-candidate states from the manifest's additive ``placement_candidate``
+    blocks, OVERLAID with the LIVE accept/reject decision from the review-acceptance records (so the export
+    reports ACCEPTED / REJECTED / CANDIDATE truthfully, not the render-time snapshot). Deterministic /
+    recognized manifests carry no placement_candidate block -> empty summary (review_required False). Honest
+    only: it invents no confidence, only echoes what the manifest + records recorded."""
+    recs = {r.get("reviewed_bore_log_id"): r
+            for r in list_review_candidates(store_root, customer_project_id, job_id)}
+    items = []
+    for lg in manifest.get("logs", []):
+        pc = lg.get("placement_candidate")
+        if not pc:
+            continue
+        live = recs.get(lg["log_id"])
+        state = _REVIEW_STATE.get(live.get("status")) if live else pc.get("state")
+        items.append({
+            "log_id": lg["log_id"],
+            "state": state or pc.get("state"),
+            "confidence": pc.get("confidence"),
+            "confidence_score": pc.get("confidence_score"),
+            "reasons": pc.get("reasons") or [],
+            "warnings": pc.get("warnings") or [],
+            "dialect": pc.get("dialect"),
+            "generic_fallback": pc.get("generic_fallback"),
+            "rejection_reason": (live or {}).get("rejection_reason"),
+        })
+    accepted = sum(1 for i in items if i["state"] == "ACCEPTED")
+    return {
+        "bundle_origin": manifest.get("bundle_origin"),
+        "candidate_count": len(items),
+        "accepted_count": accepted,
+        "review_required": any(i["state"] != "ACCEPTED" for i in items),
+        "candidates": items,
+    }
 
 
 class ExportBundleError(ValueError):
@@ -64,7 +113,7 @@ def _open_bundle(store_root, customer_project_id, job_id):
     return StaticBundleConsumer(bundle_store, enable=True).open_bundle(slot["ref"]["bundle_id"])
 
 
-def _readme(job_id, manifest, kmz, artifact_count, kmz_included) -> str:
+def _readme(job_id, manifest, kmz, artifact_count, kmz_included, candidate_summary=None) -> str:
     """Plain-English description of the bundle contents + honest provenance/limitation notes."""
     origin = manifest.get("bundle_origin")
     summary = manifest.get("summary", {})
@@ -86,11 +135,19 @@ def _readme(job_id, manifest, kmz, artifact_count, kmz_included) -> str:
     ]
     if kmz_included:
         lines.append("  redline_export.kmz           valid KMZ (real geospatial geometry)")
+    if candidate_summary and candidate_summary.get("candidate_count"):
+        lines.append("  status/placement_candidates.json  REVIEW candidate states + confidence + warnings")
     lines += [
         "",
         "Honesty notes:",
         "  * Redline geometry is the engine's, rendered from the plan's own drawn vectors — never invented.",
     ]
+    if candidate_summary and candidate_summary.get("candidate_count"):
+        lines.append("  * This package contains REVIEW PLACEMENT CANDIDATES generated from uploaded project "
+                     "evidence (%d candidate(s), %d accepted). They are NOT deterministic AUTO/FINAL truth; "
+                     "each carries a confidence band + reasons + warnings in status/placement_candidates.json "
+                     "and must be human-reviewed/accepted before use."
+                     % (candidate_summary["candidate_count"], candidate_summary["accepted_count"]))
     if kmz.get("status") != KMZ_EXPORTABLE_STATUS:
         codes = ", ".join(sorted({b.get("code") for b in (kmz.get("blockers") or [])})) or "BLOCKED"
         lines.append("  * KMZ/KML is NOT included: the redline manifest is %s (%s). The system refuses to "
@@ -136,10 +193,17 @@ def build_export_zip(store_root, customer_project_id, job_id) -> tuple:
         if export_pkg is not None:
             _put(z, STATUS_DIR + "export_package.json", json.dumps(export_pkg, indent=2, sort_keys=True))
         _put(z, STATUS_DIR + "reviewed_bore_logs.json", json.dumps(rbls, indent=2, sort_keys=True))
+        # REVIEW placement-candidate states (confidence + reasons + warnings + live accept/reject) — present
+        # ONLY when the manifest carries candidate blocks (general uploaded-project lane); a recognized /
+        # deterministic bundle has none, so its ZIP stays byte-identical.
+        pcs = placement_candidate_summary(store_root, customer_project_id, job_id, manifest)
+        if pcs["candidate_count"] > 0:
+            _put(z, STATUS_DIR + "placement_candidates.json", json.dumps(pcs, indent=2, sort_keys=True))
         kmz_included = kmz.get("status") == KMZ_EXPORTABLE_STATUS and bool(kmz.get("kml"))
         if kmz_included:
             z.writestr(zipfile.ZipInfo(KMZ_MEMBER), build_kmz_bytes(kmz["kml"]))
-        _put(z, README_MEMBER, _readme(job_id, manifest, kmz, artifact_count, kmz_included))
+        _put(z, README_MEMBER, _readme(job_id, manifest, kmz, artifact_count, kmz_included,
+                                       candidate_summary=pcs))
     if artifact_count == 0:
         raise NoRedlineBundleError("the validated bundle has no FINAL_REDLINE_PNG artifacts to export")
     return buf.getvalue(), EXPORT_ZIP_FILENAME % job_id

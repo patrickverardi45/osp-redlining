@@ -178,6 +178,8 @@ def _new_record(*, candidate_id, customer_project_id, job_id, reviewed_bore_log_
         "placement_status": cand.get("placement_status"),
         "engine_reason": cand.get("reason"),
         "dialect": cand.get("dialect"),
+        "generic_fallback": cand.get("generic_fallback", False),
+        "confidence": cand.get("confidence"),   # graded REVIEW confidence (generic lane); None on named path
         "bore_span": cand.get("bore_span"),
         "referenced_sheets": cand.get("referenced_sheets") or [],
         "render_sheets": cand.get("render_sheets") or [],

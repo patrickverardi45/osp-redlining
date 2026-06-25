@@ -89,7 +89,7 @@ def _patch_engine(monkeypatch, *, placement, bore=None, extra_legs=(), matchline
     b = bore if bore is not None else _bore()
     ml = matchline if matchline is not None else _NA_MATCHLINE
     monkeypatch.setattr(uce, "_run_engine",
-                        lambda plan_path, borelog_path: (b, placement, 0, dialect, list(extra_legs), ml))
+                        lambda plan_path, borelog_path: (b, placement, 0, dialect, list(extra_legs), ml, None))
 
 
 def _patch_render(monkeypatch):

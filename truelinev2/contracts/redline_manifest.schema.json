@@ -270,6 +270,33 @@
             "type": "array",
             "items": {"type": "string"},
             "description": "Consumer-facing hazards (e.g. stale fixture fields, owner-corrected sheets)."
+          },
+          "placement_candidate": {
+            "type": ["object", "null"],
+            "additionalProperties": false,
+            "required": ["state", "confidence", "confidence_score", "reasons", "warnings"],
+            "properties": {
+              "state": {
+                "type": "string",
+                "enum": ["CANDIDATE", "ACCEPTED", "REJECTED", "ABSTAINED"],
+                "description": "REVIEW placement-candidate lifecycle state. The manifest is published at render time so it records CANDIDATE; the live accept/reject decision lives in the review-acceptance record and is overlaid by the export/closeout reader."
+              },
+              "confidence": {
+                "type": ["string", "null"],
+                "enum": ["HIGH", "MEDIUM", "LOW", null],
+                "description": "Graded REVIEW confidence band (null on a named-dialect candidate that carries no graded signals)."
+              },
+              "confidence_score": {
+                "type": ["number", "null"],
+                "minimum": 0,
+                "description": "0..1 confidence (capped below 1.0 -- a REVIEW candidate is NEVER AUTO). null when ungraded."
+              },
+              "reasons": {"type": "array", "items": {"type": "string"}, "description": "Human-readable support for the placement."},
+              "warnings": {"type": "array", "items": {"type": "string"}, "description": "Honest hazards (low confidence, many rival runs, noisy axis, short extent)."},
+              "dialect": {"type": ["string", "null"], "description": "Dialect that produced the candidate ('generic' for the name-free fallback)."},
+              "generic_fallback": {"type": "boolean", "description": "true => placed by the name-free generic-geometry fallback (no recognized convention)."}
+            },
+            "description": "Present (non-null) ONLY on bundle_origin UPLOADED_CORPUS_ENGINE manifests: the REVIEW placement-candidate state + graded confidence + reasons/warnings for a general uploaded-project placement. ABSENT on deterministic/recognized manifests (which are FINAL drawn truth, never review candidates), so those stay byte-identical."
           }
         }
       }
