@@ -130,13 +130,33 @@ def test_cap_review_forces_review_from_auto():
 
 
 def test_confidence_high_only_when_placement_earns_it():
-    # Confidence is EARNED by placement quality: tight extent match + endpoint bracket + red + isolated.
+    # Confidence is EARNED by placement quality: near-FULL span coverage + tight extent + endpoint bracket +
+    # NO plausible rivals. Coverage and rival-absence are mandatory — extent match alone is not enough.
     bore = _bore()
     hi = uce._confidence(None, object(), bore,
-                         {"score": 0.95, "extent_fit": 1.0, "end_fit": 0.95, "is_red": True,
-                          "full_sheet": False, "competition": 0})
-    assert hi["band"] == "HIGH" and hi["score"] <= 0.92      # never AUTO
+                         {"score": 0.95, "cover": 1.0, "extent_fit": 1.0, "end_fit": 0.95, "is_red": True,
+                          "full_sheet": False, "fragments": 0, "competition": 0, "axis_ticks": 7})
+    assert hi["band"] == "HIGH" and hi["score"] <= 0.85      # never AUTO (REVIEW ceiling)
     assert any("matches the bore-log span" in r for r in hi["reasons"])
+    assert hi["correction_recommended"] is False
+
+    # ...but the SAME tight run, if it only covers part of the bore, is NOT HIGH — it is at most low-MEDIUM
+    # and correction is recommended (partial coverage is never a confident bore identification).
+    partial = uce._confidence(None, object(), bore,
+                              {"score": 0.95, "cover": 0.6, "extent_fit": 1.0, "end_fit": 0.95,
+                               "is_red": True, "full_sheet": False, "fragments": 0, "competition": 0,
+                               "axis_ticks": 7})
+    assert partial["band"] in ("LOW", "MEDIUM") and partial["band"] != "HIGH"
+    assert partial["correction_recommended"] is True
+    assert any(w.startswith("PARTIAL_SPAN_COVERAGE") for w in partial["warnings"])
+
+    # ...and a tight run drowned in plausible rivals (the real-plan case) collapses to LOW + correction.
+    ambiguous = uce._confidence(None, object(), bore,
+                                {"score": 0.95, "cover": 1.0, "extent_fit": 1.0, "end_fit": 0.95,
+                                 "is_red": True, "full_sheet": False, "fragments": 5, "competition": 2,
+                                 "axis_ticks": 4})
+    assert ambiguous["band"] == "LOW" and ambiguous["correction_recommended"] is True
+    assert any(w.startswith("MULTIPLE_PLAUSIBLE_RUNS") for w in ambiguous["warnings"])
 
 
 def test_confidence_low_capped_for_full_sheet_baseline():
@@ -207,6 +227,101 @@ def test_place_generic_clips_stroke_to_bore_span(tmp_path):
         axis = d.axis_for(1)
         lo, hi = sorted([axis.station_at(poly[0][0]), axis.station_at(poly[-1][0])])
         assert abs(lo - 1175.0) < 20.0 and abs(hi - 1325.0) < 20.0
+    finally:
+        plan.close()
+
+
+def _runs_plan(tmp_path, runs) -> str:
+    """A 1-page plan: the realistic tick row (10+00..16+00, axis station_at(x)~=x+880) + each drawn run
+    given as (x0, x1, y, rgb). Lets a test compose specific rival geometry over the bore span (1175..1325 ->
+    x 295..445)."""
+    doc = fitz.open()
+    page = doc.new_page(width=792, height=612)
+    for ft in range(1000, 1601, 100):
+        x = 120 + (ft - 1000) / 100 * 100
+        page.draw_line((x, 400.0), (x, 412.0), color=(0, 0, 0), width=0.8)
+        page.insert_text((x - 12, 426.0), "%d+%02d" % (ft // 100, ft % 100), fontsize=8)
+    for (x0, x1, y, rgb) in runs:
+        page.draw_line((x0, y), (x1, y), color=rgb, width=1.8)
+    path = str(tmp_path / "runs.pdf")
+    doc.save(path)
+    doc.close()
+    return path
+
+
+def test_place_generic_partial_coverage_is_low_and_correction(tmp_path):
+    # REGRESSION (staging 71'/118' bug): a single run covering only ~60% of the bore span must read LOW +
+    # PARTIAL coverage + correction-recommended, NEVER a confident MEDIUM/HIGH. Partial coverage is never a
+    # confident bore identification — 40% of the bore has no drawn evidence.
+    plan = PlanPdf(_runs_plan(tmp_path, [(295.0, 385.0, 384.0, (1, 0, 0))]))   # ~1175..1265 = ~60% of 150ft
+    try:
+        d = GenericGeometryDialect()
+        placement, sig = uce._place_generic(_bore175(), plan, d, 0)
+        assert placement is not None
+        conf = uce._confidence(placement, placement.matched_callouts[0], _bore175(),
+                               d.signals_for(placement.matched_callouts[0]))
+        assert conf["band"] == "LOW" and conf["correction_recommended"] is True
+        assert any(w.startswith("PARTIAL_SPAN_COVERAGE") for w in conf["warnings"])
+        assert uce.GENERIC_PARTIAL_SPAN in placement.caveats
+        assert uce.GENERIC_CORRECTION_RECOMMENDED in placement.caveats
+    finally:
+        plan.close()
+
+
+def test_place_generic_many_rivals_is_low_and_correction(tmp_path):
+    # REGRESSION (real-plan ambiguity): several distinct co-linear runs all cover the span (the real-plan
+    # case where the bore is one of many lines). The lane must DETECT the ambiguity (fragments) and report
+    # LOW + MULTIPLE_PLAUSIBLE_RUNS + correction — not silently pick one and call it MEDIUM.
+    plan = PlanPdf(_runs_plan(tmp_path, [
+        (295.0, 445.0, 380.0, (0, 0, 0)),    # full-span rival A (a utility/EOP line)
+        (295.0, 445.0, 396.0, (1, 0, 0)),    # full-span rival B (red, like a right-of-way line)
+        (310.0, 445.0, 412.0, (0, 0, 0)),    # near-full rival C
+    ]))
+    try:
+        d = GenericGeometryDialect()
+        placement, sig = uce._place_generic(_bore175(), plan, d, 0)
+        assert placement is not None
+        assert sig["fragments"] >= 2                          # honest rival count over the span
+        conf = uce._confidence(placement, placement.matched_callouts[0], _bore175(),
+                               d.signals_for(placement.matched_callouts[0]))
+        assert conf["band"] == "LOW" and conf["correction_recommended"] is True
+        assert any(w.startswith("MULTIPLE_PLAUSIBLE_RUNS") for w in conf["warnings"])
+        assert uce.GENERIC_MULTIPLE_RUNS in placement.caveats
+        # ...and the runner-up runs are offered for a guided correction step.
+        assert sig["alternatives"] and all("from_sta" in a and "to_sta" in a for a in sig["alternatives"])
+    finally:
+        plan.close()
+
+
+def test_place_generic_does_not_let_red_baseline_beat_the_bore(tmp_path):
+    # REGRESSION (the ROW-line bug): a RED full-sheet line (like ODOT's red right-of-way) must NOT be chosen
+    # over a tight per-bore run that fully covers the span. Coverage + per-bore extent beat color; the red
+    # full-length line is a baseline, not the bore.
+    plan = PlanPdf(_runs_plan(tmp_path, [
+        (120.0, 720.0, 400.0, (1, 0, 0)),    # red FULL-SHEET line on the tick row (the ROW trap)
+        (295.0, 445.0, 384.0, (0, 0, 0)),    # the tight per-bore run (black), exactly the bore span
+    ]))
+    try:
+        d = GenericGeometryDialect()
+        placement, sig = uce._place_generic(_bore175(), plan, d, 0)
+        s = d.signals_for(placement.matched_callouts[0])
+        assert not s.get("full_sheet") and s["run_extent_ft"] < 250    # the per-bore run, not the red baseline
+        assert uce.GENERIC_RUN_MATCHES_SPAN in placement.caveats
+    finally:
+        plan.close()
+
+
+def test_place_generic_clean_single_bore_stays_confident(tmp_path):
+    # The clean single-bore demo case (one tight red run, full coverage, no rivals) MUST remain confident —
+    # the honesty fixes for real plans must not regress the legitimate high-confidence placement.
+    plan = PlanPdf(_realistic_plan(tmp_path))
+    try:
+        d = GenericGeometryDialect()
+        placement, sig = uce._place_generic(_bore175(), plan, d, 0)
+        conf = uce._confidence(placement, placement.matched_callouts[0], _bore175(),
+                               d.signals_for(placement.matched_callouts[0]))
+        assert conf["band"] == "HIGH" and conf["correction_recommended"] is False
+        assert sig["fragments"] == 0 and sig["cover"] >= 0.9
     finally:
         plan.close()
 

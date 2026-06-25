@@ -178,17 +178,50 @@ def _cap_review(placement):
     return placement.model_copy(update={"status": PlacementStatus.REVIEW, "caveats": caveats})
 
 
-# --- Bore-aware generic placement (correctness): pick the drawn run most likely to BE the proposed bore --- #
-_GENERIC_MIN_COVER = 0.5         # a run must cover >= this fraction of the bore span to be a candidate
+# --- Bore-aware generic placement (correctness + HONESTY): pick the drawn run most likely to BE the proposed
+# bore, but earn confidence ONLY from real coverage + uniqueness, never from a confident guess. On a real
+# plan the name-free shape detector fragments ALL linework (right-of-way / edge-of-pavement / centerline /
+# utilities / alignment) into many "runs"; the proposed bore is distinguished by ANNOTATION (a CAD layer /
+# a "DIRECTIONAL BORE" note) that the named dialects read but generic geometry cannot. So the generic lane
+# must DETECT that ambiguity and report it honestly (LOW + correction-recommended), not paper over it. ----- #
+_GENERIC_MIN_COVER = 0.5         # a run must cover >= this fraction of the bore span to be PLACED at all
+_GENERIC_CONFIDENT_COVER = 0.85  # below this, coverage is PARTIAL -> the placement can never exceed low-MEDIUM
+_GENERIC_HIGH_COVER = 0.90       # HIGH confidence needs near-full span coverage
+_GENERIC_FRAG_COVER = 0.25       # a non-baseline run covering >= this much of the span is a PLAUSIBLE RIVAL
 _GENERIC_FULL_SHEET_FRAC = 0.8   # a run spanning >= this fraction of the detected sheet range = a baseline
+_GENERIC_BORE_NOTE_PT = 220.0    # a printed 'BORE' note within this many display-pt weakly corroborates
+_GENERIC_MAX_ALTERNATIVES = 4    # how many runner-up runs to surface for the correction step
 GENERIC_RUN_MATCHES_SPAN = "GENERIC_RUN_MATCHES_BORE_SPAN"
 GENERIC_PLACED_ON_ALIGNMENT = "GENERIC_PLACED_ON_ALIGNMENT_LINE_UNVERIFIED"
+GENERIC_PARTIAL_SPAN = "GENERIC_PARTIAL_SPAN_COVERAGE"
+GENERIC_MULTIPLE_RUNS = "GENERIC_MULTIPLE_PLAUSIBLE_RUNS"
+GENERIC_CORRECTION_RECOMMENDED = "GENERIC_CORRECTION_RECOMMENDED"
 NO_DRAWN_RUN_OVER_SPAN = "NO_DRAWN_RUN_OVER_SPAN"
+# 'BORE' / 'DIRECTIONAL BORE' is an industry term (not a customer/project/location name), so reading it in
+# the generic lane stays name-free; it is a WEAK corroboration only, never a confidence promoter.
+_BORE_NOTE_RE = re.compile(r"\bBORE\b", re.I)
+
+
+def _nearest_bore_note(plan, sheet, offset, bbox):
+    """Display-pt distance from a run's bbox center to the nearest printed 'BORE' note word on the sheet, or
+    None when there is none. Name-free corroboration only — the note typically sits well off the drawn line
+    (observed 140-480pt on real plans), so it never sets geometry and never lifts the confidence band."""
+    if not bbox:
+        return None
+    cx, cy = (bbox[0] + bbox[2]) / 2.0, (bbox[1] + bbox[3]) / 2.0
+    best = None
+    for w in plan.words(sheet, offset):
+        if _BORE_NOTE_RE.search(w.get("text") or ""):
+            d = ((w["xc"] - cx) ** 2 + (w["yc"] - cy) ** 2) ** 0.5
+            best = d if best is None else min(best, d)
+    return round(best, 0) if best is not None else None
 
 
 def _score_bore_run(sig, bore):
-    """Score a drawn run for being THIS bore's proposed line: extent matches the bore-log span + run brackets
-    the bore endpoints + proposed (red) color + covers the span; a full-sheet baseline is heavily penalized."""
+    """Score a drawn run for being THIS bore's proposed line. COVERAGE dominates (does the run actually span
+    the bore?), then extent match + endpoint bracket; red is only a WEAK tie-breaker (right-of-way / edge
+    lines are also drawn red on real plans, so red must never dominate). A full-sheet baseline is heavily
+    penalized."""
     lo, hi = min(bore.station_start_ft, bore.station_end_ft), max(bore.station_start_ft, bore.station_end_ft)
     span = max(float(bore.span_ft), 1.0)
     run_lo, run_hi = float(sig.get("run_from_ft", lo)), float(sig.get("run_to_ft", hi))
@@ -199,7 +232,7 @@ def _score_bore_run(sig, bore):
     end_fit = max(0.0, 1.0 - (abs(run_lo - lo) + abs(run_hi - hi)) / (2.0 * span))
     full_sheet = sheet_span > 0 and run_len >= _GENERIC_FULL_SHEET_FRAC * sheet_span
     red = bool(sig.get("is_red"))
-    score = 0.45 * extent_fit + 0.25 * end_fit + (0.20 if red else 0.0) + 0.10 * min(1.0, cover)
+    score = 0.40 * min(1.0, cover) + 0.30 * extent_fit + 0.25 * end_fit + (0.05 if red else 0.0)
     if full_sheet:
         score *= 0.35                                        # alignment baseline, not a per-bore run
     return {"score": round(score, 3), "cover": round(cover, 3), "extent_fit": round(extent_fit, 3),
@@ -211,12 +244,14 @@ def _place_generic(bore, plan, dialect, offset):
     """Bore-aware generic placement (REVIEW only): across the bore's referenced sheets, select the drawn run
     most likely to BE the proposed bore, CLIP its stroke to the bore-log span (projected onto the run via the
     station axis) so the drawn redline spans EXACTLY the bore (never the full run / a sheet-long baseline),
-    and return a REVIEW Placement plus the selection signals. Returns (None, blocker) when no drawn run covers
-    the span. Never AUTO; never invents a coordinate (every vertex is a real run point or an axis projection
-    between real run points)."""
+    and return a REVIEW Placement plus HONEST selection signals (coverage, plausible-rival count, axis
+    quality, alternatives for the correction step). Returns (None, blocker) when no drawn run covers the span.
+    Never AUTO; never invents a coordinate (every vertex is a real run point or an axis projection between
+    real run points). The confidence band is EARNED downstream from these signals — a partial-coverage or
+    ambiguous (many-rival) selection reports LOW + correction-recommended, never a confident guess."""
     lo, hi = min(bore.station_start_ft, bore.station_end_ft), max(bore.station_start_ft, bore.station_end_ft)
     sheets = [int(s) for s in (bore.sheet_refs or [])] or [1]
-    scored = []
+    scored, overlapping = [], []
     for sheet in sheets:
         for c in dialect.extract_callouts(plan, sheet, offset):
             sig = dialect.signals_for(c)
@@ -224,6 +259,7 @@ def _place_generic(bore, plan, dialect, offset):
             if not c.bbox or run_lo is None or run_hi is None or min(run_hi, hi) <= max(run_lo, lo):
                 continue                                     # no overlap with the bore span
             sc = _score_bore_run(sig, bore)
+            overlapping.append((sc, c, sheet))               # EVERY overlapping run -> honest ambiguity count
             if sc["cover"] >= _GENERIC_MIN_COVER:
                 scored.append((sc, c, sheet))
     if not scored:
@@ -231,7 +267,18 @@ def _place_generic(bore, plan, dialect, offset):
                       "reason": "No drawn run covers the bore-log station span on the referenced sheet(s)."}
     scored.sort(key=lambda t: t[0]["score"], reverse=True)
     sc, winner, sheet = scored[0]
-    competition = sum(1 for s, _c, _sh in scored[1:] if s["score"] >= sc["score"] - 0.08)
+
+    def _other(c, sh):
+        return list(c.bbox or []) != list(winner.bbox or []) or sh != sheet
+
+    # HONEST ambiguity — counted over ALL overlapping runs (NOT the cover-prefiltered set, the prior bug that
+    # hid competition). fragments = distinct non-baseline runs that ALSO plausibly cover the span; competition
+    # = placement candidates scoring within a hair of the winner. On a real plan these are large (the bore is
+    # one of many co-linear lines); on a clean single-bore plan they are zero.
+    fragments = sum(1 for s, c, sh in overlapping
+                    if _other(c, sh) and not s["full_sheet"] and s["cover"] >= _GENERIC_FRAG_COVER)
+    competition = sum(1 for s, c, sh in scored if _other(c, sh) and s["score"] >= sc["score"] - 0.08)
+    wsig = dialect.signals_for(winner)
 
     axis = dialect.axis_for(sheet)
     x_lo = axis.x_at(bore.station_start_ft) if axis else None
@@ -241,7 +288,19 @@ def _place_generic(bore, plan, dialect, offset):
     if clipped and len(clipped) >= 2:
         dialect.set_stroke(winner, clipped)                  # stroke spans EXACTLY the bore, not the full run
 
+    # JSON-safe runner-up runs for a guided "Correct redline placement" step (let a human pick the intended
+    # line instead of trusting the geometry guess). Distinct from the winner, best score first.
+    alternatives = [{"from_sta": c.from_sta, "to_sta": c.to_sta, "sheet": int(sh),
+                     "score": s["score"], "cover": s["cover"], "is_red": s["is_red"]}
+                    for s, c, sh in scored if _other(c, sh)][:_GENERIC_MAX_ALTERNATIVES]
+
     sc["competition"] = competition
+    sc["fragments"] = fragments
+    sc["overlapping_runs"] = len(overlapping)
+    sc["axis_ticks"] = int(wsig.get("axis_ticks") or 0)
+    sc["axis_residual_ft"] = wsig.get("axis_residual_ft")
+    sc["bore_note_dist"] = _nearest_bore_note(plan, sheet, offset, winner.bbox)
+    sc["alternatives"] = alternatives
     dialect.merge_signals(winner, sc)
     caveats = [GENERIC_GEOMETRY_REVIEW]
     if sc["full_sheet"]:
@@ -250,6 +309,12 @@ def _place_generic(bore, plan, dialect, offset):
     else:
         caveats.append(GENERIC_RUN_MATCHES_SPAN)
         reason = "DRAWN_RUN_MATCHES_BORE_SPAN_REVIEW"
+    if sc["cover"] < _GENERIC_CONFIDENT_COVER:
+        caveats.append(GENERIC_PARTIAL_SPAN)
+    if fragments >= 1 or competition >= 1:
+        caveats.append(GENERIC_MULTIPLE_RUNS)
+    if sc["full_sheet"] or fragments >= 2 or sc["cover"] < _GENERIC_CONFIDENT_COVER:
+        caveats.append(GENERIC_CORRECTION_RECOMMENDED)       # auto-pick is uncertain -> route to human correction
     if sc["run_extent_ft"] > bore.span_ft + 25.0:
         caveats.append("DRAWN_EXTENT_EXCEEDS_BORE_SPAN")
     placement = Placement(
@@ -261,45 +326,83 @@ def _place_generic(bore, plan, dialect, offset):
 
 
 def _confidence(placement, candidate, bore, signals):
-    """Honest graded REVIEW confidence — EARNED by placement quality, never by axis readability alone. It
-    reflects how sure we are the SELECTED drawn run actually IS this bore: the run's length matches the
-    bore-log span (a per-bore segment, not a sheet-long baseline), the run brackets the bore endpoints, and
-    it is drawn in the proposed-construction color. A full-sheet alignment/baseline pick is capped LOW
-    (station LOCATION is right; the exact line is unverified). Capped < 1.0 — REVIEW is never AUTO. For the
-    named-dialect path ``signals`` is empty (no graded confidence emitted)."""
+    """Honest graded REVIEW confidence — EARNED by how completely + uniquely the SELECTED run spans the bore,
+    NEVER by axis readability or color alone. Drivers, in order: span COVERAGE (does the run actually cover
+    the bore-log range?), extent/endpoint fit, and ABSENCE of plausible rivals. Confidence is forced DOWN —
+    to LOW + correction-recommended — whenever the selection is partial, ambiguous, on a full-sheet baseline,
+    or rests on a sparse/noisy station axis, because on a real plan the proposed bore is one of many co-linear
+    lines and geometry alone cannot single it out. HIGH is reserved for a near-full, tight, rival-free run
+    (the clean single-bore case). Capped < 0.86 — the generic lane INFERS the bore, so REVIEW, never AUTO.
+    For the named-dialect path ``signals`` is empty (no graded confidence emitted)."""
     reasons, warnings = [], []
-    conf = float(signals.get("score", 0.0))                 # the bore-aware selection score (0..1)
-    extent_fit = signals.get("extent_fit")
-    end_fit = signals.get("end_fit")
-    full_sheet = signals.get("full_sheet")
+    cover = float(signals.get("cover", 0.0) or 0.0)
+    extent_fit = float(signals.get("extent_fit", 0.0) or 0.0)
+    end_fit = float(signals.get("end_fit", 0.0) or 0.0)
+    full_sheet = bool(signals.get("full_sheet"))
+    fragments = int(signals.get("fragments", 0) or 0)
     competition = int(signals.get("competition", 0) or 0)
+    axis_ticks = int(signals.get("axis_ticks", 0) or 0)
+    resid = signals.get("axis_residual_ft")
+    note_dist = signals.get("bore_note_dist")
 
-    if extent_fit is not None and extent_fit >= 0.80:
+    # Coverage dominates: a run that does not span the bore is not a confident identification of it.
+    conf = 0.45 * min(1.0, cover) + 0.30 * extent_fit + 0.25 * end_fit
+
+    if cover >= _GENERIC_HIGH_COVER and extent_fit >= 0.80:
+        reasons.append("the drawn run spans the full bore-log station range")
+    if extent_fit >= 0.80:
         reasons.append("drawn run length matches the bore-log span (%.0f%%)" % (extent_fit * 100))
-    elif extent_fit is not None and extent_fit < 0.50:
+    elif extent_fit < 0.50:
         warnings.append("RUN_LENGTH_UNLIKE_BORE_SPAN")
-    if end_fit is not None and end_fit >= 0.80:
+    if end_fit >= 0.80:
         reasons.append("the drawn run brackets the bore start/end stations")
     if signals.get("is_red"):
-        reasons.append("inferred run is drawn red (proposed-construction color)")
+        reasons.append("inferred run is drawn red (proposed-construction color)")   # weak — a REASON only
+
+    # Penalties for ambiguity / weak axis (subtract before the hard ceilings).
+    if fragments >= 1:                                      # several plausible runs over the span -> ambiguous
+        warnings.append("MULTIPLE_PLAUSIBLE_RUNS_%d" % fragments)
+        conf -= 0.12 * min(fragments, 4)
+    if competition >= 1:
+        warnings.append("COMPETING_RUNS_NEAR_SCORE")
+        conf -= 0.10 * min(competition, 3)
+    if axis_ticks and axis_ticks < 5:                       # sparse station labels -> a less trustworthy axis
+        warnings.append("SPARSE_STATION_LABELS_%d" % axis_ticks)
+        conf -= 0.10
+    if resid is not None and resid > 6.0:
+        warnings.append("NOISY_STATION_AXIS"); conf -= 0.10
+    if note_dist is not None and note_dist <= _GENERIC_BORE_NOTE_PT:   # weak, name-free corroboration only
+        reasons.append("near a printed directional-bore note")
+        conf += 0.05
+
+    # Hard ceilings LAST so nothing (color/note/etc.) can lift a partial / ambiguous / baseline pick above them.
+    if fragments >= 2:                                      # 3+ plausible runs over the span -> cannot single
+        conf = min(conf, 0.45)                             # out the bore from geometry alone -> LOW + correct
+    if cover < _GENERIC_CONFIDENT_COVER:                   # PARTIAL coverage -> never a confident placement
+        warnings.append("PARTIAL_SPAN_COVERAGE_%d_PCT" % round(cover * 100))
+        cap = (0.55 if (cover >= 0.70 and fragments == 0 and competition == 0 and extent_fit >= 0.60)
+               else 0.40)                                   # decent-but-partial -> low-MEDIUM; otherwise LOW
+        conf = min(conf, cap)
     if full_sheet:
         reasons.append("placed on the alignment at the bore's stations — the exact drawn line is unverified")
         warnings.append("PLACED_ON_FULL_SHEET_ALIGNMENT_LINE")
-        conf = min(conf, 0.40)                              # baseline pick: station location only
-    if competition:
-        warnings.append("COMPETING_RUNS_NEAR_SCORE")
-        conf -= 0.10 * min(competition, 3)
-    resid = signals.get("axis_residual_ft")
-    if resid is not None and resid > 6.0:
-        warnings.append("NOISY_STATION_AXIS"); conf -= 0.10
+        conf = min(conf, 0.35)                              # baseline pick: station location only
 
-    # Ceiling 0.85: the generic lane INFERS which drawn line is the bore (from geometry + color), so even a
-    # perfect extent match is never near-certain — REVIEW, never AUTO, and never an overstated 90%+.
     conf = max(0.05, min(0.85, conf))
     band = "HIGH" if conf >= 0.72 else ("MEDIUM" if conf >= 0.50 else "LOW")
+    # HIGH demands genuinely strong, unambiguous evidence — near-full coverage + tight extent + no rivals on a
+    # per-bore (non-baseline) run. Anything short of that is at most MEDIUM (verify), never HIGH.
+    if band == "HIGH" and not (cover >= _GENERIC_HIGH_COVER and extent_fit >= 0.80
+                               and fragments == 0 and competition == 0 and not full_sheet):
+        band = "MEDIUM"
+    correction = (band == "LOW" or full_sheet or fragments >= 2
+                  or cover < _GENERIC_CONFIDENT_COVER)
     if band == "LOW":
         warnings.append("LOW_CONFIDENCE_REVIEW_VERIFY_PLACEMENT")
-    return {"score": round(conf, 2), "band": band, "reasons": reasons, "warnings": warnings}
+    if correction:
+        warnings.append("CORRECTION_RECOMMENDED")
+    return {"score": round(conf, 2), "band": band, "reasons": reasons, "warnings": warnings,
+            "correction_recommended": correction}
 
 
 def _run_engine(plan_path, borelog_path):
