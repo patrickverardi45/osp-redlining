@@ -47,11 +47,35 @@ _MIN_ELONGATION = 4.0        # run length / run thickness: a bore run is a thin 
 _MAX_RUN_THICKNESS_PT = 34.0 # a run is thin; title-block / legend fills are thick
 _AXIS_MAX_RESIDUAL_FT = 12.0 # reject a station-axis fit this noisy (not a real stationed alignment)
 _MIN_AXIS_TICKS = 3          # need at least this many station ticks to trust the axis
+_TICK_ROW_BAND = 18.0        # display-pt y-tolerance grouping ticks into one horizontal station row
 
 
 def _key(bbox) -> Tuple[float, float, float, float]:
     """Stable rounded bbox key (deterministic lookup of a callout's traced centerline)."""
     return tuple(round(float(v), 1) for v in bbox)  # type: ignore[return-value]
+
+
+def _densest_tick_row(words):
+    """Station-tick words clustered to the DENSEST horizontal row — the alignment's actual station axis — so
+    stray title-block / general-note station references on OTHER rows don't corrupt the axis fit. Returns
+    (row_ticks, tick_y) where row_ticks is a list of (word, station_ft); ([], None) if no ticks. Greedy
+    y-banding (within _TICK_ROW_BAND); the winning row maximizes the count of DISTINCT-x ticks."""
+    ticks = [(w, parse_tick(w["text"])) for w in words]
+    ticks = [(w, ft) for w, ft in ticks if ft is not None]
+    if not ticks:
+        return [], None
+    bands = []
+    for w, ft in sorted(ticks, key=lambda t: t[0]["yc"]):
+        for band in bands:
+            if abs(w["yc"] - band["y"]) <= _TICK_ROW_BAND:
+                band["items"].append((w, ft))
+                break
+        else:
+            bands.append({"y": w["yc"], "items": [(w, ft)]})
+    best = max(bands, key=lambda b: len({round(t[0]["xc"], 0) for t in b["items"]}))
+    row = best["items"]
+    tick_y = sum(t[0]["yc"] for t in row) / len(row)
+    return row, tick_y
 
 
 def _is_reddish(color) -> bool:
@@ -177,13 +201,13 @@ class GenericGeometryDialect:
         words = plan.words(sheet, offset)
         if not words:
             return []
-        tick_words = [w for w in words if parse_tick(w["text"]) is not None]
-        if len(tick_words) < _MIN_AXIS_TICKS:
+        row, tick_y = _densest_tick_row(words)
+        if len(row) < _MIN_AXIS_TICKS:
             return []
-        axis = fit_axis([(w["xc"], parse_tick(w["text"])) for w in tick_words])
+        axis = fit_axis([(w["xc"], ft) for w, ft in row])
         if axis is None or axis.residual_ft > _AXIS_MAX_RESIDUAL_FT:
             return []
-        tick_y = sum(w["yc"] for w in tick_words) / len(tick_words)
+        n_ticks = len(row)
         legend = detect_legend_block(words)
 
         segs = _segments_near_band(plan, sheet, offset, tick_y, legend)
@@ -224,7 +248,7 @@ class GenericGeometryDialect:
                 bbox=c["bbox"], dialect="generic")
             k = (sheet, _key(c["bbox"]))
             self._polys[k] = c["poly"]
-            self._meta[k] = {"axis_residual_ft": axis.residual_ft, "axis_ticks": len(tick_words),
+            self._meta[k] = {"axis_residual_ft": axis.residual_ft, "axis_ticks": n_ticks,
                              "is_red": c["red"], "run_len_pt": c["len"],
                              "rival_runs": len(candidates), "red_runs": n_red}
             out.append(callout)
