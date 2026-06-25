@@ -178,48 +178,128 @@ def _cap_review(placement):
     return placement.model_copy(update={"status": PlacementStatus.REVIEW, "caveats": caveats})
 
 
+# --- Bore-aware generic placement (correctness): pick the drawn run most likely to BE the proposed bore --- #
+_GENERIC_MIN_COVER = 0.5         # a run must cover >= this fraction of the bore span to be a candidate
+_GENERIC_FULL_SHEET_FRAC = 0.8   # a run spanning >= this fraction of the detected sheet range = a baseline
+GENERIC_RUN_MATCHES_SPAN = "GENERIC_RUN_MATCHES_BORE_SPAN"
+GENERIC_PLACED_ON_ALIGNMENT = "GENERIC_PLACED_ON_ALIGNMENT_LINE_UNVERIFIED"
+NO_DRAWN_RUN_OVER_SPAN = "NO_DRAWN_RUN_OVER_SPAN"
+
+
+def _score_bore_run(sig, bore):
+    """Score a drawn run for being THIS bore's proposed line: extent matches the bore-log span + run brackets
+    the bore endpoints + proposed (red) color + covers the span; a full-sheet baseline is heavily penalized."""
+    lo, hi = min(bore.station_start_ft, bore.station_end_ft), max(bore.station_start_ft, bore.station_end_ft)
+    span = max(float(bore.span_ft), 1.0)
+    run_lo, run_hi = float(sig.get("run_from_ft", lo)), float(sig.get("run_to_ft", hi))
+    run_len = max(run_hi - run_lo, 0.0)
+    sheet_span = float(sig.get("sheet_station_span_ft") or 0.0)
+    cover = max(0.0, min(run_hi, hi) - max(run_lo, lo)) / (hi - lo) if hi > lo else 0.0
+    extent_fit = max(0.0, 1.0 - abs(run_len - span) / span)
+    end_fit = max(0.0, 1.0 - (abs(run_lo - lo) + abs(run_hi - hi)) / (2.0 * span))
+    full_sheet = sheet_span > 0 and run_len >= _GENERIC_FULL_SHEET_FRAC * sheet_span
+    red = bool(sig.get("is_red"))
+    score = 0.45 * extent_fit + 0.25 * end_fit + (0.20 if red else 0.0) + 0.10 * min(1.0, cover)
+    if full_sheet:
+        score *= 0.35                                        # alignment baseline, not a per-bore run
+    return {"score": round(score, 3), "cover": round(cover, 3), "extent_fit": round(extent_fit, 3),
+            "end_fit": round(end_fit, 3), "full_sheet": full_sheet, "is_red": red,
+            "run_extent_ft": round(run_len, 1)}
+
+
+def _place_generic(bore, plan, dialect, offset):
+    """Bore-aware generic placement (REVIEW only): across the bore's referenced sheets, select the drawn run
+    most likely to BE the proposed bore, CLIP its stroke to the bore-log span (projected onto the run via the
+    station axis) so the drawn redline spans EXACTLY the bore (never the full run / a sheet-long baseline),
+    and return a REVIEW Placement plus the selection signals. Returns (None, blocker) when no drawn run covers
+    the span. Never AUTO; never invents a coordinate (every vertex is a real run point or an axis projection
+    between real run points)."""
+    lo, hi = min(bore.station_start_ft, bore.station_end_ft), max(bore.station_start_ft, bore.station_end_ft)
+    sheets = [int(s) for s in (bore.sheet_refs or [])] or [1]
+    scored = []
+    for sheet in sheets:
+        for c in dialect.extract_callouts(plan, sheet, offset):
+            sig = dialect.signals_for(c)
+            run_lo, run_hi = sig.get("run_from_ft"), sig.get("run_to_ft")
+            if not c.bbox or run_lo is None or run_hi is None or min(run_hi, hi) <= max(run_lo, lo):
+                continue                                     # no overlap with the bore span
+            sc = _score_bore_run(sig, bore)
+            if sc["cover"] >= _GENERIC_MIN_COVER:
+                scored.append((sc, c, sheet))
+    if not scored:
+        return None, {"code": NO_DRAWN_RUN_OVER_SPAN,
+                      "reason": "No drawn run covers the bore-log station span on the referenced sheet(s)."}
+    scored.sort(key=lambda t: t[0]["score"], reverse=True)
+    sc, winner, sheet = scored[0]
+    competition = sum(1 for s, _c, _sh in scored[1:] if s["score"] >= sc["score"] - 0.08)
+
+    axis = dialect.axis_for(sheet)
+    x_lo = axis.x_at(bore.station_start_ft) if axis else None
+    x_hi = axis.x_at(bore.station_end_ft) if axis else None
+    clipped = (dialect.clip_centerline_to_x(winner, x_lo, x_hi)
+               if (x_lo is not None and x_hi is not None) else None)
+    if clipped and len(clipped) >= 2:
+        dialect.set_stroke(winner, clipped)                  # stroke spans EXACTLY the bore, not the full run
+
+    sc["competition"] = competition
+    dialect.merge_signals(winner, sc)
+    caveats = [GENERIC_GEOMETRY_REVIEW]
+    if sc["full_sheet"]:
+        caveats.append(GENERIC_PLACED_ON_ALIGNMENT)
+        reason = "DRAWN_ALIGNMENT_COVERS_SPAN_LINE_UNVERIFIED"
+    else:
+        caveats.append(GENERIC_RUN_MATCHES_SPAN)
+        reason = "DRAWN_RUN_MATCHES_BORE_SPAN_REVIEW"
+    if sc["run_extent_ft"] > bore.span_ft + 25.0:
+        caveats.append("DRAWN_EXTENT_EXCEEDS_BORE_SPAN")
+    placement = Placement(
+        bore_id=bore.bore_id, status=PlacementStatus.REVIEW, tier="AUTO_PLACED_REQUIRES_APPROVAL",
+        reason=reason, sheets=[int(winner.sheet)],
+        station_span="%s->%s" % (bore.station_start, bore.station_end), footage=bore.span_ft,
+        caveats=caveats, matched_callouts=[winner])
+    return placement, sc
+
+
 def _confidence(placement, candidate, bore, signals):
-    """A graded 0..1 REVIEW confidence + HIGH/MEDIUM/LOW band + human reasons + warnings. Reflects how well
-    the inferred run is supported by source evidence — it NEVER promotes to AUTO (capped < 1.0). For the
-    named-dialect path ``signals`` is empty, so the band reflects only the engine reason. For the generic
-    fallback, ``signals`` carries the station-axis residual, tick count, red-bucket flag, and rival-run
-    count from GenericGeometryDialect.signals_for()."""
-    score = 0.5
+    """Honest graded REVIEW confidence — EARNED by placement quality, never by axis readability alone. It
+    reflects how sure we are the SELECTED drawn run actually IS this bore: the run's length matches the
+    bore-log span (a per-bore segment, not a sheet-long baseline), the run brackets the bore endpoints, and
+    it is drawn in the proposed-construction color. A full-sheet alignment/baseline pick is capped LOW
+    (station LOCATION is right; the exact line is unverified). Capped < 1.0 — REVIEW is never AUTO. For the
+    named-dialect path ``signals`` is empty (no graded confidence emitted)."""
     reasons, warnings = [], []
-    span = float(getattr(bore, "span_ft", 0.0) or 0.0)
-    ext = float(getattr(candidate, "footage", 0.0) or 0.0)
+    conf = float(signals.get("score", 0.0))                 # the bore-aware selection score (0..1)
+    extent_fit = signals.get("extent_fit")
+    end_fit = signals.get("end_fit")
+    full_sheet = signals.get("full_sheet")
+    competition = int(signals.get("competition", 0) or 0)
 
-    resid = signals.get("axis_residual_ft")
-    if resid is not None:
-        if resid <= 2.0:
-            score += 0.18; reasons.append("station axis fits tightly (residual %.1fft)" % resid)
-        elif resid <= 6.0:
-            score += 0.08; reasons.append("station axis fits (residual %.1fft)" % resid)
-        else:
-            score -= 0.10; warnings.append("NOISY_STATION_AXIS")
-    ticks = signals.get("axis_ticks")
-    if ticks is not None and ticks >= 8:
-        score += 0.08; reasons.append("%d station labels anchor the axis" % ticks)
+    if extent_fit is not None and extent_fit >= 0.80:
+        reasons.append("drawn run length matches the bore-log span (%.0f%%)" % (extent_fit * 100))
+    elif extent_fit is not None and extent_fit < 0.50:
+        warnings.append("RUN_LENGTH_UNLIKE_BORE_SPAN")
+    if end_fit is not None and end_fit >= 0.80:
+        reasons.append("the drawn run brackets the bore start/end stations")
     if signals.get("is_red"):
-        score += 0.15; reasons.append("inferred run is drawn red (proposed-construction color)")
-    rivals = signals.get("rival_runs")
-    if rivals is not None:
-        if rivals <= 5:
-            score += 0.10; reasons.append("few competing runs near the alignment")
-        elif rivals >= 150:
-            score -= 0.30; warnings.append("MANY_RIVAL_RUNS")
-        elif rivals >= 60:
-            score -= 0.18; warnings.append("MANY_RIVAL_RUNS")
-    if span > 0 and ext > 0 and ext < 0.5 * span:
-        score -= 0.10; warnings.append("SHORT_DRAWN_EXTENT")
-    if placement is not None and placement.reason == "DRAWN_EXTENT_COVERS_SPAN_NOT_TIGHT":
-        reasons.append("drawn geometry covers the span but is not a per-bore tight match (REVIEW)")
+        reasons.append("inferred run is drawn red (proposed-construction color)")
+    if full_sheet:
+        reasons.append("placed on the alignment at the bore's stations — the exact drawn line is unverified")
+        warnings.append("PLACED_ON_FULL_SHEET_ALIGNMENT_LINE")
+        conf = min(conf, 0.40)                              # baseline pick: station location only
+    if competition:
+        warnings.append("COMPETING_RUNS_NEAR_SCORE")
+        conf -= 0.10 * min(competition, 3)
+    resid = signals.get("axis_residual_ft")
+    if resid is not None and resid > 6.0:
+        warnings.append("NOISY_STATION_AXIS"); conf -= 0.10
 
-    score = max(0.05, min(0.95, score))                     # REVIEW confidence never reaches AUTO (1.0)
-    band = "HIGH" if score >= 0.70 else ("MEDIUM" if score >= 0.45 else "LOW")
+    # Ceiling 0.85: the generic lane INFERS which drawn line is the bore (from geometry + color), so even a
+    # perfect extent match is never near-certain — REVIEW, never AUTO, and never an overstated 90%+.
+    conf = max(0.05, min(0.85, conf))
+    band = "HIGH" if conf >= 0.72 else ("MEDIUM" if conf >= 0.50 else "LOW")
     if band == "LOW":
         warnings.append("LOW_CONFIDENCE_REVIEW_VERIFY_PLACEMENT")
-    return {"score": round(score, 2), "band": band, "reasons": reasons, "warnings": warnings}
+    return {"score": round(conf, 2), "band": band, "reasons": reasons, "warnings": warnings}
 
 
 def _run_engine(plan_path, borelog_path):
@@ -251,22 +331,26 @@ def _run_engine(plan_path, borelog_path):
 
         # Generic fallback — only when the named path produced no drawable candidate. Reordering is
         # impossible (named dialects are tried first and win whenever they place), so a recognized plan is
-        # never routed here and its render stays byte-identical.
+        # never routed here and its render stays byte-identical. The generic lane uses a dedicated BORE-AWARE
+        # placement (select the run most likely to be the bore + clip the stroke to the bore span), NOT the
+        # midpoint-only decide_by_extent pick.
         named_cand = _candidate(placement)
         if named_cand is None or not getattr(named_cand, "bbox", None):
             generic = GenericGeometryDialect()
             if generic.detect(plan):
                 gen_off = generic.calibrate(plan, _DEFAULT_OFFSET)
-                gen_pl = run_match(bore, plan, generic, gen_off)
-                gen_cand = _candidate(gen_pl)
-                if gen_cand is not None and gen_cand.bbox:
-                    placement = _cap_review(gen_pl)
+                gen_pl, _gen_sig = _place_generic(bore, plan, generic, gen_off)
+                if gen_pl is not None:
+                    placement = gen_pl                       # REVIEW; stroke already clipped to the bore span
                     used = generic
                     offset = gen_off
 
         cand = _candidate(placement)
+        is_generic = getattr(used, "name", None) == _GENERIC_DIALECT_NAME
         if cand is not None and cand.bbox:
-            extra_legs = _extra_sheet_legs(plan, used, offset, bore, cand.sheet)
+            # The generic lane places a single clipped bore stroke (no cross-sheet leg assembly yet); named
+            # dialects keep their per-sheet cross-sheet REVIEW legs.
+            extra_legs = [] if is_generic else _extra_sheet_legs(plan, used, offset, bore, cand.sheet)
             render_sheets = {int(cand.sheet)} | {int(l["sheet"]) for l in extra_legs}
             matchline = _matchline_continuity(plan, offset, bore, render_sheets)
         else:

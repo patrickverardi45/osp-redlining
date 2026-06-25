@@ -129,27 +129,103 @@ def test_cap_review_forces_review_from_auto():
     assert uce.GENERIC_CAP_REVIEW in capped.caveats
 
 
-def test_confidence_bands_and_caps():
+def test_confidence_high_only_when_placement_earns_it():
+    # Confidence is EARNED by placement quality: tight extent match + endpoint bracket + red + isolated.
     bore = _bore()
-
-    class _C:
-        footage = 100.0
-
-    # tight axis + red + few rivals -> HIGH, but never >= 1.0 (REVIEW is never AUTO)
-    hi = uce._confidence(None, _C(), bore,
-                         {"axis_residual_ft": 0.0, "axis_ticks": 10, "is_red": True, "rival_runs": 3})
-    assert hi["band"] == "HIGH" and hi["score"] <= 0.95
-
-    # noisy axis + many rivals + short extent -> LOW + honest warnings
-    _C.footage = 10.0
-    lo = uce._confidence(None, _C(), bore,
-                         {"axis_residual_ft": 11.0, "axis_ticks": 5, "is_red": False, "rival_runs": 200})
-    assert lo["band"] == "LOW"
-    assert "MANY_RIVAL_RUNS" in lo["warnings"] and "NOISY_STATION_AXIS" in lo["warnings"]
-    assert "SHORT_DRAWN_EXTENT" in lo["warnings"]
+    hi = uce._confidence(None, object(), bore,
+                         {"score": 0.95, "extent_fit": 1.0, "end_fit": 0.95, "is_red": True,
+                          "full_sheet": False, "competition": 0})
+    assert hi["band"] == "HIGH" and hi["score"] <= 0.92      # never AUTO
+    assert any("matches the bore-log span" in r for r in hi["reasons"])
 
 
-def test_named_dialect_path_emits_no_confidence_signals():
-    # A dialect object without signals_for() (named path) -> evaluate attaches no confidence; here we assert
-    # the helper simply has no signals to read (the gating contract the adapter relies on).
-    assert not hasattr(object(), "signals_for")
+def test_confidence_low_capped_for_full_sheet_baseline():
+    # A full-sheet alignment/baseline pick is capped LOW (station location only; line unverified) even though
+    # the axis is perfect — readability never inflates confidence.
+    bore = _bore()
+    lo = uce._confidence(None, object(), bore,
+                         {"score": 0.04, "extent_fit": 0.0, "end_fit": 0.0, "is_red": False,
+                          "full_sheet": True, "competition": 1, "axis_residual_ft": 0.0})
+    assert lo["band"] == "LOW" and lo["score"] <= 0.40
+    assert "PLACED_ON_FULL_SHEET_ALIGNMENT_LINE" in lo["warnings"]
+    assert "RUN_LENGTH_UNLIKE_BORE_SPAN" in lo["warnings"]
+
+
+# --- Bore-aware placement on a REALISTIC plan (full-sheet baselines + a tight per-bore run) ---------------- #
+_R_TICK_Y = 400.0
+
+
+def _realistic_plan(tmp_path, include_bore=True) -> str:
+    """Grid + ticks (10+00..16+00) + a full-sheet survey baseline + 2 full-sheet utilities + (optionally) the
+    PROPOSED bore drawn red, TIGHTLY spanning 11+75..13+25 (x 295..445). Axis station_at(x)=x+880."""
+    doc = fitz.open()
+    page = doc.new_page(width=792, height=612)
+    for gy in range(300, 361, 20):
+        page.draw_line((120, gy), (720, gy), color=(0.8, 0.8, 0.8), width=0.4)
+    for ft in range(1000, 1601, 100):
+        x = 120 + (ft - 1000) / 100 * 100
+        page.draw_line((x, _R_TICK_Y), (x, _R_TICK_Y + 12), color=(0, 0, 0), width=0.8)
+        page.insert_text((x - 12, _R_TICK_Y + 26), "%d+%02d" % (ft // 100, ft % 100), fontsize=8)
+    page.draw_line((120, _R_TICK_Y), (720, _R_TICK_Y), color=(0, 0, 0), width=0.7)       # baseline (600ft)
+    page.draw_line((120, 372), (720, 372), color=(0.2, 0.5, 0.9), width=0.8)            # blue utility
+    page.draw_line((120, 388), (720, 388), color=(0.1, 0.6, 0.2), width=0.8)            # green utility
+    if include_bore:
+        page.draw_line((295, 384), (445, 384), color=(1, 0, 0), width=1.8)              # proposed bore (150ft)
+    path = str(tmp_path / "realistic.pdf")
+    doc.save(path)
+    doc.close()
+    return path
+
+
+def _bore175() -> Bore:
+    return Bore(bore_id="b-1", sheet_refs=[1], station_start="11+75", station_end="13+25",
+                station_start_ft=1175.0, station_end_ft=1325.0, span_ft=150.0)
+
+
+def test_place_generic_selects_bore_run_over_full_sheet_baselines(tmp_path):
+    # The classic failure mode: a survey baseline must NOT be chosen as the bore. The bore-aware selector
+    # picks the tight per-bore red run instead.
+    plan = PlanPdf(_realistic_plan(tmp_path))
+    try:
+        d = GenericGeometryDialect()
+        placement, sig = uce._place_generic(_bore175(), plan, d, 0)
+        assert placement is not None and placement.status == PlacementStatus.REVIEW
+        s = d.signals_for(placement.matched_callouts[0])
+        assert s["run_extent_ft"] < 250 and not s.get("full_sheet")   # the 150ft bore run, not a 600ft baseline
+        assert uce.GENERIC_RUN_MATCHES_SPAN in placement.caveats
+    finally:
+        plan.close()
+
+
+def test_place_generic_clips_stroke_to_bore_span(tmp_path):
+    # The drawn stroke spans EXACTLY the bore-log stations, never the full run (the owner's overstatement bug).
+    plan = PlanPdf(_realistic_plan(tmp_path))
+    try:
+        d = GenericGeometryDialect()
+        placement, sig = uce._place_generic(_bore175(), plan, d, 0)
+        poly = d.centerline_for(placement.matched_callouts[0])
+        axis = d.axis_for(1)
+        lo, hi = sorted([axis.station_at(poly[0][0]), axis.station_at(poly[-1][0])])
+        assert abs(lo - 1175.0) < 20.0 and abs(hi - 1325.0) < 20.0
+    finally:
+        plan.close()
+
+
+def test_place_generic_baseline_only_is_low_and_unverified(tmp_path):
+    # No per-bore run, only full-sheet lines -> it still locates the bore on the alignment, but confidence is
+    # LOW and the caveat says the exact line is unverified (no fake high confidence on a guessed line).
+    plan = PlanPdf(_realistic_plan(tmp_path, include_bore=False))
+    try:
+        d = GenericGeometryDialect()
+        placement, sig = uce._place_generic(_bore175(), plan, d, 0)
+        assert placement is not None
+        conf = uce._confidence(placement, placement.matched_callouts[0], _bore175(),
+                               d.signals_for(placement.matched_callouts[0]))
+        assert conf["band"] == "LOW"
+        assert uce.GENERIC_PLACED_ON_ALIGNMENT in placement.caveats
+        # ...and even the baseline pick is clipped to the bore stations (location is still useful)
+        poly = d.centerline_for(placement.matched_callouts[0]); axis = d.axis_for(1)
+        lo, hi = sorted([axis.station_at(poly[0][0]), axis.station_at(poly[-1][0])])
+        assert abs(lo - 1175.0) < 20.0 and abs(hi - 1325.0) < 20.0
+    finally:
+        plan.close()

@@ -40,6 +40,13 @@ class StationAxis:
     def station_at(self, x: float) -> float:
         return self.a * x + self.b
 
+    def x_at(self, station_ft: float) -> Optional[float]:
+        """Inverse of ``station_at``: the display-space x for a station (ft), or None if degenerate.
+        Lets a caller clip a drawn run to a bore-log station span."""
+        if not self.a:
+            return None
+        return (float(station_ft) - self.b) / self.a
+
 
 def fit_axis(points: List[Tuple[float, float]]) -> Optional[StationAxis]:
     """points: (x, station_ft). Theil-Sen fit; None if < 2 distinct x."""

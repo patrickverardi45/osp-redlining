@@ -182,6 +182,8 @@ class GenericGeometryDialect:
     def __init__(self) -> None:
         self._polys: Dict[Tuple[int, Tuple[float, float, float, float]], List[Tuple[float, float]]] = {}
         self._meta: Dict[Tuple[int, Tuple[float, float, float, float]], Dict[str, Any]] = {}
+        self._axis: Dict[int, Any] = {}            # fitted StationAxis per sheet (station<->x)
+        self._sheet_span: Dict[int, float] = {}    # detected station range (ft) on the sheet (full-sheet test)
 
     # -- PlanDialect protocol ---------------------------------------------------------------- #
     def detect(self, plan: PlanPdf) -> bool:
@@ -208,6 +210,9 @@ class GenericGeometryDialect:
         if axis is None or axis.residual_ft > _AXIS_MAX_RESIDUAL_FT:
             return []
         n_ticks = len(row)
+        self._axis[sheet] = axis
+        row_ft = [ft for _, ft in row]
+        self._sheet_span[sheet] = max(row_ft) - min(row_ft)     # detected station range (full-sheet test)
         legend = detect_legend_block(words)
 
         segs = _segments_near_band(plan, sheet, offset, tick_y, legend)
@@ -250,6 +255,8 @@ class GenericGeometryDialect:
             self._polys[k] = c["poly"]
             self._meta[k] = {"axis_residual_ft": axis.residual_ft, "axis_ticks": n_ticks,
                              "is_red": c["red"], "run_len_pt": c["len"],
+                             "run_from_ft": round(f0, 1), "run_to_ft": round(f1, 1),
+                             "run_extent_ft": round(f1 - f0, 1), "sheet_station_span_ft": self._sheet_span[sheet],
                              "rival_runs": len(candidates), "red_runs": n_red}
             out.append(callout)
         return out
@@ -267,7 +274,52 @@ class GenericGeometryDialect:
 
     def signals_for(self, callout: Callout) -> Dict[str, Any]:
         """Confidence signals for a callout this dialect emitted (axis residual, tick count, red
-        boost, rival-run count). Empty dict if unknown."""
+        boost, rival-run count, run extent, sheet station span). Empty dict if unknown."""
         if not callout.bbox:
             return {}
         return dict(self._meta.get((callout.sheet, _key(callout.bbox)), {}))
+
+    def set_stroke(self, callout: Callout, points: List[List[float]]) -> None:
+        """Replace a callout's stored centerline with ``points`` (e.g. the span-clipped stroke), so
+        ``centerline_for`` / the renderer draw exactly that. No-op if the callout has no bbox."""
+        if callout.bbox and points and len(points) >= 2:
+            self._polys[(callout.sheet, _key(callout.bbox))] = [(float(x), float(y)) for x, y in points]
+
+    def merge_signals(self, callout: Callout, extra: Dict[str, Any]) -> None:
+        """Merge extra confidence signals into a callout's meta (the adapter's bore-aware selection score)."""
+        if callout.bbox:
+            self._meta.setdefault((callout.sheet, _key(callout.bbox)), {}).update(extra)
+
+    def axis_for(self, sheet: int):
+        """The fitted StationAxis for a sheet (station<->x), or None. Lets a caller clip a run to a
+        bore-log station span via ``axis.x_at(station_ft)``."""
+        return self._axis.get(int(sheet))
+
+    def clip_centerline_to_x(self, callout: Callout, x_lo: float, x_hi: float
+                             ) -> Optional[List[List[float]]]:
+        """The selected run's centerline CLIPPED to a display-space x-range [x_lo, x_hi] (the bore-log span
+        projected onto the run via the station axis), with interpolated endpoints at x_lo / x_hi so the drawn
+        stroke spans EXACTLY the bore, not the full drawn run. None if the run has no usable trace."""
+        poly = self._polys.get((callout.sheet, _key(callout.bbox))) if callout.bbox else None
+        if not poly or len(poly) < 2:
+            return None
+        lo, hi = (x_lo, x_hi) if x_lo <= x_hi else (x_hi, x_lo)
+        pts = sorted(poly, key=lambda p: p[0])
+
+        def y_at(x: float) -> float:
+            if x <= pts[0][0]:
+                return pts[0][1]
+            if x >= pts[-1][0]:
+                return pts[-1][1]
+            for a, b in zip(pts, pts[1:]):
+                if a[0] <= x <= b[0]:
+                    t = 0.0 if b[0] == a[0] else (x - a[0]) / (b[0] - a[0])
+                    return a[1] + t * (b[1] - a[1])
+            return pts[-1][1]
+
+        out: List[List[float]] = [[float(lo), float(y_at(lo))]]
+        for p in pts:
+            if lo < p[0] < hi:
+                out.append([float(p[0]), float(p[1])])
+        out.append([float(hi), float(y_at(hi))])
+        return out if len(out) >= 2 else None

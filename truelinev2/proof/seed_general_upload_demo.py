@@ -44,25 +44,30 @@ AT, BY = "2026-06-24T00:00:00Z", "seed"
 
 
 def _plan_pdf_bytes() -> bytes:
-    """A name-free synthetic plan: a station-tick row (10+00..16+00) + a red drawn run over ~11+50..13+50,
-    plus a little base linework so the confidence reflects real rival-run competition. NO named-dialect text."""
+    """A name-free REALISTIC synthetic plan: a profile grid + station-tick row (10+00..16+00) + a full-sheet
+    survey baseline + two existing utilities (full-sheet, the classic wrong picks) + the PROPOSED bore drawn
+    red, TIGHTLY spanning the bore-log range 11+75..13+25 (x 295..445). The bore-aware generic selector must
+    pick the red per-bore run over the full-sheet baselines, and clip the stroke to the bore span. NO
+    named-dialect text ('STA <a> TO STA <b>' / 'DIR(ECTIONAL) BORE' trigger the Brenham/ODOT detectors)."""
     doc = fitz.open()
     page = doc.new_page(width=792, height=612)            # landscape, plan-like
-    # NOTE: deliberately avoid 'STA <a> TO STA <b>' and 'DIR(ECTIONAL) BORE' text — those trigger the named
-    # Brenham/ODOT detectors. A generic firm's title block carries neither, so this stays unrecognized.
-    page.insert_text((60, 70), "PROJECT PLAN & PROFILE  -  ALIGNMENT 10+00 thru 16+00 (demo)", fontsize=11)
-    # station ticks along an axis: x=120..720 -> stations 1000..1600 ft (station_at(x) = x + 880)
-    for i, ft in enumerate(range(1000, 1601, 100)):
-        x = 120 + i * 100
-        sta = "%d+%02d" % (ft // 100, ft % 100)
-        page.draw_line((x, 360), (x, 372), color=(0, 0, 0), width=0.8)   # tick mark
-        page.insert_text((x - 12, 388), sta, fontsize=8)
-    # base linework near the alignment (realistic rivals): the survey baseline + an existing utility
-    page.draw_line((120, 366), (720, 366), color=(0, 0, 0), width=0.6)
-    page.draw_line((120, 330), (720, 332), color=(0.2, 0.5, 0.9), width=0.8)
-    # the PROPOSED bore run (red), a single elongated run over x 270..470 -> stations ~1150..1350; its
-    # midpoint sits on the bore span midpoint, so the extent decider selects it over the full-length rivals.
-    page.draw_line((270, 352), (470, 352), color=(1, 0, 0), width=1.8)
+    page.insert_text((60, 60), "PLAN & PROFILE  -  ALIGNMENT 10+00 thru 16+00 (demo)", fontsize=11)
+    # profile grid (light gray) — realistic background noise
+    for gx in range(120, 721, 50):
+        page.draw_line((gx, 300), (gx, 360), color=(0.8, 0.8, 0.8), width=0.4)
+    for gy in range(300, 361, 20):
+        page.draw_line((120, gy), (720, gy), color=(0.8, 0.8, 0.8), width=0.4)
+    # station ticks + labels (the axis row): x=120..720 -> stations 1000..1600 (station_at(x) = x + 880)
+    for ft in range(1000, 1601, 100):
+        x = 120 + (ft - 1000) / 100 * 100
+        page.draw_line((x, 400), (x, 412), color=(0, 0, 0), width=0.8)
+        page.insert_text((x - 12, 426), "%d+%02d" % (ft // 100, ft % 100), fontsize=8)
+    # full-sheet survey baseline + existing utilities (rivals the selector must NOT mistake for the bore)
+    page.draw_line((120, 400), (720, 400), color=(0, 0, 0), width=0.7)
+    page.draw_line((120, 372), (720, 372), color=(0.2, 0.5, 0.9), width=0.8)   # blue utility
+    page.draw_line((120, 388), (720, 388), color=(0.1, 0.6, 0.2), width=0.8)   # green utility
+    # the PROPOSED BORE — red run TIGHTLY spanning the bore-log range 11+75..13+25 (x 295..445)
+    page.draw_line((295, 384), (445, 384), color=(1, 0, 0), width=1.8)
     out = io.BytesIO()
     doc.save(out)
     doc.close()
