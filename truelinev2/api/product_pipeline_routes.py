@@ -157,6 +157,7 @@ from truelinev2.contracts.review_acceptance import (
 from truelinev2.contracts.product_workflow import (
     ProductWorkflowError,
     assemble_closeout_package,
+    export_gate,
     run_product_redline,
 )
 from truelinev2.contracts.source_anchor import (
@@ -837,6 +838,11 @@ def download_export_package(job_id: str,
     nothing rendered or faked. 409 if the job has no validated redline bundle yet; 404 if the job is
     missing."""
     cp, store = ctx.tenant.value, _store_root(c)
+    ok, gate_code = export_gate(store, cp, job_id)
+    if not ok:
+        raise HTTPException(status_code=409,
+                            detail="redline REVIEW not resolved (%s); accept or correct it before downloading"
+                                   % gate_code)
     try:
         data, filename = build_export_zip(store, cp, job_id)
     except NoRedlineBundleError as exc:
@@ -859,6 +865,11 @@ def download_closeout_pdf(job_id: str,
     faked. 409 (specific not-ready) if the job has no validated redline bundle yet; 404 if the job is
     missing."""
     cp, store = ctx.tenant.value, _store_root(c)
+    ok, gate_code = export_gate(store, cp, job_id)
+    if not ok:
+        raise HTTPException(status_code=409,
+                            detail="redline REVIEW not resolved (%s); accept or correct it before downloading"
+                                   % gate_code)
     try:
         data, filename = build_closeout_pdf(store, cp, job_id)
     except NoCloseoutPdfError as exc:

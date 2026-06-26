@@ -53,6 +53,11 @@ STATUS_REVIEW_CANDIDATE = "REVIEW_CANDIDATE"
 STATUS_REVIEW_ACCEPTED = "REVIEW_ACCEPTED"
 STATUS_REVIEW_REJECTED = "REVIEW_REJECTED"
 STATUS_ABSTAINED = "ABSTAINED"
+# Terminal: the engine candidate was REPLACED by a human-confirmed source-anchor correction. The human did
+# NOT accept the engine's placement — they re-placed the redline themselves, so the human-confirmed bundle
+# (not this candidate) is the authoritative redline filling the job's slot. Treated like ABSTAINED by the
+# closeout/export acceptance gate (resolved, non-blocking). Set ONLY after a source-anchor render succeeds.
+STATUS_REVIEW_SUPERSEDED = "REVIEW_SUPERSEDED"
 
 # Engine placement tiers (honest; AUTO is never synthesized by this lane).
 TIER_AUTO = "AUTO"
@@ -63,6 +68,7 @@ TIER_ABSTAIN = "ABSTAIN"
 CANDIDATE_ORIGIN = "ENGINE_GENERATED"
 CANDIDATE_PROVENANCE = "ENGINE_GENERATED_REVIEW_CANDIDATE"
 ACCEPTED_PROVENANCE = "ENGINE_GENERATED_HUMAN_ACCEPTED_REVIEW"
+SUPERSEDED_PROVENANCE = "HUMAN_CONFIRMED_SOURCE_ANCHOR_SUPERSEDES_ENGINE_REVIEW"
 
 # Named, honest reason AUTO is blocked for an uploaded corpus drawn as one continuous alignment with no
 # per-bore termini / tight unique run (the banked finding). Surfaced so REVIEW is explained, never to claim
@@ -311,6 +317,44 @@ def reject_review_candidate(store_root, customer_project_id, job_id, candidate_i
     rec["audit"].append({"action": "review_candidate_rejected", "at": at, "by": by,
                          "from": STATUS_REVIEW_CANDIDATE, "to": STATUS_REVIEW_REJECTED,
                          "reason": reason.strip()})
+    _write(store_root, rec)
+    return rec
+
+
+def supersede_review_candidate_for_reviewed_bore_log(
+        store_root, customer_project_id, job_id, reviewed_bore_log_id, *,
+        source_anchor_bundle_id, at, by):
+    """Mark the engine REVIEW candidate for ``reviewed_bore_log_id`` as SUPERSEDED because a human-confirmed
+    source-anchor render has REPLACED it as the job's authoritative redline.
+
+    Called ONLY after a source-anchor render SUCCEEDS (the human-confirmed bundle fills the job's redline
+    slot), so a SUPERSEDED record is itself proof that a human correction — not the engine candidate — is the
+    placed redline. The gated closeout/export workflow then treats it like ABSTAINED (resolved, non-blocking),
+    which is how a corrected LOW/wrong candidate becomes packageable without falsely "accepting" the engine's
+    placement.
+
+    Idempotent and safe: returns None when there is no engine candidate to supersede (a direct correction with
+    no prior engine REVIEW); returns the record unchanged if already SUPERSEDED or ABSTAINED (an ABSTAINED
+    record produced no geometry and never gates). Supersedes from REVIEW_CANDIDATE / REVIEW_REJECTED /
+    REVIEW_ACCEPTED (the human re-placed it regardless of the prior decision — this also clears the
+    reject-first trap)."""
+    candidate_id = _candidate_id(reviewed_bore_log_id)
+    try:
+        rec = load_review_candidate(store_root, customer_project_id, job_id, candidate_id)
+    except ReviewCandidateNotFoundError:
+        return None
+    if rec["status"] in (STATUS_REVIEW_SUPERSEDED, STATUS_ABSTAINED):
+        return rec
+    prior = rec["status"]
+    rec["status"] = STATUS_REVIEW_SUPERSEDED
+    rec["provenance"] = SUPERSEDED_PROVENANCE
+    rec["superseded_at"] = at
+    rec["superseded_by"] = by
+    rec["superseded_by_source_anchor_bundle"] = source_anchor_bundle_id
+    rec["updated_at"] = at
+    rec["audit"].append({"action": "review_candidate_superseded_by_human_correction", "at": at, "by": by,
+                         "from": prior, "to": STATUS_REVIEW_SUPERSEDED,
+                         "reason": "human-confirmed source-anchor render replaced the engine candidate"})
     _write(store_root, rec)
     return rec
 

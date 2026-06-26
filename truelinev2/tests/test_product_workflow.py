@@ -28,6 +28,8 @@ from truelinev2.contracts.reviewed_bore_log import (
     GROUPING_CONFIRMED, SEPARATE_BORE, add_extracted_rows, create_reviewed_bore_log,
     define_segment_group, review_row_in_log, set_grouping_status,
 )
+from truelinev2.contracts.source_anchor import create_source_anchor
+from truelinev2.render.source_anchor_render import render_job_source_anchors
 from truelinev2.contracts import recognized_corpus_handoff as rch
 from truelinev2.contracts import review_acceptance as ra
 from truelinev2.contracts import product_workflow as pw
@@ -212,6 +214,14 @@ def test_review_gate_pure_cases():
     ok, status, code = pw._review_gate([{"status": ra.STATUS_ABSTAINED},
                                         {"status": ra.STATUS_REVIEW_ACCEPTED}])
     assert ok and code is None
+    # SUPERSEDED is IGNORED — a human source-anchor correction replaced the engine candidate, so it is the
+    # authoritative placed redline now and never gates closeout.
+    ok, status, code = pw._review_gate([{"status": ra.STATUS_REVIEW_SUPERSEDED}])
+    assert ok and code is None
+    # but a SUPERSEDED candidate next to a still-pending sibling REVIEW still blocks on the pending one.
+    ok, status, code = pw._review_gate([{"status": ra.STATUS_REVIEW_SUPERSEDED},
+                                        {"status": ra.STATUS_REVIEW_CANDIDATE}])
+    assert not ok and code == pw.REVIEW_NOT_ACCEPTED
 
 
 def test_failed_job_cannot_advance(tmp_path):
@@ -283,3 +293,70 @@ def test_uploaded_review_after_accept_is_ready_to_package(tmp_path):
     pkg = pw.assemble_closeout_package(tmp_path, CP, JOB, at=AT, by=BY)
     assert pkg["assembled"] is True and pkg["blocker"] is None
     assert pkg["export_status"] == "READY"
+
+
+# --------------------------------------------------------------------------- #
+# F. Correction lane — a LOW/wrong engine REVIEW candidate, CORRECTED by a human source-anchor render,
+#    becomes packageable WITHOUT falsely "accepting" the engine's geometry (the core mission fix). The
+#    correction SUPERSEDES the candidate (it never gates again) and fills the job's redline slot.
+# --------------------------------------------------------------------------- #
+def test_source_anchor_correction_supersedes_review_and_unblocks_closeout(tmp_path):
+    _generic_review_job(tmp_path)
+    reg = {"corpora": [], "configured": True}
+
+    first = pw.run_product_redline(tmp_path, CP, JOB, registry=reg, at=AT, by=BY)
+    assert first["path"] == pw.PATH_UPLOADED_REVIEW
+    cid = first["candidate_id"]
+
+    # Before correction a pending REVIEW blocks closeout — the dead-end this fix removes.
+    blocked = pw.assemble_closeout_package(tmp_path, CP, JOB, at=AT, by=BY)
+    assert blocked["assembled"] is False and blocked["blocker"] == pw.REVIEW_NOT_ACCEPTED
+
+    # Human correction: capture + validate a source anchor, then render it (the customer "Correct redline
+    # placement" action). This fills the job's redline slot with the human-confirmed bundle.
+    plan_upload = next(u["upload_id"] for u in load_job(tmp_path, CP, JOB)["uploads"]
+                       if u["kind"] == "PLAN_PDF")
+    create_source_anchor(
+        tmp_path, CP, JOB, source_anchor_id="sa-1", plan_upload_id=plan_upload,
+        reviewed_bore_log_id=RBL, page_number=1,
+        control_points=[{"x": 250.0, "y": 392.0}, {"x": 350.0, "y": 392.0}], group_id=None,
+        at=AT, by=BY, page_bounds=(0.0, 0.0, 612.0, 792.0),
+        start_identity={"station": "11+50"}, end_identity={"station": "12+50"})
+    summary = render_job_source_anchors(tmp_path, CP, JOB, "sa-1", at=AT, by=BY)
+    assert summary["status"] == "SUCCEEDED"
+    assert summary["bundle_origin"] == "HUMAN_CONFIRMED_SOURCE_ANCHOR"
+
+    # The engine candidate is now SUPERSEDED — NOT accepted (the human replaced it, never approving the
+    # engine's wrong/low geometry).
+    rec = ra.load_review_candidate(tmp_path, CP, JOB, cid)
+    assert rec["status"] == ra.STATUS_REVIEW_SUPERSEDED
+    assert rec["provenance"] == ra.SUPERSEDED_PROVENANCE
+
+    # Re-running the redline path (the workspace lands here on rehydrate) reports placed + ready, no re-accept.
+    again = pw.run_product_redline(tmp_path, CP, JOB, registry=reg, at=AT, by=BY)
+    assert again["requires_acceptance"] is False and again.get("review_superseded") is True
+
+    # Closeout/export now assembles from the human-confirmed redline — the user is no longer stranded.
+    pkg = pw.assemble_closeout_package(tmp_path, CP, JOB, at=AT, by=BY)
+    assert pkg["assembled"] is True and pkg["blocker"] is None
+    assert pkg["export_status"] == "READY"
+
+
+def test_export_gate_blocks_unaccepted_download_but_passes_resolved(tmp_path):
+    # The ZIP/PDF download routes share this gate, so a pending/rejected REVIEW is never downloadable while
+    # recognized/AUTO (no candidate), an accepted REVIEW, a corrected SUPERSEDED candidate, and a stale
+    # ABSTAINED record all pass.
+    create_customer_project(tmp_path, CP, "Label", AT)
+    create_job(tmp_path, CP, JOB, AT, BY)
+    ok, code = pw.export_gate(tmp_path, CP, JOB)          # no candidate (recognized/AUTO) -> packageable
+    assert ok and code is None
+
+    _inject_review_candidate(tmp_path, ra.STATUS_REVIEW_CANDIDATE)
+    ok, code = pw.export_gate(tmp_path, CP, JOB)          # pending REVIEW -> blocked
+    assert not ok and code == pw.REVIEW_NOT_ACCEPTED
+
+    rec = ra.load_review_candidate(tmp_path, CP, JOB, "rc-%s" % RBL)
+    rec["status"] = ra.STATUS_REVIEW_SUPERSEDED           # human-corrected -> packageable again
+    ra._write(tmp_path, rec)
+    ok, code = pw.export_gate(tmp_path, CP, JOB)
+    assert ok and code is None

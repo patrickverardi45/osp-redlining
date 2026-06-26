@@ -45,6 +45,9 @@ from truelinev2.contracts.manifest_handoff import (
     record_handoff_attempt,
 )
 from truelinev2.contracts.published_bundle_consumer import StaticBundleConsumer
+from truelinev2.contracts.review_acceptance import (
+    supersede_review_candidate_for_reviewed_bore_log,
+)
 
 ENGINE_OUTPUTS_SUBDIR = "engine_outputs"
 RENDER_STATUS = "REVIEW"                       # dashed, human-adjustable — NEVER AUTO_SELECT (solid)
@@ -180,4 +183,13 @@ def render_job_source_anchors(store_root, customer_project_id, job_id, source_an
         raise SourceAnchorStateError(
             "render handoff did not succeed (%s): %s"
             % (handoff.get("status"), "; ".join(handoff.get("errors") or [])))
+
+    # The human-confirmed render is now the authoritative redline filling this job's slot. Supersede any
+    # pending/rejected engine REVIEW candidate for the same reviewed bore-log so the gated closeout/export
+    # workflow no longer treats the job as un-accepted — the correction IS the placement (no false "accept"
+    # of the engine's geometry). Safe no-op when there was no engine candidate (a direct source-anchor).
+    bundle_id = (handoff.get("artifact_bundle_attachment") or {}).get("bundle_id")
+    supersede_review_candidate_for_reviewed_bore_log(
+        store_root, customer_project_id, job_id, rbl_id,
+        source_anchor_bundle_id=bundle_id, at=at, by=by)
     return _summary(store_root, customer_project_id, job_id, handoff, anchor_ids)

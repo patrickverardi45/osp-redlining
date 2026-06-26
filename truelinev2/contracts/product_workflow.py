@@ -50,6 +50,7 @@ from truelinev2.contracts.review_acceptance import (
     STATUS_REVIEW_ACCEPTED,
     STATUS_REVIEW_CANDIDATE,
     STATUS_REVIEW_REJECTED,
+    STATUS_REVIEW_SUPERSEDED,
     TIER_ABSTAIN,
     TIER_AUTO,
     TIER_REVIEW,
@@ -172,16 +173,20 @@ def run_product_redline(store_root, customer_project_id, job_id, *, registry, at
         review_status = (gen.get("record") or {}).get("status")
         review_accepted = review_status == STATUS_REVIEW_ACCEPTED
         review_rejected = review_status == STATUS_REVIEW_REJECTED
+        # SUPERSEDED: the human corrected this candidate via a source-anchor render — the redline is placed
+        # (human-confirmed) and needs no acceptance, exactly like an accepted candidate.
+        review_superseded = review_status == STATUS_REVIEW_SUPERSEDED
         return {
             "path": PATH_UPLOADED_AUTO if is_auto else PATH_UPLOADED_REVIEW,
             "runnable": True, "rendered": True,
             "provenance": PROVENANCE_DETERMINISTIC_AUTO if is_auto else PROVENANCE_REVIEW_CANDIDATE,
             "recognized_corpus_id": None, "deterministic_log_id": None,
             "candidate_id": gen.get("candidate_id"), "review": gen, "bundle": gen.get("bundle"),
-            # An AUTO render needs no acceptance; a REVIEW needs it ONLY while still pending (not yet accepted).
-            "requires_acceptance": (not is_auto) and not review_accepted,
+            # An AUTO render needs no acceptance; a REVIEW needs it ONLY while still pending (not yet accepted
+            # and not superseded by a human correction).
+            "requires_acceptance": (not is_auto) and not review_accepted and not review_superseded,
             "review_status": review_status, "review_accepted": review_accepted,
-            "review_rejected": review_rejected, "blockers": [],
+            "review_rejected": review_rejected, "review_superseded": review_superseded, "blockers": [],
         }
 
     # --- Path C: abstain with SPECIFIC, preserved reasons (recognition + engine), accept stays blocked - #
@@ -198,9 +203,13 @@ def _review_gate(cands) -> tuple:
     rejected) blocks closeout. An ABSTAINED record (the engine produced NO geometry) is IGNORED: it never
     gates a later authoritative render — a job recognized as a deterministic package, or one that abstained
     and has no render at all, is not blocked here (the latter hard-blocks honestly at closeout on the missing
-    manifest, which is the truthful reason). A recognized/AUTO job has no review candidate -> passes. Returns
+    manifest, which is the truthful reason). A SUPERSEDED record is also IGNORED: the human corrected the
+    candidate via a source-anchor render, which is the authoritative redline now filling the slot (SUPERSEDED
+    is set ONLY by a successful human-confirmed render, so ignoring it never lets a still-pending engine
+    REVIEW through). A recognized/AUTO job has no review candidate -> passes. Returns
     (ok, review_status, blocker_code)."""
-    statuses = [c.get("status") for c in (cands or []) if c.get("status") != STATUS_ABSTAINED]
+    resolved = (STATUS_ABSTAINED, STATUS_REVIEW_SUPERSEDED)
+    statuses = [c.get("status") for c in (cands or []) if c.get("status") not in resolved]
     if not statuses:
         return True, None, None
     if all(s == STATUS_REVIEW_ACCEPTED for s in statuses):
@@ -210,6 +219,20 @@ def _review_gate(cands) -> tuple:
     if any(s == STATUS_REVIEW_CANDIDATE for s in statuses):
         return False, STATUS_REVIEW_CANDIDATE, REVIEW_NOT_ACCEPTED
     return True, statuses[0], None
+
+
+def export_gate(store_root, customer_project_id, job_id) -> tuple:
+    """Public REVIEW-acceptance gate for the DOWNLOAD routes (export ZIP / closeout PDF), identical to the
+    closeout-assembly gate so EVERY export path agrees: a job's redline may be downloaded only when its REVIEW
+    is RESOLVED. A recognized DETERMINISTIC / engine AUTO job (no candidate), an ACCEPTED REVIEW, a
+    human-corrected SUPERSEDED candidate, and a stale ABSTAINED record all PASS; a still-pending
+    REVIEW_CANDIDATE or a REVIEW_REJECTED candidate BLOCKS — so an un-accepted or rejected dashed REVIEW is
+    never downloadable. Returns (ok, blocker_code)."""
+    validate_customer_project_id(customer_project_id)
+    validate_job_id(job_id)
+    cands = list_review_candidates(store_root, customer_project_id, job_id)
+    ok, _status, code = _review_gate(cands)
+    return ok, code
 
 
 def assemble_closeout_package(store_root, customer_project_id, job_id, *, at, by,
