@@ -186,7 +186,9 @@ def _cap_review(placement):
 # must DETECT that ambiguity and report it honestly (LOW + correction-recommended), not paper over it. ----- #
 _GENERIC_MIN_COVER = 0.5         # a run must cover >= this fraction of the bore span to be PLACED at all
 _GENERIC_CONFIDENT_COVER = 0.85  # below this, coverage is PARTIAL -> the placement can never exceed low-MEDIUM
-_GENERIC_HIGH_COVER = 0.90       # HIGH confidence needs near-full span coverage
+_GENERIC_HIGH_COVER = 0.90       # near-full span coverage (a REASON the run fits; no longer unlocks a HIGH band)
+_GENERIC_MAX_CONF = 0.70         # generic INFERENCE-lane ceiling: caps at MEDIUM, NEVER HIGH (no source-tight
+                                 # per-bore evidence — see C2). PROVISIONAL — validated on one corpus (ODOT).
 _GENERIC_FRAG_COVER = 0.25       # a non-baseline run covering >= this much of the span is a PLAUSIBLE RIVAL
 _GENERIC_FULL_SHEET_FRAC = 0.8   # a run spanning >= this fraction of the detected sheet range = a baseline
 _GENERIC_BORE_NOTE_PT = 220.0    # a printed 'BORE' note within this many display-pt weakly corroborates
@@ -388,13 +390,13 @@ def _confidence(placement, candidate, bore, signals):
         warnings.append("PLACED_ON_FULL_SHEET_ALIGNMENT_LINE")
         conf = min(conf, 0.35)                              # baseline pick: station location only
 
-    conf = max(0.05, min(0.85, conf))
-    band = "HIGH" if conf >= 0.72 else ("MEDIUM" if conf >= 0.50 else "LOW")
-    # HIGH demands genuinely strong, unambiguous evidence — near-full coverage + tight extent + no rivals on a
-    # per-bore (non-baseline) run. Anything short of that is at most MEDIUM (verify), never HIGH.
-    if band == "HIGH" and not (cover >= _GENERIC_HIGH_COVER and extent_fit >= 0.80
-                               and fragments == 0 and competition == 0 and not full_sheet):
-        band = "MEDIUM"
+    # The generic lane INFERS the bore from plan geometry with NO source-tight per-bore evidence (on a real
+    # plan the bore is one of many co-linear drawn lines; only an annotation a named dialect reads could single
+    # it out). Its honest ceiling is therefore MEDIUM ("verify") — it must NEVER show HIGH to a customer, even
+    # on a clean single-bore plan where coverage/extent look perfect. Capped at _GENERIC_MAX_CONF; banded
+    # MEDIUM/LOW only. (C2 — a HIGH on an inference lane that itself reports NO_PER_BORE_TERMINI is dishonest.)
+    conf = max(0.05, min(_GENERIC_MAX_CONF, conf))
+    band = "MEDIUM" if conf >= 0.50 else "LOW"
     correction = (band == "LOW" or full_sheet or fragments >= 2
                   or cover < _GENERIC_CONFIDENT_COVER)
     if band == "LOW":
@@ -412,10 +414,13 @@ def _run_engine(plan_path, borelog_path):
 
     GENERIC FALLBACK: when no named (Brenham/ODOT) dialect recognizes the plan, OR the named engine
     abstains / places nothing drawable, the name-free GenericGeometryDialect is tried. It reconstructs a
-    plausible drawn run from generic geometry + the station-label axis and runs through the SAME
-    ``run_match`` + ``decide_by_extent`` (so it inherits their span-coverage + uniqueness gates), capped to
-    REVIEW. This NEVER fires for a recognized plan that places — the deterministic ODOT/Brenham paths are
-    byte-identical. The returned ``dialect`` instance lets the renderer read back the traced centerline.
+    plausible drawn run from generic geometry + the station-label axis and places it via the dedicated
+    BORE-AWARE ``_place_generic`` (select the drawn run most likely to BE the bore + clip the stroke to the
+    bore-log span). That helper constructs the candidate DIRECTLY as REVIEW — it does NOT route through
+    ``run_match`` / ``decide_by_extent`` — and earns a graded MEDIUM/LOW confidence from real coverage +
+    uniqueness; it is never AUTO and (capped at ``_GENERIC_MAX_CONF``) never HIGH. This NEVER fires for a
+    recognized plan that places — the deterministic ODOT/Brenham paths are byte-identical. The returned
+    ``dialect`` instance lets the renderer read back the traced centerline.
 
     ``extra_legs`` are source-supported drawn legs on REFERENCED sheets OTHER than the winner's sheet
     (cross-sheet REVIEW coverage). ``matchline`` is the read-only printed-matchline continuity verdict over

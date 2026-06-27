@@ -129,14 +129,15 @@ def test_cap_review_forces_review_from_auto():
     assert uce.GENERIC_CAP_REVIEW in capped.caveats
 
 
-def test_confidence_high_only_when_placement_earns_it():
-    # Confidence is EARNED by placement quality: near-FULL span coverage + tight extent + endpoint bracket +
-    # NO plausible rivals. Coverage and rival-absence are mandatory — extent match alone is not enough.
+def test_confidence_capped_at_medium_never_high():
+    # The generic lane is an INFERENCE with no source-tight per-bore evidence, so its honest ceiling is
+    # MEDIUM ("verify") — even a PERFECT placement (full coverage + tight extent + endpoint bracket + zero
+    # rivals) tops out at MEDIUM, never HIGH (C2). Score is capped at _GENERIC_MAX_CONF.
     bore = _bore()
     hi = uce._confidence(None, object(), bore,
                          {"score": 0.95, "cover": 1.0, "extent_fit": 1.0, "end_fit": 0.95, "is_red": True,
                           "full_sheet": False, "fragments": 0, "competition": 0, "axis_ticks": 7})
-    assert hi["band"] == "HIGH" and hi["score"] <= 0.85      # never AUTO (REVIEW ceiling)
+    assert hi["band"] == "MEDIUM" and hi["score"] <= uce._GENERIC_MAX_CONF
     assert any("matches the bore-log span" in r for r in hi["reasons"])
     assert hi["correction_recommended"] is False
 
@@ -311,19 +312,36 @@ def test_place_generic_does_not_let_red_baseline_beat_the_bore(tmp_path):
         plan.close()
 
 
-def test_place_generic_clean_single_bore_stays_confident(tmp_path):
-    # The clean single-bore demo case (one tight red run, full coverage, no rivals) MUST remain confident —
-    # the honesty fixes for real plans must not regress the legitimate high-confidence placement.
+def test_place_generic_clean_single_bore_is_medium_not_high(tmp_path):
+    # The clean single-bore demo case (one tight red run, full coverage, no rivals) is the engine's STRONGEST
+    # generic placement — and it still tops out at MEDIUM (verify), never HIGH, because the generic lane only
+    # INFERS which drawn line is the bore (no source-tight per-bore evidence). It is confident enough to need
+    # no correction, but honestly labeled MEDIUM (C2).
     plan = PlanPdf(_realistic_plan(tmp_path))
     try:
         d = GenericGeometryDialect()
         placement, sig = uce._place_generic(_bore175(), plan, d, 0)
         conf = uce._confidence(placement, placement.matched_callouts[0], _bore175(),
                                d.signals_for(placement.matched_callouts[0]))
-        assert conf["band"] == "HIGH" and conf["correction_recommended"] is False
+        assert conf["band"] == "MEDIUM" and conf["correction_recommended"] is False
         assert sig["fragments"] == 0 and sig["cover"] >= 0.9
     finally:
         plan.close()
+
+
+def test_generic_confidence_never_high_even_with_maxed_signals():
+    # REGRESSION LOCK (C2): no combination of signals — however perfect — may produce a HIGH band from the
+    # generic INFERENCE lane. If a future weight change re-inflates confidence, this fails. The lane caps at
+    # MEDIUM; HIGH is structurally unreachable.
+    bore = _bore()
+    for cover in (0.90, 0.95, 1.0):
+        for extent in (0.80, 0.95, 1.0):
+            conf = uce._confidence(None, object(), bore,
+                                   {"score": 1.0, "cover": cover, "extent_fit": extent, "end_fit": 1.0,
+                                    "is_red": True, "full_sheet": False, "fragments": 0, "competition": 0,
+                                    "axis_ticks": 9, "bore_note_dist": 10.0})
+            assert conf["band"] != "HIGH", f"generic lane must never reach HIGH (cover={cover}, extent={extent})"
+            assert conf["score"] <= uce._GENERIC_MAX_CONF
 
 
 def test_place_generic_baseline_only_is_low_and_unverified(tmp_path):
