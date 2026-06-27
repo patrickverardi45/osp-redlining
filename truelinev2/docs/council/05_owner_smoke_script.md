@@ -1,25 +1,25 @@
 # FieldRoute — Owner Smoke Script
 
 **Audience:** Patrick (owner), running behind Cloudflare Access. No prior context needed.
-**Goal:** prove a real user can take a project from upload → redline → review/correct → closeout → print/save/download, powered by the real v2 engine, with no fake outputs **and no "demo" language anywhere customer-facing.**
+**Goal:** prove a real user can take a project from upload → redline → review/correct → closeout → print/save/download, powered by the real v2 engine, with no fake outputs **and the app reads as the real FieldRoute product — no placeholder / test-environment framing, and no raw store slugs anywhere customer-facing (Diagnostics + Technical details included).**
 **Rule of the day:** *HTTP 200 is not proof.* A step "passes" only if you reach the EXPECTED result **without anyone explaining where to click**. Anything you have to puzzle over, work around, or be told about = a **RED FLAG** (write it down — it is a finding, not a pass).
 
 This script is **read-only against the running product**. It exercises the UI a customer would use. `<BASE>` = `https://staging.fieldroute.io` (staging) or `http://localhost:3100` (a local browser smoke).
 
-> **Naming note:** the projects below are the seeded example projects. They appear in the **Projects** list by their product names (e.g. "Recognized project — automatic redline"). The raw store IDs (`recognized-log9`, `demo-general-upload`, …) appear only in the URL and under **Diagnostics / Technical details** — never as a visible card, title, or button. That is by design.
+> **Naming note:** the projects below are the seeded example projects. They appear in the **Projects** list by their product names (e.g. "Recognized project — automatic redline"). Any technical reference shown (the URL `?job=` value, and the **Diagnostics / Technical details** "Project key" / "Internal reference") is a **neutral alias** such as `project-clean-placement` / `project-recognized-automatic` — never the raw internal store slug. The internal store ids are masked at the UI layer (renaming them in the store is risky), so they are never rendered.
 
 ---
 
-## 0. Front door + nav (no "demo" anywhere)
+## 0. Front door + nav (real product framing)
 
 1. Open `<BASE>/`.
    - **EXPECT:** a clean FieldRoute landing — hero "Automatic OSP redline handoff", cards **"Start a new project"** and **"Finished redline gallery"**, and a "How FieldRoute works" explainer.
    - The left sidebar nav is exactly **Home · New project · Projects**. The top bar reads **FieldRoute · Access-gated**.
-   - **RED FLAG:** the word **"Demo"/"Demos"/"Demo workflows"/"demonstration"/"Staging demo"** appears anywhere on screen. (There should be none.)
+   - **RED FLAG:** any placeholder / test-environment framing appears on screen — a "Staging" banner, a "workflow chooser", or the literal word for a throwaway/example harness. There should be none.
 
 2. Click **New project** (or **Projects**) in the sidebar.
-   - **EXPECT:** the **Projects** workspace — a **Project** list with product-named projects ("Recognized project — automatic redline", "Uploaded project — clean placement", "Uploaded project — ambiguous (correct it)", "Uploaded project — REVIEW acceptance", "Uploaded project — cross-sheet REVIEW", "Finished redline showcase") plus a "Create project" box.
-   - **RED FLAG:** any project card/button shows a raw id like `demo-general-upload`, or says "demo".
+   - **EXPECT:** the **Projects** workspace — a **Project** list with product-named projects ("Recognized project — automatic redline", "Uploaded project — clean placement", "Uploaded project — ambiguous correction", "Uploaded project — REVIEW acceptance", "Uploaded project — cross-sheet REVIEW", "Finished redline showcase") plus a "Create project" box.
+   - **RED FLAG:** any project card/button shows a raw store slug instead of the product name.
 
 ---
 
@@ -101,7 +101,7 @@ During Flow 2/3, press browser **Reload** on the project URL after each major st
 
 ## Owner sign-off (tick all)
 
-- [ ] **No "demo" language anywhere customer-facing** (landing, sidebar, Projects, project workspace, closeout review, export buttons, downloaded filenames). Raw store ids appear only under Diagnostics / Technical details.
+- [ ] **The app reads as the real FieldRoute product** — no placeholder / test-environment framing, and **no raw store slug anywhere** (landing, sidebar, Projects, workspace, Diagnostics, Technical details, closeout review, export buttons, downloaded filenames, the URL `?job=` value). Technical references shown are neutral aliases (`project-clean-placement`, …).
 - [ ] Flow 1: recognized project → automatic red redline → assemble → real PDF + ZIP.
 - [ ] Flow 2: clean uploaded project → **Medium** confidence (never High) → accept → assemble → download.
 - [ ] Flow 3: ambiguous → Low → corrected on the plan → superseded → assemble → download (Assemble blocked before Render).
