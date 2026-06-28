@@ -18,6 +18,8 @@ Name-free: no customer / place / dialect literals — the format is auto-detecte
 """
 from __future__ import annotations
 
+import openpyxl
+
 from truelinev2.contracts.extracted_row import TABLE_IMPORT, new_extracted_row
 from truelinev2.ingest.normalize import load_borelog
 
@@ -26,6 +28,49 @@ _ROW_ID_PREFIX = "extracted"
 
 class BoreLogExtractionError(Exception):
     """The uploaded bore-log file could not be parsed into reviewable rows."""
+
+
+def _read_optional_fields(path) -> dict:
+    """Read source-backed OPTIONAL bore-log columns the canonical Bore model does not carry (date / crew /
+    boc), so the owner info card can show them WHEN PRESENT. Header-name matched on GENERIC field names (never
+    customer/place names); date/crew = first non-empty value, boc = the minimum numeric reading. Returns {}
+    on any read failure or when a column is absent/empty — the caller then surfaces an honest 'not available',
+    never an invented value. READ-ONLY; opens nothing else and changes no engine/Bore behavior."""
+    try:
+        wb = openpyxl.load_workbook(str(path), data_only=True)
+        try:
+            rows = list(wb.worksheets[0].iter_rows(values_only=True))
+        finally:
+            wb.close()
+    except Exception:  # noqa: BLE001 - any unreadable/foreign format -> no optional fields (honest)
+        return {}
+    if not rows:
+        return {}
+    header = [str(h).strip().lower() if h is not None else "" for h in rows[0]]
+
+    def col(*names):
+        for n in names:
+            if n in header:
+                return header.index(n)
+        return None
+
+    ci_date, ci_crew, ci_boc = col("date"), col("crew"), col("boc", "boc_ft")
+    out: dict = {}
+    bocs = []
+    for r in rows[1:]:
+        if not r:
+            continue
+        if ci_date is not None and "date" not in out and ci_date < len(r) and r[ci_date] not in (None, ""):
+            out["date"] = str(r[ci_date]).strip()
+        if ci_crew is not None and "crew" not in out and ci_crew < len(r) and r[ci_crew] not in (None, ""):
+            out["crew"] = str(r[ci_crew]).strip()
+        if ci_boc is not None and ci_boc < len(r):
+            v = r[ci_boc]
+            if isinstance(v, (int, float)) and not isinstance(v, bool):
+                bocs.append(float(v))
+    if bocs:
+        out["boc_min_ft"] = min(bocs)
+    return out
 
 
 def _next_row_id(existing: set) -> str:
@@ -62,6 +107,9 @@ def extract_rows_from_borelog(path, source_upload_id, *, at, by, existing_row_id
         "source_file": bore.source_file,
         "print_raw": bore.print_raw,
     }
+    # Additively surface source-backed optional columns (date / crew / boc) the Bore model omits, WHEN
+    # present — for the owner info card. Absent columns are simply not added (caller shows 'not available').
+    raw.update(_read_optional_fields(path))
     # normalized = candidate SUGGESTIONS (never truth); mirrors the manual-entry row shape so the existing
     # review gate treats an extracted row identically to a typed one.
     normalized = {"start_station": bore.station_start, "end_station": bore.station_end}

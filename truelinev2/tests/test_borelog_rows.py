@@ -36,6 +36,22 @@ def test_extract_maps_bore_to_untrusted_table_import_row(monkeypatch):
     assert row["source_upload_id"] == "up-1"
 
 
+def test_extract_includes_optional_source_fields_when_present(monkeypatch):
+    monkeypatch.setattr(br, "load_borelog", lambda p: _bore())
+    monkeypatch.setattr(br, "_read_optional_fields",
+                        lambda p: {"date": "2025-12-17", "crew": "tx1-1", "boc_min_ft": 7.0})
+    raw = br.extract_rows_from_borelog("x.xlsx", "up-1", at="t", by="u")[0]["raw"]
+    assert raw["date"] == "2025-12-17" and raw["crew"] == "tx1-1" and raw["boc_min_ft"] == 7.0
+
+
+def test_extract_omits_optional_fields_when_absent(monkeypatch):
+    # An absent / unreadable optional column is NEVER invented — the field is simply not present.
+    monkeypatch.setattr(br, "load_borelog", lambda p: _bore())
+    monkeypatch.setattr(br, "_read_optional_fields", lambda p: {})
+    raw = br.extract_rows_from_borelog("x.xlsx", "up-1", at="t", by="u")[0]["raw"]
+    assert "date" not in raw and "crew" not in raw and "boc_min_ft" not in raw
+
+
 def test_extract_row_id_avoids_existing(monkeypatch):
     monkeypatch.setattr(br, "load_borelog", lambda p: _bore())
     rows = br.extract_rows_from_borelog("x.xlsx", "up-1", at="t", by="u",
