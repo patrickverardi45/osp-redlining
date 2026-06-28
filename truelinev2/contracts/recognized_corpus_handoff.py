@@ -156,6 +156,13 @@ def _union_artifacts(log_id):
     return out
 
 
+def _union_span(log_id):
+    """Real committed bore span ({start_station, end_station, label}) for a drawn log from the all-50 union
+    manifest, or None. READ-ONLY — used to label a recognized bore honestly (the span is never invented)."""
+    lg = _load_union_logs().get(log_id) or {}
+    return lg.get("span")
+
+
 def _deterministic_artifacts(log_id):
     """(manifest_path, source_png_path, sheets) for each committed render PNG of ``log_id``. First the
     callout-route-assembly sweep dir (the 37 NEW_TARGETS — byte-identical to the existing renders, untouched);
@@ -172,9 +179,12 @@ def _deterministic_artifacts(log_id):
 
 
 def _recognize(store_root, customer_project_id, job_id, registry, job):
-    """Pure recognition over the registry + job: returns (corpus, mapped_log_id, rbl_id, ready_rbls). corpus
-    is the matched registry entry (dict) or None; mapped_log_id/rbl_id are set only when a recognized plan
-    AND an engine-ready reviewed_bore_log whose source upload maps to a deterministic log are both present."""
+    """Pure recognition over the registry + job: returns
+    (corpus, mapped_log_id, rbl_id, ready_rbls, plan_uploads, recognized). ``corpus`` is the matched registry
+    entry (dict) or None. ``recognized`` is the FULL list of ``(rbl_id, log_id)`` pairs — EVERY engine-ready
+    reviewed_bore_log whose source upload maps to a deterministic log (the multi-bore set); it scales to N.
+    ``mapped_log_id``/``rbl_id`` are the FIRST recognized pair (the single-bore legacy fields), set only when a
+    recognized plan AND at least one mapped engine-ready reviewed_bore_log are both present."""
     plan_uploads = _uploads_of_kind(job, PLAN_PDF_KIND)
     plan_shas = {u.get("sha256") for u in plan_uploads if u.get("sha256")}
     corpus = next((c for c in registry.get("corpora", [])
@@ -182,13 +192,13 @@ def _recognize(store_root, customer_project_id, job_id, registry, job):
     bore_map = (corpus.get("bore_log_sha256_to_log") or {}) if corpus else {}
     ready_rbls = [r for r in list_reviewed_bore_logs(store_root, customer_project_id, job_id)
                   if is_engine_ready(r)]
-    rbl_id = mapped_log = None
+    recognized = []                                          # [(rbl_id, log_id)] — every mapped engine-ready rbl
     for r in ready_rbls:
         up = next((u for u in job.get("uploads", []) if u.get("upload_id") == r.get("source_upload_id")), None)
         if up and up.get("sha256") in bore_map:
-            rbl_id, mapped_log = r.get("reviewed_bore_log_id"), bore_map[up["sha256"]]
-            break
-    return corpus, mapped_log, rbl_id, ready_rbls, plan_uploads
+            recognized.append((r.get("reviewed_bore_log_id"), bore_map[up["sha256"]]))
+    rbl_id, mapped_log = recognized[0] if recognized else (None, None)
+    return corpus, mapped_log, rbl_id, ready_rbls, plan_uploads, recognized
 
 
 def evaluate_recognized_corpus_handoff(store_root, customer_project_id, job_id, *, registry) -> dict:
@@ -200,10 +210,26 @@ def evaluate_recognized_corpus_handoff(store_root, customer_project_id, job_id, 
     validate_customer_project_id(customer_project_id)
     validate_job_id(job_id)
     job = load_job(store_root, customer_project_id, job_id)
-    corpus, mapped_log, rbl_id, ready_rbls, plan_uploads = _recognize(
+    corpus, mapped_log, rbl_id, ready_rbls, plan_uploads, recognized = _recognize(
         store_root, customer_project_id, job_id, registry, job)
     artifacts = _deterministic_artifacts(mapped_log)
     configured = bool(registry.get("configured"))
+
+    # Every recognized log that has committed render artifacts (deduped by log_id, recognition order) — the
+    # per-bore step-through list. ADDITIVE: the single-bore legacy fields below are unchanged.
+    recognized_logs = []
+    _seen = set()
+    for (_r, _l) in recognized:
+        if _l in _seen:
+            continue
+        _arts = _deterministic_artifacts(_l)
+        if not _arts:
+            continue
+        _seen.add(_l)
+        recognized_logs.append({
+            "log_id": _l, "reviewed_bore_log_id": _r, "bore_span": _union_span(_l),
+            "render_sheets": sorted({s for (_p, _src, ss) in _arts for s in ss}),
+        })
 
     blockers = []
     if not plan_uploads:
@@ -243,19 +269,23 @@ def evaluate_recognized_corpus_handoff(store_root, customer_project_id, job_id, 
         "render_sheets": sorted({s for (_p, _src, ss) in artifacts for s in ss}) if runnable else [],
         "render_commit": RECOGNIZED_RENDER_COMMIT if runnable else None,
         "reviewed_bore_log_id": rbl_id if runnable else None,
+        # Per-bore list (one entry per recognized engine-ready bore-log with a committed render). Scales to N;
+        # the FEATURED walkthrough is capped by seeding only 3-5 bore-logs.
+        "recognized_logs": recognized_logs if runnable else [],
         "blockers": blockers,
     }
 
 
-def _build_manifest_input(log_id, artifacts, *, project_id, corpus_ref, log_facts) -> dict:
+def _build_log_entry(log_id, artifacts, span) -> dict:
+    """One DETERMINISTIC_AUTO log entry for a recognized drawn log. ``span`` is the real committed bore span
+    (from the union manifest) or None (→ a neutral placeholder; never invented as a real station)."""
     sheets = sorted({s for (_m, _src, ss) in artifacts for s in ss})
-    facts = log_facts or {}
-    log = {
-        "log_id": log_id, "parent_id": facts.get("parent_id", log_id), "entry_role": "standalone",
+    return {
+        "log_id": log_id, "parent_id": log_id, "entry_role": "standalone",
         "status": "DRAWN_REDLINE", "provenance": "DETERMINISTIC_AUTO",
         "drawn": True, "covered": False, "blocked": False, "drawn_lane": "NEW_TARGETS",
         "source_sheets": sheets,
-        "span": facts.get("span", {"start_station": "0+00", "end_station": "0+00", "label": "0+00"}),
+        "span": span or {"start_station": "0+00", "end_station": "0+00", "label": "0+00"},
         "closure": None, "coverage": None, "blocker": None,
         "artifacts": [{"kind": "FINAL_REDLINE_PNG", "sheet": ss[0], "path": mpath,
                        "sha256": None, "example_placeholder": True}
@@ -269,28 +299,34 @@ def _build_manifest_input(log_id, artifacts, *, project_id, corpus_ref, log_fact
         ],
         "warnings": [],
     }
+
+
+def _build_manifest_input(log_entries, *, project_id, corpus_ref) -> dict:
+    """Recognized-corpus job-local manifest over N drawn logs (N == 1 for a single-bore job). Every log is a
+    committed DETERMINISTIC_AUTO render; the bundle is a job-local subset, NOT the unified all-50 bundle."""
+    n = len(log_entries)
     return {
         "schema_version": "1.0.0", "mock_example": False,
         "disclaimer": "Recognized-corpus deterministic redline bundle (bundle_origin "
-                      "DETERMINISTIC_RECOGNIZED_CORPUS): the engine's committed redline for a POSITIVELY "
+                      "DETERMINISTIC_RECOGNIZED_CORPUS): the engine's committed redline(s) for a POSITIVELY "
                       "recognized uploaded project package (%s). NOT human-clicked, NOT arbitrary upload "
                       "support." % corpus_ref,
         "project_id": project_id, "project_name": project_id,
         "engine": {"branch": "feat/truelinev2", "engine_head": "deterministic-recognized-corpus",
                    "render_commit": RECOGNIZED_RENDER_COMMIT, "generated_from": "recognized_corpus_handoff"},
         "bundle_origin": BUNDLE_ORIGIN_DETERMINISTIC_RECOGNIZED_CORPUS,
-        "summary": {"total_logs": 1, "drawn_count": 1, "covered_count": 0, "blocked_count": 0,
-                    "frontier": "1/1"},
-        "status_counts": {"DRAWN_REDLINE": 1, "COVERED_BY_EXISTING_REDLINE": 0, "OWNER_LOCKED_ABSTAIN": 0,
+        "summary": {"total_logs": n, "drawn_count": n, "covered_count": 0, "blocked_count": 0,
+                    "frontier": "%d/%d" % (n, n)},
+        "status_counts": {"DRAWN_REDLINE": n, "COVERED_BY_EXISTING_REDLINE": 0, "OWNER_LOCKED_ABSTAIN": 0,
                           "SOURCE_GAP_BLOCKED": 0, "MISSING_SOURCE_SHEET_BLOCKED": 0},
-        "provenance_counts": {"DETERMINISTIC_AUTO": 1, "OWNER_CONFIRMED_HUMAN_ADJUSTABLE": 0,
+        "provenance_counts": {"DETERMINISTIC_AUTO": n, "OWNER_CONFIRMED_HUMAN_ADJUSTABLE": 0,
                               "COVERED_BY_EXISTING_REDLINE": 0, "BLOCKED_OWNER_LOCKED": 0,
                               "BLOCKED_SOURCE_GAP": 0, "BLOCKED_MISSING_SOURCE": 0},
         "consumption_rules": [
             "Consume only this manifest for drawn/covered/blocked truth.",
-            "Recognized-corpus deterministic single-log subset; NOT the unified all-50 bundle.",
+            "Recognized-corpus deterministic subset (job-local); NOT the unified all-50 bundle.",
         ],
-        "logs": [log],
+        "logs": log_entries,
     }
 
 
@@ -326,17 +362,30 @@ def render_recognized_corpus_handoff(store_root, customer_project_id, job_id, *,
     validate_customer_project_id(customer_project_id)
     validate_job_id(job_id)
     job = load_job(store_root, customer_project_id, job_id)
-    corpus, mapped_log, rbl_id, ready_rbls, _plan = _recognize(
+    corpus, mapped_log, rbl_id, ready_rbls, _plan, recognized = _recognize(
         store_root, customer_project_id, job_id, registry, job)
     artifacts = _deterministic_artifacts(mapped_log)
     if not (corpus and mapped_log and artifacts and ready_rbls):
         ev = evaluate_recognized_corpus_handoff(store_root, customer_project_id, job_id, registry=registry)
         raise RecognizedCorpusError("recognized-corpus handoff is not runnable: %s"
                                     % "; ".join(b["code"] for b in ev["blockers"]))
-    artifact_map = {mpath: str(src) for (mpath, src, _ss) in artifacts}
+
+    # Publish EVERY recognized engine-ready bore-log's committed render in ONE job-local multi-log bundle
+    # (deduped by log_id in recognition order). Scales to N; a single-bore job yields exactly one log.
+    per_log = []
+    seen = set()
+    for (_r, _l) in recognized:
+        if _l in seen:
+            continue
+        arts = _deterministic_artifacts(_l)
+        if not arts:
+            continue
+        seen.add(_l)
+        per_log.append((_l, arts))
+    artifact_map = {mpath: str(src) for (_l, arts) in per_log for (mpath, src, _ss) in arts}
     corpus_id = _public_corpus_id(corpus, registry)
 
-    key_blob = json.dumps({"corpus": corpus_id, "log": mapped_log,
+    key_blob = json.dumps({"corpus": corpus_id, "logs": sorted(l for (l, _a) in per_log),
                            "artifacts": sorted(artifact_map.keys())}, sort_keys=True).encode("utf-8")
     engine_run_id = "rc-render-%s" % hashlib.sha256(key_blob).hexdigest()[:16]
 
@@ -350,9 +399,8 @@ def render_recognized_corpus_handoff(store_root, customer_project_id, job_id, *,
     staging_root = job_dir(store_root, customer_project_id, job_id) / ENGINE_OUTPUTS_SUBDIR
     render_src = staging_root / ("_rc_src_%s" % engine_run_id)
     render_src.mkdir(parents=True, exist_ok=True)
-    manifest_input = _build_manifest_input(
-        mapped_log, artifacts, project_id=customer_project_id,
-        corpus_ref=corpus_id, log_facts=(corpus.get("log_facts") or {}).get(mapped_log))
+    log_entries = [_build_log_entry(_l, arts, _union_span(_l)) for (_l, arts) in per_log]
+    manifest_input = _build_manifest_input(log_entries, project_id=customer_project_id, corpus_ref=corpus_id)
     input_path = render_src / "_input_manifest.json"
     input_path.write_text(json.dumps(manifest_input, indent=2), encoding="utf-8")
 

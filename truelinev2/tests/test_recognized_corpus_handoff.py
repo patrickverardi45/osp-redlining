@@ -137,6 +137,56 @@ def test_recognized_corpus_runnable_renders_deterministic_bundle(tmp_path, monke
     assert again["bundle_id"] == summary["bundle_id"]
 
 
+def test_recognized_multi_bore_publishes_all_logs(tmp_path, monkeypatch):
+    # Two engine-ready bore-logs mapping to two DRAWN logs -> ONE job-local multi-log bundle (scales to N);
+    # the per-bore recognized_logs list drives the step-through. A single-bore job still yields one log.
+    rdir = tmp_path / "render"
+    rdir.mkdir()
+    for n in ("log8_s18", "log8_s22", "log9_s7"):
+        (rdir / ("%s_redline_stroke.png" % n)).write_bytes(_PNG)
+    monkeypatch.setattr(rch, "_DETERMINISTIC_RENDER_DIR", rdir)
+    bore8, bore9 = b"bore-eight", b"bore-nine"
+    reg = {"corpora": [{
+        "corpus_id": "recognized-corpus-001", "display_name": "Test Corpus",
+        "plan_sha256": [hashlib.sha256(_PDF).hexdigest()],
+        "bore_log_sha256_to_log": {hashlib.sha256(bore8).hexdigest(): "log8",
+                                   hashlib.sha256(bore9).hexdigest(): "log9"},
+    }], "configured": True}
+
+    create_customer_project(tmp_path, CP, "Label", AT)
+    create_job(tmp_path, CP, JOB, AT, BY)
+    accept_upload(tmp_path, CP, JOB, kind="PLAN_PDF", filename="plan.pdf", content=_PDF, stored_at=AT)
+    for i, (bore, _lg) in enumerate([(bore8, "log8"), (bore9, "log9")], start=1):
+        up = accept_upload(tmp_path, CP, JOB, kind="BORE_LOG", filename="bore%d.xlsx" % i,
+                           content=bore, stored_at=AT)
+        rbl = "rbl-%d" % i
+        create_reviewed_bore_log(tmp_path, CP, JOB, up["upload_id"], rbl, at=AT, by=BY)
+        row = new_extracted_row("row-%d" % i, up["upload_id"], raw={"s": "0+00"}, normalized={"s": "0+00"},
+                                extraction_method=MANUAL_ENTRY, at=AT, by=BY)
+        add_extracted_rows(tmp_path, CP, JOB, rbl, [row], at=AT, by=BY)
+        review_row_in_log(tmp_path, CP, JOB, rbl, "row-%d" % i, CONFIRMED, at=AT, by=BY)
+        define_segment_group(tmp_path, CP, JOB, rbl, "g-%d" % i, ["row-%d" % i], SEPARATE_BORE, at=AT, by=BY)
+        set_grouping_status(tmp_path, CP, JOB, rbl, "g-%d" % i, GROUPING_CONFIRMED, at=AT, by=BY)
+
+    ev = rch.evaluate_recognized_corpus_handoff(tmp_path, CP, JOB, registry=reg)
+    assert ev["runnable"] is True
+    assert {r["log_id"] for r in ev["recognized_logs"]} == {"log8", "log9"}
+    assert all("render_sheets" in r and "reviewed_bore_log_id" in r for r in ev["recognized_logs"])
+
+    summary = rch.render_recognized_corpus_handoff(tmp_path, CP, JOB, registry=reg, at=AT, by=BY)
+    assert summary["status"] == "SUCCEEDED"
+    assert {a["log_id"] for a in summary["artifacts"]} == {"log8", "log9"}
+    assert summary["artifact_count"] == 3                      # log8 s18+s22 + log9 s7
+
+    bundle_id = summary["bundle_id"]
+    mpath = job_dir(tmp_path, CP, JOB) / "bundle_store" / "bundles" / bundle_id / "redline_manifest.json"
+    m = json.loads(mpath.read_text(encoding="utf-8"))
+    assert {lg["log_id"] for lg in m["logs"]} == {"log8", "log9"}
+    assert m["summary"]["frontier"] == "2/2"
+    assert m["provenance_counts"]["DETERMINISTIC_AUTO"] == 2
+    assert "Test Corpus" not in json.dumps(m)                  # display_name never reaches the bundle
+
+
 def test_unknown_plan_blocked(tmp_path, monkeypatch):
     reg = _registry(tmp_path, monkeypatch, plan_bytes=_PDF, bore_bytes=_BORE,
                     recognize_plan=False, map_bore_to="log8")

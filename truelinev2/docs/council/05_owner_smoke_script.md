@@ -6,7 +6,7 @@
 
 This script is **read-only against the running product**. It exercises the UI a customer would use. `<BASE>` = `https://staging.fieldroute.io` (staging) or `http://localhost:3100` (a local browser smoke).
 
-> **Naming note:** the projects below are the seeded example projects. They appear in the **Projects** list by their product names (e.g. "Recognized project — automatic redline"). Any technical reference shown (the URL `?job=` value, and the **Diagnostics / Technical details** "Project key" / "Internal reference") is a **neutral alias** such as `project-clean-placement` / `project-recognized-automatic` — never the raw internal store slug. The internal store ids are masked at the UI layer (renaming them in the store is risky), so they are never rendered.
+> **Naming note:** the projects below are the seeded example projects. They appear in the **Projects** list by their product names (e.g. "Recognized project — automatic redlines"). Any technical reference shown (the URL `?job=` value, and the **Diagnostics / Technical details** "Project key" / "Internal reference") is a **neutral alias** such as `project-clean-placement` / `project-recognized-automatic` — never the raw internal store slug. The internal store ids are masked at the UI layer (renaming them in the store is risky), so they are never rendered.
 
 ---
 
@@ -18,25 +18,28 @@ This script is **read-only against the running product**. It exercises the UI a 
    - **RED FLAG:** any placeholder / test-environment framing appears on screen — a "Staging" banner, a "workflow chooser", or the literal word for a throwaway/example harness. There should be none.
 
 2. Click **New project** (or **Projects**) in the sidebar.
-   - **EXPECT:** the **Projects** workspace — a **Project** list with product-named projects ("Recognized project — automatic redline", "Uploaded project — clean placement", "Uploaded project — ambiguous correction", "Uploaded project — REVIEW acceptance", "Uploaded project — cross-sheet REVIEW", "Finished redline showcase") plus a "Create project" box.
-   - **RED FLAG:** any project card/button shows a raw store slug instead of the product name.
+   - **EXPECT:** the **Projects** workspace — a **Project** list with product-named projects ("Recognized project — automatic redlines", "Uploaded project — clean placement", "Uploaded project — ambiguous correction", "Finished redline showcase") plus a "Create project" box.
+   - **RED FLAG:** any project card/button shows a raw store slug instead of the product name; any project named after a real customer/place, or a "REVIEW acceptance" / "cross-sheet REVIEW" example (those former examples carried non-Brenham content and have been removed — the REVIEW + correction lane is covered by the two "Uploaded project" demos above).
 
 ---
 
-## Flow 1 — Recognized project, end-to-end (the "it just works" project)
+## Flow 1 — Recognized MULTI-BORE project, end-to-end (the "it just works" project)
 
-Open **Projects** → click **"Recognized project — automatic redline"**.
+Open **Projects** → click **"Recognized project — automatic redlines"** (the primary Brenham walkthrough: the
+real plan + KMZ + several bore logs).
 
 | # | Click | EXPECT |
 |---|-------|--------|
-| 1 | (project opens) | Header **"Recognized project — automatic redline"** (no raw id shown). Status strip: Files / Redline / Closeout. |
-| 2 | Scroll to **3 · Map / route**. | A route renders from the uploaded KMZ, or an honest "no GIS route" note. No invented coordinates or street names. |
-| 3 | Scroll to **5 · Redline** → **Generate redline**. | **"Redline placed automatically"** + red-stroke redline PNG(s) + **"Continue to closeout ↓"**. <br>**RED FLAG:** "Automatic redline is not configured" / `RECOGNIZED_CORPUS_REGISTRY_NOT_CONFIGURED` (registry env missing). |
-| 4 | **6 · Review & correct**. | "No review needed — the redline was placed automatically." |
-| 5 | **7 · Closeout review** → **Assemble closeout package**. | Badge **"Assembled — ready for approval"**; Project summary, Uploaded files, **Final review checklist** (all ✓), Redline evidence (red PNG), Bore-log rows, Quantities (Billing **not shown — quantities only**). |
-| 6 | **8 · Export & print** → **Download closeout PDF**. | A real PDF downloads (filename like `closeout_packet_recognized-project-automatic-redline.pdf`) with the embedded **red** redline + itemized quantities. |
-| 7 | **Download data package (.zip)**. | A real zip downloads. |
-| 8 | **Print / save the on-screen review** (the secondary link). | Browser print dialog shows **only** the closeout review (sidebar + other sections hidden). |
+| 1 | (project opens) | Header **"Recognized project — automatic redlines"** (no raw id shown). Status strip: Files / Redline / Closeout. |
+| 2 | Scroll to **2 · Project files**. | A green **"Recognized project — ready to process"** verdict; the Bore log card shows the **count** of uploaded bore-log files and each filename; Plan PDF + KMZ/KML present. |
+| 3 | Scroll to **3 · Map / route**. | A route renders from the uploaded KMZ, or an honest "no GIS route" note. No invented coordinates or street names. |
+| 4 | Scroll to **5 · Redline** → **Generate redline**. | **"Redline placed automatically"**, THEN a **"Placed redlines — step through each bore log"** panel: a bore list (Bore 1..N with each station span + sheet) and a viewer. <br>**RED FLAG:** "Automatic redline is not configured" / `RECOGNIZED_CORPUS_REGISTRY_NOT_CONFIGURED` (registry env missing). |
+| 5 | In the step-through, **click each bore** (or use ← →). | The selected bore’s **red redline** shows on its **correct plan sheet**, with an honest **"Pixel-only on plan sheet N — not georeferenced"** badge (the redline is on the PDF, NOT projected onto the map — no fake coordinates). <br>**RED FLAG:** a bore shows the wrong sheet, a non-red stroke, or a map projection of the redline. |
+| 6 | **6 · Review & correct**. | "No review needed — the redline was placed automatically." |
+| 7 | **7 · Closeout review** → **Assemble closeout package**. | Badge **"Assembled — ready for approval"**; Project summary, Uploaded files, **Final review checklist** (all ✓), Redline evidence (red PNG), Bore-log rows, Quantities (Billing **not shown — quantities only**). |
+| 8 | **8 · Export & print** → **Download closeout PDF**. | A real PDF downloads (filename like `closeout_packet_recognized-project-automatic-redlines.pdf`) with the embedded **red** redline + itemized quantities. |
+| 9 | **Download data package (.zip)**. | A real zip downloads. |
+| 10 | **Print / save the on-screen review** (the secondary link). | Browser print dialog shows **only** the closeout review (sidebar + other sections hidden). |
 
 ---
 
@@ -102,7 +105,7 @@ During Flow 2/3, press browser **Reload** on the project URL after each major st
 ## Owner sign-off (tick all)
 
 - [ ] **The app reads as the real FieldRoute product** — no placeholder / test-environment framing, and **no raw store slug anywhere** (landing, sidebar, Projects, workspace, Diagnostics, Technical details, closeout review, export buttons, downloaded filenames, the URL `?job=` value). Technical references shown are neutral aliases (`project-clean-placement`, …).
-- [ ] Flow 1: recognized project → automatic red redline → assemble → real PDF + ZIP.
+- [ ] Flow 1: recognized MULTI-BORE project → automatic red redlines → step through each bore on its correct sheet (pixel-only badge) → assemble → real PDF + ZIP.
 - [ ] Flow 2: clean uploaded project → **Medium** confidence (never High) → accept → assemble → download.
 - [ ] Flow 3: ambiguous → Low → corrected on the plan → superseded → assemble → download (Assemble blocked before Render).
 - [ ] Flow 4: new project from scratch reaches a redline (recording the manual bore-log re-entry as expected).
