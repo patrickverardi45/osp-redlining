@@ -58,6 +58,10 @@ from truelinev2.contracts.extracted_row import (
     ExtractedRowError,
     new_extracted_row,
 )
+from truelinev2.extract.borelog_rows import (
+    BoreLogExtractionError,
+    extract_rows_from_borelog,
+)
 from truelinev2.contracts.reviewed_bore_log import (
     GroupNotFoundError,
     ReviewedBoreLogError,
@@ -173,6 +177,8 @@ from truelinev2.ingest.pdf import PlanPdf
 from truelinev2.render.source_anchor_render import render_job_source_anchors
 
 router = APIRouter(prefix="/v2/product")
+
+BORE_LOG_KIND = "BORE_LOG"   # canonical upload kind for a bore-log file (mirrors PLAN_PDF_KIND)
 
 
 class ProjectCreate(BaseModel):
@@ -492,6 +498,43 @@ def add_rows(job_id: str, reviewed_bore_log_id: str, req: RowsAdd,
                                   at=now, by=ctx.session_id)
     except _CONTRACT_ERRORS as exc:
         raise _to_http(exc)
+
+
+@router.post("/jobs/{job_id}/reviewed-bore-logs/{reviewed_bore_log_id}/extract")
+def extract_bore_log_rows_route(job_id: str, reviewed_bore_log_id: str,
+                                ctx: RequestContext = Depends(get_context),
+                                c: Container = Depends(get_container)) -> dict:
+    """Read-only deterministic bore-log TABLE extraction: parse the reviewed_bore_log's SOURCE upload into
+    UNTRUSTED extracted rows (extraction_method=TABLE_IMPORT, status UNREVIEWED) and append them so the
+    existing human review/grouping/eligibility gate is unchanged. This is the auto-extract path that replaces
+    manual row entry as the default — it places NO geometry, fabricates NO confidence (deterministic table
+    parse, not OCR), and confers NO engine eligibility. 404 if the log/job is missing; 400 if the source
+    upload is missing/not a BORE_LOG/unparseable."""
+    cp, store, now = ctx.tenant.value, _store_root(c), _now()
+    try:
+        rbl = load_reviewed_bore_log(store, cp, job_id, reviewed_bore_log_id)
+        job = load_job(store, cp, job_id)
+    except _CONTRACT_ERRORS as exc:
+        raise _to_http(exc)
+    source_upload_id = rbl.get("source_upload_id")
+    upload = next((u for u in job.get("uploads", []) if u.get("upload_id") == source_upload_id), None)
+    if upload is None or upload.get("kind") != BORE_LOG_KIND:
+        raise HTTPException(status_code=400, detail="reviewed_bore_log has no BORE_LOG source upload")
+    path = job_dir(store, cp, job_id) / upload.get("stored_path", "")
+    if not path.is_file():
+        raise HTTPException(status_code=400, detail="the bore-log source file is not available")
+    existing = {r.get("row_id") for r in rbl.get("rows", [])}
+    try:
+        rows = extract_rows_from_borelog(path, source_upload_id, at=now, by=ctx.session_id,
+                                         existing_row_ids=existing)
+        record = add_extracted_rows(store, cp, job_id, reviewed_bore_log_id, rows, at=now, by=ctx.session_id)
+    except BoreLogExtractionError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except _CONTRACT_ERRORS as exc:
+        raise _to_http(exc)
+    return {"extracted_count": len(rows),
+            "extracted_row_ids": [r["row_id"] for r in rows],
+            "record": record}
 
 
 @router.post("/jobs/{job_id}/reviewed-bore-logs/{reviewed_bore_log_id}/rows/{row_id}/review")

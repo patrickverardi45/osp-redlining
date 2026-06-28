@@ -53,6 +53,7 @@ PRODUCT_PATHS = {
     "/v2/product/jobs/{job_id}/reviewed-bore-logs",
     "/v2/product/jobs/{job_id}/reviewed-bore-logs/{reviewed_bore_log_id}",
     "/v2/product/jobs/{job_id}/reviewed-bore-logs/{reviewed_bore_log_id}/rows",
+    "/v2/product/jobs/{job_id}/reviewed-bore-logs/{reviewed_bore_log_id}/extract",
     "/v2/product/jobs/{job_id}/reviewed-bore-logs/{reviewed_bore_log_id}/rows/{row_id}/review",
     "/v2/product/jobs/{job_id}/reviewed-bore-logs/{reviewed_bore_log_id}/groups",
     "/v2/product/jobs/{job_id}/reviewed-bore-logs/{reviewed_bore_log_id}/groups/{group_id}/status",
@@ -514,6 +515,37 @@ def test_review_queue_missing_rbl_is_404(tmp_path):
     _seed_job(c, ctx)
     with pytest.raises(HTTPException) as exc:
         ppr.get_review_queue("job-1", "ghost", ctx=ctx, c=c)
+    assert exc.value.status_code == 404
+
+
+# --------------------------------------------------------------------------- #
+# Slice 2 — deterministic table extraction (read-only; rows stay UNTRUSTED, no fabricated confidence).
+# --------------------------------------------------------------------------- #
+def test_extract_route_adds_untrusted_table_import_rows(tmp_path, monkeypatch):
+    from truelinev2.contracts.extracted_row import new_extracted_row, TABLE_IMPORT
+    c, ctx = _container(tmp_path), _ctx("cp-aaa")
+    up, _ = _seed_reviewed_bore_log(c, ctx)
+
+    def fake_extract(path, source_upload_id, *, at, by, existing_row_ids=()):  # noqa: ARG001
+        return [new_extracted_row("extracted-1", source_upload_id,
+                                  raw={"start_station": "0+00", "end_station": "2+99", "footage_ft": 299.0},
+                                  normalized={"start_station": "0+00", "end_station": "2+99"},
+                                  extraction_method=TABLE_IMPORT, confidence=None, at=at, by=by)]
+
+    monkeypatch.setattr(ppr, "extract_rows_from_borelog", fake_extract)
+    out = ppr.extract_bore_log_rows_route("job-1", "rbl-1", ctx=ctx, c=c)
+    assert out["extracted_count"] == 1 and out["extracted_row_ids"] == ["extracted-1"]
+    row = out["record"]["rows"][0]
+    assert row["extraction"]["extraction_method"] == TABLE_IMPORT
+    assert row["extraction"]["confidence"] is None          # deterministic parse — never fabricated
+    assert row["review"]["status"] == UNREVIEWED             # not a placement candidate until reviewed
+
+
+def test_extract_route_missing_rbl_is_404(tmp_path):
+    c, ctx = _container(tmp_path), _ctx("cp-aaa")
+    _seed_job(c, ctx)
+    with pytest.raises(HTTPException) as exc:
+        ppr.extract_bore_log_rows_route("job-1", "ghost", ctx=ctx, c=c)
     assert exc.value.status_code == 404
 
 
