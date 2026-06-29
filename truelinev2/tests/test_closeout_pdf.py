@@ -114,6 +114,20 @@ def test_closeout_pdf_recognized_job_is_valid_pdf_with_embedded_evidence(tmp_pat
     assert "review required before construction" in text
 
 
+def test_closeout_pdf_includes_operator_pricing_with_disclaimer(tmp_path, monkeypatch):
+    from truelinev2.contracts.job_pricing import save_job_pricing
+    _recognized_job(tmp_path, monkeypatch)
+    # No operator pricing entered yet -> the §12 section is absent (no fabricated dollars).
+    assert "Operator-Entered Pricing" not in _text(build_closeout_pdf(tmp_path, CP, JOB)[0])
+    # Operator enters a provisional rate + exception -> §12 renders WITH the unverified disclaimer.
+    save_job_pricing(tmp_path, CP, JOB, cost_per_foot="5.00",
+                     exceptions=[{"label": "TXDOT permit", "amount": "250.00", "note": "ROW"}], at=AT, by=BY)
+    text = _text(build_closeout_pdf(tmp_path, CP, JOB)[0])
+    assert "Operator-Entered Pricing (UNVERIFIED)" in text
+    assert "NOT verified by a configured rate sheet" in text     # the honesty disclaimer
+    assert "TXDOT permit" in text and "5.00" in text             # operator inputs surfaced
+
+
 def test_closeout_pdf_embeds_each_verified_artifact(tmp_path, monkeypatch):
     """The two recognized FINAL_REDLINE_PNG artifacts are both embedded (image XObject references present)."""
     _recognized_job(tmp_path, monkeypatch)

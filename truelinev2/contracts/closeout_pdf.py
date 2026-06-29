@@ -43,6 +43,7 @@ from truelinev2.contracts.billing_summary import (
     COMPUTED as BILLING_COMPUTED, FINAL as BILLING_FINAL,
     BillingSummaryNotFoundError, billing_summary_view, load_billing_summary,
 )
+from truelinev2.contracts.job_pricing import PRICING_DISCLAIMER, pricing_view
 
 PDF_MEDIA_TYPE = "application/pdf"
 PDF_FILENAME = "closeout_packet_%s.pdf"
@@ -245,6 +246,7 @@ def build_closeout_pdf(store_root, customer_project_id, job_id) -> tuple:
         billing = {"record": bill, "view": billing_summary_view(bill)}
     except BillingSummaryNotFoundError:
         billing = None
+    op_pricing = pricing_view(store_root, customer_project_id, job_id)   # operator-entered (unverified)
     rbls = list_reviewed_bore_logs(store_root, customer_project_id, job_id)
     candidates = placement_candidate_summary(store_root, customer_project_id, job_id, manifest)
 
@@ -419,6 +421,32 @@ def build_closeout_pdf(store_root, customer_project_id, job_id) -> tuple:
             d.kv("Billing status", bstatus, color=_GRAY)
             d.text("Billing dollars omitted — billing is not server-finalized (status %s). Deliverable "
                    "quantities are in section 3; no client-side dollars are shown." % bstatus, color=_GRAY)
+
+    # 12. Operator-entered pricing — the operator's OWN provisional rates, explicitly UNVERIFIED and kept
+    # DISTINCT from §11 (the server-authoritative billing). Shown only when the operator entered something.
+    has_op_pricing = bool(op_pricing.get("cost_per_foot") is not None or op_pricing.get("exceptions"))
+    if has_op_pricing:
+        d.heading("12. Operator-Entered Pricing (UNVERIFIED)")
+        d.small(PRICING_DISCLAIMER, color=_RED, font="hebo")
+        cur = op_pricing.get("currency") or "USD"
+        if op_pricing.get("footage") is not None:
+            d.kv("Footage (server-computed)", "%s ft" % op_pricing.get("footage"))
+        else:
+            d.kv("Footage (server-computed)", "not available yet", color=_GRAY)
+        d.kv("Cost per foot (operator-entered)",
+             ("%s %s" % (op_pricing.get("cost_per_foot"), cur)) if op_pricing.get("cost_per_foot") is not None
+             else "not entered", color=(_GRAY if op_pricing.get("cost_per_foot") is None else None))
+        if op_pricing.get("base_total") is not None:
+            d.kv("Base total (footage × rate)", "%s %s" % (op_pricing.get("base_total"), cur))
+        for ex in (op_pricing.get("exceptions") or []):
+            amt = ("%s %s" % (ex.get("amount"), cur)) if ex.get("amount") is not None else "—"
+            d.bullet("%s — %s%s" % (ex.get("label"), amt,
+                                    (" (%s)" % ex.get("note")) if ex.get("note") else ""))
+        d.kv("Exception total", "%s %s" % (op_pricing.get("exception_total"), cur))
+        if op_pricing.get("final_total") is not None:
+            d.kv("Final total (operator-entered, unverified)", "%s %s" % (op_pricing.get("final_total"), cur))
+        elif op_pricing.get("totals_note"):
+            d.text(op_pricing.get("totals_note"), color=_GRAY)
 
     # Footer disclaimer
     d.y += 10.0

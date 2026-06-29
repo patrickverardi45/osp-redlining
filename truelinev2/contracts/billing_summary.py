@@ -408,6 +408,26 @@ def _compute_gate(store_root, cp, job_id):
     return gate, manifest, footage, source_manifest_id, source_bundle_id, footage_incomplete
 
 
+def job_effective_footage(store_root, customer_project_id, processing_job_id) -> dict:
+    """Server-computed drawn footage for a job — a QUANTITY ONLY, independent of billing finalization and of
+    any cost-rule set: the sum of `closure.drawn_ft` over DRAWN logs of the VALIDATED, sha256-verified
+    durable manifest. Returns {available, footage(str|None), incomplete, source_manifest_id}; available is
+    False (footage None) when there is no validated manifest yet. Invents nothing. Exposed so the
+    OPERATOR-ENTERED pricing lane can multiply this trusted quantity by an operator rate WITHOUT depending on
+    the server-authoritative billing model."""
+    validate_customer_project_id(customer_project_id)
+    validate_job_id(processing_job_id)
+    job = load_job(store_root, customer_project_id, processing_job_id)        # NotFound -> 404 upstream
+    manifest, source_manifest_id, _bundle_id, _m_ref = _resolve_manifest(
+        store_root, customer_project_id, processing_job_id, job, [], [])
+    if manifest is None:
+        return {"available": False, "footage": None, "incomplete": False,
+                "source_manifest_id": source_manifest_id}
+    footage, incomplete = _effective_footage(manifest)
+    return {"available": True, "footage": str(footage), "incomplete": incomplete,
+            "source_manifest_id": source_manifest_id}
+
+
 def _build_charge_lines(footage, items, by_code, base_code, digits, warnings):
     """Deterministic charge lines: a manifest-derived BASE line (if a BASE rule exists) + one line per
     trusted itemized input. Each amount = quantity × the rule's unit_cost (clients never supply amounts)."""

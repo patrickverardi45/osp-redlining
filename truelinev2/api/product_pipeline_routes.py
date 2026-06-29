@@ -115,6 +115,11 @@ from truelinev2.contracts.billing_summary import (
     create_billing_summary,
     load_billing_summary,
 )
+from truelinev2.contracts.job_pricing import (
+    JobPricingError,
+    pricing_view,
+    save_job_pricing,
+)
 from truelinev2.contracts.export_package import (
     ExportPackageError,
     ExportPackageNotFoundError,
@@ -281,6 +286,17 @@ class ReviewReject(BaseModel):
     reason: str
 
 
+class OperatorPricingException(BaseModel):
+    label: str
+    amount: Optional[str] = None        # blank/None allowed; validated server-side (non-negative number)
+    note: Optional[str] = None
+
+
+class OperatorPricingUpdate(BaseModel):
+    cost_per_foot: Optional[str] = None  # blank/None allowed — NO default rate is ever invented
+    exceptions: list[OperatorPricingException] = []
+
+
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -326,8 +342,8 @@ def _to_http(exc: Exception) -> HTTPException:
 # subclass). A non-contract error is left to propagate (a real 500 — never masked as a 400).
 _CONTRACT_ERRORS = (CustomerProjectError, ProcessingJobError, UploadError, ExtractedRowError,
                     ReviewedBoreLogError, ManifestHandoffError, ConsumerError, CloseoutReviewError,
-                    BillingSummaryError, ExportPackageError, ExportBundleError, CloseoutPdfError,
-                    GisRouteError, SourceAnchorError, ReviewAcceptanceError, IsolationError)
+                    BillingSummaryError, JobPricingError, ExportPackageError, ExportBundleError,
+                    CloseoutPdfError, GisRouteError, SourceAnchorError, ReviewAcceptanceError, IsolationError)
 
 
 @router.post("/project")
@@ -837,6 +853,40 @@ def get_billing(job_id: str,
     except _CONTRACT_ERRORS as exc:
         raise _to_http(exc)
     return {**record, "view": billing_summary_view(record)}
+
+
+@router.get("/jobs/{job_id}/operator-pricing")
+def get_operator_pricing(job_id: str,
+                         ctx: RequestContext = Depends(get_context),
+                         c: Container = Depends(get_container)) -> dict:
+    """Read the job's OPERATOR-ENTERED pricing + the SERVER footage quantity + computed totals. This is the
+    operator's own provisional rate table (provenance OPERATOR_ENTERED_UNVERIFIED + disclaimer), DISTINCT
+    from the server-authoritative billing_summary — dollars are the operator's entered rates, never a
+    configured rate sheet, never invented. Returns a blank table (no rates) when nothing is saved. 404 if the
+    job is missing."""
+    cp, store = ctx.tenant.value, _store_root(c)
+    try:
+        return pricing_view(store, cp, job_id)
+    except _CONTRACT_ERRORS as exc:
+        raise _to_http(exc)
+
+
+@router.post("/jobs/{job_id}/operator-pricing")
+def put_operator_pricing(job_id: str, req: OperatorPricingUpdate,
+                         ctx: RequestContext = Depends(get_context),
+                         c: Container = Depends(get_container)) -> dict:
+    """Save the operator-entered cost-per-foot + exception rows for one job, then return the recomputed view.
+    Blank rates are allowed and stay blank (NO invented default); a negative/non-numeric amount is a 400.
+    Quantities are NOT accepted from the client — footage comes from the server. 404 if the job is missing."""
+    cp, store = ctx.tenant.value, _store_root(c)
+    try:
+        save_job_pricing(store, cp, job_id,
+                         cost_per_foot=req.cost_per_foot,
+                         exceptions=[e.model_dump() for e in req.exceptions],
+                         at=_now(), by=ctx.session_id)
+        return pricing_view(store, cp, job_id)
+    except _CONTRACT_ERRORS as exc:
+        raise _to_http(exc)
 
 
 @router.post("/jobs/{job_id}/export-package/assemble")

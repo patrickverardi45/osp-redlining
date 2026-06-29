@@ -27,6 +27,7 @@ PIPELINE_MODULES = [
     CONTRACTS / "kmz_export.py",
     CONTRACTS / "closeout_review.py",
     CONTRACTS / "billing_summary.py",
+    CONTRACTS / "job_pricing.py",
     CONTRACTS / "export_package.py",
     CONTRACTS / "closeout_pdf.py",
     CONTRACTS / "gis_route.py",

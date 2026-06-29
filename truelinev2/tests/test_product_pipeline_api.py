@@ -71,6 +71,7 @@ PRODUCT_PATHS = {
     "/v2/product/jobs/{job_id}/closeout",
     "/v2/product/jobs/{job_id}/billing/compute",
     "/v2/product/jobs/{job_id}/billing",
+    "/v2/product/jobs/{job_id}/operator-pricing",
     "/v2/product/jobs/{job_id}/export-package/assemble",
     "/v2/product/jobs/{job_id}/export-package",
     "/v2/product/jobs/{job_id}/export-package/download",
