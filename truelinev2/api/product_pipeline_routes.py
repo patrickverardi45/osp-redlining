@@ -957,8 +957,9 @@ def download_gis_route(job_id: str,
     if not out.get("present") or not out.get("kmz_bytes"):
         raise HTTPException(status_code=409,
                             detail="route export not available (%s)" % (out.get("reason") or "NO_ROUTE"))
+    fname = out.get("filename") or "route.kmz"          # derived from the customer file, Content-Disposition-safe
     return Response(content=out["kmz_bytes"], media_type=KMZ_MEDIA_TYPE,
-                    headers={"Content-Disposition": 'attachment; filename="route.kmz"'})
+                    headers={"Content-Disposition": 'attachment; filename="%s"' % fname})
 
 
 # --------------------------------------------------------------------------- #

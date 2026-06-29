@@ -179,3 +179,51 @@ def test_load_job_route_kmz_absent_is_honest(tmp_path):
     accept_upload(tmp_path, CP, JOB, kind="PLAN_PDF", filename="plan.pdf", content=b"%PDF-1.7\n", stored_at=AT)
     out = load_job_route_kmz(tmp_path, CP, JOB)
     assert out["present"] is False and out["kmz_bytes"] is None and out["reason"] == NO_GIS_ROUTE_UPLOADED
+
+
+# A KMZ that carries the structure a real customer design KMZ has: named <Folder>s, a custom <Style>, and a
+# placemark with NO <name>. The Google-Earth export must PRESERVE all of it verbatim (the customer's own
+# file) — never flatten folders away or relabel the name-less placemark as a generic "Point".
+_KML_FOLDERS = (
+    '<?xml version="1.0" encoding="UTF-8"?>'
+    '<kml xmlns="http://www.opengis.net/kml/2.2"><Document><name>Brenham Design</name>'
+    '<Style id="flowerpot"><IconStyle><color>ff00aaff</color></IconStyle></Style>'
+    '<Folder><name>Flower Pot</name>'
+    '<Placemark><styleUrl>#flowerpot</styleUrl>'  # NOTE: no <name> on this placemark
+    '<Point><coordinates>-96.15,30.12,0</coordinates></Point></Placemark>'
+    '</Folder>'
+    '<Folder><name>Backbone</name>'
+    '<Placemark><name>Main Route</name>'
+    '<LineString><coordinates>-96.10,30.10 -96.20,30.20</coordinates></LineString></Placemark>'
+    '</Folder>'
+    '</Document></kml>'
+).encode("utf-8")
+
+
+def test_load_job_route_kmz_preserves_folders_styles_and_no_generic_point(tmp_path):
+    create_customer_project(tmp_path, CP, "Label", AT)
+    create_job(tmp_path, CP, JOB, AT, BY)
+    uploaded = _kmz(_KML_FOLDERS)
+    accept_upload(tmp_path, CP, JOB, kind="GIS_ROUTE",
+                  filename="Brenham, TX - Phase 5_Design Team.kmz", content=uploaded, stored_at=AT)
+    out = load_job_route_kmz(tmp_path, CP, JOB)
+    assert out["present"] is True and out["feature_count"] == 2
+    # The uploaded .kmz is re-served VERBATIM — the customer's own folders/styles/names survive exactly.
+    assert out["kmz_bytes"] == uploaded
+    doc = zipfile.ZipFile(io.BytesIO(out["kmz_bytes"])).read("doc.kml").decode("utf-8")
+    assert "<Folder>" in doc and "Flower Pot" in doc and "Backbone" in doc   # folder hierarchy preserved
+    assert 'id="flowerpot"' in doc and "#flowerpot" in doc                   # custom style preserved
+    assert "<name>Point</name>" not in doc                                   # NO generic "Point" relabel
+    # download filename is derived from the customer file (comma stripped -> Content-Disposition safe), .kmz
+    assert out["filename"].endswith(".kmz") and "," not in out["filename"]
+
+
+def test_load_job_route_kmz_kml_upload_packed_preserving_structure(tmp_path):
+    create_customer_project(tmp_path, CP, "Label", AT)
+    create_job(tmp_path, CP, JOB, AT, BY)
+    accept_upload(tmp_path, CP, JOB, kind="GIS_ROUTE", filename="design.kml", content=_KML_FOLDERS, stored_at=AT)
+    out = load_job_route_kmz(tmp_path, CP, JOB)
+    assert out["present"] is True
+    doc = zipfile.ZipFile(io.BytesIO(out["kmz_bytes"])).read("doc.kml").decode("utf-8")
+    assert "Flower Pot" in doc and 'id="flowerpot"' in doc and "<Folder>" in doc   # original KML structure kept
+    assert out["filename"] == "design.kmz"

@@ -238,15 +238,45 @@ def build_route_kml(features, *, doc_name="Uploaded route") -> str:
     return "\n".join(parts)
 
 
+def _safe_download_name(name, default="route.kmz") -> str:
+    """A download-safe .kmz filename derived from the uploaded file's own name (keeps it recognisable to the
+    operator), or a stable default. Strips characters that break a Content-Disposition header."""
+    base = (name or "").strip()
+    if not base:
+        return default
+    base = re.sub(r"[^A-Za-z0-9 ._-]+", " ", base).strip()        # drop commas/quotes/etc, keep readable
+    base = re.sub(r"\s+", " ", base)
+    if base.lower().endswith(".kmz"):
+        return base
+    if base.lower().endswith(".kml"):
+        return base[:-4] + ".kmz"
+    return (base + ".kmz") if base else default
+
+
 def load_job_route_kmz(store_root, customer_project_id, job_id) -> dict:
     """Build a downloadable KMZ of the job's UPLOADED route so the operator can open it in Google Earth.
     Returns {present, reason, kmz_bytes, filename, feature_count}. Honest named states (no route upload /
-    missing file / unparseable / no coordinates) -> present:False with kmz_bytes:None (the route route then
-    answers 409, never a faked file). Reuses the deterministic build_kmz_bytes packer."""
+    missing file / unparseable / no coordinates) -> present:False with kmz_bytes:None (the route then answers
+    409, never a faked file).
+
+    FIDELITY: this re-serves the operator's UPLOADED file FAITHFULLY — when the upload is already a .kmz it is
+    returned VERBATIM, so Google Earth shows the customer's OWN folder hierarchy, placemark names,
+    descriptions, and styles/icons (never a flattened rebuild that renders name-less placemarks as a generic
+    'Point' under one folder). A .kml upload is packed into a .kmz preserving its original KML bytes. Invents
+    nothing: it is literally the customer's own source bytes. The redline is pixel-only and is NEVER added
+    here (the redline-KMZ authority stays kmz_export.evaluate_export, which honestly BLOCKS pixel-only)."""
     route = load_job_gis_route(store_root, customer_project_id, job_id)
-    if not route.get("features"):
+    if not route.get("features"):                                  # honest gating from a real parse + count
         return {"present": False, "reason": route.get("reason") or NO_COORDINATES_FOUND,
                 "kmz_bytes": None, "filename": None, "feature_count": 0}
-    kml = build_route_kml(route["features"], doc_name="Uploaded route")
-    return {"present": True, "reason": None, "kmz_bytes": build_kmz_bytes(kml),
-            "filename": "route.kmz", "feature_count": route.get("feature_count", 0)}
+    # Re-resolve the stored upload bytes (validated above: parsed + has coordinates).
+    job = load_job(store_root, customer_project_id, job_id)
+    up = next((u for u in (job.get("uploads") or []) if u.get("kind") == GIS_ROUTE_KIND), None)
+    data = (job_dir(store_root, customer_project_id, job_id) / up["stored_path"]).read_bytes()
+    if data[:2] == b"PK":                                          # already a .kmz -> the customer's own file
+        kmz_bytes = data
+    else:                                                          # .kml -> pack original bytes (structure kept)
+        kmz_bytes = build_kmz_bytes(data.decode("utf-8", "replace"))
+    filename = _safe_download_name((route.get("upload") or {}).get("filename"))
+    return {"present": True, "reason": None, "kmz_bytes": kmz_bytes, "filename": filename,
+            "feature_count": route.get("feature_count", 0)}
