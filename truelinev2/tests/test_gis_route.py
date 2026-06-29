@@ -14,8 +14,26 @@ from truelinev2.contracts.processing_job import create_job
 from truelinev2.contracts.upload_pipeline import accept_upload
 from truelinev2.contracts.gis_route import (
     GIS_ROUTE_FILE_MISSING, GIS_ROUTE_NOT_PARSEABLE, NO_COORDINATES_FOUND, NO_GIS_ROUTE_UPLOADED,
-    load_job_gis_route, parse_gis_route,
+    ROUTE_LINE_KML_COLOR, build_route_kml, load_job_gis_route, load_job_route_kmz, parse_gis_route,
 )
+from truelinev2.contracts.kmz_export import (
+    EXPORT_STROKE_KML_COLOR, build_kmz_bytes, validate_kmz_bytes,
+)
+
+# A described premises point (street name in the <description> HTML table, as real GIS exports encode it)
+# + an undescribed route line. Mirrors the shape of a real uploaded design KMZ.
+_KML_DESC = (
+    '<?xml version="1.0" encoding="UTF-8"?>'
+    '<kml xmlns="http://www.opengis.net/kml/2.2"><Document>'
+    '<Placemark><name>House 700</name>'
+    '<description><![CDATA[<table>'
+    '<tr><td>Street Number</td><td>700</td></tr>'
+    '<tr><td>Street Name</td><td>East Stone Street</td></tr></table>]]></description>'
+    '<Point><coordinates>-96.38785,30.15244,0</coordinates></Point></Placemark>'
+    '<Placemark><name>Backbone</name>'
+    '<LineString><coordinates>-96.10,30.10 -96.20,30.20</coordinates></LineString></Placemark>'
+    '</Document></kml>'
+).encode("utf-8")
 
 AT, BY, CP, JOB = "2026-06-24T00:00:00Z", "op-1", "cp-0001", "job-0001"
 
@@ -100,3 +118,64 @@ def test_load_job_gis_route_unparseable_is_honest_not_raised(tmp_path):
     r = load_job_gis_route(tmp_path, CP, JOB)
     assert r["present"] is True and r["reason"] == GIS_ROUTE_NOT_PARSEABLE   # honest, no exception/500
     assert r["features"] == []
+
+
+# --------------------------------------------------------------------------- #
+# Source-backed street labels (verbatim from the file's <description>, never invented).
+# --------------------------------------------------------------------------- #
+def test_street_label_read_verbatim_from_description():
+    r = parse_gis_route(_KML_DESC)
+    pt = next(f for f in r["features"] if f["type"] == "Point")
+    line = next(f for f in r["features"] if f["type"] == "LineString")
+    assert pt["source_label"] == "East Stone Street"   # echoed exactly as the file printed it
+    assert line["source_label"] is None                 # route line has no street in source -> honest None
+
+
+def test_no_description_means_no_street_label():
+    r = parse_gis_route(_KML)
+    assert all(f["source_label"] is None for f in r["features"])   # nothing invented
+
+
+# --------------------------------------------------------------------------- #
+# Route KMZ export — a Google-Earth-openable KMZ of the UPLOADED route (NOT redline output, never red).
+# --------------------------------------------------------------------------- #
+def test_build_route_kml_preserves_names_streets_and_is_not_red():
+    r = parse_gis_route(_KML_DESC)
+    kml = build_route_kml(r["features"])
+    assert "East Stone Street" in kml                  # street label preserved verbatim
+    assert "House 700" in kml and "Backbone" in kml    # placemark names preserved
+    assert ROUTE_LINE_KML_COLOR in kml                 # styled as a route (orange)
+    assert EXPORT_STROKE_KML_COLOR not in kml          # NOT the redline red — this is the route, not a redline
+
+
+def test_route_kmz_is_google_earth_valid():
+    r = parse_gis_route(_KML_DESC)
+    v = validate_kmz_bytes(build_kmz_bytes(build_route_kml(r["features"])))
+    assert v["valid"] is True, v["errors"]
+    assert v["placemark_count"] == 2
+    assert "LineString" in v["geometry_kinds"] and "Point" in v["geometry_kinds"]
+
+
+def test_route_kml_build_is_deterministic():
+    r = parse_gis_route(_KML_DESC)
+    a = build_kmz_bytes(build_route_kml(r["features"]))
+    b = build_kmz_bytes(build_route_kml(r["features"]))
+    assert a == b   # byte-stable (fixed member name + fixed zip timestamp)
+
+
+def test_load_job_route_kmz_present_and_valid(tmp_path):
+    create_customer_project(tmp_path, CP, "Label", AT)
+    create_job(tmp_path, CP, JOB, AT, BY)
+    accept_upload(tmp_path, CP, JOB, kind="GIS_ROUTE", filename="route.kmz", content=_kmz(_KML_DESC), stored_at=AT)
+    out = load_job_route_kmz(tmp_path, CP, JOB)
+    assert out["present"] is True and out["filename"] == "route.kmz" and out["feature_count"] == 2
+    v = validate_kmz_bytes(out["kmz_bytes"])
+    assert v["valid"] is True and v["placemark_count"] == 2
+
+
+def test_load_job_route_kmz_absent_is_honest(tmp_path):
+    create_customer_project(tmp_path, CP, "Label", AT)
+    create_job(tmp_path, CP, JOB, AT, BY)
+    accept_upload(tmp_path, CP, JOB, kind="PLAN_PDF", filename="plan.pdf", content=b"%PDF-1.7\n", stored_at=AT)
+    out = load_job_route_kmz(tmp_path, CP, JOB)
+    assert out["present"] is False and out["kmz_bytes"] is None and out["reason"] == NO_GIS_ROUTE_UPLOADED

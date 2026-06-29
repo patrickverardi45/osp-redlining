@@ -135,7 +135,7 @@ from truelinev2.contracts.closeout_pdf import (
     NoCloseoutPdfError,
     build_closeout_pdf,
 )
-from truelinev2.contracts.gis_route import GisRouteError, load_job_gis_route
+from truelinev2.contracts.gis_route import GisRouteError, load_job_gis_route, load_job_route_kmz
 from truelinev2.contracts.engine_handoff_readiness import evaluate_engine_handoff_readiness
 from truelinev2.contracts.recognized_corpus_handoff import (
     RecognizedCorpusError,
@@ -937,6 +937,27 @@ def get_gis_route(job_id: str,
         return load_job_gis_route(store, cp, job_id)
     except _CONTRACT_ERRORS as exc:
         raise _to_http(exc)
+
+
+@router.get("/jobs/{job_id}/gis-route/download")
+def download_gis_route(job_id: str,
+                       ctx: RequestContext = Depends(get_context),
+                       c: Container = Depends(get_container)) -> Response:
+    """Serve the job's UPLOADED route as a downloadable KMZ (real WGS84 geometry + verbatim names / street
+    labels) to open in Google Earth. This is the operator's uploaded DESIGN route, NOT redline output —
+    redlines are pixel-only and are NOT in this KMZ (the redline-KMZ status lives at kmz-export/download,
+    which honestly blocks pixel-only). 409 honest state when the job has no usable GIS_ROUTE; 404 if the
+    job is missing. Invents nothing."""
+    cp, store = ctx.tenant.value, _store_root(c)
+    try:
+        out = load_job_route_kmz(store, cp, job_id)
+    except _CONTRACT_ERRORS as exc:
+        raise _to_http(exc)
+    if not out.get("present") or not out.get("kmz_bytes"):
+        raise HTTPException(status_code=409,
+                            detail="route export not available (%s)" % (out.get("reason") or "NO_ROUTE"))
+    return Response(content=out["kmz_bytes"], media_type=KMZ_MEDIA_TYPE,
+                    headers={"Content-Disposition": 'attachment; filename="route.kmz"'})
 
 
 # --------------------------------------------------------------------------- #

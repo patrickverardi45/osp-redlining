@@ -76,6 +76,7 @@ PRODUCT_PATHS = {
     "/v2/product/jobs/{job_id}/export-package/download",
     "/v2/product/jobs/{job_id}/export-package/pdf",
     "/v2/product/jobs/{job_id}/gis-route",
+    "/v2/product/jobs/{job_id}/gis-route/download",
     # Slice C — uploaded-corpus engine-handoff readiness (read-only)
     "/v2/product/jobs/{job_id}/engine-handoff",
     # Recognized-corpus AUTOMATIC handoff (positive sha256 recognition -> existing deterministic render)
@@ -1036,6 +1037,36 @@ def test_gis_route_route_honest_when_absent(tmp_path):
     assert exc.value.status_code == 404
 
 
+def test_gis_route_download_kmz_present_and_honest_409_when_absent(tmp_path):
+    """The route-export endpoint serves a Google-Earth-openable KMZ of the UPLOADED route when one is present,
+    an honest 409 (never a faked file) when the job has no usable GIS_ROUTE, and 404 for a missing job."""
+    import base64
+    import io
+    import zipfile
+    from truelinev2.contracts.kmz_export import KMZ_MEDIA_TYPE, validate_kmz_bytes
+    c, ctx = _container(tmp_path), _ctx("cp-aaa")
+    ppr.create_project(ppr.ProjectCreate(display_name="Label"), ctx=ctx, c=c)
+    ppr.create_processing_job(ppr.JobCreate(job_id="job-1"), ctx=ctx, c=c)
+    with pytest.raises(HTTPException) as exc:                       # no GIS_ROUTE yet -> honest 409
+        ppr.download_gis_route("job-1", ctx=ctx, c=c)
+    assert exc.value.status_code == 409
+    with pytest.raises(HTTPException) as exc2:                      # missing job -> 404
+        ppr.download_gis_route("nope", ctx=ctx, c=c)
+    assert exc2.value.status_code == 404
+    kml = (b'<?xml version="1.0"?><kml xmlns="http://www.opengis.net/kml/2.2"><Document>'
+           b'<Placemark><name>R</name><LineString><coordinates>-96.1,30.1 -96.2,30.2</coordinates>'
+           b'</LineString></Placemark></Document></kml>')
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        z.writestr("doc.kml", kml)
+    b64 = base64.b64encode(buf.getvalue()).decode()
+    ppr.register_upload("job-1", ppr.UploadRegister(kind="GIS_ROUTE", filename="route.kmz", content_base64=b64),
+                        ctx=ctx, c=c)
+    resp = ppr.download_gis_route("job-1", ctx=ctx, c=c)            # uploaded route -> real KMZ
+    assert resp.media_type == KMZ_MEDIA_TYPE
+    assert validate_kmz_bytes(resp.body)["valid"] is True
+
+
 # --------------------------------------------------------------------------- #
 # Slice 4 — tenant isolation across the whole status/closeout/billing/export surface.
 # --------------------------------------------------------------------------- #
@@ -1059,6 +1090,7 @@ def test_slice4_tenant_isolation_b_cannot_address_a(tmp_path):
         lambda: ppr.get_export_package("job-1", ctx=ctx_b, c=c),
         lambda: ppr.download_closeout_pdf("job-1", ctx=ctx_b, c=c),
         lambda: ppr.get_gis_route("job-1", ctx=ctx_b, c=c),
+        lambda: ppr.download_gis_route("job-1", ctx=ctx_b, c=c),
     ):
         with pytest.raises(HTTPException) as exc:
             call()
