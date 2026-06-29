@@ -19,6 +19,7 @@ import json
 from pathlib import Path
 
 from truelinev2.ingest.pdf import PlanPdf
+from truelinev2.ingest.sheet_label_index import build_sheet_index, construction_sheet_for_page
 from truelinev2.render.crop import render_redline_stroke
 from truelinev2.contracts.processing_job import job_dir, load_job
 from truelinev2.contracts.reviewed_bore_log import (
@@ -146,25 +147,34 @@ def render_job_source_anchors(store_root, customer_project_id, job_id, source_an
     render_src.mkdir(parents=True, exist_ok=True)
 
     entries, artifact_map = [], {}
+    sheet_index_cache = {}
     for sa in anchors:
         sa_id = sa["source_anchor_id"]
         plan_path = _plan_path_for(store_root, customer_project_id, job_id, job, sa["plan_upload_id"])
         if plan_path is None:
             raise SourceAnchorStateError("PLAN_PDF for source_anchor %r is not available" % sa_id)
-        page = int(sa["page_number"])
+        page = int(sa["page_number"])                       # 1-based PDF page index the stroke renders on
         plan = PlanPdf(str(plan_path))
         try:
             png = render_redline_stroke(
                 plan, bore_id=sa_id, sheet=page, offset=0, stroke_points=_stroke_points(sa),
                 status=RENDER_STATUS, reason="human-confirmed source anchor %s" % sa_id,
                 out_dir=str(render_src))
+            # Honest sheet labelling: the manifest reports the CONSTRUCTION sheet number printed on that PDF
+            # page (e.g. PDF page 20 -> "7 OF 30" -> 7), matching the unit the engine/recognized bundles use
+            # for source_sheets. Falls back to the PDF page number when the page carries no plan-sheet label.
+            cache_key = str(plan_path)
+            if cache_key not in sheet_index_cache:
+                sheet_index_cache[cache_key] = build_sheet_index(plan)
+            construction_sheet = construction_sheet_for_page(sheet_index_cache[cache_key], page)
         finally:
             plan.close()
         if not png:
             raise SourceAnchorStateError("render produced no stroke for source_anchor %r" % sa_id)
         manifest_path = "artifacts/%s/%s" % (sa_id, Path(png).name)
         artifact_map[manifest_path] = png
-        entries.append({"source_anchor": sa, "artifact_path": manifest_path, "sheet": page})
+        entries.append({"source_anchor": sa, "artifact_path": manifest_path, "sheet": page,
+                        "construction_sheet": construction_sheet})
 
     manifest_input = build_source_anchor_manifest(
         entries, project_id=customer_project_id, project_name=customer_project_id,

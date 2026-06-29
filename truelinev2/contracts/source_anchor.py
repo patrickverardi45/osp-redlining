@@ -318,9 +318,14 @@ def build_source_anchor_manifest(anchor_entries, *, project_id, project_name, en
     OWNER_CONFIRMED_HUMAN_ADJUSTABLE (an EXISTING manifest enum, never DETERMINISTIC_AUTO), top-level
     ``bundle_origin = HUMAN_CONFIRMED_SOURCE_ANCHOR``. ``mock_example`` is false; artifact sha256/bytes are
     filled by the publisher. ``closure``/``coverage`` are null (no station footage is solved or invented).
-    Each entry is {"source_anchor": <record>, "artifact_path": <manifest-relative png>, "sheet": <int>}.
-    Counts derive from the logs, so the published manifest reconciles. Per-job + per-bundle only — never
-    summed into the deterministic 50/58 frontier."""
+    Each entry is {"source_anchor": <record>, "artifact_path": <manifest-relative png>, "sheet": <int>,
+    "construction_sheet": <int|None>}. ``sheet``/``page_number`` are the 1-based PDF page index the stroke
+    rendered on; ``construction_sheet`` is the CONSTRUCTION sheet number printed on that page (e.g. PDF page
+    20 -> "7 OF 30" -> 7). The manifest's ``source_sheets`` + artifact ``sheet`` report the construction
+    sheet (the unit the engine/recognized bundles use), falling back to the PDF page number when the page
+    has no plan-sheet label (so closeout never mislabels the sheet). Counts derive from the logs, so the
+    published manifest reconciles. Per-job + per-bundle only — never summed into the deterministic 50/58
+    frontier."""
     logs = []
     for entry in anchor_entries:
         sa = entry["source_anchor"]
@@ -330,6 +335,10 @@ def build_source_anchor_manifest(anchor_entries, *, project_id, project_name, en
         end_sta = end.get("station") or ""
         label = ("%s->%s" % (start_sta, end_sta)) if (start_sta or end_sta) \
             else "human-confirmed control-point route"
+        # Report the construction sheet number (matches engine/recognized source_sheets), not the PDF page
+        # index; fall back to the PDF page number when the page carries no construction-sheet label.
+        construction_sheet = entry.get("construction_sheet")
+        sheet_label = int(construction_sheet) if construction_sheet is not None else int(sa["page_number"])
         logs.append({
             "log_id": sa["source_anchor_id"],
             "parent_id": sa["reviewed_bore_log_id"],
@@ -338,12 +347,12 @@ def build_source_anchor_manifest(anchor_entries, *, project_id, project_name, en
             "provenance": MANIFEST_HUMAN_PROVENANCE,
             "drawn": True, "covered": False, "blocked": False,
             "drawn_lane": "NEW_TARGETS",
-            "source_sheets": [int(sa["page_number"])],
+            "source_sheets": [sheet_label],
             "span": {"start_station": start_sta, "end_station": end_sta, "label": label},
             "closure": None,            # no station footage solved or invented
             "coverage": None,
             "blocker": None,
-            "artifacts": [{"kind": "FINAL_REDLINE_PNG", "sheet": int(entry["sheet"]),
+            "artifacts": [{"kind": "FINAL_REDLINE_PNG", "sheet": sheet_label,
                            "path": entry["artifact_path"], "sha256": None,
                            "example_placeholder": True}],
             "evidence": [{"kind": "OWNER_REVIEW", "ref": "source_anchor/%s" % sa["source_anchor_id"],

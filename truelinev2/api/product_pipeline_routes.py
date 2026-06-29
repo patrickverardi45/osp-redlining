@@ -174,6 +174,7 @@ from truelinev2.contracts.source_anchor import (
     load_source_anchor,
 )
 from truelinev2.ingest.pdf import PlanPdf
+from truelinev2.ingest.sheet_label_index import build_sheet_index, SHEET_TYPE_OTHER
 from truelinev2.render.source_anchor_render import render_job_source_anchors
 
 router = APIRouter(prefix="/v2/product")
@@ -1324,9 +1325,13 @@ def get_plan_page_metadata(job_id: str, plan_upload_id: str,
                            ctx: RequestContext = Depends(get_context),
                            c: Container = Depends(get_container)) -> dict:
     """Read-only page metadata for an uploaded PLAN_PDF: page_count + per-page DISPLAY-space bounds (the
-    coordinate space source-anchor control points use) + width/height + the raster zoom/pixel size. Lets
-    the web map click pixels back to display-space. 404 if the upload is missing, 400 if it is not a
-    PLAN_PDF. Opens the PDF read-only (no rasterization here); creates no artifacts/slots."""
+    coordinate space source-anchor control points use) + width/height + the raster zoom/pixel size, AND the
+    page's printed CONSTRUCTION-SHEET label/number/type (from the title block). The label distinction lets
+    the web resolve a bore-log sheet ref (e.g. "7" = the plan sheet "7 OF 30") to the correct PDF page
+    instead of treating the sheet number as a raw PDF page index, and prefer route plan sheets over
+    cover/typical-detail pages. ``page_number`` stays a 1-based PDF page index everywhere. 404 if the upload
+    is missing, 400 if it is not a PLAN_PDF. Opens the PDF read-only (no rasterization here); creates no
+    artifacts/slots."""
     cp, store = ctx.tenant.value, _store_root(c)
     try:
         job = load_job(store, cp, job_id)
@@ -1338,6 +1343,8 @@ def get_plan_page_metadata(job_id: str, plan_upload_id: str,
         raise HTTPException(status_code=404, detail="plan file is not available")
     plan = PlanPdf(str(path))
     try:
+        index = build_sheet_index(plan)                     # title-block construction-sheet labels per page
+        by_page = {p.pdf_page_number: p for p in index.pages}
         pages = []
         for n in range(1, plan.page_count + 1):
             bounds = plan.page_bounds_display(n, 0)         # offset 0 -> page_index = page_number - 1
@@ -1345,15 +1352,23 @@ def get_plan_page_metadata(job_id: str, plan_upload_id: str,
                 continue
             x0, y0, x1, y1 = bounds
             w, h = x1 - x0, y1 - y0
+            sp = by_page.get(n)
             pages.append({
-                "page_number": n,
+                "page_number": n,                           # 1-based PDF page index (NOT a construction sheet)
                 "bounds": {"x0": x0, "y0": y0, "x1": x1, "y1": y1},
                 "width": w, "height": h,
                 "zoom": _PLAN_RASTER_ZOOM,
                 "raster_width": round(w * _PLAN_RASTER_ZOOM),
                 "raster_height": round(h * _PLAN_RASTER_ZOOM),
+                # Construction-sheet identity from the printed title block (null on cover/detail pages).
+                "construction_sheet_number": sp.construction_sheet_number if sp else None,
+                "sheet_total": sp.sheet_total if sp else None,
+                "plan_sheet_label": sp.plan_sheet_label if sp else None,
+                "sheet_type": sp.sheet_type if sp else SHEET_TYPE_OTHER,
+                "is_plan_sheet": bool(sp and sp.is_plan_sheet),
             })
-        return {"plan_upload_id": plan_upload_id, "page_count": plan.page_count, "pages": pages}
+        return {"plan_upload_id": plan_upload_id, "page_count": plan.page_count,
+                "plan_set_total": index.plan_set_total, "pages": pages}
     finally:
         plan.close()
 
