@@ -520,6 +520,19 @@ def plan_baseline_trap_with_notes() -> bytes:
     return _save(doc)
 
 
+def plan_offset_run_with_notes() -> bytes:
+    """Both endpoints source-bound and a SINGLE clean unforked run of the right length, but SHIFTED ~20 ft off
+    the bound endpoints (drawn 12+15..13+65, not the bore's 11+75..13+25). The run's path is unique and its
+    length matches the span, so branch-uniqueness and the length signal both look fine — only the run's
+    terminals do NOT sit at the bound endpoint stations. The case that ONLY ENDPOINT_TO_RUN_COORDINATE_TIGHTNESS
+    rejects."""
+    doc, page = _new_plan()
+    _both_notes_axis(page, "offset endpoints")
+    page.draw_line((315, 384), (465, 384), color=(1, 0, 0), width=1.8)            # ~12+15 .. ~13+65 (shifted +20)
+    _start_end_notes(page)
+    return _save(doc)
+
+
 def borelog_xlsx(start=_BORE_START, end=_BORE_END, *, print_val="1", depth=5.0, boc=None) -> bytes:
     """A flat bore-log: a single bore span (station/depth/print). ``print_val`` controls the referenced plan
     sheet(s) — e.g. ``"1,2"`` declares a two-sheet bore (load_borelog -> sheet_refs=[1,2]). ``boc``, when

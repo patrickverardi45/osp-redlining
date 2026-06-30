@@ -192,6 +192,8 @@ class GenericGeometryDialect:
         self._meta: Dict[Tuple[int, Tuple[float, float, float, float]], Dict[str, Any]] = {}
         self._axis: Dict[int, Any] = {}            # fitted StationAxis per sheet (station<->x)
         self._sheet_span: Dict[int, float] = {}    # detected station range (ft) on the sheet (full-sheet test)
+        self._band_segs: Dict[int, List[Dict[str, Any]]] = {}  # raw near-band segments per sheet (read-only
+        #   OBSERVER feed only — never read by placement/render; welding+polyline ordering otherwise discard it)
 
     # -- PlanDialect protocol ---------------------------------------------------------------- #
     def detect(self, plan: PlanPdf) -> bool:
@@ -259,6 +261,7 @@ class GenericGeometryDialect:
         legend = detect_legend_block(words)
 
         segs = _segments_near_band(plan, sheet, offset, tick_y, legend)
+        self._band_segs[sheet] = segs            # retain raw band segments for the read-only geometry observer
         if not segs:
             return []
         runs = _weld_runs(segs)
@@ -337,6 +340,14 @@ class GenericGeometryDialect:
         """The fitted StationAxis for a sheet (station<->x), or None. Lets a caller clip a run to a
         bore-log station span via ``axis.x_at(station_ft)``."""
         return self._axis.get(int(sheet))
+
+    def band_segments_for(self, sheet: int) -> List[Dict[str, Any]]:
+        """Read-only: the raw near-band drawn line-segments retained from the last ``extract_callouts`` on
+        ``sheet`` (each ``{"a": (x,y), "b": (x,y), "len", "red", ...}``), or ``[]``. EXPOSES the segment-level
+        geometry that union-find welding + x-sorted polyline ordering otherwise discard, so a read-only
+        geometry observer can reconstruct run topology (branch-uniqueness) and endpoint tightness. NEVER read
+        by placement or the renderer — purely observational, like ``signals_for``."""
+        return list(self._band_segs.get(int(sheet), []))
 
     def clip_centerline_to_x(self, callout: Callout, x_lo: float, x_hi: float
                              ) -> Optional[List[List[float]]]:
