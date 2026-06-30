@@ -20,6 +20,7 @@ _TERMINUS_MODULES = [
     _EXTRACT / "terminus_evidence.py",
     _EXTRACT / "terminus_extractor.py",
     _EXTRACT.parents[0] / "harness" / "terminus_fixtures.py",
+    _EXTRACT.parents[0] / "contracts" / "terminus_report.py",   # G3 read-only display report (observer)
 ]
 
 

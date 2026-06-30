@@ -75,6 +75,7 @@ from truelinev2.contracts.reviewed_bore_log import (
     review_row_in_log,
     set_grouping_status,
 )
+from truelinev2.contracts.terminus_report import terminus_evidence_report
 from truelinev2.contracts.manifest_handoff import (
     ARTIFACT_BUNDLE_SLOT,
     BUNDLE_STORE_SUBDIR,
@@ -1108,6 +1109,28 @@ def render_uploaded_corpus_engine_handoff_route(job_id: str,
         return render_uploaded_corpus_engine_handoff(store, cp, job_id, at=_now(), by=ctx.session_id)
     except UploadedCorpusEngineError as exc:
         raise HTTPException(status_code=409, detail=str(exc))
+    except _CONTRACT_ERRORS as exc:
+        raise _to_http(exc)
+
+
+# --------------------------------------------------------------------------- #
+# Terminus evidence (G3 — DISPLAY-only OBSERVER). Read-only source-backed per-bore endpoint evidence for the
+# REVIEW flow: for each engine-ready reviewed bore-log, what the START/END bound to (a printed structure note)
+# or the named missing-evidence blocker. Runs NO engine, renders nothing, sets no slot, advances no job,
+# changes no placement/status/AUTO. A separate read path — never the placement orchestrator.
+# --------------------------------------------------------------------------- #
+@router.get("/jobs/{job_id}/terminus-evidence")
+def get_terminus_evidence(job_id: str,
+                          ctx: RequestContext = Depends(get_context),
+                          c: Container = Depends(get_container)) -> dict:
+    """Read-only DISPLAY of source-backed per-bore TERMINUS EVIDENCE (observer-only). For each engine-ready
+    reviewed bore-log, resolves the job's stored PLAN_PDF + the bore-log source file and reports each
+    endpoint's source_bound / source_type / station / sheet / printed text / named blocker / provenance —
+    with honest named blockers when an input is missing. Changes NO placement/status/AUTO, runs no engine,
+    renders nothing, sets no slot. 404 if the job is missing (incl. cross-tenant)."""
+    cp, store = ctx.tenant.value, _store_root(c)
+    try:
+        return terminus_evidence_report(store, cp, job_id)
     except _CONTRACT_ERRORS as exc:
         raise _to_http(exc)
 

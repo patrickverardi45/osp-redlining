@@ -86,6 +86,8 @@ PRODUCT_PATHS = {
     # Uploaded-corpus ENGINE handoff (run the engine on the job's own plan + reviewed bore-log)
     "/v2/product/jobs/{job_id}/uploaded-corpus-engine-handoff",
     "/v2/product/jobs/{job_id}/uploaded-corpus-engine-handoff/render",
+    # G3 — terminus evidence (DISPLAY-only observer; read-only, no placement/status/AUTO change)
+    "/v2/product/jobs/{job_id}/terminus-evidence",
     # Phase 9 — product workflow orchestrator (3-path redline decision + closeout/export assembly)
     "/v2/product/jobs/{job_id}/workflow/redline",
     "/v2/product/jobs/{job_id}/workflow/closeout",
