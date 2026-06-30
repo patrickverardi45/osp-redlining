@@ -49,6 +49,14 @@ _AXIS_MAX_RESIDUAL_FT = 12.0 # reject a station-axis fit this noisy (not a real 
 _MIN_AXIS_TICKS = 3          # need at least this many station ticks to trust the axis
 _TICK_ROW_BAND = 18.0        # display-pt y-tolerance grouping ticks into one horizontal station row
 
+# Generic-lane ABSTAIN reason codes (name-free) — a diagnostic refinement of the single coarse "no plan
+# dialect recognized" reason, classified from evidence the detector already has (no new source evidence,
+# no placement change). NO_DRAWN_RUN_OVER_SPAN (runs exist but none cover the span) lives in the adapter
+# alongside placement, since it is decided there.
+NO_STATION_AXIS = "NO_STATION_AXIS"                      # no legible station-tick axis on any page
+INSUFFICIENT_AXIS_QUALITY = "INSUFFICIENT_AXIS_QUALITY"  # ticks present but too few / too noisy to trust
+NO_WELDABLE_RUN = "NO_WELDABLE_RUN"                      # axis OK, but no drawn run survives the shape gates
+
 
 def _key(bbox) -> Tuple[float, float, float, float]:
     """Stable rounded bbox key (deterministic lookup of a callout's traced centerline)."""
@@ -194,6 +202,41 @@ class GenericGeometryDialect:
             if self.extract_callouts(plan, idx + 1, 0):
                 return True
         return False
+
+    def detect_blocker(self, plan: PlanPdf) -> Optional[dict]:
+        """Classify WHY detect() found no usable drawn run, using the SAME gates as extract_callouts (kept in
+        lock-step): no station axis at all, an untrustworthy axis (too few / too noisy ticks), or a
+        trustworthy axis with no weldable run. Returns the MOST-PROGRESSED reason across pages as
+        {code, reason} (axis-OK-but-no-run outranks no-axis, since it is more specific). Read-only diagnostic
+        that changes NO placement; only meaningful when detect() returned False (else returns None)."""
+        rank = {NO_STATION_AXIS: 0, INSUFFICIENT_AXIS_QUALITY: 1, NO_WELDABLE_RUN: 2}
+        best = None
+        for idx in range(plan.page_count):
+            sheet = idx + 1
+            words = plan.words(sheet, 0)
+            row, _ty = _densest_tick_row(words) if words else ([], None)
+            if not row:
+                code = NO_STATION_AXIS
+            elif len(row) < _MIN_AXIS_TICKS:
+                code = INSUFFICIENT_AXIS_QUALITY
+            else:
+                axis = fit_axis([(w["xc"], ft) for w, ft in row])
+                if axis is None or axis.residual_ft > _AXIS_MAX_RESIDUAL_FT:
+                    code = INSUFFICIENT_AXIS_QUALITY
+                elif self.extract_callouts(plan, sheet, 0):
+                    return None                              # this page HAS a usable run -> not blocked
+                else:
+                    code = NO_WELDABLE_RUN
+            if best is None or rank[code] > rank[best]:
+                best = code
+        if best is None:
+            return None
+        reasons = {
+            NO_STATION_AXIS: "No legible station-tick axis was found on any page.",
+            INSUFFICIENT_AXIS_QUALITY: "A station axis was found but is too sparse or noisy to trust.",
+            NO_WELDABLE_RUN: "A station axis was found, but no drawn run survives the run-shape gates.",
+        }
+        return {"code": best, "reason": reasons[best]}
 
     def calibrate(self, plan: PlanPdf, default_offset: int) -> int:
         off, _ev = derive_offset(plan)

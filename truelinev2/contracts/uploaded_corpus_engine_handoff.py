@@ -464,6 +464,10 @@ def _run_engine(plan_path, borelog_path):
                     offset = gen_off
                 elif isinstance(gen_sig, dict) and gen_sig.get("code"):
                     generic_blocker = gen_sig                # the generic lane's SPECIFIC abstain reason
+            else:
+                # The fallback found no usable drawn run at all: classify WHY (no axis / weak axis / no
+                # weldable run) instead of the single coarse NO_PLAN_DIALECT_RECOGNIZED. Diagnostic only.
+                generic_blocker = generic.detect_blocker(plan)
 
         cand = _candidate(placement)
         is_generic = getattr(used, "name", None) == _GENERIC_DIALECT_NAME

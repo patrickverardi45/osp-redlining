@@ -5,14 +5,12 @@ isolated tmp store, and pins the engine's CURRENT cold-package behavior:
 
   * a clear single bore-shaped run over the span -> UPLOADED_REVIEW, MEDIUM confidence;
   * ambiguous / partial-coverage runs            -> UPLOADED_REVIEW, LOW confidence, correction-recommended;
-  * no usable geometry (no run / blank / weak axis / speckle) -> ABSTAIN (currently the coarse
-    NO_PLAN_DIALECT_RECOGNIZED for several distinct causes);
+  * baseline-only / under-covered (over-placement guard) -> ABSTAIN, NO_DRAWN_RUN_OVER_SPAN;
+  * no usable geometry -> ABSTAIN with a SPECIFIC per-cause reason: blank/no-axis -> NO_STATION_AXIS,
+    weak axis -> INSUFFICIENT_AXIS_QUALITY, no weldable run -> NO_WELDABLE_RUN;
   * the review gate unsatisfied                  -> ABSTAIN, NO_ENGINE_READY_REVIEWED_BORE_LOG.
 
-A correct ABSTAIN with the expected named blocker is a PASS. The two over-placement probes are PINNED as
-KNOWN divergences (the engine currently places a LOW, correction-recommended candidate on the full-sheet
-alignment line where the oracle wants an ABSTAIN); if a future abstain-policy change flips them, these
-assertions fail on purpose and force a deliberate review (never a silent regression).
+A correct ABSTAIN with the expected named blocker is a PASS.
 """
 from __future__ import annotations
 
@@ -53,11 +51,22 @@ def test_matrix(tmp_path):
     assert results["pkg-001-tight-red-run"].observed_status == "UPLOADED_REVIEW"
     assert results["pkg-001-tight-red-run"].observed_band == "MEDIUM"
 
-    # Un-placeable geometry abstains with the engine's (currently coarse) named dialect reason. The finer
-    # split of this code into per-cause reasons is a separate, deferred engine change.
-    for fid in ("pkg-003-axis-no-runs", "pkg-005-weak-axis-2-ticks", "pkg-010-speckle-no-run"):
+    # Un-placeable geometry now abstains with a SPECIFIC per-cause reason (no longer the single coarse
+    # NO_PLAN_DIALECT_RECOGNIZED): blank/no-axis -> NO_STATION_AXIS, weak axis -> INSUFFICIENT_AXIS_QUALITY,
+    # no weldable run -> NO_WELDABLE_RUN.
+    per_cause = {
+        "pkg-004-blank-plan": "NO_STATION_AXIS",
+        "pkg-005-weak-axis-2-ticks": "INSUFFICIENT_AXIS_QUALITY",
+        "pkg-003-axis-no-runs": "NO_WELDABLE_RUN",
+        "pkg-010-speckle-no-run": "NO_WELDABLE_RUN",
+    }
+    for fid, code in per_cause.items():
         assert results[fid].observed_status == "ABSTAIN"
-        assert any("NO_PLAN_DIALECT_RECOGNIZED" in b for b in results[fid].observed_blockers)
+        assert any(code in b for b in results[fid].observed_blockers), results[fid].observed_blockers
+        # the coarse code is no longer emitted for these now-classified cases
+        assert not any("NO_PLAN_DIALECT_RECOGNIZED" in b for b in results[fid].observed_blockers)
+    # the four formerly-collapsed cases now span >= 3 distinct engine reasons
+    assert len(set(per_cause.values())) >= 3
 
     # Over-placement guard: a baseline-only / under-covered plan (no bore-shaped run) now ABSTAINS with the
     # SPECIFIC NO_DRAWN_RUN_OVER_SPAN, instead of placing a LOW correction-recommended candidate on the
