@@ -276,3 +276,54 @@ def observe_dialect_run(dialect: Any, sheet: int, start_ft: float, end_ft: float
     if sx is None or ex is None:
         return None
     return observe_run_geometry(dialect.band_segments_for(sheet), sx, ex, **kwargs)
+
+
+def spanning_run_terminals(segments: Sequence[Dict[str, Any]], start_x: float, end_x: float,
+                           *, weld_eps: float = _WELD_EPS_PT, span_overlap_min: float = _SPAN_OVERLAP_MIN
+                           ) -> Optional[Tuple[Tuple[float, float], Tuple[float, float]]]:
+    """Read-only: the SPANNING run's two terminal coordinates ``((start_xy), (end_xy))`` — the (x, y) of the
+    run-graph nodes nearest ``start_x`` / ``end_x`` within the unique spanning component — or ``None`` when the
+    run is absent / not unique (0 or >=2 spanning components). Built from the SAME segment-graph as
+    :func:`observe_run_geometry` (reuses :func:`_cluster_points` / :class:`_UF` / :func:`_overlap_fraction`), so a
+    disconnected small shape (e.g. a structure symbol) is its own component and never moves the run terminal.
+    Additive + standalone: it does not change any verdict; the 2-D tightness layer needs the terminal's y, which
+    the x-only :func:`observe_run_geometry` does not return."""
+    pts: List[Tuple[float, float]] = []
+    seg_pts: List[Tuple[int, int]] = []
+    for s in segments:
+        a = s.get("a"); b = s.get("b")
+        if a is None or b is None:
+            continue
+        ia = len(pts); pts.append((float(a[0]), float(a[1])))
+        ib = len(pts); pts.append((float(b[0]), float(b[1])))
+        seg_pts.append((ia, ib))
+    if not seg_pts:
+        return None
+
+    node_of = _cluster_points(pts, weld_eps)
+    n_nodes = max(node_of) + 1
+    sums: Dict[int, List[float]] = {}
+    for idx, nid in enumerate(node_of):
+        acc = sums.setdefault(nid, [0.0, 0.0, 0.0])
+        acc[0] += pts[idx][0]; acc[1] += pts[idx][1]; acc[2] += 1.0
+    coord = {nid: (acc[0] / acc[2], acc[1] / acc[2]) for nid, acc in sums.items()}
+
+    comp = _UF(n_nodes)
+    for ia, ib in seg_pts:
+        na, nb = node_of[ia], node_of[ib]
+        if na != nb:
+            comp.union(na, nb)
+    comps: Dict[int, List[int]] = {}
+    for nid in range(n_nodes):
+        comps.setdefault(comp.find(nid), []).append(nid)
+
+    lo_x, hi_x = (start_x, end_x) if start_x <= end_x else (end_x, start_x)
+    spanning = [nodes for nodes in comps.values()
+                if _overlap_fraction(min(coord[n][0] for n in nodes), max(coord[n][0] for n in nodes),
+                                     lo_x, hi_x) >= span_overlap_min]
+    if len(spanning) != 1:
+        return None                                  # absent or rival runs -> the run terminal is not unique
+    run = spanning[0]
+    start_node = min(run, key=lambda n: abs(coord[n][0] - start_x))
+    end_node = min(run, key=lambda n: abs(coord[n][0] - end_x))
+    return (coord[start_node], coord[end_node])

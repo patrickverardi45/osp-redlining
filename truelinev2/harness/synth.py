@@ -533,6 +533,41 @@ def plan_offset_run_with_notes() -> bytes:
     return _save(doc)
 
 
+def _structure_symbol(page, cx: float, cy: float, *, half: float = 5.0) -> None:
+    """A small drawn structure SYMBOL (a compact filled box ~10x10) centered at (cx, cy) — the kind of marker a
+    plan draws at a structure on the alignment. Compact in both dims so a geometry-only observer can tell it from
+    a run line / baseline / station tick. Name-free."""
+    page.draw_rect(fitz.Rect(cx - half, cy - half, cx + half, cy + half), color=(0, 0, 0), fill=(0, 0, 0),
+                   width=0.8)
+
+
+def plan_symbol_clean_with_notes() -> bytes:
+    """Both endpoints source-bound AND a drawn structure SYMBOL on the run band at each endpoint: the run ends
+    exactly at the drawn structures, so TERMINUS_DRAWN_COORDINATE is derivable and ENDPOINT_TO_TERMINUS_2D_TIGHTNESS
+    is TIGHT. The clean positive for the 2-D layer (still REVIEW today — the generic lane never auto-promotes)."""
+    doc, page = _new_plan()
+    _both_notes_axis(page, "symbol clean")
+    page.draw_line((295, 384), (445, 384), color=(1, 0, 0), width=1.8)            # the bore run on the band
+    _structure_symbol(page, 295, 384)                                            # start structure symbol on the run
+    _structure_symbol(page, 445, 384)                                            # end structure symbol on the run
+    _start_end_notes(page)
+    return _save(doc)
+
+
+def plan_symbol_y_misaligned_with_notes() -> bytes:
+    """Both endpoints source-bound, structure SYMBOLS drawn on the alignment band (y=384), but the run drawn on a
+    PARALLEL band (y=360): the run reaches the right STATION-X at each end (station-x tightness PASSES) yet its
+    endpoints sit ~24 pt off the drawn structures. The case that ONLY ENDPOINT_TO_TERMINUS_2D_TIGHTNESS rejects —
+    station-x alone cannot see it."""
+    doc, page = _new_plan()
+    _both_notes_axis(page, "symbol y-misaligned")
+    page.draw_line((295, 360), (445, 360), color=(1, 0, 0), width=1.8)            # run on a parallel band (wrong y)
+    _structure_symbol(page, 295, 384)                                            # structure on the true band
+    _structure_symbol(page, 445, 384)
+    _start_end_notes(page)
+    return _save(doc)
+
+
 def borelog_xlsx(start=_BORE_START, end=_BORE_END, *, print_val="1", depth=5.0, boc=None) -> bytes:
     """A flat bore-log: a single bore span (station/depth/print). ``print_val`` controls the referenced plan
     sheet(s) — e.g. ``"1,2"`` declares a two-sheet bore (load_borelog -> sheet_refs=[1,2]). ``boc``, when
