@@ -242,6 +242,70 @@ def plan_multi_sheet_end_note() -> bytes:
     return _save(doc)
 
 
+def _start_end_notes(page) -> None:
+    page.insert_text((250, 360), "STA 11+75 INSTALLER HH", fontsize=8)          # printed START structure note
+    page.insert_text((450, 360), "STA 13+25 SPLICE", fontsize=8)               # printed END structure note
+
+
+# --- G4 preflight builders: each combines printed structure notes (both endpoints source-bound) with a
+# DIFFERENT placement-geometry condition, so the future AUTO gate's geometry/sheet checks can be exercised
+# against a both-bound terminus. All REVIEW today (the generic lane never auto-promotes). Name-free. --------- #
+def plan_clean_bore_with_notes() -> bytes:
+    """The LONE positive candidate shape: axis + a SINGLE tight red bore run over the span (no baseline, no
+    rival utilities) + printed structure notes at BOTH endpoints. Near-perfect coverage, zero rivals, both
+    endpoints source-bound — the only shape a future AUTO gate would accept. STILL REVIEW today."""
+    doc, page = _new_plan()
+    page.insert_text((60, 60), "PLAN & PROFILE  -  ALIGNMENT 10+00 thru 16+00", fontsize=11)
+    _draw_axis(page)
+    page.draw_line((295, 384), (445, 384), color=(1, 0, 0), width=1.8)         # the sole bore run, no rivals
+    _start_end_notes(page)
+    return _save(doc)
+
+
+def plan_ambiguous_runs_with_notes() -> bytes:
+    """Both endpoints source-bound BUT the geometry is ambiguous: several co-linear runs over the same span
+    (no single drawn line is clearly the bore). The future AUTO gate must REJECT this (rivals present) even
+    though the termini are printed-bound. REVIEW + correction-recommended today."""
+    doc, page = _new_plan()
+    page.insert_text((60, 60), "PLAN & PROFILE  -  ALIGNMENT 10+00 thru 16+00 (ambiguous runs)", fontsize=11)
+    _draw_axis(page)
+    page.draw_line((120, 400), (720, 400), color=(0, 0, 0), width=0.7)         # full-sheet baseline
+    page.draw_line((295, 378), (445, 378), color=(0, 0, 0), width=1.4)         # rival A
+    page.draw_line((295, 392), (445, 392), color=(1, 0, 0), width=1.6)         # rival B (red)
+    page.draw_line((310, 406), (445, 406), color=(0, 0, 0), width=1.4)         # rival C
+    _start_end_notes(page)
+    return _save(doc)
+
+
+def plan_partial_run_with_notes(width_pt) -> bytes:
+    """Both endpoints source-bound BUT the drawn run covers only PART of the span (partial coverage -> low
+    generic confidence). The future AUTO gate must REJECT this (coverage below the confident floor). REVIEW
+    (low) today."""
+    doc, page = _new_plan()
+    page.insert_text((60, 60), "PLAN & PROFILE  -  ALIGNMENT 10+00 thru 16+00 (partial run)", fontsize=11)
+    _draw_axis(page)
+    page.draw_line((120, 400), (720, 400), color=(0, 0, 0), width=0.7)
+    page.draw_line((295, 384), (295 + width_pt, 384), color=(1, 0, 0), width=1.8)
+    _start_end_notes(page)
+    return _save(doc)
+
+
+def plan_run_sheet1_notes_sheet2() -> bytes:
+    """Both endpoints source-bound BUT on a DIFFERENT sheet than the placement: the bore run is drawn on sheet
+    1 while BOTH printed structure notes sit on sheet 2 (bore-log references both). Placement lands on sheet 1;
+    the termini bind on sheet 2 -> a sheet mismatch the future AUTO gate must REJECT. REVIEW today."""
+    doc = fitz.open()
+    p1 = doc.new_page(width=792, height=612)
+    p1.insert_text((60, 60), "PLAN & PROFILE  -  ALIGNMENT 10+00 thru 16+00 (SHEET 1 — run)", fontsize=11)
+    _draw_axis(p1)
+    p1.draw_line((295, 384), (445, 384), color=(1, 0, 0), width=1.8)           # the bore run on sheet 1
+    p2 = doc.new_page(width=792, height=612)
+    p2.insert_text((60, 60), "PLAN & PROFILE  -  ALIGNMENT 10+00 thru 16+00 (SHEET 2 — notes)", fontsize=11)
+    _draw_axis(p2)
+    _start_end_notes(p2)                                                       # BOTH structure notes on sheet 2
+    return _save(doc)
+
+
 def borelog_xlsx(start=_BORE_START, end=_BORE_END, *, print_val="1", depth=5.0, boc=None) -> bytes:
     """A flat bore-log: a single bore span (station/depth/print). ``print_val`` controls the referenced plan
     sheet(s) — e.g. ``"1,2"`` declares a two-sheet bore (load_borelog -> sheet_refs=[1,2]). ``boc``, when
