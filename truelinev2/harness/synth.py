@@ -568,6 +568,77 @@ def plan_symbol_y_misaligned_with_notes() -> bytes:
     return _save(doc)
 
 
+def _label_box(page, x0: float, y0: float, x1: float, y1: float) -> None:
+    """A drawn label FRAME (rectangle outline) around a structure note — the anchor a leader exits. Name-free."""
+    page.draw_rect(fitz.Rect(x0, y0, x1, y1), color=(0, 0, 0), width=0.6)
+
+
+def _leader(page, ax: float, ay: float, bx: float, by: float) -> None:
+    """A drawn leader line from a label box toward a structure symbol. Name-free."""
+    page.draw_line((ax, ay), (bx, by), color=(0, 0, 0), width=0.6)
+
+
+def plan_leader_traced_with_notes() -> bytes:
+    """Both endpoints source-bound; each printed note is FRAMED in a label box with its own LEADER LINE pointing
+    at the drawn structure symbol on the run. The unique label->box->leader->symbol chain resolves ->
+    LEADER_TRACED_SYMBOL provenance (stronger than the geometry-only COMPACT_SYMBOL_AT_STATION). Still REVIEW;
+    NOT class-verified (no CAD layer/class table in the cold lane)."""
+    doc, page = _new_plan()
+    _both_notes_axis(page, "leader traced")
+    page.draw_line((295, 384), (445, 384), color=(1, 0, 0), width=1.8)            # the bore run
+    _start_end_notes(page)
+    _label_box(page, 245, 351, 360, 365)                                         # START label frame
+    _leader(page, 300, 365, 297, 381)                                            # START leader -> symbol
+    _structure_symbol(page, 295, 384)
+    _label_box(page, 390, 351, 505, 365)                                         # END label frame
+    _leader(page, 450, 365, 447, 381)                                            # END leader -> symbol
+    _structure_symbol(page, 445, 384)
+    return _save(doc)
+
+
+def plan_label_only_no_symbol_with_notes() -> bytes:
+    """Both endpoints source-bound and FRAMED, but NO leader and NO drawn symbol anywhere: a label-only plan.
+    Leader-tracing finds the framed label but no leader -> LABEL_ONLY_NO_SYMBOL; the compact fallback finds no
+    symbol -> NO_DRAWN_COORDINATE. The label/text centroid is NEVER used as a coordinate."""
+    doc, page = _new_plan()
+    _both_notes_axis(page, "label only")
+    page.draw_line((295, 384), (445, 384), color=(1, 0, 0), width=1.8)
+    _start_end_notes(page)
+    _label_box(page, 245, 351, 360, 365)
+    _label_box(page, 390, 351, 505, 365)
+    return _save(doc)
+
+
+def plan_ambiguous_leader_with_notes() -> bytes:
+    """The START note is framed but TWO leaders exit the box -> AMBIGUOUS_LEADER (never chosen between) ->
+    non-promoting. The END carries a bare compact symbol for contrast."""
+    doc, page = _new_plan()
+    _both_notes_axis(page, "ambiguous leader")
+    page.draw_line((295, 384), (445, 384), color=(1, 0, 0), width=1.8)
+    _start_end_notes(page)
+    _label_box(page, 245, 351, 360, 365)
+    _leader(page, 300, 365, 297, 381)                                            # leader A
+    _leader(page, 320, 365, 330, 381)                                            # leader B -> ambiguous
+    _structure_symbol(page, 295, 384)
+    _structure_symbol(page, 445, 384)                                            # END compact symbol
+    return _save(doc)
+
+
+def plan_ambiguous_symbol_with_notes() -> bytes:
+    """The START note is framed with ONE leader, but TWO drawn symbols sit at the leader tip -> AMBIGUOUS_SYMBOL
+    (never chosen between) -> non-promoting."""
+    doc, page = _new_plan()
+    _both_notes_axis(page, "ambiguous symbol")
+    page.draw_line((295, 384), (445, 384), color=(1, 0, 0), width=1.8)
+    _start_end_notes(page)
+    _label_box(page, 245, 351, 360, 365)
+    _leader(page, 300, 365, 295, 381)                                            # single leader
+    _structure_symbol(page, 291, 384)                                            # symbol A at the tip
+    _structure_symbol(page, 299, 384)                                            # symbol B at the tip -> ambiguous
+    _structure_symbol(page, 445, 384)                                            # END compact symbol
+    return _save(doc)
+
+
 def borelog_xlsx(start=_BORE_START, end=_BORE_END, *, print_val="1", depth=5.0, boc=None) -> bytes:
     """A flat bore-log: a single bore span (station/depth/print). ``print_val`` controls the referenced plan
     sheet(s) — e.g. ``"1,2"`` declares a two-sheet bore (load_borelog -> sheet_refs=[1,2]). ``boc``, when

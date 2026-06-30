@@ -36,6 +36,12 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from truelinev2.extract.generic_geometry import GenericGeometryDialect
+from truelinev2.extract.leader_symbol_trace import (
+    AMBIGUOUS_LEADER,
+    AMBIGUOUS_SYMBOL,
+    LEADER_TRACED_SYMBOL,
+    trace_label_to_symbol,
+)
 from truelinev2.extract.run_geometry_observer import (
     BRANCH_PATH_UNIQUENESS,
     BRANCH_UNIQUE,
@@ -45,6 +51,7 @@ from truelinev2.extract.run_geometry_observer import (
     spanning_run_terminals,
 )
 from truelinev2.ingest.pdf import PlanPdf
+from truelinev2.stations import feet_to_station
 
 # --- The two named diagnostics this layer adds. --------------------------------------------------------- #
 TERMINUS_DRAWN_COORDINATE = "TERMINUS_DRAWN_COORDINATE"
@@ -56,7 +63,9 @@ NO_DRAWN_COORDINATE = "NO_DRAWN_COORDINATE"              # source-bound, but no 
 AMBIGUOUS_DRAWN_COORDINATE = "AMBIGUOUS_DRAWN_COORDINATE"  # >=2 compact shapes at the station -> never chosen
 NOT_SOURCE_BOUND = "NOT_SOURCE_BOUND"                    # endpoint has no printed identity -> no coordinate to seek
 
-# coordinate provenance (honest: geometry-only, NOT class-verified)
+# coordinate provenance ladder (strongest -> weakest). LEADER_TRACED_SYMBOL is imported from
+# leader_symbol_trace; COMPACT_SYMBOL_AT_STATION is the geometry-only fallback. NEITHER is class-verified —
+# generic class verification needs a CAD layer/class table the cold lane does not have (still missing).
 COMPACT_SYMBOL_AT_STATION = "COMPACT_SYMBOL_AT_STATION"
 
 # 2-D tightness verdicts
@@ -73,10 +82,15 @@ _TIGHT_2D_TOL = 15.0        # run-terminal -> terminus-coordinate 2-D gap above 
 
 @dataclass(frozen=True)
 class TerminusCoordinate:
-    """The drawn coordinate (or honest refusal) for one source-bound endpoint."""
+    """The drawn coordinate (or honest refusal) for one source-bound endpoint. ``provenance`` is the ladder
+    rung (``LEADER_TRACED_SYMBOL`` > ``COMPACT_SYMBOL_AT_STATION``); ``leader_trace`` is the leader resolver's
+    sub-status; ``class_verified`` is ALWAYS False in the cold lane (generic class verification needs a
+    layer/class table the cold lane lacks — a named missing capability)."""
     result: str
     xy: Optional[Tuple[float, float]] = None
     provenance: Optional[str] = None
+    class_verified: bool = False
+    leader_trace: Optional[str] = None
     detail: Dict[str, Any] = field(default_factory=dict)
 
 
@@ -105,10 +119,13 @@ class TerminusCoordinateObservation:
 
 
 _NOTES = (
-    "TERMINUS_DRAWN_COORDINATE is cold-lane GEOMETRY-ONLY (a compact drawn shape at the bound station); it is "
-    "NOT class-verified. The class-verified analog is structure_position.resolve_structure_position, which "
-    "needs a CAD layer table + class fill colors the generic/cold lane does not have",
-    "2-D tightness uses a derived drawn coordinate or reports UNMEASURABLE — a missing coordinate never promotes",
+    "TERMINUS_DRAWN_COORDINATE provenance ladder: LEADER_TRACED_SYMBOL (a printed label's own drawn leader "
+    "points at a unique drawn symbol) is STRONGER than COMPACT_SYMBOL_AT_STATION (a compact drawn shape at the "
+    "bound station); both are geometry-only positions",
+    "CLASS VERIFICATION IS STILL MISSING: no rung is class-verified — generic class verification needs a CAD "
+    "layer/class table the cold lane does not have (structure_position.resolve_structure_position is the "
+    "named-dialect analog). class_verified is always False; the label/text centroid is NEVER used as a coordinate",
+    "2-D tightness uses a derived drawn coordinate or reports UNMEASURABLE — a missing/ambiguous coordinate never promotes",
     "single-sheet drawn geometry only; cross-sheet continuation is out of scope",
     "validated against the adversarial harness only; no eligible fresh non-recognized package exists in the repo "
     "(only the recognized work corpus + synthetic fixtures) so this is NOT proof of real generalization",
@@ -158,6 +175,39 @@ def derive_terminus_drawn_coordinate(shapes: Sequence[Dict[str, Any]], station_x
                               detail={"station_x": round(float(station_x), 2)})
 
 
+def derive_terminus_coordinate(*, source_bound: bool, station_x: Optional[float], label_tokens: Sequence[str],
+                               words: Sequence[Dict[str, Any]], line_items: Sequence[Dict[str, Any]],
+                               shapes: Sequence[Dict[str, Any]], x_tol: float = _STATION_X_TOL,
+                               min_dim: float = _SYMBOL_MIN_DIM, max_dim: float = _SYMBOL_MAX_DIM
+                               ) -> TerminusCoordinate:
+    """The full cold-lane coordinate ladder for a source-bound terminus, uniqueness-mandatory + never guessed.
+
+    Order: (1) LEADER-TRACE the label's own leader to a unique drawn symbol -> ``LEADER_TRACED_SYMBOL`` (the
+    strongest cold-lane provenance); (2) if the leader evidence is AMBIGUOUS (>=2 labels/boxes/leaders, or >=2
+    symbols at the tip) REFUSE -> ``AMBIGUOUS_DRAWN_COORDINATE`` (never downgraded to a weaker guess); (3)
+    otherwise (no label / no frame / no leader / leader points at nothing) fall back to the weaker
+    ``COMPACT_SYMBOL_AT_STATION`` geometry-only path. ``class_verified`` stays False at every rung."""
+    if not source_bound or station_x is None:
+        return TerminusCoordinate(NOT_SOURCE_BOUND, detail={"station_x": station_x, "source_bound": source_bound})
+
+    xy, sub, ldetail = trace_label_to_symbol(words, line_items, shapes, label_tokens=label_tokens)
+    if sub == LEADER_TRACED_SYMBOL and xy is not None:
+        return TerminusCoordinate(DRAWN_COORDINATE_BOUND, xy=(float(xy[0]), float(xy[1])),
+                                  provenance=LEADER_TRACED_SYMBOL, class_verified=False, leader_trace=sub,
+                                  detail={"station_x": round(float(station_x), 2), "leader": ldetail})
+    if sub in (AMBIGUOUS_LEADER, AMBIGUOUS_SYMBOL):
+        # ambiguous SOURCE evidence -> refuse; never silently downgrade to the weaker compact guess
+        return TerminusCoordinate(AMBIGUOUS_DRAWN_COORDINATE, provenance=None, class_verified=False,
+                                  leader_trace=sub, detail={"station_x": round(float(station_x), 2), "leader": ldetail})
+
+    # no usable leader evidence -> the weaker compact-symbol-at-station fallback (still never a guess)
+    compact = derive_terminus_drawn_coordinate(shapes, station_x, source_bound=source_bound,
+                                               x_tol=x_tol, min_dim=min_dim, max_dim=max_dim)
+    return TerminusCoordinate(compact.result, xy=compact.xy, provenance=compact.provenance,
+                              class_verified=False, leader_trace=sub,
+                              detail={**compact.detail, "leader": ldetail})
+
+
 def endpoint_2d_tightness(run_terminal_xy: Optional[Tuple[float, float]], terminus_xy: Optional[Tuple[float, float]],
                           *, tol: float = _TIGHT_2D_TOL) -> Endpoint2DTightness:
     """2-D distance from the run's terminal to the terminus drawn coordinate. ``UNMEASURABLE`` when either is
@@ -181,10 +231,16 @@ def _inside_any(midpoint: Tuple[float, float], boxes: Sequence[Tuple[float, floa
 def observe_terminus_coordinates_core(shapes: Sequence[Dict[str, Any]], segments: Sequence[Dict[str, Any]],
                                       start_x: Optional[float], end_x: Optional[float],
                                       *, start_source_bound: bool, end_source_bound: bool,
+                                      words: Sequence[Dict[str, Any]] = (),
+                                      line_items: Sequence[Dict[str, Any]] = (),
+                                      start_label_tokens: Sequence[str] = (),
+                                      end_label_tokens: Sequence[str] = (),
                                       tight_tol: float = _TIGHT_2D_TOL, **run_kwargs: Any
                                       ) -> TerminusCoordinateObservation:
     """Pure core (no PlanPdf/dialect): compose branch + station-x (from ``observe_run_geometry``) with the 2-D
     terminus-coordinate layer over explicit ``shapes`` (vector_segments-style) + ``segments`` (band-segment-style).
+    ``words`` / ``line_items`` / ``*_label_tokens`` drive leader-tracing; when empty (the prior callers) the
+    coordinate derivation falls back to the geometry-only compact-symbol path — prior behavior is preserved.
 
     The run graph EXCLUDES detected compact symbols (the run is linework minus markers) so a drawn symbol at an
     endpoint does not weld into the run and falsely read as a fork."""
@@ -201,8 +257,12 @@ def observe_terminus_coordinates_core(shapes: Sequence[Dict[str, Any]], segments
     start_term = terminals[0] if terminals else None
     end_term = terminals[1] if terminals else None
 
-    start_coord = derive_terminus_drawn_coordinate(symbols, start_x, source_bound=start_source_bound)
-    end_coord = derive_terminus_drawn_coordinate(symbols, end_x, source_bound=end_source_bound)
+    start_coord = derive_terminus_coordinate(source_bound=start_source_bound, station_x=start_x,
+                                             label_tokens=start_label_tokens, words=words,
+                                             line_items=line_items, shapes=shapes)
+    end_coord = derive_terminus_coordinate(source_bound=end_source_bound, station_x=end_x,
+                                           label_tokens=end_label_tokens, words=words,
+                                           line_items=line_items, shapes=shapes)
     start_2d = endpoint_2d_tightness(start_term, start_coord.xy, tol=tight_tol)
     end_2d = endpoint_2d_tightness(end_term, end_coord.xy, tol=tight_tol)
 
@@ -245,7 +305,10 @@ def observe_terminus_coordinates(plan: PlanPdf, dialect: GenericGeometryDialect,
         return None
     return observe_terminus_coordinates_core(
         plan.vector_segments(sheet, offset), dialect.band_segments_for(sheet), sx, ex,
-        start_source_bound=start_source_bound, end_source_bound=end_source_bound, **kwargs)
+        start_source_bound=start_source_bound, end_source_bound=end_source_bound,
+        words=plan.words(sheet, offset), line_items=plan.line_items(sheet, offset),
+        start_label_tokens=(feet_to_station(float(start_ft)),),
+        end_label_tokens=(feet_to_station(float(end_ft)),), **kwargs)
 
 
 def observe_package_terminus_geometry(plan_path: str, sheet: int, start_ft: float, end_ft: float,
