@@ -452,6 +452,74 @@ def plan_matchline_both_bound() -> bytes:
     return _save(doc)
 
 
+# --- G4 GEOMETRY-vs-ENDPOINT adversarial builders. Each prints structure notes at BOTH endpoints (so the
+# termini are source-bound) but draws a SPECIFIC geometry pathology between them, to challenge the idea that
+# correct endpoints prove the line. All REVIEW/ABSTAIN today (the generic lane never auto-promotes). --------- #
+def _both_notes_axis(page, title) -> None:
+    page.insert_text((60, 60), "PLAN & PROFILE  -  ALIGNMENT 10+00 thru 16+00 (%s)" % title, fontsize=11)
+    _draw_axis(page)
+
+
+def plan_parallel_rivals_with_notes() -> bytes:
+    """Both endpoints source-bound, but TWO parallel red runs span the same stations -> two plausible bores."""
+    doc, page = _new_plan()
+    _both_notes_axis(page, "parallel rivals")
+    page.draw_line((295, 380), (445, 380), color=(1, 0, 0), width=1.8)            # rival A (red)
+    page.draw_line((295, 392), (445, 392), color=(1, 0, 0), width=1.8)            # rival B (red, parallel)
+    _start_end_notes(page)
+    return _save(doc)
+
+
+def plan_broken_fragments_with_notes() -> bytes:
+    """Both endpoints source-bound, but only short widely-spaced specks span the range (no weldable run)."""
+    doc, page = _new_plan()
+    _both_notes_axis(page, "broken fragments")
+    for x in range(300, 441, 40):
+        page.draw_line((x, 384), (x + 8, 384), color=(1, 0, 0), width=1.8)
+    _start_end_notes(page)
+    return _save(doc)
+
+
+def plan_overshoot_run_with_notes() -> bytes:
+    """Both endpoints source-bound, but the selected red run extends MATERIALLY BEYOND the termini."""
+    doc, page = _new_plan()
+    _both_notes_axis(page, "overshoot")
+    page.draw_line((200, 384), (540, 384), color=(1, 0, 0), width=1.8)            # ~10+80 .. ~14+20 (>> span)
+    _start_end_notes(page)
+    return _save(doc)
+
+
+def plan_undershoot_run_with_notes() -> bytes:
+    """Both endpoints source-bound, but the red run sits in the MIDDLE and reaches neither terminus."""
+    doc, page = _new_plan()
+    _both_notes_axis(page, "undershoot")
+    page.draw_line((325, 384), (415, 384), color=(1, 0, 0), width=1.8)            # ~12+05 .. ~12+95 only
+    _start_end_notes(page)
+    return _save(doc)
+
+
+def plan_forked_run_with_notes() -> bytes:
+    """Both endpoints source-bound, but the run FORKS: a common start segment then two diverging branches to
+    the end -> the selected path can follow the wrong branch (no proven uniqueness)."""
+    doc, page = _new_plan()
+    _both_notes_axis(page, "forked")
+    page.draw_line((295, 384), (370, 384), color=(1, 0, 0), width=1.8)            # common start
+    page.draw_line((370, 384), (445, 376), color=(1, 0, 0), width=1.8)            # branch A (up to end)
+    page.draw_line((370, 384), (445, 392), color=(1, 0, 0), width=1.8)            # branch B (down to end)
+    _start_end_notes(page)
+    return _save(doc)
+
+
+def plan_baseline_trap_with_notes() -> bytes:
+    """Both endpoints source-bound, but ONLY a full-sheet survey baseline spans the stations (no proposed
+    bore run) -> the over-placement guard must keep this out of AUTO (abstain / baseline-flagged)."""
+    doc, page = _new_plan()
+    _both_notes_axis(page, "baseline trap")
+    page.draw_line((120, 400), (720, 400), color=(0, 0, 0), width=0.7)            # full-sheet baseline only
+    _start_end_notes(page)
+    return _save(doc)
+
+
 def borelog_xlsx(start=_BORE_START, end=_BORE_END, *, print_val="1", depth=5.0, boc=None) -> bytes:
     """A flat bore-log: a single bore span (station/depth/print). ``print_val`` controls the referenced plan
     sheet(s) — e.g. ``"1,2"`` declares a two-sheet bore (load_borelog -> sheet_refs=[1,2]). ``boc``, when
