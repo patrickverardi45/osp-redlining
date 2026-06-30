@@ -362,6 +362,96 @@ def plan_callout_conflicts_structure() -> bytes:
     return _save(doc)
 
 
+# --- Printed MATCHLINE boundary-station builders (MATCHLINE_BOUNDARY_STATION evidence). A multi-sheet bore can
+# end on a printed matchline crossing; the binder confirms ONLY the BILATERAL case (both sheets print the same
+# 'MATCH... STA <n> - SEE SHEET <m>' equation). The grammar carries NO 'STA a TO STA b' / 'DIR(ECTIONAL) BORE',
+# so select_dialect stays None (cold/generic lane). -------------------------------------------------------- #
+def _ml_sheet(doc, label, *, run=False, texts=()):
+    page = doc.new_page(width=792, height=612)
+    page.insert_text((60, 60), "PLAN & PROFILE  -  ALIGNMENT 10+00 thru 16+00 (%s)" % label, fontsize=11)
+    _draw_axis(page)
+    if run:
+        page.draw_line((295, 384), (445, 384), color=(1, 0, 0), width=1.8)         # the drawn bore run
+    y = 360
+    for t in texts:
+        page.insert_text((250, y), t, fontsize=8)
+        y -= 12
+    return page
+
+
+def plan_matchline_bilateral() -> bytes:
+    """Clean BILATERAL matchline: the END station 13+25 is printed as a matchline crossing by BOTH sheet 1 and
+    sheet 2 -> the END binds MATCHLINE_BOUNDARY_STATION; the START binds via a structure note."""
+    doc = fitz.open()
+    _ml_sheet(doc, "SHEET 1", run=True,
+              texts=("STA 11+75 INSTALLER HH", "MATCHLINE STA 13+25 - SEE SHEET 2"))
+    _ml_sheet(doc, "SHEET 2", texts=("MATCHLINE STA 13+25 - SEE SHEET 1",))
+    return _save(doc)
+
+
+def plan_matchline_unilateral() -> bytes:
+    """UNILATERAL matchline: only sheet 1 prints the 13+25 crossing; sheet 2 does NOT reciprocate -> not
+    bilateral -> the END does NOT bind (the engine's CONFIRMED tier requires both sides)."""
+    doc = fitz.open()
+    _ml_sheet(doc, "SHEET 1", run=True,
+              texts=("STA 11+75 INSTALLER HH", "MATCHLINE STA 13+25 - SEE SHEET 2"))
+    _ml_sheet(doc, "SHEET 2", texts=())                       # no reciprocal equation
+    return _save(doc)
+
+
+def plan_matchline_ambiguous() -> bytes:
+    """Two RIVAL bilateral crossings at 13+25 (the same station is a confirmed boundary in BOTH sheet pairs
+    1-2 and 2-3) -> the END is AMBIGUOUS; the binder never coin-flips between rival crossings."""
+    doc = fitz.open()
+    _ml_sheet(doc, "SHEET 1", run=True,
+              texts=("STA 11+75 INSTALLER HH", "MATCHLINE STA 13+25 - SEE SHEET 2"))
+    _ml_sheet(doc, "SHEET 2",
+              texts=("MATCHLINE STA 13+25 - SEE SHEET 1", "MATCHLINE STA 13+25 - SEE SHEET 3"))
+    _ml_sheet(doc, "SHEET 3", texts=("MATCHLINE STA 13+25 - SEE SHEET 2",))
+    return _save(doc)
+
+
+def plan_matchline_sheet_mismatch() -> bytes:
+    """The matchline crossing references SHEET 3, which the bore does NOT reference (bore sheets = 1,2) -> no
+    bilateral boundary on the bore's own sheet pair -> the END does not bind (sheet mismatch)."""
+    doc = fitz.open()
+    _ml_sheet(doc, "SHEET 1", run=True,
+              texts=("STA 11+75 INSTALLER HH", "MATCHLINE STA 13+25 - SEE SHEET 3"))
+    _ml_sheet(doc, "SHEET 2", texts=())
+    return _save(doc)
+
+
+def plan_matchline_unrelated() -> bytes:
+    """A bilateral matchline crossing at 13+20 (inside the span but NOT the bore end 13+25) -> binds NEITHER
+    endpoint; proximity is never an exact match."""
+    doc = fitz.open()
+    _ml_sheet(doc, "SHEET 1", run=True,
+              texts=("STA 11+75 INSTALLER HH", "MATCHLINE STA 13+20 - SEE SHEET 2"))
+    _ml_sheet(doc, "SHEET 2", texts=("MATCHLINE STA 13+20 - SEE SHEET 1",))
+    return _save(doc)
+
+
+def plan_matchline_conflicts_callout() -> bytes:
+    """The END is bilaterally matchline-bound at 13+25, but a span callout anchored to the bore start brackets
+    the bore to a DIFFERENT end (13+50) -> the two printed sources CONFLICT about the end."""
+    doc = fitz.open()
+    _ml_sheet(doc, "SHEET 1", run=True,
+              texts=("STA 11+75 INSTALLER HH", "MATCHLINE STA 13+25 - SEE SHEET 2", "BORE 11+75 TO 13+50"))
+    _ml_sheet(doc, "SHEET 2", texts=("MATCHLINE STA 13+25 - SEE SHEET 1",))
+    return _save(doc)
+
+
+def plan_matchline_both_bound() -> bytes:
+    """Both endpoints land on bilateral matchline crossings: START 11+75 (sheets 1-2) and END 13+25 (sheets
+    2-3); the bore references all three sheets -> both endpoints bind MATCHLINE_BOUNDARY_STATION."""
+    doc = fitz.open()
+    _ml_sheet(doc, "SHEET 1", run=True, texts=("MATCHLINE STA 11+75 - SEE SHEET 2",))
+    _ml_sheet(doc, "SHEET 2",
+              texts=("MATCHLINE STA 11+75 - SEE SHEET 1", "MATCHLINE STA 13+25 - SEE SHEET 3"))
+    _ml_sheet(doc, "SHEET 3", texts=("MATCHLINE STA 13+25 - SEE SHEET 2",))
+    return _save(doc)
+
+
 def borelog_xlsx(start=_BORE_START, end=_BORE_END, *, print_val="1", depth=5.0, boc=None) -> bytes:
     """A flat bore-log: a single bore span (station/depth/print). ``print_val`` controls the referenced plan
     sheet(s) — e.g. ``"1,2"`` declares a two-sheet bore (load_borelog -> sheet_refs=[1,2]). ``boc``, when

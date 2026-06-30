@@ -26,6 +26,12 @@ from truelinev2.extract.callout_anchor import (
     bind_endpoint_callout,
     span_callouts,
 )
+from truelinev2.extract.matchline_anchor import (
+    MATCHLINE_AMBIGUOUS,
+    MATCHLINE_BOUND,
+    bilateral_boundaries,
+    bind_endpoint_matchline,
+)
 from truelinev2.extract.structure_anchor import BOUND, bind_end_structure_note
 from truelinev2.extract.terminus_evidence import (
     ABSENT,
@@ -36,6 +42,7 @@ from truelinev2.extract.terminus_evidence import (
     BoreTerminusEvidence,
     CONFLICTING_END_TERMINUS,
     CONFLICTING_START_TERMINUS,
+    MATCHLINE_BOUNDARY_STATION,
     NO_BORE_LOG_STATION,
     NO_PRINTED_END_STRUCTURE,
     NO_PRINTED_START_STRUCTURE,
@@ -72,12 +79,15 @@ def _bind_endpoint(plan: PlanPdf, station_ft: Optional[float], which: str, sheet
     station_str = feet_to_station(station_ft)
     other_str = feet_to_station(other_ft) if other_ft is not None else None
 
-    # Gather printed evidence across the bore's referenced sheets: structure notes + station-range callouts.
+    # Gather printed evidence across the bore's referenced sheets: structure notes + station-range callouts +
+    # bilateral matchline boundary equations.
     struct_bound = None                                       # (sheet, EndNoteBinding) when a note binds
     max_struct_candidates = 0
     spans = []                                                # [(sheet, SpanCallout)]
+    sheet_lines = {}
     for sheet in sheets:
         lines = plan.lines(sheet, 0)
+        sheet_lines[sheet] = lines
         b = bind_end_structure_note(station_ft, lines)
         max_struct_candidates = max(max_struct_candidates, getattr(b, "candidates", 0) or 0)
         if b.result == BOUND and struct_bound is None:
@@ -87,18 +97,26 @@ def _bind_endpoint(plan: PlanPdf, station_ft: Optional[float], which: str, sheet
     flat_spans = [sc for _sheet, sc in spans]
     cb = bind_endpoint_callout(which, station_str, flat_spans)
 
-    # (1) CONFLICT: a printed structure note binds this endpoint AND a printed span callout anchored to the
-    # bore's other endpoint brackets it to a DIFFERENT station -> two printed sources disagree. Never choose.
-    if struct_bound is not None and other_str is not None:
+    lo_ft = min(station_ft, other_ft) if other_ft is not None else station_ft
+    hi_ft = max(station_ft, other_ft) if other_ft is not None else station_ft
+    boundaries = bilateral_boundaries(sheet_lines, sheets, lo_ft, hi_ft)
+    mb = bind_endpoint_matchline(station_str, boundaries)
+
+    # (1) CONFLICT: a printed source binds this endpoint (structure note OR bilateral matchline) AND a printed
+    # span callout anchored to the bore's other endpoint brackets it to a DIFFERENT station -> two printed
+    # sources disagree. Never silently chosen between.
+    a_printed_binds = struct_bound is not None or mb.result == MATCHLINE_BOUND
+    if a_printed_binds and other_str is not None:
         disagree = anchored_disagreement(which, station_str, other_str, flat_spans)
         if disagree is not None:
             return TerminusEvidence(
                 which=which, source_type=BORE_LOG_ROW, source_bound=False,
-                station_ft=station_ft, station_str=station_str, sheet=struct_bound[0],
+                station_ft=station_ft, station_str=station_str,
+                sheet=(struct_bound[0] if struct_bound else sheets[0]),
                 source_text=None, structure_label=None, provenance=BORE_LOG_ROW_PARSED,
                 confidence=None, blocker=conflict,
-                pedigree="printed structure note binds %s at STA %s but a printed span callout brackets the "
-                         "bore to STA %s -> source conflict; never chosen between"
+                pedigree="a printed source binds %s at STA %s but a printed span callout brackets the bore to "
+                         "STA %s -> source conflict; never chosen between"
                          % (which.lower(), station_str, disagree))
 
     # (2) Printed structure note (PRINTED_STRUCTURE_LABEL).
@@ -112,7 +130,19 @@ def _bind_endpoint(plan: PlanPdf, station_ft: Optional[float], which: str, sheet
             pedigree="sheet %d: printed structure note %r binds %s at STA %s"
                      % (sheet, b.note_line, which.lower(), station_str))
 
-    # (3) Printed station-range callout (PRINTED_STA_CALLOUT) — exact station identity, unique.
+    # (3) Printed BILATERAL matchline boundary station (MATCHLINE_BOUNDARY_STATION) — both adjacent referenced
+    # sheets print the same crossing at this endpoint; unilateral / sheet-mismatched matchlines never reach here.
+    if mb.result == MATCHLINE_BOUND:
+        sheet = mb.pair[0] if mb.pair else sheets[0]
+        return TerminusEvidence(
+            which=which, source_type=MATCHLINE_BOUNDARY_STATION, source_bound=True,
+            station_ft=station_ft, station_str=station_str, sheet=sheet,
+            source_text=mb.text, structure_label=None,
+            provenance=PRINTED_PLAN_TEXT, confidence=1.0, blocker=None,
+            pedigree="sheets %d+%d: bilateral printed matchline boundary %r binds %s at STA %s"
+                     % (mb.pair[0], mb.pair[1], mb.text, which.lower(), station_str))
+
+    # (4) Printed station-range callout (PRINTED_STA_CALLOUT) — exact station identity, unique.
     if cb.result == CALLOUT_BOUND:
         sheet = next((sh for sh, sc in spans if sc.text == cb.text), sheets[0])
         return TerminusEvidence(
@@ -123,16 +153,17 @@ def _bind_endpoint(plan: PlanPdf, station_ft: Optional[float], which: str, sheet
             pedigree="sheet %d: printed station callout %r brackets %s at STA %s"
                      % (sheet, cb.text, which.lower(), station_str))
 
-    # (4) No printed proof bound: the station VALUE is the bore-log row; report the precise missing/ambiguous
-    # reason (a structure-note OR callout ambiguity is reported as the endpoint-ambiguous blocker).
-    if max_struct_candidates >= 2 or cb.result == CALLOUT_AMBIGUOUS:
+    # (5) No printed proof bound: the station VALUE is the bore-log row; report the precise missing/ambiguous
+    # reason (a structure-note / callout / matchline ambiguity is reported as the endpoint-ambiguous blocker).
+    if max_struct_candidates >= 2 or cb.result == CALLOUT_AMBIGUOUS or mb.result == MATCHLINE_AMBIGUOUS:
         blocker = ambiguous
-        n = max(max_struct_candidates, cb.candidates)
-        detail = "%d printed structure notes/station callouts share STA %s (ambiguous)" % (n, station_str)
+        n = max(max_struct_candidates, cb.candidates, mb.candidates)
+        detail = "%d printed structure notes / station callouts / matchlines share STA %s (ambiguous)" \
+                 % (n, station_str)
     else:
         blocker = no_struct
-        detail = ("no printed structure note 'STA %s <structure>' or station-range callout binds STA %s "
-                  "on sheet(s) %s" % (station_str, station_str, sheets))
+        detail = ("no printed structure note, station-range callout, or bilateral matchline boundary binds "
+                  "STA %s on sheet(s) %s" % (station_str, sheets))
     return TerminusEvidence(
         which=which, source_type=BORE_LOG_ROW, source_bound=False,
         station_ft=station_ft, station_str=station_str, sheet=sheets[0],
