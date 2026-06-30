@@ -62,10 +62,18 @@ drawn line between two endpoints is the bore — that requires stage 4.
   linework has no CAD layer to isolate the route from grid/border/annotation, so a unique connecting run cannot
   be verified (`NO_DRAWN_RUN`→`ENDPOINT_NOT_TIGHT`→`MULTIPLE_PLAUSIBLE_RUNS` as the reach tolerance widens). This
   surfaces two prerequisite gates before stage-4 can verify on real plan-view sheets:
-  - **G-a′: structure-coordinate anchoring** — trace each station label to its structure symbol (leader-trace)
-    so the endpoint anchor sits ON the run, not offset from it.
+  - **G-a′ (DONE, read-only): plan-view anchor resolver** (`extract/plan_view_anchor_resolver.py`) — upgrade a
+    located label to a SOURCE-BACKED anchor in strict priority: leader-traced symbol → leader tip → unique
+    nearby symbol → unique route terminus; refuse (`AMBIGUOUS_ANCHOR` / `LABEL_ONLY_NO_ANCHOR` /
+    `NO_SUPPORTED_ANCHOR` / `UNMEASURABLE`) on any ambiguity, and NEVER snap to the nearest passing line.
+    Reuses the proven `leader_symbol_trace` chain; `class_verified` always False. **Finding on the proof case:**
+    it REFUSES (`AMBIGUOUS_ANCHOR`) — both station labels are buried in the permit's grid/table boxes
+    (`AMBIGUOUS_LEADER`: each word framed by 3 drawings) with no clean leader/symbol and the route offset, so no
+    stronger anchor resolves and G-b cannot improve. This makes **G-b′ the remaining blocker** for this drawing
+    style.
   - **G-b′: route-layer isolation** — separate the route linework from grid/border/annotation (no CAD layer to
-    rely on in the cold lane) so connectivity is uniquely measurable.
+    rely on in the cold lane) so labels are not framed by grid boxes and connectivity is uniquely measurable.
+    Confirmed necessary by G-a′'s honest refusal on the real proof case.
 - **G-c: HDD entry/exit POINT-station binder** — binds B1 (the largest cold family).
 - **G-d: structure-symbol binders for OSP** (vault / handhole / pullbox) + wire leader-trace — binds B3.
 - **G-e: cold REVIEW candidate emission** — draw the human-adjustable stroke between verified endpoints. First
@@ -96,7 +104,9 @@ the proof case + the product domain.
   located in 2-D where the axis observer returned `NO_STATION_AXIS`) and by name-free synth tests including a
   non-collinear layout where a linear axis provably cannot fit.
 
-NEXT after G-b: **G-a′** (refine the endpoint anchor from the offset label to the structure symbol via
-leader-trace) + **G-b′** (route-layer isolation) — both proven necessary by G-b's honest refusal on the real
-plan-view proof case. Only once an endpoint anchor sits ON an isolated route can stage-4 verify a unique
-connecting run, and only then can a cold REVIEW stroke (G-e) be drawn. AUTO remains blocked throughout.
+NEXT after G-a′: **G-b′** (route-layer isolation). G-a′ resolves a source-backed anchor when the evidence is
+clean (leader→symbol / leader tip / unique symbol / unique route terminus), but on the real proof case it
+honestly REFUSED — the labels are framed by the permit's grid boxes, so no clean anchor resolves. Separating the
+route linework from grid/border/annotation (G-b′) is therefore the gating step: only an isolated route lets G-a′
+resolve a clean anchor and G-b verify a unique run, after which a cold REVIEW stroke (G-e) can be drawn. AUTO
+remains blocked throughout.
