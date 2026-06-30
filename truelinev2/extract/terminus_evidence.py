@@ -47,6 +47,10 @@ NO_PRINTED_END_STRUCTURE = "NO_PRINTED_END_STRUCTURE"
 AMBIGUOUS_START_STRUCTURE = "AMBIGUOUS_START_STRUCTURE"
 AMBIGUOUS_END_STRUCTURE = "AMBIGUOUS_END_STRUCTURE"
 NO_BORE_LOG_STATION = "NO_BORE_LOG_STATION"
+# Two PRINTED source readings disagree about an endpoint (e.g. a printed structure note binds the endpoint
+# while a printed span callout brackets the bore to a DIFFERENT station). Never silently preferred / chosen.
+CONFLICTING_START_TERMINUS = "CONFLICTING_START_TERMINUS"
+CONFLICTING_END_TERMINUS = "CONFLICTING_END_TERMINUS"
 
 
 @dataclass(frozen=True)

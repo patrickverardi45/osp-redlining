@@ -306,6 +306,62 @@ def plan_run_sheet1_notes_sheet2() -> bytes:
     return _save(doc)
 
 
+# --- Printed STATION-CALLOUT builders (PRINTED_STA_CALLOUT evidence). The callout grammar is name-free and
+# carries NO per-station 'STA' prefix and NO 'DIR(ECTIONAL) BORE', so it never triggers the named Brenham/ODOT
+# dialects (select_dialect stays None -> the fixture stays in the cold/generic lane). ------------------------- #
+def _bore_run_axis(page) -> None:
+    page.insert_text((60, 60), "PLAN & PROFILE  -  ALIGNMENT 10+00 thru 16+00", fontsize=11)
+    _draw_axis(page)
+    page.draw_line((295, 384), (445, 384), color=(1, 0, 0), width=1.8)             # the drawn bore run
+
+
+def plan_callout_span_both() -> bytes:
+    """A printed station-range callout that brackets the bore span exactly -> BOTH endpoints bind as
+    PRINTED_STA_CALLOUT. No 'STA a TO STA b' (would trigger Brenham); no structure notes."""
+    doc, page = _new_plan()
+    _bore_run_axis(page)
+    page.insert_text((250, 360), "BORE 11+75 TO 13+25", fontsize=8)                # name-free span callout
+    return _save(doc)
+
+
+def plan_callout_start_only() -> bytes:
+    """A span callout whose LOW station is the bore start but whose HIGH station is NOT the bore end and no
+    other end evidence is printed -> only the START is callout-bound; the END stays missing (partial)."""
+    doc, page = _new_plan()
+    _bore_run_axis(page)
+    page.insert_text((250, 360), "BORE 11+75 TO 12+50", fontsize=8)                # brackets the start only
+    return _save(doc)
+
+
+def plan_callout_ambiguous() -> bytes:
+    """TWO rival span callouts that both bracket the bore span -> each endpoint is AMBIGUOUS (never
+    coin-flipped)."""
+    doc, page = _new_plan()
+    _bore_run_axis(page)
+    page.insert_text((250, 360), "BORE 11+75 TO 13+25", fontsize=8)                # rival A
+    page.insert_text((250, 348), "PROPOSED BORE 11+75 TO 13+25", fontsize=8)       # rival B (same span)
+    return _save(doc)
+
+
+def plan_callout_unrelated() -> bytes:
+    """A span callout for a DIFFERENT range (neither station matches the bore) -> binds NEITHER endpoint."""
+    doc, page = _new_plan()
+    _bore_run_axis(page)
+    page.insert_text((250, 360), "BORE 14+50 TO 16+00", fontsize=8)                # another run's callout
+    return _save(doc)
+
+
+def plan_callout_conflicts_structure() -> bytes:
+    """A printed structure note binds the END at 13+25 while a span callout anchored to the bore start
+    brackets the bore to a DIFFERENT end (13+50) -> the two printed sources CONFLICT about the end."""
+    doc, page = _new_plan()
+    _bore_run_axis(page)
+    page.insert_text((250, 360), "STA 11+75 INSTALLER HH", fontsize=8)             # START structure note
+    page.insert_text((450, 360), "STA 13+25 SPLICE", fontsize=8)                   # END structure note (13+25)
+    page.insert_text((250, 348), "BORE 11+75 TO 13+50", fontsize=8)                # callout disagrees (13+50)
+    return _save(doc)
+
+
 def borelog_xlsx(start=_BORE_START, end=_BORE_END, *, print_val="1", depth=5.0, boc=None) -> bytes:
     """A flat bore-log: a single bore span (station/depth/print). ``print_val`` controls the referenced plan
     sheet(s) — e.g. ``"1,2"`` declares a two-sheet bore (load_borelog -> sheet_refs=[1,2]). ``boc``, when
