@@ -1,12 +1,18 @@
-"""Cold-package evaluation harness: baseline behavior + scorer logic.
+"""Cold-package evaluation harness: behavior matrix + scorer logic.
 
-Drives the synthetic baseline fixtures through the REAL product redline decision (empty registry -> cold
-path) in an isolated tmp store, and asserts the engine's current cold-package behavior:
-  * a tight single proposed bore over the span -> UPLOADED_REVIEW (generic lane places, capped REVIEW);
-  * several co-linear runs over the span     -> UPLOADED_REVIEW (placed, honestly low/correction);
-  * axis-only / blank plans                  -> ABSTAIN with the named engine blocker.
-A correct ABSTAIN (the expected named blocker) is a PASS — an honest abstain is evidence of a real, named
-missing capability, never a failure.
+Drives the synthetic fixtures through the REAL product redline decision (empty registry -> cold path) in an
+isolated tmp store, and pins the engine's CURRENT cold-package behavior:
+
+  * a clear single bore-shaped run over the span -> UPLOADED_REVIEW, MEDIUM confidence;
+  * ambiguous / partial-coverage runs            -> UPLOADED_REVIEW, LOW confidence, correction-recommended;
+  * no usable geometry (no run / blank / weak axis / speckle) -> ABSTAIN (currently the coarse
+    NO_PLAN_DIALECT_RECOGNIZED for several distinct causes);
+  * the review gate unsatisfied                  -> ABSTAIN, NO_ENGINE_READY_REVIEWED_BORE_LOG.
+
+A correct ABSTAIN with the expected named blocker is a PASS. The two over-placement probes are PINNED as
+KNOWN divergences (the engine currently places a LOW, correction-recommended candidate on the full-sheet
+alignment line where the oracle wants an ABSTAIN); if a future abstain-policy change flips them, these
+assertions fail on purpose and force a deliberate review (never a silent regression).
 """
 from __future__ import annotations
 
@@ -15,32 +21,53 @@ from truelinev2.harness.runner import provision_and_run
 from truelinev2.harness.scorer import score
 from truelinev2.harness.synth import build_synthetic_fixtures
 
+# Fixtures whose observed outcome matches the desired oracle today.
+ALIGNED = {
+    "pkg-001-tight-red-run", "pkg-002-ambiguous-runs", "pkg-007-partial-mid", "pkg-009-multi-sheet",
+    "pkg-003-axis-no-runs", "pkg-004-blank-plan", "pkg-005-weak-axis-2-ticks", "pkg-010-speckle-no-run",
+    "pkg-011-no-engine-ready-borelog",
+}
+# Over-placement probes: the oracle says ABSTAIN (no clear bore drawn), but the engine currently places a
+# LOW, correction-recommended candidate on the full-sheet alignment line. Pinned (see module docstring).
+KNOWN_OVERPLACEMENT = {"pkg-006-partial-below-min", "pkg-008-over-placement-baseline"}
 
-def test_baseline_matrix(tmp_path):
+
+def test_matrix(tmp_path):
     fx_root = tmp_path / "fixtures"
     store = tmp_path / "store"
     store.mkdir(parents=True)
     build_synthetic_fixtures(fx_root)
 
     fixtures = load_fixtures(fx_root)
-    assert {f.fixture_id for f in fixtures} == {
-        "pkg-001-tight-red-run", "pkg-002-ambiguous-runs", "pkg-003-axis-no-runs", "pkg-004-blank-plan"}
+    assert {f.fixture_id for f in fixtures} == ALIGNED | KNOWN_OVERPLACEMENT
 
-    results = {}
-    for f in fixtures:
-        results[f.fixture_id] = score(provision_and_run(store, f), f)
+    results = {f.fixture_id: score(provision_and_run(store, f), f) for f in fixtures}
 
-    # Every fixture matches its expected status (and expected named blockers) -> 4/4 PASS.
-    assert all(r.passed for r in results.values()), {k: r.detail for k, r in results.items()}
+    # Every aligned fixture matches its desired oracle (status + named blockers).
+    for fid in ALIGNED:
+        assert results[fid].passed, results[fid].detail
 
-    # The two placeable plans reach REVIEW (never auto-promoted; generic lane is capped to REVIEW).
+    # A clear bore-shaped run is a confident (MEDIUM) review; never auto-promoted.
     assert results["pkg-001-tight-red-run"].observed_status == "UPLOADED_REVIEW"
-    assert results["pkg-002-ambiguous-runs"].observed_status == "UPLOADED_REVIEW"
+    assert results["pkg-001-tight-red-run"].observed_band == "MEDIUM"
 
-    # The two un-placeable plans abstain with the engine's named reason (honest, specific — not a bare abstain).
-    for fid in ("pkg-003-axis-no-runs", "pkg-004-blank-plan"):
+    # Un-placeable geometry abstains with the engine's (currently coarse) named dialect reason.
+    for fid in ("pkg-003-axis-no-runs", "pkg-005-weak-axis-2-ticks", "pkg-010-speckle-no-run"):
         assert results[fid].observed_status == "ABSTAIN"
         assert any("NO_PLAN_DIALECT_RECOGNIZED" in b for b in results[fid].observed_blockers)
+
+    # The gate-state abstain names its SPECIFIC cause (distinct from the coarse dialect blocker).
+    assert any("NO_ENGINE_READY_REVIEWED_BORE_LOG" in b
+               for b in results["pkg-011-no-engine-ready-borelog"].observed_blockers)
+
+    # FINDING (pinned): the over-placement probes place a LOW correction-recommended candidate on the
+    # alignment instead of abstaining.
+    for fid in KNOWN_OVERPLACEMENT:
+        r = results[fid]
+        assert not r.passed
+        assert r.observed_status == "UPLOADED_REVIEW"
+        assert r.observed_band == "LOW"
+        assert r.observed_correction is True
 
 
 def test_scorer_path_and_blocker_logic():
@@ -59,9 +86,14 @@ def test_scorer_path_and_blocker_logic():
     assert not score(wrong_reason, fx).passed
 
 
-def test_review_fixture_has_no_blockers():
+def test_scorer_captures_confidence():
     fx = Fixture("pkg-y", "", (), (), "UPLOADED_REVIEW", ())
-    review = {"path": "UPLOADED_REVIEW", "blockers": []}
-    r = score(review, fx)
+    decision = {
+        "path": "UPLOADED_REVIEW", "blockers": [],
+        "review": {"record": {"confidence": {"band": "LOW", "score": 0.35, "correction_recommended": True}}},
+    }
+    r = score(decision, fx)
     assert r.passed
-    assert r.observed_blockers == ()
+    assert r.observed_band == "LOW"
+    assert r.observed_score == 0.35
+    assert r.observed_correction is True

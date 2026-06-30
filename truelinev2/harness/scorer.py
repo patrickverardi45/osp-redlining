@@ -27,6 +27,12 @@ class ScoreResult:
     expected_blockers: tuple
     passed: bool
     detail: str
+    # Placement-confidence signals for a placed (REVIEW) candidate — captured so the matrix can distinguish a
+    # CONFIDENT review from a LOW, correction-recommended placement (the engine's honest "I placed on the
+    # alignment, please verify"). Informational; scoring stays on path + named blockers.
+    observed_band: str = None            # MEDIUM / LOW / ... (None when nothing was placed)
+    observed_score: float = None         # confidence score (None when nothing was placed)
+    observed_correction: bool = False    # True when the candidate is flagged correction-recommended
 
 
 def _blocker_codes(decision) -> tuple:
@@ -38,23 +44,33 @@ def _blocker_codes(decision) -> tuple:
     return tuple(out)
 
 
+def _confidence_of(decision) -> dict:
+    """The placed candidate's confidence dict ({score, band, correction_recommended, ...}) or {}."""
+    rec = (decision.get("review") or {}).get("record") or {}
+    return rec.get("confidence") or {}
+
+
 def score(decision, fixture) -> ScoreResult:
     observed_status = decision.get("path")
     observed = _blocker_codes(decision)
+    conf = _confidence_of(decision)
+    band = conf.get("band")
+    cscore = conf.get("score")
+    correction = bool(conf.get("correction_recommended"))
     # Compare expected blocker codes by their bare code (ignore the source tag for the expectation).
     observed_bare = {c.split(":", 1)[-1] for c in observed}
 
-    if observed_status != fixture.expected_status:
-        detail = "path mismatch: expected %s, observed %s" % (fixture.expected_status, observed_status)
+    def _result(passed, detail):
         return ScoreResult(fixture.fixture_id, fixture.expected_status, observed_status, observed,
-                           fixture.expected_blockers, False, detail)
+                           fixture.expected_blockers, passed, detail,
+                           observed_band=band, observed_score=cscore, observed_correction=correction)
+
+    if observed_status != fixture.expected_status:
+        return _result(False, "path mismatch: expected %s, observed %s"
+                       % (fixture.expected_status, observed_status))
 
     missing = [b for b in fixture.expected_blockers if b not in observed_bare]
     if missing:
-        detail = "path ok (%s) but missing expected blocker(s): %r" % (observed_status, missing)
-        return ScoreResult(fixture.fixture_id, fixture.expected_status, observed_status, observed,
-                           fixture.expected_blockers, False, detail)
+        return _result(False, "path ok (%s) but missing expected blocker(s): %r" % (observed_status, missing))
 
-    detail = "ok (%s)" % observed_status
-    return ScoreResult(fixture.fixture_id, fixture.expected_status, observed_status, observed,
-                       fixture.expected_blockers, True, detail)
+    return _result(True, "ok (%s)" % observed_status)
