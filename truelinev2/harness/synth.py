@@ -161,6 +161,24 @@ def plan_multi_sheet() -> bytes:
     return _save(doc)
 
 
+def plan_with_structure_notes(start_note: bool = True, end_note: bool = True) -> bytes:
+    """A COLD plan (no named-dialect trigger): axis + a red bore run over the span 11+75..13+25, plus printed
+    structure NOTE lines 'STA <station> <structure>' at the start and/or end station so the structure reader
+    can bind those endpoints from source. The notes use generic industry structure terms and carry NO
+    'STA a TO STA b' run-callout or 'DIR(ECTIONAL) BORE' text, so select_dialect stays None (generic cold lane)
+    and the named dialects are never triggered."""
+    doc, page = _new_plan()
+    page.insert_text((60, 60), "PLAN & PROFILE  -  ALIGNMENT 10+00 thru 16+00", fontsize=11)
+    _draw_axis(page)
+    page.draw_line((120, 400), (720, 400), color=(0, 0, 0), width=0.7)            # full-sheet baseline
+    page.draw_line((295, 384), (445, 384), color=(1, 0, 0), width=1.8)            # the bore (11+75..13+25)
+    if start_note:
+        page.insert_text((250, 360), "STA 11+75 INSTALLER HH", fontsize=8)        # printed START structure note
+    if end_note:
+        page.insert_text((450, 360), "STA 13+25 SPLICE", fontsize=8)              # printed END structure note
+    return _save(doc)
+
+
 def borelog_xlsx(start=_BORE_START, end=_BORE_END) -> bytes:
     """A flat bore-log: a single bore span on plan sheet 1 (station/depth/print)."""
     wb = openpyxl.Workbook()
