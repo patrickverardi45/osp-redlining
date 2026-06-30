@@ -53,10 +53,19 @@ invented coordinate, station, or bore value. A located/bound endpoint proves ide
 drawn line between two endpoints is the bore — that requires stage 4.
 
 ## Future gates toward actual drawn redlines (each separately owner-approved)
-- **G-a (THIS GATE): plan-view printed-station 2-D locator.** Resolve a bound station to its 2-D position via
-  the printed label — no axis. Read-only; strict refusal.
-- **G-b: 2-D drawn-run reconstruction + verification** between two located anchors (branch-uniqueness +
-  endpoint tightness in absolute 2-D, not station-x). Closes stage 4 for plan-view.
+- **G-a (DONE `78730d5`): plan-view printed-station 2-D locator.** Resolve a bound station to its 2-D position
+  via the printed label — no axis. Read-only; strict refusal.
+- **G-b (DONE, read-only): 2-D drawn-run verification** between two located anchors — `observe_run_between_anchors`
+  classifies the drawn linework into `PLAN_VIEW_RUN_CONNECTED` vs `NO_DRAWN_RUN` / `BROKEN_RUN` /
+  `MULTIPLE_PLAUSIBLE_RUNS` / `FORKED_RUN` / `ENDPOINT_NOT_TIGHT` / `UNMEASURABLE`; strict refusal, never draws.
+  **Finding on the proof case:** it REFUSES — the located LABEL anchors are 16–40 pt OFF the drawn route and the
+  linework has no CAD layer to isolate the route from grid/border/annotation, so a unique connecting run cannot
+  be verified (`NO_DRAWN_RUN`→`ENDPOINT_NOT_TIGHT`→`MULTIPLE_PLAUSIBLE_RUNS` as the reach tolerance widens). This
+  surfaces two prerequisite gates before stage-4 can verify on real plan-view sheets:
+  - **G-a′: structure-coordinate anchoring** — trace each station label to its structure symbol (leader-trace)
+    so the endpoint anchor sits ON the run, not offset from it.
+  - **G-b′: route-layer isolation** — separate the route linework from grid/border/annotation (no CAD layer to
+    rely on in the cold lane) so connectivity is uniquely measurable.
 - **G-c: HDD entry/exit POINT-station binder** — binds B1 (the largest cold family).
 - **G-d: structure-symbol binders for OSP** (vault / handhole / pullbox) + wire leader-trace — binds B3.
 - **G-e: cold REVIEW candidate emission** — draw the human-adjustable stroke between verified endpoints. First
@@ -87,5 +96,7 @@ the proof case + the product domain.
   located in 2-D where the axis observer returned `NO_STATION_AXIS`) and by name-free synth tests including a
   non-collinear layout where a linear axis provably cannot fit.
 
-NEXT after G-a: **G-b** (verify a drawn run between the two located anchors) — the last read-only stage before a
-cold REVIEW redline can be drawn. AUTO remains blocked throughout.
+NEXT after G-b: **G-a′** (refine the endpoint anchor from the offset label to the structure symbol via
+leader-trace) + **G-b′** (route-layer isolation) — both proven necessary by G-b's honest refusal on the real
+plan-view proof case. Only once an endpoint anchor sits ON an isolated route can stage-4 verify a unique
+connecting run, and only then can a cold REVIEW stroke (G-e) be drawn. AUTO remains blocked throughout.
