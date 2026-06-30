@@ -18,6 +18,7 @@ HARNESS_MODULES = [
     HARNESS / "scorer.py",
     HARNESS / "report.py",
     HARNESS / "__main__.py",
+    HARNESS / "package_validation.py",
 ]
 
 
