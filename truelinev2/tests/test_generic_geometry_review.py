@@ -344,21 +344,15 @@ def test_generic_confidence_never_high_even_with_maxed_signals():
             assert conf["score"] <= uce._GENERIC_MAX_CONF
 
 
-def test_place_generic_baseline_only_is_low_and_unverified(tmp_path):
-    # No per-bore run, only full-sheet lines -> it still locates the bore on the alignment, but confidence is
-    # LOW and the caveat says the exact line is unverified (no fake high confidence on a guessed line).
+def test_place_generic_baseline_only_abstains(tmp_path):
+    # No per-bore run, only full-sheet alignment/baseline lines -> the generic lane must NOT draw a redline on
+    # the survey baseline. Over-placement guard: it ABSTAINS honestly with NO_DRAWN_RUN_OVER_SPAN, so a human is
+    # never handed a confident-looking line guessed onto the alignment (correct answer is "nothing to place").
     plan = PlanPdf(_realistic_plan(tmp_path, include_bore=False))
     try:
         d = GenericGeometryDialect()
         placement, sig = uce._place_generic(_bore175(), plan, d, 0)
-        assert placement is not None
-        conf = uce._confidence(placement, placement.matched_callouts[0], _bore175(),
-                               d.signals_for(placement.matched_callouts[0]))
-        assert conf["band"] == "LOW"
-        assert uce.GENERIC_PLACED_ON_ALIGNMENT in placement.caveats
-        # ...and even the baseline pick is clipped to the bore stations (location is still useful)
-        poly = d.centerline_for(placement.matched_callouts[0]); axis = d.axis_for(1)
-        lo, hi = sorted([axis.station_at(poly[0][0]), axis.station_at(poly[-1][0])])
-        assert abs(lo - 1175.0) < 20.0 and abs(hi - 1325.0) < 20.0
+        assert placement is None
+        assert isinstance(sig, dict) and sig.get("code") == uce.NO_DRAWN_RUN_OVER_SPAN
     finally:
         plan.close()

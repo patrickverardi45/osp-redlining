@@ -21,15 +21,17 @@ from truelinev2.harness.runner import provision_and_run
 from truelinev2.harness.scorer import score
 from truelinev2.harness.synth import build_synthetic_fixtures
 
-# Fixtures whose observed outcome matches the desired oracle today.
+# All fixtures whose observed outcome matches the desired oracle.
 ALIGNED = {
     "pkg-001-tight-red-run", "pkg-002-ambiguous-runs", "pkg-007-partial-mid", "pkg-009-multi-sheet",
     "pkg-003-axis-no-runs", "pkg-004-blank-plan", "pkg-005-weak-axis-2-ticks", "pkg-010-speckle-no-run",
     "pkg-011-no-engine-ready-borelog",
+    "pkg-006-partial-below-min", "pkg-008-over-placement-baseline",
 }
-# Over-placement probes: the oracle says ABSTAIN (no clear bore drawn), but the engine currently places a
-# LOW, correction-recommended candidate on the full-sheet alignment line. Pinned (see module docstring).
-KNOWN_OVERPLACEMENT = {"pkg-006-partial-below-min", "pkg-008-over-placement-baseline"}
+# Over-placement probes: the oracle says ABSTAIN (no bore-shaped run drawn, only a full-sheet alignment /
+# baseline). The over-placement guard now makes these ABSTAIN with NO_DRAWN_RUN_OVER_SPAN instead of placing a
+# LOW correction-recommended candidate on the baseline.
+OVER_PLACEMENT_GUARDED = {"pkg-006-partial-below-min", "pkg-008-over-placement-baseline"}
 
 
 def test_matrix(tmp_path):
@@ -39,11 +41,11 @@ def test_matrix(tmp_path):
     build_synthetic_fixtures(fx_root)
 
     fixtures = load_fixtures(fx_root)
-    assert {f.fixture_id for f in fixtures} == ALIGNED | KNOWN_OVERPLACEMENT
+    assert {f.fixture_id for f in fixtures} == ALIGNED
 
     results = {f.fixture_id: score(provision_and_run(store, f), f) for f in fixtures}
 
-    # Every aligned fixture matches its desired oracle (status + named blockers).
+    # Every fixture matches its desired oracle (status + named blockers) -> 11/11.
     for fid in ALIGNED:
         assert results[fid].passed, results[fid].detail
 
@@ -51,23 +53,23 @@ def test_matrix(tmp_path):
     assert results["pkg-001-tight-red-run"].observed_status == "UPLOADED_REVIEW"
     assert results["pkg-001-tight-red-run"].observed_band == "MEDIUM"
 
-    # Un-placeable geometry abstains with the engine's (currently coarse) named dialect reason.
+    # Un-placeable geometry abstains with the engine's (currently coarse) named dialect reason. The finer
+    # split of this code into per-cause reasons is a separate, deferred engine change.
     for fid in ("pkg-003-axis-no-runs", "pkg-005-weak-axis-2-ticks", "pkg-010-speckle-no-run"):
         assert results[fid].observed_status == "ABSTAIN"
         assert any("NO_PLAN_DIALECT_RECOGNIZED" in b for b in results[fid].observed_blockers)
 
+    # Over-placement guard: a baseline-only / under-covered plan (no bore-shaped run) now ABSTAINS with the
+    # SPECIFIC NO_DRAWN_RUN_OVER_SPAN, instead of placing a LOW correction-recommended candidate on the
+    # full-sheet alignment line.
+    for fid in OVER_PLACEMENT_GUARDED:
+        assert results[fid].observed_status == "ABSTAIN"
+        assert results[fid].observed_band is None          # nothing placed
+        assert any("NO_DRAWN_RUN_OVER_SPAN" in b for b in results[fid].observed_blockers)
+
     # The gate-state abstain names its SPECIFIC cause (distinct from the coarse dialect blocker).
     assert any("NO_ENGINE_READY_REVIEWED_BORE_LOG" in b
                for b in results["pkg-011-no-engine-ready-borelog"].observed_blockers)
-
-    # FINDING (pinned): the over-placement probes place a LOW correction-recommended candidate on the
-    # alignment instead of abstaining.
-    for fid in KNOWN_OVERPLACEMENT:
-        r = results[fid]
-        assert not r.passed
-        assert r.observed_status == "UPLOADED_REVIEW"
-        assert r.observed_band == "LOW"
-        assert r.observed_correction is True
 
 
 def test_scorer_path_and_blocker_logic():

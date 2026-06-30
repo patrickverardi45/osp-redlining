@@ -270,6 +270,15 @@ def _place_generic(bore, plan, dialect, offset):
     scored.sort(key=lambda t: t[0]["score"], reverse=True)
     sc, winner, sheet = scored[0]
 
+    # Over-placement guard: if the ONLY run covering the bore span is a full-sheet alignment/baseline (no
+    # bore-shaped run qualifies), this is NOT a placeable bore -> abstain honestly rather than drawing a
+    # redline on the survey baseline. Confined to the name-free generic lane; the named-dialect/deterministic
+    # path never reaches _place_generic.
+    if sc["full_sheet"] and not any(not s["full_sheet"] for s, _c, _sh in scored):
+        return None, {"code": NO_DRAWN_RUN_OVER_SPAN,
+                      "reason": "Only a full-sheet alignment/baseline covers the bore span; "
+                                "no bore-shaped run was drawn over it."}
+
     def _other(c, sh):
         return list(c.bbox or []) != list(winner.bbox or []) or sh != sheet
 
@@ -443,15 +452,18 @@ def _run_engine(plan_path, borelog_path):
         # placement (select the run most likely to be the bore + clip the stroke to the bore span), NOT the
         # midpoint-only decide_by_extent pick.
         named_cand = _candidate(placement)
+        generic_blocker = None
         if named_cand is None or not getattr(named_cand, "bbox", None):
             generic = GenericGeometryDialect()
             if generic.detect(plan):
                 gen_off = generic.calibrate(plan, _DEFAULT_OFFSET)
-                gen_pl, _gen_sig = _place_generic(bore, plan, generic, gen_off)
+                gen_pl, gen_sig = _place_generic(bore, plan, generic, gen_off)
                 if gen_pl is not None:
                     placement = gen_pl                       # REVIEW; stroke already clipped to the bore span
                     used = generic
                     offset = gen_off
+                elif isinstance(gen_sig, dict) and gen_sig.get("code"):
+                    generic_blocker = gen_sig                # the generic lane's SPECIFIC abstain reason
 
         cand = _candidate(placement)
         is_generic = getattr(used, "name", None) == _GENERIC_DIALECT_NAME
@@ -463,7 +475,7 @@ def _run_engine(plan_path, borelog_path):
             matchline = _matchline_continuity(plan, offset, bore, render_sheets)
         else:
             extra_legs, matchline = [], _na
-        return bore, placement, offset, getattr(used, "name", None), extra_legs, matchline, used
+        return bore, placement, offset, getattr(used, "name", None), extra_legs, matchline, used, generic_blocker
     finally:
         plan.close()
 
@@ -591,10 +603,14 @@ def evaluate_uploaded_corpus_engine_handoff(store_root, customer_project_id, job
     used = None
     matchline = {"verdict": "N/A", "caveats": [], "evidence": []}
     if plan_path is not None and borelog_path is not None:
-        bore, placement, offset, dialect_name, extra_legs, matchline, used = _run_engine(
+        bore, placement, offset, dialect_name, extra_legs, matchline, used, generic_blocker = _run_engine(
             plan_path, borelog_path)
         if placement is None:
-            blockers.append({"code": NO_PLAN_DIALECT_RECOGNIZED,
+            # Surface the generic lane's SPECIFIC abstain reason (e.g. NO_DRAWN_RUN_OVER_SPAN) when it ran but
+            # placed nothing drawable; otherwise the package matched no plan dialect at all. (The broader split
+            # of NO_PLAN_DIALECT_RECOGNIZED into per-cause codes is a separate, deferred change.)
+            blockers.append(generic_blocker or
+                            {"code": NO_PLAN_DIALECT_RECOGNIZED,
                              "reason": "No registered plan dialect recognized this plan."})
         elif placement.status == PlacementStatus.ABSTAIN:
             blockers.append({"code": ENGINE_ABSTAINED,
@@ -753,7 +769,7 @@ def render_uploaded_corpus_engine_handoff(store_root, customer_project_id, job_i
     if plan_path is None or borelog_path is None or rbl is None:
         raise UploadedCorpusEngineError("not runnable: %s" % "; ".join(b["code"] for b in blockers))
 
-    bore, placement, offset, dialect_name, extra_legs, matchline, used = _run_engine(
+    bore, placement, offset, dialect_name, extra_legs, matchline, used, _generic_blocker = _run_engine(
         plan_path, borelog_path)
     candidate = _candidate(placement)
     if candidate is None or not candidate.bbox:
