@@ -179,13 +179,90 @@ def plan_with_structure_notes(start_note: bool = True, end_note: bool = True) ->
     return _save(doc)
 
 
-def borelog_xlsx(start=_BORE_START, end=_BORE_END) -> bytes:
-    """A flat bore-log: a single bore span on plan sheet 1 (station/depth/print)."""
+def plan_ambiguous_end_notes() -> bytes:
+    """COLD plan: axis + a red bore run over 11+75..13+25, a single printed START note, and TWO different
+    printed structure notes at the SAME end station 13+25. The structure reader must NOT pick between two
+    rival identities -> the END is reported AMBIGUOUS (source-bound=False, AMBIGUOUS_END_STRUCTURE), never a
+    coin-flip bind. Name-free generic structure terms; no run-callout / 'DIR BORE' text."""
+    doc, page = _new_plan()
+    page.insert_text((60, 60), "PLAN & PROFILE  -  ALIGNMENT 10+00 thru 16+00", fontsize=11)
+    _draw_axis(page)
+    page.draw_line((120, 400), (720, 400), color=(0, 0, 0), width=0.7)
+    page.draw_line((295, 384), (445, 384), color=(1, 0, 0), width=1.8)
+    page.insert_text((250, 360), "STA 11+75 INSTALLER HH", fontsize=8)        # single START note -> bound
+    page.insert_text((450, 360), "STA 13+25 SPLICE", fontsize=8)              # END rival A
+    page.insert_text((450, 372), "STA 13+25 TERMINAL", fontsize=8)            # END rival B -> ambiguous
+    return _save(doc)
+
+
+def plan_offset_end_note() -> bytes:
+    """COLD plan: axis + a red bore run over 11+75..13+25, a correct printed START note, and an END-area
+    structure note that belongs to a DIFFERENT station (14+50, not the bore end 13+25). Identity binding is
+    by EXACT station, never by proximity, so the END stays NOT source-bound (NO_PRINTED_END_STRUCTURE) — the
+    nearby note is another station's. The negative case that guards against over-binding."""
+    doc, page = _new_plan()
+    page.insert_text((60, 60), "PLAN & PROFILE  -  ALIGNMENT 10+00 thru 16+00", fontsize=11)
+    _draw_axis(page)
+    page.draw_line((120, 400), (720, 400), color=(0, 0, 0), width=0.7)
+    page.draw_line((295, 384), (445, 384), color=(1, 0, 0), width=1.8)
+    page.insert_text((250, 360), "STA 11+75 INSTALLER HH", fontsize=8)        # correct START note -> bound
+    page.insert_text((455, 360), "STA 14+50 SPLICE", fontsize=8)              # belongs to 14+50, not 13+25
+    return _save(doc)
+
+
+def plan_bare_station_callouts() -> bytes:
+    """COLD plan: axis + a red bore run + bare station callouts 'STA 11+75' / 'STA 13+25' that carry NO
+    structure keyword. A bare station callout is not a printed STRUCTURE identity, so BOTH endpoints stay NOT
+    source-bound (NO_PRINTED_*_STRUCTURE) — the observer never upgrades a bare callout to a structure proof."""
+    doc, page = _new_plan()
+    page.insert_text((60, 60), "PLAN & PROFILE  -  ALIGNMENT 10+00 thru 16+00", fontsize=11)
+    _draw_axis(page)
+    page.draw_line((120, 400), (720, 400), color=(0, 0, 0), width=0.7)
+    page.draw_line((295, 384), (445, 384), color=(1, 0, 0), width=1.8)
+    page.insert_text((250, 360), "STA 11+75", fontsize=8)                     # bare callout, no structure word
+    page.insert_text((450, 360), "STA 13+25", fontsize=8)                     # bare callout, no structure word
+    return _save(doc)
+
+
+def plan_multi_sheet_end_note() -> bytes:
+    """COLD TWO-page plan: the START structure note + the bore run sit on sheet 1; the END structure note sits
+    on sheet 2. With a bore-log that references both sheets, the observer binds the START on sheet 1 and the
+    END on sheet 2 — exercising cross-sheet endpoint binding without inventing any boundary equation."""
+    doc = fitz.open()
+    p1 = doc.new_page(width=792, height=612)
+    p1.insert_text((60, 60), "PLAN & PROFILE  -  ALIGNMENT 10+00 thru 16+00 (SHEET 1)", fontsize=11)
+    _draw_axis(p1)
+    p1.draw_line((120, 400), (720, 400), color=(0, 0, 0), width=0.7)
+    p1.draw_line((295, 384), (445, 384), color=(1, 0, 0), width=1.8)
+    p1.insert_text((250, 360), "STA 11+75 INSTALLER HH", fontsize=8)          # START note on sheet 1
+    p2 = doc.new_page(width=792, height=612)
+    p2.insert_text((60, 60), "PLAN & PROFILE  -  ALIGNMENT 10+00 thru 16+00 (SHEET 2)", fontsize=11)
+    _draw_axis(p2)
+    p2.insert_text((450, 360), "STA 13+25 SPLICE", fontsize=8)                # END note on sheet 2
+    return _save(doc)
+
+
+def borelog_xlsx(start=_BORE_START, end=_BORE_END, *, print_val="1", depth=5.0, boc=None) -> bytes:
+    """A flat bore-log: a single bore span (station/depth/print). ``print_val`` controls the referenced plan
+    sheet(s) — e.g. ``"1,2"`` declares a two-sheet bore (load_borelog -> sheet_refs=[1,2]). ``boc``, when
+    given, adds a bottom-of-casing column: it is CARRIED metadata only (load_borelog does not read it and the
+    terminus/placement path never uses it), exercised here to prove depth/BOC do not affect endpoint binding.
+    Defaults reproduce the original single-sheet bore-log byte-for-byte."""
     wb = openpyxl.Workbook()
     ws = wb.active
-    ws.append(["station", "depth", "print", "notes"])
-    ws.append([start, 5.0, "1", "bore start"])
-    ws.append([end, 5.0, "1", "bore end"])
+    header = ["station", "depth", "print", "notes"]
+    if boc is not None:
+        header.insert(2, "boc")                       # carried metadata; read-order is by column NAME
+    ws.append(header)
+
+    def _row(sta, note):
+        cells = [sta, depth, str(print_val), note]
+        if boc is not None:
+            cells.insert(2, boc)
+        return cells
+
+    ws.append(_row(start, "bore start"))
+    ws.append(_row(end, "bore end"))
     out = io.BytesIO()
     wb.save(out)
     return out.getvalue()

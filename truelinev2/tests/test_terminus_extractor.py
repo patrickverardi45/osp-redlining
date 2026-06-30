@@ -29,7 +29,10 @@ def test_seed_fixtures_match_expected(tmp_path):
     build_terminus_fixtures(root)
     fixtures = load_terminus_fixtures(root)
     assert {f.fixture_id for f in fixtures} == {
-        "term-001-both-bound", "term-002-end-bound-start-missing", "term-003-none-bound"}
+        "term-001-both-bound", "term-002-end-bound-start-missing", "term-003-none-bound",
+        "term-004-start-bound-end-missing", "term-005-ambiguous-end", "term-006-bare-station-callout",
+        "term-007-offset-note-other-station", "term-008-multi-sheet-end-on-sheet-2",
+        "term-009-depth-boc-carried-metadata", "term-010-route-geometry-no-termini"}
 
     for fx in fixtures:
         ev = extract_termini(fx.plan_path, fx.borelog_path)
