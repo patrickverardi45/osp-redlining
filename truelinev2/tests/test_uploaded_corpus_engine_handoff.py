@@ -13,6 +13,7 @@ exercised deterministically. The end-to-end engine render on real plan geometry 
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 
 import pytest
@@ -100,8 +101,13 @@ def _patch_engine(monkeypatch, *, placement, bore=None, extra_legs=(), matchline
                         lambda plan_path, borelog_path: (b, placement, 0, dialect, list(extra_legs), ml, None, None))
 
 
-def _patch_render(monkeypatch):
-    def fake_render(plan, bore_id, sheet, offset, stroke_points, *, status, reason, out_dir):
+def _patch_render(monkeypatch, captions_seen=None):
+    # Mirrors the real renderer's signature incl. the caption gate; ``captions_seen`` records the
+    # caption kwarg per call so tests can assert the PRODUCT lane opts out (caption=False).
+    def fake_render(plan, bore_id, sheet, offset, stroke_points, *, status, reason, out_dir,
+                    caption=True):
+        if captions_seen is not None:
+            captions_seen.append(caption)
         import os
         os.makedirs(out_dir, exist_ok=True)
         p = os.path.join(out_dir, "%s_s%d_redline_stroke.png" % (bore_id, sheet))
@@ -115,7 +121,8 @@ def test_review_candidate_renders_job_local_bundle(tmp_path, monkeypatch):
     _job(tmp_path)
     _patch_engine(monkeypatch, placement=_placement(PlacementStatus.REVIEW,
                                                     caveats=["DRAWN_EXTENT_EXCEEDS_BORE_SPAN"]))
-    _patch_render(monkeypatch)
+    captions_seen = []
+    _patch_render(monkeypatch, captions_seen)
 
     ev = uce.evaluate_uploaded_corpus_engine_handoff(tmp_path, CP, JOB)
     assert ev["status"] == "RUNNABLE" and ev["runnable"] is True
@@ -128,10 +135,14 @@ def test_review_candidate_renders_job_local_bundle(tmp_path, monkeypatch):
     summary = uce.render_uploaded_corpus_engine_handoff(tmp_path, CP, JOB, at=AT, by=BY)
     assert summary["status"] == "SUCCEEDED"
     assert summary["bundle_origin"] == "UPLOADED_CORPUS_ENGINE"
-    assert summary["placement_status"] == "REVIEW"
+    assert summary["placement_status"] == "REVIEW"              # no promotion: REVIEW stays REVIEW
     assert summary["artifact_count"] == 1
     assert summary["artifacts"] and all(a["kind"] == "FINAL_REDLINE_PNG" for a in summary["artifacts"])
     assert all(a["sha256"] and a["bytes"] for a in summary["artifacts"])
+    # PRODUCT artifacts are rendered caption-free: the render call opts out of the diagnostic band;
+    # bore id / status / reason remain STRUCTURED manifest/summary fields (asserted above/below),
+    # never burned into customer-facing pixels.
+    assert captions_seen == [False]
 
     job = load_job(tmp_path, CP, JOB)
     assert job["slots"]["artifact_bundle"] is not None
@@ -145,6 +156,14 @@ def test_review_candidate_renders_job_local_bundle(tmp_path, monkeypatch):
     assert m["logs"][0]["log_id"] == RBL                       # generic, name-free log id
     assert m["logs"][0]["status"] == "DRAWN_REDLINE"
     assert m["logs"][0]["provenance"] == "OWNER_CONFIRMED_HUMAN_ADJUSTABLE"   # REVIEW => human-adjustable
+
+    # No manifest lies: each published sha256/bytes is computed from the ACTUAL (caption-free)
+    # product artifact bytes on disk in the bundle.
+    bdir = job_dir(tmp_path, CP, JOB) / "bundle_store" / "bundles" / bundle_id
+    for a in summary["artifacts"]:
+        blob = (bdir / a["path"]).read_bytes()
+        assert hashlib.sha256(blob).hexdigest() == a["sha256"]
+        assert len(blob) == a["bytes"]
 
     again = uce.render_uploaded_corpus_engine_handoff(tmp_path, CP, JOB, at=AT, by=BY)
     assert again["bundle_id"] == summary["bundle_id"]          # idempotent by content

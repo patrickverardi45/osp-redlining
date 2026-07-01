@@ -93,7 +93,10 @@ def _patch_engine(monkeypatch, *, placement, bore=None, extra_legs=(), matchline
 
 
 def _patch_render(monkeypatch):
-    def fake_render(plan, bore_id, sheet, offset, stroke_points, *, status, reason, out_dir):
+    # Mirrors the real renderer's signature incl. the caption gate (the product handoff call site
+    # passes caption=False; this suite only cares that a file lands, so the kwarg is accepted+ignored).
+    def fake_render(plan, bore_id, sheet, offset, stroke_points, *, status, reason, out_dir,
+                    caption=True):
         import os
         os.makedirs(out_dir, exist_ok=True)
         p = os.path.join(out_dir, "%s_s%d_redline_stroke.png" % (bore_id, sheet))

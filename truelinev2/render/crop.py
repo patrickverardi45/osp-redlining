@@ -82,12 +82,15 @@ def render_redline_stroke(plan: PlanPdf, bore_id: str, sheet: int, offset: int,
                           stroke_points, *, status: str, reason: str,
                           out_dir: str, evidence_bboxes=(), zoom: float = 2.0,
                           pad: float = 130.0, mandatory_points=(),
-                          show_all_markers: bool = False) -> Optional[str]:
+                          show_all_markers: bool = False,
+                          caption: bool = True) -> Optional[str]:
     """The M8.14 REDLINE STROKE overlay: a red polyline along the traced
     route with circle markers, SOLID for AUTO placements / DASHED for REVIEW
     placements, grey boxes for matched-callout SUPPORTING EVIDENCE only
     (never called redlines), and a caption band naming the bore / status /
-    reason. Refuses to draw without a real path (< 2 points) -- abstains
+    reason (``caption=False`` omits the diagnostic band for customer-facing
+    product artifacts; the default True keeps every diagnostic/proof render
+    byte-identical). Refuses to draw without a real path (< 2 points) -- abstains
     never render. Marker rings are density-thinned on tight curves
     (``thin_markers``); ``mandatory_points`` (plan coords of structure/
     equation/pothole/review anchors) always keep their rings; the STROKE
@@ -130,14 +133,17 @@ def render_redline_stroke(plan: PlanPdf, bore_id: str, sheet: int, offset: int,
         draw.ellipse([cx - r, cy - r, cx + r, cy + r], outline=(255, 255, 255), width=6)
         draw.ellipse([cx - r, cy - r, cx + r, cy + r], outline=red, width=3)
 
-    thinned = len(pts) - len(marker_idx)
-    cap = (f"{bore_id} · {status} ({'solid=auto' if solid else 'dashed=review'}) · "
-           f"{reason} · redline stroke: follows the drawn route · "
-           f"grey boxes = supporting callout evidence"
-           + (f" · markers {len(marker_idx)}/{len(pts)} (curve-thinned for "
-              f"legibility; geometry unchanged)" if thinned else ""))
-    draw.rectangle([0, 0, img.width, 30], fill=(255, 255, 255))
-    draw.text((8, 8), cap[:180], fill=(20, 20, 20))
+    if caption:
+        # Diagnostic caption band ONLY. Product/customer-facing artifacts opt out (caption=False):
+        # the bore id / status / reason stay in structured manifest fields -- never burned into pixels.
+        thinned = len(pts) - len(marker_idx)
+        cap = (f"{bore_id} · {status} ({'solid=auto' if solid else 'dashed=review'}) · "
+               f"{reason} · redline stroke: follows the drawn route · "
+               f"grey boxes = supporting callout evidence"
+               + (f" · markers {len(marker_idx)}/{len(pts)} (curve-thinned for "
+                  f"legibility; geometry unchanged)" if thinned else ""))
+        draw.rectangle([0, 0, img.width, 30], fill=(255, 255, 255))
+        draw.text((8, 8), cap[:180], fill=(20, 20, 20))
 
     os.makedirs(out_dir, exist_ok=True)
     path = os.path.join(out_dir, _safe(f"{bore_id}_s{sheet}_redline_stroke.png"))

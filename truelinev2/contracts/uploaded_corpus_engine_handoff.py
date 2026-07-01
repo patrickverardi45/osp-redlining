@@ -820,7 +820,11 @@ def render_uploaded_corpus_engine_handoff(store_root, customer_project_id, job_i
             png = render_redline_stroke(
                 plan, bore_id=log_id, sheet=leg["sheet"], offset=offset,
                 stroke_points=leg["stroke_points"], status=placement.status.value,
-                reason=placement.reason, out_dir=str(render_src))
+                reason=placement.reason, out_dir=str(render_src),
+                # Customer-facing product artifact: NO diagnostic caption band. The status /
+                # reason / bore id stay in the structured manifest fields below -- traceability
+                # lives in metadata, never burned into the customer's redline pixels.
+                caption=False)
             if png:
                 rendered.append({"sheet": leg["sheet"],
                                  "artifact_path": "artifacts/%s/%s" % (log_id, Path(png).name),

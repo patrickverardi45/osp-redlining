@@ -1657,7 +1657,10 @@ _RA_PDF = base64.b64decode(
     "cmVmCjI4NAolJUVPRgo=")
 
 
-def _fake_render_png(plan, bore_id, sheet, offset, stroke_points, *, status, reason, out_dir):
+def _fake_render_png(plan, bore_id, sheet, offset, stroke_points, *, status, reason, out_dir,
+                     caption=True):
+    # Mirrors the real renderer's signature incl. the caption gate (the product handoff call site
+    # passes caption=False; these route tests only care that an artifact file lands).
     import os
     os.makedirs(out_dir, exist_ok=True)
     p = os.path.join(out_dir, "%s_s%d_redline_stroke.png" % (bore_id, sheet))
