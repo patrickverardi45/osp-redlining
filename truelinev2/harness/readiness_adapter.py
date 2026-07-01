@@ -15,12 +15,12 @@ in the recorded findings — never derived autonomously here.
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass, replace
 from typing import Any, Dict, Optional, Sequence
 
 from truelinev2.harness.readiness_source import (
     ObserverFindings,
     PackageSource,
-    SOURCE_NOT_FOUND,
     discover_package,
     resolve_case_dir,
 )
@@ -32,6 +32,11 @@ from truelinev2.harness.review_readiness import (
     SpanSourceEvidence,
     classify_review_readiness,
     format_report,
+)
+from truelinev2.harness.span_extractor import (
+    SpanExtraction,
+    extract_spans_from_folder,
+    span_source_evidence_from_extraction,
 )
 
 FINDINGS_ORIGIN_RECORDED = "recorded"
@@ -121,12 +126,84 @@ def run_readiness(source: PackageSource, *, allow_live: bool = False) -> Optiona
     return classify_review_readiness(evidence)
 
 
-def run_readiness_for_folder(package_dir, *, allow_live: bool = False) -> Optional[ReviewReadinessReport]:
-    """Discover a package folder (seam 1) and route it to a readiness report."""
+@dataclass(frozen=True)
+class PackageReadiness:
+    """A readiness report + the SpanExtraction sidecar (extracted source-confirmed span rows / refusals), so a
+    later anchor/route binder can consume the rows. Nothing here is a coordinate, an endpoint, or route
+    geometry — the rows are station identities only."""
+    report: ReviewReadinessReport
+    extraction: SpanExtraction
+
+    def to_dict(self) -> dict:
+        return {"report": self.report.to_dict(), "extraction": self.extraction.to_dict()}
+
+
+def _span_summary(extraction: SpanExtraction) -> list:
+    """Compact, coordinate-free echo of the extracted span rows for the readiness report detail."""
+    return [{"span_id": s.span_id, "start_station": s.start_station, "end_station": s.end_station,
+             "footage": s.footage, "source_file": s.source_file, "source_page": s.source_page,
+             "source_kind": s.source_kind, "confidence": s.confidence,
+             "start_structure": s.start_structure, "end_structure": s.end_structure} for s in extraction.spans]
+
+
+def _assemble_evidence(source: PackageSource, extraction: SpanExtraction, *, allow_live: bool
+                       ) -> Optional[ReviewReadinessEvidence]:
+    """Merge the base signals (recognized / plan_readable / keep_blocked / anchor / route — from recorded
+    findings or the live seam) with the SPAN populated from the real source-span extractor when source files are
+    present. Real extracted source files OVERRIDE a recorded span; a plan-only package (no discoverable span
+    source) leaves the span unpopulated so the classifier honestly returns MISSING_BORE_SPAN_SOURCE."""
+    base: Optional[ReviewReadinessEvidence] = None
+    if source.findings is not None:
+        base = evidence_from_findings(source.package_id, source.findings)
+    elif allow_live:
+        base = evidence_from_live_observers(source)
+
+    extracted_span: Optional[SpanSourceEvidence] = None
+    if extraction.source_files_seen:                       # real bore-log / schedule / table file(s) discovered
+        plan_inspected = bool(base and base.span and base.span.plan_span_layer_inspected)
+        extracted_span = span_source_evidence_from_extraction(extraction, plan_span_layer_inspected=plan_inspected)
+
+    has_package = source.manifest is not None or source.findings is not None
+    if base is None and extracted_span is None and not has_package:
+        return None                                        # truly empty target
+
+    extra: Dict[str, Any] = {}
+    if extracted_span is not None:
+        extra["span_origin"] = "extractor"
+        extra["extracted_span_count"] = extraction.source_confirmed_span_count
+        extra["extracted_spans"] = _span_summary(extraction)
+
+    if base is not None:
+        span = extracted_span if extracted_span is not None else base.span
+        detail = dict(base.detail)
+        detail.update(extra)
+        detail.setdefault("span_origin", detail.get("findings_origin", "recorded"))
+        return replace(base, span=span, detail=detail)
+
+    # no recorded/live base, but a package or extracted files exist -> minimal base + the extracted span
+    detail: Dict[str, Any] = {"span_origin": "extractor" if extracted_span is not None else "none"}
+    detail.update(extra)
+    return ReviewReadinessEvidence(package_id=source.package_id, plan_readable=True, recognized=False,
+                                   span=extracted_span, detail=detail)
+
+
+def run_readiness_with_spans(package_dir, *, allow_live: bool = False) -> Optional[PackageReadiness]:
+    """End-to-end (all five seams): discover the package + its source-span files, run the source-span extractor,
+    populate the span evidence from the extracted rows/refusals, classify, and return the report + the
+    extraction sidecar. Read-only; draws nothing."""
     source = discover_package(package_dir)
-    if source.kind == SOURCE_NOT_FOUND and source.findings is None:
+    extraction = extract_spans_from_folder(str(package_dir))
+    evidence = _assemble_evidence(source, extraction, allow_live=allow_live)
+    if evidence is None:
         return None
-    return run_readiness(source, allow_live=allow_live)
+    return PackageReadiness(report=classify_review_readiness(evidence), extraction=extraction)
+
+
+def run_readiness_for_folder(package_dir, *, allow_live: bool = False) -> Optional[ReviewReadinessReport]:
+    """Discover a package folder + run the source-span extractor over its source files, then route to a
+    readiness report (seams 1 -> 2 -> 3 -> 4)."""
+    pr = run_readiness_with_spans(package_dir, allow_live=allow_live)
+    return pr.report if pr else None
 
 
 def run_readiness_for_case(case_id, cold_packages_root, *, allow_live: bool = False
@@ -151,13 +228,13 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     if not positional:
         sys.stderr.write("usage: readiness_adapter <package_dir> [--live]\n")
         return 2
-    report = run_readiness_for_folder(positional[0], allow_live=allow_live)
-    if report is None:
+    pr = run_readiness_with_spans(positional[0], allow_live=allow_live)
+    if pr is None:
         print(json.dumps({"status": "SOURCE_UNRESOLVED",
-                          "note": "no recorded observer_findings.json and live normalization not enabled "
+                          "note": "no package manifest, recorded findings, or source-span files found "
                                   "(pass --live with a readable plan)"}, indent=2, sort_keys=True))
         return 0
-    print(format_readiness(report))
+    print(json.dumps(pr.to_dict(), indent=2, sort_keys=True))
     return 0
 
 

@@ -27,6 +27,7 @@ from truelinev2.harness.readiness_adapter import (
     run_readiness,
     run_readiness_for_case,
     run_readiness_for_folder,
+    run_readiness_with_spans,
     format_readiness,
 )
 from truelinev2.harness.readiness_source import (
@@ -41,7 +42,9 @@ from truelinev2.harness.review_readiness import (
     MISSING_BORE_SPAN_SOURCE,
     NO_SOURCE_CONFIRMED_SPAN,
     PACKAGE_RECOGNIZED_CONTROL,
+    SPAN_SOURCE_FOUND,
 )
+from truelinev2.harness.synth import borelog_xlsx
 
 _HARNESS = Path(__file__).resolve().parents[1] / "harness"
 _ADAPTER_MODULES = [_HARNESS / "readiness_source.py", _HARNESS / "readiness_adapter.py"]
@@ -251,3 +254,94 @@ def test_run_readiness_without_findings_and_no_live_returns_none(tmp_path):
     src = discover_package(d)
     assert src.findings is None
     assert run_readiness(src, allow_live=False) is None      # no recorded findings, live disabled
+
+
+# ----------------------------------------------------------------------------------------------------------- #
+# Wiring: the adapter runs the source-span EXTRACTOR over real source files to populate the span stage.
+# ----------------------------------------------------------------------------------------------------------- #
+def _make_pkg_with_source(root: Path, name: str, *, source_files: dict, plan_only: bool = False) -> Path:
+    d = root / name
+    (d / "uploads").mkdir(parents=True)
+    uploads = [{"kind": "PLAN_PDF", "filename": "plan.pdf"}]
+    for fn, content in source_files.items():
+        fp = d / "uploads" / fn
+        fp.write_bytes(content) if isinstance(content, (bytes, bytearray)) else fp.write_text(content, encoding="utf-8")
+        uploads.append({"kind": "BORE_LOG", "filename": fn})
+    (d / "package.json").write_text(json.dumps({
+        "package_id": name, "provenance_class": "FRESH_NONRECOGNIZED",
+        "uploads": ([uploads[0]] if plan_only else uploads), "bores": []}), encoding="utf-8")
+    return d
+
+
+def test_wiring_csv_source_span_file_is_span_source_found(tmp_path):
+    d = _make_pkg_with_source(tmp_path, "pkg-csv",
+                              source_files={"bore-log.csv": "start,end,footage\n11+75,13+25,150\n"})
+    pr = run_readiness_with_spans(str(d))
+    assert pr.report.status == SPAN_SOURCE_FOUND
+    assert pr.report.detail["span_origin"] == "extractor"
+    assert pr.report.detail["extracted_span_count"] == 1
+    assert pr.extraction.spans[0].start_station == "11+75" and pr.extraction.spans[0].end_station == "13+25"
+    assert pr.report.draws_anything is False and pr.report.performs_placement is False
+
+
+def test_wiring_text_source_span_file_is_span_source_found(tmp_path):
+    d = _make_pkg_with_source(tmp_path, "pkg-txt", source_files={"bore-log.txt": "bore run 11+75 TO 13+25\n"})
+    assert run_readiness_for_folder(str(d)).status == SPAN_SOURCE_FOUND
+
+
+def test_wiring_xlsx_source_span_file_is_span_source_found(tmp_path):
+    d = _make_pkg_with_source(tmp_path, "pkg-xlsx", source_files={"bore-log.xlsx": borelog_xlsx("11+75", "13+25")})
+    assert run_readiness_for_folder(str(d)).status == SPAN_SOURCE_FOUND
+
+
+def test_wiring_source_file_only_standalone_stations_is_no_source_confirmed(tmp_path):
+    d = _make_pkg_with_source(tmp_path, "pkg-standalone",
+                              source_files={"notes.txt": "handhole at 5+00\nvault at 40+00\n"})
+    r = run_readiness_for_folder(str(d))
+    assert r.status == NO_SOURCE_CONFIRMED_SPAN
+    assert r.detail["span_origin"] == "extractor"
+
+
+def test_wiring_plan_only_package_stays_missing(tmp_path):
+    d = _make_pkg_with_source(tmp_path, "pkg-planonly", source_files={}, plan_only=True)
+    assert run_readiness_for_folder(str(d)).status == MISSING_BORE_SPAN_SOURCE
+
+
+def test_wiring_009_stays_missing_without_a_real_bore_log(tmp_path):
+    """public-cold-009 recorded findings (plan-only, anchors would resolve) + NO real source file -> stays
+    MISSING_BORE_SPAN_SOURCE."""
+    d = _make_case(tmp_path, "public-cold-009", _FINDINGS["public-cold-009"])
+    r = run_readiness_for_folder(str(d))
+    assert r.status == MISSING_BORE_SPAN_SOURCE
+    assert r.detail.get("anchors_would_resolve") is True    # anchors would bind; the blocker is the span source
+
+
+def test_wiring_009_becomes_span_found_when_a_bore_log_is_added(tmp_path):
+    d = _make_case(tmp_path, "public-cold-009", _FINDINGS["public-cold-009"])
+    (d / "uploads").mkdir(exist_ok=True)
+    (d / "uploads" / "bore-log.csv").write_text("start,end\n7+62,8+00\n", encoding="utf-8")
+    pr = run_readiness_with_spans(str(d))
+    assert pr.report.status == SPAN_SOURCE_FOUND
+    assert pr.report.detail["span_origin"] == "extractor"
+    assert pr.extraction.spans[0].start_station == "7+62"
+
+
+def test_wiring_exposes_extracted_rows_without_coordinates_or_route(tmp_path):
+    d = _make_pkg_with_source(tmp_path, "pkg-rows", source_files={"bore-log.csv": "start,end\n11+75,13+25\n"})
+    pr = run_readiness_with_spans(str(d))
+    row = pr.extraction.spans[0]
+    assert row.start_station == "11+75" and row.end_station == "13+25" and row.footage == 150.0
+    # station identities only — no coordinate / endpoint / route geometry is invented on the row
+    for forbidden in ("x", "y", "coordinate", "endpoint", "route", "geometry"):
+        assert forbidden not in row.__dict__
+    assert row.bbox is None                                  # no coordinate invented for a text/table source
+    summary = pr.report.detail["extracted_spans"]
+    assert summary and summary[0]["start_station"] == "11+75"
+
+
+def test_wiring_adapter_is_read_only(tmp_path):
+    d = _make_pkg_with_source(tmp_path, "pkg-ro", source_files={"bore-log.csv": "start,end\n11+75,13+25\n"})
+    before = sorted(str(p.relative_to(d)) for p in d.rglob("*"))
+    run_readiness_with_spans(str(d))
+    after = sorted(str(p.relative_to(d)) for p in d.rglob("*"))
+    assert before == after                                   # created / removed nothing
