@@ -71,9 +71,22 @@ drawn line between two endpoints is the bore — that requires stage 4.
     (`AMBIGUOUS_LEADER`: each word framed by 3 drawings) with no clean leader/symbol and the route offset, so no
     stronger anchor resolves and G-b cannot improve. This makes **G-b′ the remaining blocker** for this drawing
     style.
-  - **G-b′: route-layer isolation** — separate the route linework from grid/border/annotation (no CAD layer to
-    rely on in the cold lane) so labels are not framed by grid boxes and connectivity is uniquely measurable.
-    Confirmed necessary by G-a′'s honest refusal on the real proof case.
+  - **G-b′ (DONE, read-only): route-layer isolation** (`extract/plan_view_route_isolator.py`) — separate
+    route-like linework from grid/border/table/label-box/leader/annotation linework between two source-supported
+    anchors (no CAD layer in the cold lane), then reuse G-b's `observe_run_between_anchors` VERBATIM on the
+    isolated set and the full set and compare them to flag a span that exists only through grid/border artifacts:
+    `ROUTE_LINEWORK_ISOLATED` (one SIMPLE anchor-to-anchor path, no stub/tail) vs `NO_ROUTE_LINEWORK` /
+    `GRID_OR_BORDER_ONLY` / `MULTIPLE_ROUTE_CANDIDATES` / `ROUTE_ENDPOINT_NOT_TIGHT` / `ROUTE_LAYER_AMBIGUOUS` /
+    `UNMEASURABLE`; refusal-first (never strips cycles, never snaps); `class_verified` always False.
+    **Finding on the proof case:** it excludes the grid boxes (8) + word-attached leader/tick segments (~400) and
+    isolates ~118 route segments, IMPROVING the diagnosis from raw grid-polluted `MULTIPLE_PLAUSIBLE_RUNS` to the
+    more precise `ROUTE_LAYER_AMBIGUOUS` — but still REFUSES: the printed-label anchors are ~16–41 pt off the
+    drawn route and the route region still forks (laterals in un-layered linework). The isolated route segments
+    are the read-only input the NEXT gate consumes.
+  - **G-b″: isolated-route → anchor composition** — use G-b′'s isolated route segments as evidence to resolve a
+    SOURCE-SUPPORTED route anchor (the label is offset from the route + framed by grid boxes, so G-a′'s raw
+    leader/symbol/terminus tiers refuse); never snap to an arbitrary nearest line, refuse on multiple/forked
+    isolated-route anchors. Then re-verify the run with the improved anchors. Still pre-redline; no stroke.
 - **G-c: HDD entry/exit POINT-station binder** — binds B1 (the largest cold family).
 - **G-d: structure-symbol binders for OSP** (vault / handhole / pullbox) + wire leader-trace — binds B3.
 - **G-e: cold REVIEW candidate emission** — draw the human-adjustable stroke between verified endpoints. First
@@ -104,9 +117,10 @@ the proof case + the product domain.
   located in 2-D where the axis observer returned `NO_STATION_AXIS`) and by name-free synth tests including a
   non-collinear layout where a linear axis provably cannot fit.
 
-NEXT after G-a′: **G-b′** (route-layer isolation). G-a′ resolves a source-backed anchor when the evidence is
-clean (leader→symbol / leader tip / unique symbol / unique route terminus), but on the real proof case it
-honestly REFUSED — the labels are framed by the permit's grid boxes, so no clean anchor resolves. Separating the
-route linework from grid/border/annotation (G-b′) is therefore the gating step: only an isolated route lets G-a′
-resolve a clean anchor and G-b verify a unique run, after which a cold REVIEW stroke (G-e) can be drawn. AUTO
-remains blocked throughout.
+NEXT after G-b′: **G-b″** (isolated-route → anchor composition). G-b′ now separates route-like linework from the
+grid/box/leader linework that made G-a′ refuse, but on the real proof case the printed-label anchors are still
+offset from the drawn route and the route region still forks, so G-b′ honestly REFUSES. The gating step is now to
+feed G-b′'s isolated route segments back into anchor resolution: resolve a SOURCE-SUPPORTED route anchor from the
+isolated route only (never snapping to an arbitrary line, refusing on multiple/forked candidates), then re-verify
+the run with the improved anchors. Only then can a cold REVIEW stroke (G-e) be drawn. AUTO remains blocked
+throughout.
