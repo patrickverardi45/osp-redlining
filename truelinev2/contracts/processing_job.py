@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
 from pathlib import Path
 
 from truelinev2.contracts.customer_project import (
@@ -152,6 +153,26 @@ def list_jobs(store_root, customer_project_id) -> list:
             assert_same_project(customer_project_id, job.get("customer_project_id"))
             out.append(job)
     return out
+
+
+def delete_job(store_root, customer_project_id, job_id) -> dict:
+    """Permanently delete ONE processing_job's entire directory (record + uploads + artifacts + every stage
+    subdir), scoped to the verified tenant. Tenant-safe + path-safe: ``load_job`` first validates the slug +
+    job id and re-verifies the record is in-scope — a tenant can never name another tenant's job (cross-scope
+    raises CrossProjectAccessError; a missing job raises JobNotFoundError). The target is computed by
+    ``job_dir`` (contained under the tenant's project_root) and the RESOLVED path is re-asserted strictly
+    inside this tenant's ``processing_jobs`` directory before removal, so it can only ever remove that one
+    job's subtree — never the project, another job, or anything outside the store. No lifecycle transition /
+    status promotion / engine work — pure store removal. Returns a small summary of what was removed."""
+    job = load_job(store_root, customer_project_id, job_id)           # 404 + in-scope gate (defense in depth)
+    jobs_root = (project_root(store_root, customer_project_id) / PROCESSING_JOBS_SUBDIR).resolve()
+    target = job_dir(store_root, customer_project_id, job_id).resolve()
+    if target == jobs_root or not target.is_relative_to(jobs_root) or not target.is_dir():
+        raise JobNotFoundError("refusing to delete %s/%s (not a job directory under the tenant)"
+                               % (customer_project_id, job_id))
+    shutil.rmtree(str(target))
+    return {"deleted": True, "customer_project_id": customer_project_id, "job_id": job_id,
+            "status_before_delete": job.get("status")}
 
 
 def write_job(store_root, job) -> str:

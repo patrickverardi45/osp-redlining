@@ -44,6 +44,7 @@ from truelinev2.contracts.processing_job import (
     JobNotFoundError,
     ProcessingJobError,
     create_job,
+    delete_job,
     job_dir,
     list_jobs,
     load_job,
@@ -437,6 +438,23 @@ def transition_processing_job(job_id: str, req: JobTransition,
         return transition(_store_root(c), ctx.tenant.value, job_id, req.to_status,
                           at=_now(), by=ctx.session_id, reason=req.reason)
     except (ProcessingJobError, IsolationError) as exc:
+        raise _to_http(exc)
+
+
+@router.post("/jobs/{job_id}/delete")
+def delete_processing_job(job_id: str,
+                          ctx: RequestContext = Depends(get_context),
+                          c: Container = Depends(get_container)) -> dict:
+    """Permanently delete the authenticated tenant's job — its record + all uploads + every artifact / stage
+    subdir — so test/demo jobs do not stack forever. Tenant-safe + path-safe: the job dir is resolved under
+    the verified tenant's project root and re-asserted contained before removal, so a tenant can only ever
+    delete its OWN job. 404 if the job is missing (incl. a cross-tenant id); 403 on a cross-project record.
+    POST (not DELETE) so no CORS method change is needed. No engine / render / status promotion — pure store
+    removal."""
+    cp, store = ctx.tenant.value, _store_root(c)
+    try:
+        return delete_job(store, cp, job_id)
+    except _CONTRACT_ERRORS as exc:
         raise _to_http(exc)
 
 

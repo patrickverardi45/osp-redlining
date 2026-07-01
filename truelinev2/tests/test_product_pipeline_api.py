@@ -48,6 +48,7 @@ PRODUCT_PATHS = {
     "/v2/product/jobs",
     "/v2/product/jobs/{job_id}",
     "/v2/product/jobs/{job_id}/transition",
+    "/v2/product/jobs/{job_id}/delete",
     # Slice 2 — inputs + the reviewed-bore-log review gate
     "/v2/product/jobs/{job_id}/uploads",
     "/v2/product/jobs/{job_id}/reviewed-bore-logs",
@@ -231,6 +232,37 @@ def test_job_create_and_get(tmp_path):
     assert job["status"] == CREATED and job["job_id"] == "job-1"
     got = ppr.get_processing_job("job-1", ctx=ctx, c=c)
     assert got["job_id"] == "job-1" and got["customer_project_id"] == "cp-aaa"
+
+
+def test_delete_processing_job_route(tmp_path):
+    c, ctx = _container(tmp_path), _ctx("cp-aaa")
+    ppr.create_project(ppr.ProjectCreate(display_name="Label"), ctx=ctx, c=c)
+    ppr.create_processing_job(ppr.JobCreate(job_id="job-1"), ctx=ctx, c=c)
+    out = ppr.delete_processing_job("job-1", ctx=ctx, c=c)
+    assert out["deleted"] is True and out["job_id"] == "job-1"
+    with pytest.raises(HTTPException) as exc:                    # gone afterwards
+        ppr.get_processing_job("job-1", ctx=ctx, c=c)
+    assert exc.value.status_code == 404
+
+
+def test_delete_missing_job_route_is_404(tmp_path):
+    c, ctx = _container(tmp_path), _ctx("cp-aaa")
+    ppr.create_project(ppr.ProjectCreate(display_name="Label"), ctx=ctx, c=c)
+    with pytest.raises(HTTPException) as exc:
+        ppr.delete_processing_job("job-nope", ctx=ctx, c=c)
+    assert exc.value.status_code == 404
+
+
+def test_delete_is_tenant_scoped_route(tmp_path):
+    c = _container(tmp_path)
+    a = _ctx("cp-aaa")
+    ppr.create_project(ppr.ProjectCreate(display_name="A"), ctx=a, c=c)
+    ppr.create_processing_job(ppr.JobCreate(job_id="job-1"), ctx=a, c=c)
+    b = _ctx("cp-bbb")                                          # a different tenant cannot delete cp-aaa's job
+    with pytest.raises(HTTPException) as exc:
+        ppr.delete_processing_job("job-1", ctx=b, c=c)
+    assert exc.value.status_code == 404
+    assert ppr.get_processing_job("job-1", ctx=a, c=c)["job_id"] == "job-1"   # survived
 
 
 def test_job_create_requires_project(tmp_path):
