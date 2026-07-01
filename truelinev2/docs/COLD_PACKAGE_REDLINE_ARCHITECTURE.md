@@ -124,9 +124,17 @@ drawn line between two endpoints is the bore — that requires stage 4.
   - **cold-011 = ADVERSARIAL `KEEP_BLOCKED`** (structural fragmentation + off-route labels). Kept as a regression
     case, NOT deleted; no further algorithmic gate is spent on it unless the same blocker recurs on a better
     package or the owner approves. The first cold REVIEW redline should be pursued on a better second package.
-  - **Second real cold-package validation (next): read-only** — find an eligible fresh non-recognized package with
-    route-attached labels + visible route linework, run the existing chain (G-a → G-b⁗ + diagnostic), and decide
-    whether we are one gate from G-e or need a different next gate. Validate, don't chase one hostile PDF.
+  - **Second real cold-package validation (DONE, read-only): lead candidate = `public-cold-009` (B3 OSP);
+    decision `PACKAGE_009_NEEDS_BORE_LOG`.** An anchorability probe across the packaged + cold candidates found:
+    001 recognized (odot, ineligible); 002 (B1 HDD) + 011 (B2 fiber) resolve 0 route-attached anchors (all
+    `AMBIGUOUS_ANCHOR` — labels in callout tables/points off the route); **`public-cold-009` is the ONLY probed
+    cold package where G-a′ binds real drawn anchors** — STA 08+00 → `ANCHOR_RESOLVED_TO_SYMBOL` (proximity vault
+    symbol), STA 07+62 → `ANCHOR_RESOLVED_TO_ROUTE_ENDPOINT` (route terminus). BUT a name-redacted source scan of
+    009 found ZERO printed text tying two stations as one bore (0 two-station lines / 0 station+BORE-footage / 0
+    station+structure); the page-2 stations are bare stationing-ruler ticks; BORE/VAULT are page-1 legend entries.
+    Per DO-NOT-INVENT, no span is source-confirmed → **`PACKAGE_009_NEEDS_BORE_LOG`** (anchors exist; span identity
+    missing). NEXT: obtain 009's bore log / a B3 package that ships a bore log (per-bore sheet/start_ft/end_ft),
+    then run the chain end-to-end — the shortest path to a first cold REVIEW redline with NO new algorithm.
 - **G-c: HDD entry/exit POINT-station binder** — binds B1 (the largest cold family).
 - **G-d: structure-symbol binders for OSP** (vault / handhole / pullbox) + wire leader-trace — binds B3.
 - **G-e: cold REVIEW candidate emission** — draw the human-adjustable stroke between verified endpoints. First
