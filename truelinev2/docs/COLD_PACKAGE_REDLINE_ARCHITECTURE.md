@@ -102,11 +102,20 @@ drawn line between two endpoints is the bore — that requires stage 4.
     **Finding on the proof case:** the main run CANNOT be discriminated — the isolated route is FRAGMENTED into 43
     disconnected components with no connected spine between the stations (radius 30 → `NO_MAIN_ROUTE`, 43
     components / 0 spanning). This is a route-CONTINUITY problem, not a lateral problem.
-  - **G-b⁗: route-continuity / dash-gap bridge** — reconnect colinear / near-colinear isolated route fragments
-    across SMALL gaps only when the source geometry strongly supports continuity (close + near-colinear +
-    directionally consistent + not crossing grid/border/annotation + no unsafe topology + no rival bridge); refuse
-    on ambiguous / too-wide / non-colinear / unsafe / unsupported bridges. Runs BEFORE G-b‴ in the pipeline
-    (isolate → bridge → discriminate). Still pre-redline; no stroke.
+  - **G-b⁗ (DONE, read-only): route-continuity / dash-gap bridge** (`extract/route_gap_bridge.py`) — reconnect
+    colinear route fragments across SMALL gaps only between degree-1 endpoints that are close + near-colinear +
+    directionally consistent + different-component + a UNIQUE MUTUAL choice; refuse on ambiguous / too-wide /
+    non-colinear / loop-closing / unsupported bridges: `ROUTE_GAPS_BRIDGED` / `NO_ROUTE_GAPS` vs
+    `ROUTE_GAP_AMBIGUOUS` / `ROUTE_GAP_TOO_WIDE` / `ROUTE_GAP_NOT_COLINEAR` / `ROUTE_BRIDGE_TOPOLOGY_UNSAFE` /
+    `ROUTE_BRIDGE_NOT_SUPPORTED`. Runs BEFORE G-b‴; bridge segments are in-memory continuity hypotheses (flagged
+    `"bridge": True`), never strokes; `class_verified` always False.
+    **Finding on the proof case:** the conservative default REFUSES (`ROUTE_GAP_TOO_WIDE`); a wide setting adds 6
+    safe colinear bridges (43→37 components) but the route stays fragmented, so G-b‴ still finds no spine — the
+    fragmentation is STRUCTURAL, beyond conservative dash-gap bridging.
+  - **Fragmentation diagnostic (next): a read-only investigation** — do NOT invent the next algorithm or widen
+    tolerances. Diagnose WHY the isolated route stays fragmented (component breakdown, gap taxonomy, G-b′
+    over-exclusion, curvature, vector-layer completeness, main-run reachability) and pick exactly one next code
+    gate: curve-aware bridge / G-b′ exclusion tuning / route-fragment recovery / raster-OCR lane / keep blocked.
 - **G-c: HDD entry/exit POINT-station binder** — binds B1 (the largest cold family).
 - **G-d: structure-symbol binders for OSP** (vault / handhole / pullbox) + wire leader-trace — binds B3.
 - **G-e: cold REVIEW candidate emission** — draw the human-adjustable stroke between verified endpoints. First
@@ -137,11 +146,13 @@ the proof case + the product domain.
   located in 2-D where the axis observer returned `NO_STATION_AXIS`) and by name-free synth tests including a
   non-collinear layout where a linear axis provably cannot fit.
 
-NEXT after G-b‴: **G-b⁗** (route-continuity / dash-gap bridge). G-b‴ can discriminate a main run from laterals on
-clean geometry, but on the real proof case it honestly REFUSES with `NO_MAIN_ROUTE` — the isolated route is
-FRAGMENTED into 43 disconnected components, so there is no connected spine to discriminate. The gating step is now
-to reconnect colinear / near-colinear route fragments across SMALL gaps (a dashed line, plotting gaps), but only
-when the source geometry strongly supports continuity (close + near-colinear + directionally consistent + not
-crossing grid/border/annotation + no rival bridge + no unsafe topology) — and to refuse otherwise (never bridge
-because endpoints are merely nearby). Bridging runs BEFORE G-b‴; a reconnected spine then feeds G-b‴ → G-b″ for a
-clean main run + anchors, after which a cold REVIEW stroke (G-e) can be drawn. AUTO remains blocked throughout.
+NEXT after G-b⁗: **a read-only FRAGMENTATION DIAGNOSTIC**. G-b⁗ reconnects safe colinear dash gaps, but on the
+real proof case even a wide safe pass leaves 37 components — the fragmentation is STRUCTURAL, so blindly widening
+the bridge tolerance would risk false connectors. Before writing the next algorithm, DIAGNOSE why the isolated
+route stays fragmented: component breakdown, gap taxonomy (close-colinear / close-curved / inconsistent / too-wide
+/ ambiguous / blocked), G-b′ over-exclusion (did it drop real connectors as leaders/ticks?), curvature (does the
+route bend so straight colinearity is too strict?), vector-layer completeness (are connectors dropped curves or a
+raster-only route?), and main-run reachability. The diagnostic's output picks exactly one next code gate
+(curve-aware bridge / G-b′ exclusion tuning / route-fragment recovery / raster-OCR lane / keep blocked). Only once
+a connected spine forms does G-b‴ → G-b″ → a cold REVIEW stroke (G-e) become reachable. AUTO remains blocked
+throughout.
