@@ -112,10 +112,21 @@ drawn line between two endpoints is the bore — that requires stage 4.
     **Finding on the proof case:** the conservative default REFUSES (`ROUTE_GAP_TOO_WIDE`); a wide setting adds 6
     safe colinear bridges (43→37 components) but the route stays fragmented, so G-b‴ still finds no spine — the
     fragmentation is STRUCTURAL, beyond conservative dash-gap bridging.
-  - **Fragmentation diagnostic (next): a read-only investigation** — do NOT invent the next algorithm or widen
-    tolerances. Diagnose WHY the isolated route stays fragmented (component breakdown, gap taxonomy, G-b′
-    over-exclusion, curvature, vector-layer completeness, main-run reachability) and pick exactly one next code
-    gate: curve-aware bridge / G-b′ exclusion tuning / route-fragment recovery / raster-OCR lane / keep blocked.
+  - **Fragmentation diagnostic (DONE, read-only): investigation, not a placement gate**
+    (`extract/route_fragment_diagnostic.py`) — `diagnose_route_fragmentation(...)` measures component breakdown,
+    gap taxonomy, G-b′ over-exclusion, curvature, vector density (raster proxy), and main-run reachability, and
+    recommends ONE next gate (`READY_FOR_DISCRIMINATION` / `GB_PRIME_EXCLUSION_TUNING` / `CURVE_AWARE_BRIDGE` /
+    `ROUTE_FRAGMENT_RECOVERY` / `RASTER_OCR_LANE` / `KEEP_BLOCKED` / `UNMEASURABLE`); reclassifies/bridges/draws
+    nothing; `class_verified` always False.
+    **Finding on the proof case:** over-exclusion 0, curvature 0, 552 dense vectors (not raster); recommendation
+    `ROUTE_FRAGMENT_RECOVERY` (12 colinear connectors just beyond the safe window) — BUT `near_start=0` /
+    `main_candidates=0`: the printed labels sit OFF the drawn route. Two independent blockers.
+  - **cold-011 = ADVERSARIAL `KEEP_BLOCKED`** (structural fragmentation + off-route labels). Kept as a regression
+    case, NOT deleted; no further algorithmic gate is spent on it unless the same blocker recurs on a better
+    package or the owner approves. The first cold REVIEW redline should be pursued on a better second package.
+  - **Second real cold-package validation (next): read-only** — find an eligible fresh non-recognized package with
+    route-attached labels + visible route linework, run the existing chain (G-a → G-b⁗ + diagnostic), and decide
+    whether we are one gate from G-e or need a different next gate. Validate, don't chase one hostile PDF.
 - **G-c: HDD entry/exit POINT-station binder** — binds B1 (the largest cold family).
 - **G-d: structure-symbol binders for OSP** (vault / handhole / pullbox) + wire leader-trace — binds B3.
 - **G-e: cold REVIEW candidate emission** — draw the human-adjustable stroke between verified endpoints. First
@@ -146,13 +157,13 @@ the proof case + the product domain.
   located in 2-D where the axis observer returned `NO_STATION_AXIS`) and by name-free synth tests including a
   non-collinear layout where a linear axis provably cannot fit.
 
-NEXT after G-b⁗: **a read-only FRAGMENTATION DIAGNOSTIC**. G-b⁗ reconnects safe colinear dash gaps, but on the
-real proof case even a wide safe pass leaves 37 components — the fragmentation is STRUCTURAL, so blindly widening
-the bridge tolerance would risk false connectors. Before writing the next algorithm, DIAGNOSE why the isolated
-route stays fragmented: component breakdown, gap taxonomy (close-colinear / close-curved / inconsistent / too-wide
-/ ambiguous / blocked), G-b′ over-exclusion (did it drop real connectors as leaders/ticks?), curvature (does the
-route bend so straight colinearity is too strict?), vector-layer completeness (are connectors dropped curves or a
-raster-only route?), and main-run reachability. The diagnostic's output picks exactly one next code gate
-(curve-aware bridge / G-b′ exclusion tuning / route-fragment recovery / raster-OCR lane / keep blocked). Only once
-a connected spine forms does G-b‴ → G-b″ → a cold REVIEW stroke (G-e) become reachable. AUTO remains blocked
-throughout.
+NEXT after the diagnostic: **SECOND real cold-package validation**. The diagnostic did its job — it proved cold-011
+has TWO independent blockers (structural route fragmentation + printed labels that sit OFF the drawn route,
+`near_start=0` / `main_candidates=0`), ruled out over-exclusion / curvature / raster, and recommended
+`ROUTE_FRAGMENT_RECOVERY` for the route spine. But cold-011 is now treated as an ADVERSARIAL `KEEP_BLOCKED`
+regression case — do not keep chasing one hostile PDF. The product goal is drawing correct redlines from source
+files, so the next step is to run the EXISTING evidence chain against a better second eligible fresh non-recognized
+package (route-attached labels + visible route) to learn whether a first honest cold REVIEW redline (G-e) is one
+gate away, or whether a different next gate (fragment recovery / off-route-label binding / OCR) is decisive there
+too. Only once a connected, label-reaching, discriminated main run exists does G-e become reachable. AUTO remains
+blocked throughout.
