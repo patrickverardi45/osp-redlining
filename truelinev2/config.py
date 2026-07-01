@@ -50,6 +50,12 @@ class Settings:
     # Slice 1: local-only generic product-pipeline API (project/job foundation routes). DEFAULT OFF --
     # the /v2/product routes are not mounted unless explicitly enabled.
     product_pipeline_api_optin: bool = False
+    # STAGING_REVIEW_CANDIDATE_PRODUCT_WIRING: local/staging generic source-backed readiness + REVIEW-candidate
+    # routes (run the shipped read-only readiness spine on a job's uploaded files; draw a REVIEW candidate ONLY
+    # when readiness == READY_FOR_REVIEW_REDLINE). DEFAULT OFF -- the drawing-capable readiness lane is not mounted
+    # unless explicitly enabled by the owner. NOT AUTO, NOT final placement, NOT a status promotion. Env var:
+    # TL2_PRODUCT_READINESS_API_OPTIN.
+    product_readiness_api_optin: bool = False
     # OWNER-PACKET-2 activation: consume the reviewed manual adjudication artifact
     # during ingest/resolution. DEFAULT OFF -- OFF is byte-identical (the frozen
     # M8.27 census is unchanged); ON overlays the reviewed corrections/abstains onto
@@ -91,6 +97,7 @@ class Settings:
             reviewer_api_optin=os.getenv("TL2_REVIEWER_API_OPTIN", "0") == "1",
             run_assembly_api_optin=os.getenv("TL2_RUN_ASSEMBLY_API_OPTIN", "0") == "1",
             product_pipeline_api_optin=os.getenv("TL2_PRODUCT_PIPELINE_API_OPTIN", "0") == "1",
+            product_readiness_api_optin=os.getenv("TL2_PRODUCT_READINESS_API_OPTIN", "0") == "1",
             manual_adjudications_optin=os.getenv("TRUELINE_MANUAL_ADJUDICATIONS", "0") == "1",
             design_stroke_dir=Path(
                 os.getenv("TL2_DESIGN_STROKE_DIR", str(_DESIGN_STROKE_DIR))
