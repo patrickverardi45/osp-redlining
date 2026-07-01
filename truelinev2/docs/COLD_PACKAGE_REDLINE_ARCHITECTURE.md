@@ -92,11 +92,21 @@ drawn line between two endpoints is the bore — that requires stage 4.
     **Finding on the proof case:** labels still locate + the route still isolates, but stronger anchors DON'T
     resolve — there are MULTIPLE route termini near each label (2–6 as the search radius widens), i.e. laterals /
     service drops drawn in the same un-layered linework. Honest refusal.
-  - **G-b‴: route-vs-lateral discriminator** — among the multiple route termini/branches near a station label,
-    identify the MAIN run vs short laterals/service drops ONLY when the geometry strongly supports it (continuity,
-    length, degree/topology, relation to BOTH source-bound labels + candidate termini); refuse on multiple
-    plausible main runs, on a weak distance-only guess, or unsafe topology. Never snap, never a grid/box line.
-    Feeds a uniquely-discriminated main run + its two termini back to G-b″/G-b′. Still pre-redline; no stroke.
+  - **G-b‴ (DONE, read-only): route-vs-lateral discriminator** (`extract/route_main_run.py`) — over the isolated
+    route segments, find the single connected component reaching BOTH labels, require it ACYCLIC (a cycle/mesh →
+    `ROUTE_TOPOLOGY_UNSAFE`), take the backbone = longest terminus-near-A → terminus-near-B path, and declare a
+    main run only when every off-backbone branch is short RELATIVE to the backbone AND the labels sit at the
+    backbone ends: `MAIN_ROUTE_DISCRIMINATED` vs `MULTIPLE_MAIN_ROUTE_CANDIDATES` / `ROUTE_LATERAL_AMBIGUOUS` /
+    `NO_MAIN_ROUTE` / `MAIN_ROUTE_ENDPOINT_NOT_TIGHT` / `ROUTE_TOPOLOGY_UNSAFE` / `UNMEASURABLE`. Topology +
+    relative length only; never an absolute-distance guess, never a snap; `class_verified` always False.
+    **Finding on the proof case:** the main run CANNOT be discriminated — the isolated route is FRAGMENTED into 43
+    disconnected components with no connected spine between the stations (radius 30 → `NO_MAIN_ROUTE`, 43
+    components / 0 spanning). This is a route-CONTINUITY problem, not a lateral problem.
+  - **G-b⁗: route-continuity / dash-gap bridge** — reconnect colinear / near-colinear isolated route fragments
+    across SMALL gaps only when the source geometry strongly supports continuity (close + near-colinear +
+    directionally consistent + not crossing grid/border/annotation + no unsafe topology + no rival bridge); refuse
+    on ambiguous / too-wide / non-colinear / unsafe / unsupported bridges. Runs BEFORE G-b‴ in the pipeline
+    (isolate → bridge → discriminate). Still pre-redline; no stroke.
 - **G-c: HDD entry/exit POINT-station binder** — binds B1 (the largest cold family).
 - **G-d: structure-symbol binders for OSP** (vault / handhole / pullbox) + wire leader-trace — binds B3.
 - **G-e: cold REVIEW candidate emission** — draw the human-adjustable stroke between verified endpoints. First
@@ -127,11 +137,11 @@ the proof case + the product domain.
   located in 2-D where the axis observer returned `NO_STATION_AXIS`) and by name-free synth tests including a
   non-collinear layout where a linear axis provably cannot fit.
 
-NEXT after G-b″: **G-b‴** (route-vs-lateral discriminator). G-b″ binds a label to a unique route terminus from the
-isolated linework, but on the real proof case there are MULTIPLE route termini near each station label (laterals /
-service drops in the same un-layered linework), so G-b″ honestly REFUSES (`NO_ISOLATED_ROUTE_ANCHOR` /
-`ISOLATED_ROUTE_ANCHOR_AMBIGUOUS`). The gating step is now to distinguish the MAIN run from short laterals — only
-when continuity / length / topology / relation to both source-bound labels strongly supports one main run, and to
-refuse otherwise (never a distance-only guess, never snapping). A uniquely-discriminated main run then feeds
-G-b″/G-b′ for a clean anchor + run, after which a cold REVIEW stroke (G-e) can be drawn. AUTO remains blocked
-throughout.
+NEXT after G-b‴: **G-b⁗** (route-continuity / dash-gap bridge). G-b‴ can discriminate a main run from laterals on
+clean geometry, but on the real proof case it honestly REFUSES with `NO_MAIN_ROUTE` — the isolated route is
+FRAGMENTED into 43 disconnected components, so there is no connected spine to discriminate. The gating step is now
+to reconnect colinear / near-colinear route fragments across SMALL gaps (a dashed line, plotting gaps), but only
+when the source geometry strongly supports continuity (close + near-colinear + directionally consistent + not
+crossing grid/border/annotation + no rival bridge + no unsafe topology) — and to refuse otherwise (never bridge
+because endpoints are merely nearby). Bridging runs BEFORE G-b‴; a reconnected spine then feeds G-b‴ → G-b″ for a
+clean main run + anchors, after which a cold REVIEW stroke (G-e) can be drawn. AUTO remains blocked throughout.
