@@ -83,10 +83,20 @@ drawn line between two endpoints is the bore — that requires stage 4.
     more precise `ROUTE_LAYER_AMBIGUOUS` — but still REFUSES: the printed-label anchors are ~16–41 pt off the
     drawn route and the route region still forks (laterals in un-layered linework). The isolated route segments
     are the read-only input the NEXT gate consumes.
-  - **G-b″: isolated-route → anchor composition** — use G-b′'s isolated route segments as evidence to resolve a
-    SOURCE-SUPPORTED route anchor (the label is offset from the route + framed by grid boxes, so G-a′'s raw
-    leader/symbol/terminus tiers refuse); never snap to an arbitrary nearest line, refuse on multiple/forked
-    isolated-route anchors. Then re-verify the run with the improved anchors. Still pre-redline; no stroke.
+  - **G-b″ (DONE, read-only): isolated-route → anchor composition** (`extract/isolated_route_anchor.py`) — bind
+    each printed station label to a UNIQUE drawn route TERMINUS (a degree-1 run end) from G-b′'s isolated linework
+    (never the nearest point on a passing line, never a grid/box line), then re-verify the run between the two
+    improved anchors via G-b′: `ISOLATED_ROUTE_ANCHOR_RESOLVED` vs `ISOLATED_ROUTE_ANCHOR_AMBIGUOUS` /
+    `ISOLATED_ROUTE_ANCHOR_NOT_TIGHT` / `NO_ISOLATED_ROUTE_ANCHOR` / `ROUTE_ISOLATION_REQUIRED` /
+    `ROUTE_STILL_AMBIGUOUS` / `UNMEASURABLE`; refusal-first; `class_verified` always False.
+    **Finding on the proof case:** labels still locate + the route still isolates, but stronger anchors DON'T
+    resolve — there are MULTIPLE route termini near each label (2–6 as the search radius widens), i.e. laterals /
+    service drops drawn in the same un-layered linework. Honest refusal.
+  - **G-b‴: route-vs-lateral discriminator** — among the multiple route termini/branches near a station label,
+    identify the MAIN run vs short laterals/service drops ONLY when the geometry strongly supports it (continuity,
+    length, degree/topology, relation to BOTH source-bound labels + candidate termini); refuse on multiple
+    plausible main runs, on a weak distance-only guess, or unsafe topology. Never snap, never a grid/box line.
+    Feeds a uniquely-discriminated main run + its two termini back to G-b″/G-b′. Still pre-redline; no stroke.
 - **G-c: HDD entry/exit POINT-station binder** — binds B1 (the largest cold family).
 - **G-d: structure-symbol binders for OSP** (vault / handhole / pullbox) + wire leader-trace — binds B3.
 - **G-e: cold REVIEW candidate emission** — draw the human-adjustable stroke between verified endpoints. First
@@ -117,10 +127,11 @@ the proof case + the product domain.
   located in 2-D where the axis observer returned `NO_STATION_AXIS`) and by name-free synth tests including a
   non-collinear layout where a linear axis provably cannot fit.
 
-NEXT after G-b′: **G-b″** (isolated-route → anchor composition). G-b′ now separates route-like linework from the
-grid/box/leader linework that made G-a′ refuse, but on the real proof case the printed-label anchors are still
-offset from the drawn route and the route region still forks, so G-b′ honestly REFUSES. The gating step is now to
-feed G-b′'s isolated route segments back into anchor resolution: resolve a SOURCE-SUPPORTED route anchor from the
-isolated route only (never snapping to an arbitrary line, refusing on multiple/forked candidates), then re-verify
-the run with the improved anchors. Only then can a cold REVIEW stroke (G-e) be drawn. AUTO remains blocked
+NEXT after G-b″: **G-b‴** (route-vs-lateral discriminator). G-b″ binds a label to a unique route terminus from the
+isolated linework, but on the real proof case there are MULTIPLE route termini near each station label (laterals /
+service drops in the same un-layered linework), so G-b″ honestly REFUSES (`NO_ISOLATED_ROUTE_ANCHOR` /
+`ISOLATED_ROUTE_ANCHOR_AMBIGUOUS`). The gating step is now to distinguish the MAIN run from short laterals — only
+when continuity / length / topology / relation to both source-bound labels strongly supports one main run, and to
+refuse otherwise (never a distance-only guess, never snapping). A uniquely-discriminated main run then feeds
+G-b″/G-b′ for a clean anchor + run, after which a cold REVIEW stroke (G-e) can be drawn. AUTO remains blocked
 throughout.
