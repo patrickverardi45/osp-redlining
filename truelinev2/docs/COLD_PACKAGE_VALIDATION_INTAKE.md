@@ -190,6 +190,23 @@ recognized/work corpus → §7a(4)/(7); active-field → §7a(5); synthetic test
 §7a(3); unknown provenance → §7a(8); package not found / unreadable → §7a(1)/(2); insufficient terminus
 evidence / no drawn coordinate / ambiguous evidence → §7b; cross-sheet unresolved → §7b (reserved, not emitted).
 
+### 7c. Source-completeness and REVIEW-readiness validation
+
+Eligibility (this document) answers *“may this package serve as cold proof?”* A second, complementary read-only
+layer answers the **product** question: *“is this package ready for REVIEW-redline generation, and if not, exactly
+why — and what is the single next step?”* That is the **source-completeness / REVIEW-readiness traffic
+controller** in `truelinev2/harness/review_readiness.py` (spec:
+[`SOURCE_COMPLETENESS_REVIEW_READINESS.md`](SOURCE_COMPLETENESS_REVIEW_READINESS.md)).
+
+The product rule it enforces: **FieldRoute can draw from complete source packages; it must refuse incomplete
+ones; a plan-only package is not enough when no source file confirms the bore/span start and end stations.** It
+routes a package's read-only Track B stage evidence to one of nine statuses — `PACKAGE_RECOGNIZED_CONTROL`,
+`PACKAGE_UNUSABLE_OCR_REQUIRED`, `KEEP_BLOCKED`, `MISSING_BORE_SPAN_SOURCE`, `NO_SOURCE_CONFIRMED_SPAN`,
+`SPAN_SOURCE_FOUND`, `ANCHOR_BLOCKED`, `ROUTE_BLOCKED`, `READY_FOR_REVIEW_REDLINE` — and names the next productive
+input. Like eligibility, it draws nothing, places nothing, and promotes nothing; readiness is not AUTO. The
+canonical `PACKAGE_009_NEEDS_BORE_LOG` decision is expressed there as `MISSING_BORE_SPAN_SOURCE` — a package can
+have route-attached anchors and still be refused because **no source file confirms the span.**
+
 ---
 
 ## 8. What Patrick needs to collect from a real project

@@ -19,6 +19,7 @@ HARNESS_MODULES = [
     HARNESS / "report.py",
     HARNESS / "__main__.py",
     HARNESS / "package_validation.py",
+    HARNESS / "review_readiness.py",
 ]
 
 

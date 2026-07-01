@@ -52,6 +52,29 @@ drawn run over the span; no class verification. These ABSTAIN or stay REVIEW. Id
 invented coordinate, station, or bore value. A located/bound endpoint proves identity + position, NOT that the
 drawn line between two endpoints is the bore — that requires stage 4.
 
+## Source-completeness and REVIEW-readiness gates
+
+Before the future drawing gates below matter, a package must be *complete enough* to attempt them. The read-only
+**source-completeness / REVIEW-readiness traffic controller** (`truelinev2/harness/review_readiness.py`; spec:
+[`SOURCE_COMPLETENESS_REVIEW_READINESS.md`](SOURCE_COMPLETENESS_REVIEW_READINESS.md)) maps a package's read-only
+stage evidence onto exactly one readiness status and names the single next productive step:
+
+- `PACKAGE_RECOGNIZED_CONTROL` — recognized: the deterministic control lane, out of this cold pipeline.
+- `PACKAGE_UNUSABLE_OCR_REQUIRED` — no text layer; OCR/raster ingestion first.
+- `KEEP_BLOCKED` — owner/adversarial terminal reclassification (never autonomous).
+- `MISSING_BORE_SPAN_SOURCE` — plan-only; **no source file confirms the bore/span start and end stations.**
+- `NO_SOURCE_CONFIRMED_SPAN` — a span source was inspected but confirmed no span.
+- `SPAN_SOURCE_FOUND` → `ANCHOR_BLOCKED` → `ROUTE_BLOCKED` → `READY_FOR_REVIEW_REDLINE` — the drawable path,
+  gated stage by stage against the pipeline above.
+
+The product rule: **the product can draw from complete source packages and must refuse incomplete ones; a
+plan-only package is not enough when no source file confirms the span.** This layer draws nothing, places
+nothing, and promotes nothing; a `READY_FOR_REVIEW_REDLINE` verdict means “ready to *generate* a REVIEW
+candidate,” never `DETERMINISTIC_AUTO`. It is the honest routing that turns the abstain/REVIEW rules above into an
+actionable intake pipeline. The important lesson from continued 94–102 — a package (`public-cold-009`) can bind
+route-attached anchors and still be refused because no source confirms the span — is exactly the
+`MISSING_BORE_SPAN_SOURCE` verdict.
+
 ## Future gates toward actual drawn redlines (each separately owner-approved)
 - **G-a (DONE `78730d5`): plan-view printed-station 2-D locator.** Resolve a bound station to its 2-D position
   via the printed label — no axis. Read-only; strict refusal.
