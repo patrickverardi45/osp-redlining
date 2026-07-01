@@ -26,6 +26,7 @@ HARNESS_MODULES = [
     HARNESS / "span_extractor.py",
     HARNESS / "endpoint_binding.py",
     HARNESS / "route_verification.py",
+    HARNESS / "complete_package_qa.py",
 ]
 
 # Non-module text paths (docs + tests) that must also stay free of operator-supplied real names. Scanned by the
@@ -36,11 +37,13 @@ EXTRA_NAME_FREE_TEXT_PATHS = [
     _ROOT / "docs" / "SOURCE_SPAN_EXTRACTOR.md",
     _ROOT / "docs" / "SOURCE_BACKED_ENDPOINT_BINDING.md",
     _ROOT / "docs" / "SOURCE_BACKED_ROUTE_VERIFICATION.md",
+    _ROOT / "docs" / "COMPLETE_PACKAGE_QA_HARNESS.md",
     _ROOT / "tests" / "test_review_readiness.py",
     _ROOT / "tests" / "test_readiness_adapter.py",
     _ROOT / "tests" / "test_span_extractor.py",
     _ROOT / "tests" / "test_endpoint_binding.py",
     _ROOT / "tests" / "test_route_verification.py",
+    _ROOT / "tests" / "test_complete_package_qa.py",
 ]
 
 
