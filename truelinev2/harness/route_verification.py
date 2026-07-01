@@ -70,8 +70,11 @@ class RouteVerification:
     per-observer breakdown (``None`` when that observer did not run). ``route_ready`` is True ONLY when BOTH the
     isolation gate (``ROUTE_LINEWORK_ISOLATED``) AND the discriminator (``MAIN_ROUTE_DISCRIMINATED``) pass.
     ``evaluated`` is True only when the route observers were
-    actually RUN (bound anchors + a readable plan) — never merely 'not reached'. Nothing here is a stroke; the
-    anchor summaries carry the observer-exposed coordinate, never an invented one."""
+    actually RUN (bound anchors + a readable plan) — never merely 'not reached'. ``route_geometry`` is the
+    observer-exposed verified main-run backbone segments (``{"a": (x, y), "b": (x, y)}`` from G-b‴
+    ``discriminate_main_run``) when ``route_ready`` — REVIEW evidence a later drawing gate consumes, NEVER a
+    stroke and NEVER invented (empty otherwise). Nothing here is a stroke; the anchor summaries carry the
+    observer-exposed coordinate, never an invented one."""
     span_id: str
     start_station: str
     end_station: str
@@ -86,12 +89,14 @@ class RouteVerification:
     evaluated: bool
     refusal: Optional[str]
     detail: Dict[str, Any] = field(default_factory=dict)
+    route_geometry: Tuple[Dict[str, Any], ...] = ()
 
     def to_dict(self) -> dict:
         d = dict(self.__dict__)
         d["start_anchor_summary"] = dict(self.start_anchor_summary) if self.start_anchor_summary else None
         d["end_anchor_summary"] = dict(self.end_anchor_summary) if self.end_anchor_summary else None
         d["detail"] = dict(self.detail)
+        d["route_geometry"] = [{"a": list(s["a"]), "b": list(s["b"])} for s in self.route_geometry]
         return d
 
 
@@ -171,7 +176,8 @@ def _verify_bound(binding: EndpointBinding, line_items, words, page_bounds) -> R
         refusal=(None if route_ready else canonical),
         detail={"start_anchor_xy": list(start_xy), "end_anchor_xy": list(end_xy),
                 "isolation": iso.to_dict(), "gap_bridge": brg.to_dict(), "main_run": main.to_dict(),
-                "class_verified": False})
+                "class_verified": False},
+        route_geometry=(tuple(main.main_run_segments) if route_ready else ()))
 
 
 def _common(binding: EndpointBinding) -> Dict[str, Any]:
