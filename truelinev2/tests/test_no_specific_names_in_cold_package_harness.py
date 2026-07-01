@@ -50,6 +50,7 @@ EXTRA_NAME_FREE_TEXT_PATHS = [
     _ROOT / "tests" / "test_complete_package_qa.py",
     _ROOT / "tests" / "test_review_candidate.py",
     _ROOT / "tests" / "test_product_readiness_wiring.py",
+    _ROOT / "proof" / "run_cold_package_readiness_census.py",
 ]
 
 
