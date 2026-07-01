@@ -123,6 +123,28 @@ The classifier’s PASS status sets are **test-locked** against the real observe
 (`test_pass_status_sets_match_the_real_observers`), so an observer vocabulary change cannot silently desync the
 traffic controller.
 
+## End-to-end runner (the adapter)
+
+The classifier is hand-fed evidence; the **adapter** turns it into a package → readiness report pipeline, kept in
+four cleanly separated seams:
+
+1. **package discovery / input loading** — `truelinev2/harness/readiness_source.py`: `discover_package(folder)`
+   (reuses the manifest loader) and `resolve_case_dir(case_id, cold_packages_root)` (a case reference under an
+   **injected** root — no hardcoded path or name). It reads any recorded read-only observer outputs from a
+   name-free `observer_findings.json` beside `package.json` — the *“observer outputs where already available.”*
+2. **observer evidence normalization** — `truelinev2/harness/readiness_adapter.py`: `evidence_from_findings(...)`
+   (pure transform of recorded findings) and `evidence_from_live_observers(...)` (the fresh-package seam — lazily
+   reads recognition + readability from the plan today; richer live span/anchor/route normalization is wired here
+   as real complete packages arrive). The live seam imports **only** the read-only dialect selector + plan reader.
+3. **readiness classification** — `classify_review_readiness(...)`.
+4. **report serialization** — `format_readiness(...)`.
+
+Composers: `run_readiness_for_folder(folder)` and `run_readiness_for_case(case_id, cold_packages_root)`. The
+adapter is read-only and harness-only — it draws nothing, places nothing, promotes nothing, and imports nothing
+from renderer / placement / backend / web / product runtime. `KEEP_BLOCKED` is produced only from an explicit
+owner/adversarial marker in the recorded findings, never derived autonomously. The four canonical cases reproduce
+end-to-end from folders (`test_readiness_adapter.py`).
+
 ## How to run (read-only)
 
 ```
@@ -131,6 +153,10 @@ PYTHONPATH=. venv/Scripts/python.exe -m pytest truelinev2/tests/test_review_read
 
 # harness-only diagnostic CLI over a JSON evidence file (writes nothing, draws nothing):
 PYTHONPATH=. venv/Scripts/python.exe -m truelinev2.harness.review_readiness <evidence.json>
+
+# end-to-end over a package folder (reads a recorded observer_findings.json; --live for a fresh plan):
+PYTHONPATH=. venv/Scripts/python.exe -m truelinev2.harness.readiness_adapter <package_dir> [--live]
+PYTHONPATH=. venv/Scripts/python.exe -m pytest truelinev2/tests/test_readiness_adapter.py -q
 ```
 
 ## Explicit limits

@@ -20,6 +20,17 @@ HARNESS_MODULES = [
     HARNESS / "__main__.py",
     HARNESS / "package_validation.py",
     HARNESS / "review_readiness.py",
+    HARNESS / "readiness_source.py",
+    HARNESS / "readiness_adapter.py",
+]
+
+# Non-module text paths (docs + tests) that must also stay free of operator-supplied real names. Scanned by the
+# same optional NAME_TOKENS mechanism; this list embeds no real names itself.
+_ROOT = HARNESS.parent
+EXTRA_NAME_FREE_TEXT_PATHS = [
+    _ROOT / "docs" / "SOURCE_COMPLETENESS_REVIEW_READINESS.md",
+    _ROOT / "tests" / "test_review_readiness.py",
+    _ROOT / "tests" / "test_readiness_adapter.py",
 ]
 
 
@@ -64,3 +75,20 @@ def test_identity_parameters_have_no_defaults():
                 if default is not None and _is_identity_param(arg.arg):
                     offenders.append("%s:%s(%s=...)" % (name, node.name, arg.arg))
     assert not offenders, "identity params must not have defaults (inject at runtime): %s" % offenders
+
+
+def test_extra_name_free_text_paths_exist():
+    for p in EXTRA_NAME_FREE_TEXT_PATHS:
+        assert p.is_file(), "missing name-free text path: %s" % p
+
+
+def test_operator_supplied_name_tokens_absent_in_extra_paths():
+    """(A) extended to docs + tests: if NAME_TOKENS is set, none of those tokens may appear there either."""
+    raw = os.environ.get("NAME_TOKENS", "").strip()
+    if not raw:
+        return  # optional; set NAME_TOKENS='token_a|token_b' to enforce a deployment's real names
+    tokens = [t for t in re.split(r"[|,\s]+", raw) if t]
+    blob = "\n".join(p.read_text(encoding="utf-8") for p in EXTRA_NAME_FREE_TEXT_PATHS).lower()
+    hits = sorted({t for t in tokens
+                   if re.search(r"\b" + re.escape(t.lower()) + r"\b", blob)})
+    assert not hits, "operator-supplied NAME_TOKENS leaked into docs/tests: %r" % hits
