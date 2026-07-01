@@ -146,12 +146,14 @@ def _span_summary(extraction: SpanExtraction) -> list:
              "start_structure": s.start_structure, "end_structure": s.end_structure} for s in extraction.spans]
 
 
-def _assemble_evidence(source: PackageSource, extraction: SpanExtraction, *, allow_live: bool
-                       ) -> Optional[ReviewReadinessEvidence]:
+def _assemble_evidence(source: PackageSource, extraction: SpanExtraction, *, allow_live: bool,
+                       anchor: Optional[AnchorEvidence] = None) -> Optional[ReviewReadinessEvidence]:
     """Merge the base signals (recognized / plan_readable / keep_blocked / anchor / route — from recorded
     findings or the live seam) with the SPAN populated from the real source-span extractor when source files are
-    present. Real extracted source files OVERRIDE a recorded span; a plan-only package (no discoverable span
-    source) leaves the span unpopulated so the classifier honestly returns MISSING_BORE_SPAN_SOURCE."""
+    present, and the ANCHOR populated from the source-backed endpoint binder when provided. Real extracted source
+    files OVERRIDE a recorded span; a provided ``anchor`` OVERRIDES the recorded anchor; a plan-only package (no
+    discoverable span source) leaves the span unpopulated so the classifier honestly returns
+    MISSING_BORE_SPAN_SOURCE."""
     base: Optional[ReviewReadinessEvidence] = None
     if source.findings is not None:
         base = evidence_from_findings(source.package_id, source.findings)
@@ -178,22 +180,24 @@ def _assemble_evidence(source: PackageSource, extraction: SpanExtraction, *, all
         detail = dict(base.detail)
         detail.update(extra)
         detail.setdefault("span_origin", detail.get("findings_origin", "recorded"))
-        return replace(base, span=span, detail=detail)
+        return replace(base, span=span, detail=detail,
+                       anchor=(anchor if anchor is not None else base.anchor))
 
-    # no recorded/live base, but a package or extracted files exist -> minimal base + the extracted span
+    # no recorded/live base, but a package or extracted files exist -> minimal base + the extracted span/anchor
     detail: Dict[str, Any] = {"span_origin": "extractor" if extracted_span is not None else "none"}
     detail.update(extra)
     return ReviewReadinessEvidence(package_id=source.package_id, plan_readable=True, recognized=False,
-                                   span=extracted_span, detail=detail)
+                                   span=extracted_span, anchor=anchor, detail=detail)
 
 
-def run_readiness_with_spans(package_dir, *, allow_live: bool = False) -> Optional[PackageReadiness]:
+def run_readiness_with_spans(package_dir, *, allow_live: bool = False,
+                             anchor: Optional[AnchorEvidence] = None) -> Optional[PackageReadiness]:
     """End-to-end (all five seams): discover the package + its source-span files, run the source-span extractor,
-    populate the span evidence from the extracted rows/refusals, classify, and return the report + the
-    extraction sidecar. Read-only; draws nothing."""
+    populate the span evidence (and optionally the source-backed ANCHOR) from the extracted rows/refusals,
+    classify, and return the report + the extraction sidecar. Read-only; draws nothing."""
     source = discover_package(package_dir)
     extraction = extract_spans_from_folder(str(package_dir))
-    evidence = _assemble_evidence(source, extraction, allow_live=allow_live)
+    evidence = _assemble_evidence(source, extraction, allow_live=allow_live, anchor=anchor)
     if evidence is None:
         return None
     return PackageReadiness(report=classify_review_readiness(evidence), extraction=extraction)
