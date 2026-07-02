@@ -50,4 +50,8 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         from truelinev2.api.product_readiness_routes import router as product_readiness_router
 
         app.include_router(product_readiness_router)
+    if settings.field_evidence_api_optin:
+        from truelinev2.api.field_evidence_routes import router as field_evidence_router
+
+        app.include_router(field_evidence_router)
     return app

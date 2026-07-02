@@ -56,6 +56,12 @@ class Settings:
     # unless explicitly enabled by the owner. NOT AUTO, NOT final placement, NOT a status promotion. Env var:
     # TL2_PRODUCT_READINESS_API_OPTIN.
     product_readiness_api_optin: bool = False
+    # FIELD-EVIDENCE WRITE CONTRACT: the mobile field app's submit-to-review seam (segment evidence
+    # packages: required start/end station photo refs, problem-area photos, digital bore-log readings).
+    # DEFAULT OFF -- the write routes are not mounted unless explicitly enabled by the owner. Field
+    # evidence SUPPORTS review; it performs NO AUTO, NO placement, NO redline generation. Env var:
+    # TL2_FIELD_EVIDENCE_API_OPTIN.
+    field_evidence_api_optin: bool = False
     # OWNER-PACKET-2 activation: consume the reviewed manual adjudication artifact
     # during ingest/resolution. DEFAULT OFF -- OFF is byte-identical (the frozen
     # M8.27 census is unchanged); ON overlays the reviewed corrections/abstains onto
@@ -98,6 +104,7 @@ class Settings:
             run_assembly_api_optin=os.getenv("TL2_RUN_ASSEMBLY_API_OPTIN", "0") == "1",
             product_pipeline_api_optin=os.getenv("TL2_PRODUCT_PIPELINE_API_OPTIN", "0") == "1",
             product_readiness_api_optin=os.getenv("TL2_PRODUCT_READINESS_API_OPTIN", "0") == "1",
+            field_evidence_api_optin=os.getenv("TL2_FIELD_EVIDENCE_API_OPTIN", "0") == "1",
             manual_adjudications_optin=os.getenv("TRUELINE_MANUAL_ADJUDICATIONS", "0") == "1",
             design_stroke_dir=Path(
                 os.getenv("TL2_DESIGN_STROKE_DIR", str(_DESIGN_STROKE_DIR))
