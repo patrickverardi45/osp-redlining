@@ -18,14 +18,14 @@
 
 | Repo | Branch | HEAD | vs remote | Tree |
 |---|---|---|---|---|
-| `C:\Nova\projects\TrueLine\TrueLine_Beta` (backend/engine) | `feat/truelinev2` | `42e55e9` + this save-session bump | **PUSHED** to `origin/feat/truelinev2` (0/0); `origin/main` `068a279` UNTOUCHED | clean (untracked proof PNGs only) |
-| `C:\Nova\projects\trueline-web-experience` (FieldRoute web) | `feat/hector-preflight` | `536fb26` | **PUSHED** to new `origin/feat/hector-preflight` (0/0); web `origin/main` `1a2f822` UNTOUCHED | clean (untracked `.next.prev-*` rollbacks) |
+| `C:\Nova\projects\TrueLine\TrueLine_Beta` (backend/engine) | `feat/truelinev2` | `42e55e9` + save-session bumps (this = post-merge doc bump) | **PUSHED** to `origin/feat/truelinev2` (0/0); `origin/main` `068a279` UNTOUCHED | clean (untracked proof PNGs only) |
+| `C:\Nova\projects\trueline-web-experience` (FieldRoute web) | `feat/hector-preflight` (@ `536fb26`) | web arc **MERGED to web `main`** via PR #6 (merge commit `52b46c5`) | web `origin/main` now **`52b46c5`** (was `1a2f822`), contains `536fb26` + `f16d88c`; branch still exists (not deleted) | clean (untracked `.next.prev-*` rollbacks) |
 | `C:\Nova\projects\trueline-field-mobile` (field app) | `master` | `4ac00a8` | **NO remote at all** — local-only (owner-gated) | clean |
-| `C:\Nova\knowledge\TrueLine-Wiki` (vault) | — | continued-111 save | no remote; large pre-existing drift | stage ONLY touched files, never `git add -A` |
+| `C:\Nova\knowledge\TrueLine-Wiki` (vault) | — | continued-112 save | no remote; large pre-existing drift | stage ONLY touched files, never `git add -A` |
 
-Engine truth: `DETERMINISTIC_AUTO=49`, deterministic **50/58**, cold matrix **11/11** — unchanged all session; targeted field-evidence/workflow/engine-handoff/readiness/pipeline suites **189 pass** this session. Web PR **#5** (`feat/review-readiness-panel` @ `f16d88c` → web main) is **OPEN/unmerged**; its commit is the base of `feat/hector-preflight` (which is a **superset** of PR #5 — see next choices).
+Engine truth: `DETERMINISTIC_AUTO=49`, deterministic **50/58**, cold matrix **11/11** — unchanged; targeted field-evidence/workflow/engine-handoff/readiness/pipeline suites **189 pass**. **The web field-evidence + preflight arc is now on web `main`** — PR **#6** (`feat/hector-preflight` → `main`, merge commit `52b46c5`) MERGED; PR **#5** (`f16d88c`) was **auto-resolved as MERGED** by GitHub (its head commit reached `main` via #6) — `f16d88c` is in `main` **exactly once** (no double-merge); #5 carries an explanatory comment. Backend `origin/main` `068a279` and mobile remain UNTOUCHED.
 
-## Recent commits (backend + web PUSHED this session; mobile local-only)
+## Recent commits (backend PUSHED; web arc MERGED to main via PR #6; mobile local-only)
 
 - **Backend `feat/truelinev2`:** …`9351476` **field-evidence WRITE contract** → `9c4ab33` START_HERE 111 → `555b31e` START_HERE compression → **`42e55e9`** *unreadable bore-log → named blocker `BORE_LOG_FORMAT_UNRECOGNIZED`, controlled abstain, NO 500* (the engine's `load_borelog` is stricter than the readiness lane's reader, so a readiness-READY job could 500 on `/workflow/redline`; guarded + 2 regression tests) → this save-session bump. Prior in-window: `635eddd` delete-job, `072fbaf` caption gate, `e78ef7a` cold census.
 - **Web `feat/hector-preflight`:** `f16d88c` PR #5 readiness panel → `a37f867` delete → `fd34391`/`05531c7` v1-parity live pricing → `8b02722` showcase removal → **`24aff38`** field-evidence office-review display (read-only panel in Redline proof) → **`97421db`** Home→workspace nav (two cards) → **`536fb26`** source-backed review-candidate **primacy** (presentation-only: readiness candidate primary when READY; strict ABSTAIN defers to it; no lane coupling).
@@ -54,7 +54,7 @@ Owner context: Patrick **HAS an active Apple Developer account** and **TestFligh
 
 ## Current next choices (all owner-gated; none started)
 
-1. **PR strategy (owner picks ONE — do NOT double-merge `f16d88c`):** `feat/hector-preflight` is a SUPERSET of PR #5. Either (a) merge PR #5 → main first, then hector-preflight rebases to 7 remaining commits, or (b) open a hector-preflight → main PR that supersedes PR #5 and close #5. Do NOT merge either without owner sign-off; both `origin/main` untouched.
+1. **PR strategy — DONE (option B).** PR #6 (`feat/hector-preflight` → web `main`, merge commit `52b46c5`) MERGED; PR #5 auto-resolved as merged/superseded (`f16d88c` in `main` once). Optional cleanup (owner, not required): delete the merged `feat/hector-preflight` branch; realign the local web checkout (`git checkout main && git pull` → `52b46c5`). Staging still serves `536fb26`'s build (now == web `main`), so no redeploy is needed.
 2. **Mobile remote** — create later (owner decides repo name/visibility; blocked on the FINAL app name — "FieldRoute Capture" is temp, "FieldRoute Field" REJECTED). Until then mobile is local-only.
 3. **On-device mobile write** — needs an owner-approved LAN bind of the staging backend (`:8100` is loopback-only); the Access-gated public edge is NOT a mobile write path (native fetch can't do OTP; a bundled token would leak).
 4. **Camera/GPS** native modules; photo thumbnails (upload byte-serving route); bore-reading plotting on the proof surface.
