@@ -1,6 +1,6 @@
 # START HERE — TrueLine v2 / FieldRoute Bootstrap (tight)
 
-> Single source of current working truth, compressed 2026-07-01 after **continued 111**.
+> Single source of current working truth. Last save-session 2026-07-01 after the **field-evidence + Redline-proof-UX staging arc** (backend + web feature branches PUSHED).
 > Full session history: vault `wiki/log.md` + this file's own git history (pre-compression append-log version at commit `9c4ab33`).
 > Verify against `git` before trusting any snapshot. Bump this file at `/save-session` — keep it TIGHT: update sections in place, do not re-grow an append-log.
 
@@ -18,33 +18,35 @@
 
 | Repo | Branch | HEAD | vs remote | Tree |
 |---|---|---|---|---|
-| `C:\Nova\projects\TrueLine\TrueLine_Beta` (backend/engine) | `feat/truelinev2` | this compression commit (child of `9c4ab33` = continued-111 bump; run `git log -1` for the hash) | **7 ahead / 0 behind** `origin/feat/truelinev2`; `origin/main` `068a279` UNTOUCHED | clean (untracked proof PNGs only) |
-| `C:\Nova\projects\trueline-web-experience` (FieldRoute web) | `feat/hector-preflight` | `8b02722` | branch has **no upstream** (unpushed); **5 ahead** of web `origin/main` `1a2f822` (untouched) | clean (untracked `.next.prev-*` rollbacks) |
-| `C:\Nova\projects\trueline-field-mobile` (field app) | `master` | `a2d9d77` | **NO remote at all** | clean |
-| `C:\Nova\knowledge\TrueLine-Wiki` (vault) | — | `650f888` (continued-111 save) | no remote; large pre-existing drift | stage ONLY touched files, never `git add -A` |
+| `C:\Nova\projects\TrueLine\TrueLine_Beta` (backend/engine) | `feat/truelinev2` | `42e55e9` + this save-session bump | **PUSHED** to `origin/feat/truelinev2` (0/0); `origin/main` `068a279` UNTOUCHED | clean (untracked proof PNGs only) |
+| `C:\Nova\projects\trueline-web-experience` (FieldRoute web) | `feat/hector-preflight` | `536fb26` | **PUSHED** to new `origin/feat/hector-preflight` (0/0); web `origin/main` `1a2f822` UNTOUCHED | clean (untracked `.next.prev-*` rollbacks) |
+| `C:\Nova\projects\trueline-field-mobile` (field app) | `master` | `4ac00a8` | **NO remote at all** — local-only (owner-gated) | clean |
+| `C:\Nova\knowledge\TrueLine-Wiki` (vault) | — | continued-111 save | no remote; large pre-existing drift | stage ONLY touched files, never `git add -A` |
 
-Engine truth: full v2 suite **2278 pass / 4 skip**; `DETERMINISTIC_AUTO=49`, deterministic **50/58**, cold matrix **11/11** — unchanged all session. Web PR **#5** (`feat/review-readiness-panel` @ `f16d88c` → web main) is **OPEN/unmerged**, but its commit is already contained in `feat/hector-preflight`.
+Engine truth: `DETERMINISTIC_AUTO=49`, deterministic **50/58**, cold matrix **11/11** — unchanged all session; targeted field-evidence/workflow/engine-handoff/readiness/pipeline suites **189 pass** this session. Web PR **#5** (`feat/review-readiness-panel` @ `f16d88c` → web main) is **OPEN/unmerged**; its commit is the base of `feat/hector-preflight` (which is a **superset** of PR #5 — see next choices).
 
-## Unpushed commits
+## Recent commits (backend + web PUSHED this session; mobile local-only)
 
-- **Backend (7):** `635eddd` tenant-safe delete-job → `b43df3a` START_HERE 110 → `072fbaf` **caption gate** (diagnostic captions gated out of product redline PNGs; default True keeps diagnostics byte-identical, md5-locked) → `e78ef7a` **cold readiness census** (read-only, 35/35 public cold packages: 32× `MISSING_BORE_SPAN_SOURCE`, 2× `NO_SOURCE_CONFIRMED_SPAN`, 1× `ANCHOR_BLOCKED` = cold-011's named B2 off-route-label-binder gap; ZERO READY → zero artifacts drawn) → `9351476` **field-evidence WRITE contract** (below) → `9c4ab33` START_HERE 111 → this compression commit (`wiki: compress START_HERE for restart`).
-- **Web (`feat/hector-preflight`, 5 ahead of main):** `f16d88c` PR #5 readiness panel → `a37f867` delete project/job → `fd34391` + `05531c7` v1-parity live pricing (footage × $15, source-span fallback) → `8b02722` remove dead-end showcase card.
-- **Mobile (3 new; entire repo is local-only):** `bb1e6d4` branding/generic fixtures → `d0f1e83` live read-status client → `a2d9d77` segment evidence + bore readings.
+- **Backend `feat/truelinev2`:** …`9351476` **field-evidence WRITE contract** → `9c4ab33` START_HERE 111 → `555b31e` START_HERE compression → **`42e55e9`** *unreadable bore-log → named blocker `BORE_LOG_FORMAT_UNRECOGNIZED`, controlled abstain, NO 500* (the engine's `load_borelog` is stricter than the readiness lane's reader, so a readiness-READY job could 500 on `/workflow/redline`; guarded + 2 regression tests) → this save-session bump. Prior in-window: `635eddd` delete-job, `072fbaf` caption gate, `e78ef7a` cold census.
+- **Web `feat/hector-preflight`:** `f16d88c` PR #5 readiness panel → `a37f867` delete → `fd34391`/`05531c7` v1-parity live pricing → `8b02722` showcase removal → **`24aff38`** field-evidence office-review display (read-only panel in Redline proof) → **`97421db`** Home→workspace nav (two cards) → **`536fb26`** source-backed review-candidate **primacy** (presentation-only: readiness candidate primary when READY; strict ABSTAIN defers to it; no lane coupling).
+- **Mobile `master` (local-only):** `bb1e6d4`→`d0f1e83`→`a2d9d77` (branding/live-read/segment-evidence) → **`4ac00a8`** field-evidence WRITE client (`fieldEvidenceWrite.ts`, env-gated default-OFF, kebab→snake maps, plain-English refusals, `npm run evidence:live-write`).
 
 ## Staging state (Cloudflare, LIVE)
 
 - Zone `fieldroute.io`; tunnel `fieldroute-api-staging` (`47f42c57…`); `staging.fieldroute.io` + `api-staging.fieldroute.io`; Access team `morning-river-d67d`, One-time-PIN, verified blocking both. Same-origin path-split.
-- **Backend live on `072fbaf`** (supervisor `-Once`; temp-store real-engine E2E passed). Readiness/REVIEW-candidate spine live behind `TL2_PRODUCT_READINESS_API_OPTIN` (wiring commit `4a1c45a`, pushed). **Live `:8100` predates `9351476`** — field-evidence routes NOT mounted and flag OFF; the newer commits exist only locally, so bounce the staging backend onto a newer commit BEFORE testing field-evidence routes.
-- **Web rebuilt + redeployed on `8b02722`** (landing has zero showcase refs). Env: `NEXT_PUBLIC_TL2_PRODUCT_API=1`, same-origin base, tenant; `FR_INTERNAL` proven OFF via 404 probe; rollback kept at `.next.prev-showcasefix`.
-- Demo walkthrough bundle **healed** after the caption scrub's sha drift (bug `B-STG-BUNDLE-SHA-DRIFT-1`, FIXED): regenerated through the normal gated product path → bundle `staging-smoke-uploaded-corpus-engine-fe3a80381e45`, honest sha, `REVIEW_ACCEPTED`, export descriptor **pkg-2** caption-free (pkg-1 kept as immutable history). Backups: `staging_smoke/ops/backups/demo-general-upload-{heal,export-refresh}-2026-07-01/`.
+- **Backend live on `42e55e9`** (supervisor `-Once`). Live flags: `TL2_PRODUCT_PIPELINE_API_OPTIN=1`, `TL2_PRODUCT_READINESS_API_OPTIN=1`, **`TL2_FIELD_EVIDENCE_API_OPTIN=1`** (3 field-evidence routes mounted, isolated live smoke passed). Rebuild = kill uvicorn + supervisor `-Once` (env durable in the gitignored `staging_smoke/ops/staging-supervisor.ps1`).
+- **Web rebuilt + redeployed on `536fb26`** (env `NEXT_PUBLIC_TL2_PRODUCT_API=1` + same-origin base + `staging-smoke`; `FR_INTERNAL` unset = customer mode; rollback `.next.prev-candprimacy`). **Field Evidence panel visible** in Redline proof; Home exposes the workspace (two cards).
+- **`generic-ready-demo`:** readiness `READY_FOR_REVIEW_REDLINE` + `REVIEW_CANDIDATE_READY` → the source-backed candidate is the **primary review surface**; the strict `/workflow/redline` abstains honestly (`BORE_LOG_FORMAT_UNRECOGNIZED`, HTTP 200, controlled — no 500, no closeout claim, review-only). Job stays `CREATED`.
+- **`demo-general-upload`:** `REVIEW_ACCEPTED`, closeout **READY / pkg-2**, artifact route 200 (healed bundle `…fe3a80381e45`), pricing 150 ft × $15 = $2,250.00 — unchanged. Backups: `staging_smoke/ops/backups/demo-general-upload-*-2026-07-01/`.
 
 ## Mobile state (FieldRoute Capture — temp name)
 
 - Expo SDK 56, managed workflow, **runs in Expo Go** (no native modules). Mock-first; env-gated READ-ONLY live client (`EXPO_PUBLIC_TL2_PRODUCT_API/_API_BASE/_TENANT[/_SESSION]`, default OFF; live REPLACES mock — never mixed; plain-English `statusCopy`, raw engine codes never render; REVIEW never AUTO/final).
 - Field rules (`src/lib/fieldEvidence.ts` + `npm run evidence:check`, 21 checks): required START/END station photos are the only default-required evidence; per-problem photos demanded before completion; `BoreReading` with `offsetFt` (~50 ft NOMINAL, advisory) as the future digital-redline plot axis.
 - Runtime smoke PASSED (Expo web + Playwright: 0 console errors on every screen; live env → honest-error card with zero mock rows; 5 screenshots).
-- **Backend write side exists but the mobile write client does NOT:** `9351476` added `contracts/field_evidence.py` (record `trueline-field-evidence-1` per segment; DRAFT→SUBMITTED_FOR_REVIEW then LOCKED; photos count only when bound to REAL job PHOTO uploads — evidence never invented; refusal `BLOCKED_MISSING_REQUIRED_EVIDENCE` with named reasons) + `api/field_evidence_routes.py` (`GET/PUT/POST /v2/product/jobs/{id}/field-evidence[/{segment}[/submit]]`, tenant-scoped, fail-closed) behind NEW default-OFF `TL2_FIELD_EVIDENCE_API_OPTIN` — enabled NOWHERE. Doctrine test-locked: submit changes no job status/slot; `review_support_only=True`.
-- Camera/GPS still gated (need native modules).
+- **Backend write side (`9351476`):** `contracts/field_evidence.py` (record `trueline-field-evidence-1` per segment; DRAFT→SUBMITTED_FOR_REVIEW then LOCKED; photos count only when bound to REAL job PHOTO uploads — evidence never invented; refusal `BLOCKED_MISSING_REQUIRED_EVIDENCE`) + `api/field_evidence_routes.py` (tenant-scoped, fail-closed) behind `TL2_FIELD_EVIDENCE_API_OPTIN` — **LIVE on staging**. `review_support_only=True`; submit changes no job status/slot.
+- **Mobile write client EXISTS (`4ac00a8`):** `src/lib/fieldEvidenceWrite.ts` mirrors the read client — env-gated default-OFF, needs an explicit `EXPO_PUBLIC_TL2_WRITE_JOB` for the ticket submit; kebab→snake problem/method/photo maps (unknowns throw); plain-English refusals; PHOTO-upload/save/submit ops; `npm run evidence:live-write` (static + live smoke). Web office-review display (`24aff38`) consumes the same records.
+- **NOT yet:** on-device write (needs a LAN-reachable backend — `:8100` is loopback-only); camera/GPS (native modules gated); photo thumbnails (no upload byte-serving route yet).
 
 ## Apple / TestFlight caution
 
@@ -52,12 +54,12 @@ Owner context: Patrick **HAS an active Apple Developer account** and **TestFligh
 
 ## Current next choices (all owner-gated; none started)
 
-1. **Push decisions** — backend 6-ahead; web branch push + preflight PR; PR #5 merge timing.
-2. **Staging backend relaunch on `9351476`** IF field-evidence API should go live (then flip `TL2_FIELD_EVIDENCE_API_OPTIN`).
-3. **Mobile WRITE client** — `fieldEvidence.ts` → the new API (mind kebab→snake problem kinds).
-4. **Camera/GPS gate** + FINAL mobile app name.
-5. **Cold-package EVIDENCE COLLECTION** (explicitly not code): 32 packages need a bore-log span source; cold-011 unblocks only via the owner-gated B2 off-route-label binder.
-6. G-e final/AUTO remains owner-gated, NOT started. Hector v1-parity round parked.
+1. **PR strategy (owner picks ONE — do NOT double-merge `f16d88c`):** `feat/hector-preflight` is a SUPERSET of PR #5. Either (a) merge PR #5 → main first, then hector-preflight rebases to 7 remaining commits, or (b) open a hector-preflight → main PR that supersedes PR #5 and close #5. Do NOT merge either without owner sign-off; both `origin/main` untouched.
+2. **Mobile remote** — create later (owner decides repo name/visibility; blocked on the FINAL app name — "FieldRoute Capture" is temp, "FieldRoute Field" REJECTED). Until then mobile is local-only.
+3. **On-device mobile write** — needs an owner-approved LAN bind of the staging backend (`:8100` is loopback-only); the Access-gated public edge is NOT a mobile write path (native fetch can't do OTP; a bundled token would leak).
+4. **Camera/GPS** native modules; photo thumbnails (upload byte-serving route); bore-reading plotting on the proof surface.
+5. **Source-backed candidate → closeout** is deliberately NOT wired (candidate stays review-only); wiring it is a separate owner-gated slice.
+6. **Cold-package EVIDENCE COLLECTION** (not code): 32 packages need a bore-log span source; cold-011 needs the owner-gated B2 off-route-label binder. G-e final/AUTO owner-gated, NOT started; Hector v1-parity parked.
 
 ## Guardrails
 
