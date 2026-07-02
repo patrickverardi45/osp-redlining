@@ -1,0 +1,53 @@
+# Backend checks — targeted, reliable, CI-portable subset of the v2 suite.
+#
+# Scope: the API / contract / product-pipeline / field-evidence / upload / readiness tests plus the new
+# production-ops seams (observability, rate-limit). These are deterministic and need no large binary
+# fixtures. The full deterministic RENDER/PROOF corpus (the 50/58 frontier sweeps) is intentionally NOT run
+# here: it depends on large real-PDF fixtures under data/ that are gitignored and is slow — it is verified
+# locally with the repo-root venv. See truelinev2/docs/production-ops-baseline.md.
+name: backend-checks
+
+on:
+  push:
+    paths:
+      - "truelinev2/**"
+      - ".github/workflows/backend-checks.yml"
+  pull_request:
+    paths:
+      - "truelinev2/**"
+      - ".github/workflows/backend-checks.yml"
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r truelinev2/requirements.txt
+
+      - name: Run targeted backend suite
+        env:
+          PYTHONPATH: .
+        run: |
+          python -m pytest \
+            truelinev2/tests/test_field_evidence_api.py \
+            truelinev2/tests/test_field_evidence_contract.py \
+            truelinev2/tests/test_upload_pipeline_contract.py \
+            truelinev2/tests/test_product_pipeline_api.py \
+            truelinev2/tests/test_product_readiness_wiring.py \
+            truelinev2/tests/test_product_workflow.py \
+            truelinev2/tests/test_product_workflow_seed.py \
+            truelinev2/tests/test_readiness_adapter.py \
+            truelinev2/tests/test_review_readiness.py \
+            truelinev2/tests/test_engine_handoff_readiness_contract.py \
+            truelinev2/tests/test_uploaded_corpus_engine_handoff.py \
+            truelinev2/tests/test_observability.py \
+            truelinev2/tests/test_rate_limit.py \
+            -q

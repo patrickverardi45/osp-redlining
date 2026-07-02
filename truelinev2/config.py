@@ -84,6 +84,20 @@ class Settings:
     # points this at a registry file. Real corpus NAMES + fingerprints are deployment DATA, never baked in
     # code. Env var: TL2_RECOGNIZED_CORPUS_REGISTRY.
     recognized_corpus_registry_path: Optional[Path] = None
+    # --- Production-ops baseline: observability + rate-limit guardrail (default-off seams) --------------- #
+    # Optional error observability (Sentry-style). DEFAULT None -> no-op: init_observability returns False and
+    # never raises, so local/dev/CI runs are untouched. A DSN + the OPTIONAL sentry-sdk package activate it;
+    # request bodies / upload contents are NEVER sent. Env: FIELDROUTE_SENTRY_DSN (or SENTRY_DSN).
+    observability_dsn: Optional[str] = None
+    # Deployment label for observability (e.g. "staging" / "production"). Generic — never a customer name.
+    observability_environment: str = "unknown"
+    observability_traces_sample_rate: float = 0.0
+    # In-process fixed-window rate-limit GUARDRAIL SEAM. DEFAULT OFF -> the middleware is NOT mounted and
+    # request handling is byte-identical. Conservative single-instance fallback, NOT the production limiter
+    # (production belongs at the edge / Redis / a managed gateway). Sits AFTER Cloudflare Access, so it can
+    # never interfere with the Access challenge. Env: TL2_RATE_LIMIT_OPTIN, TL2_RATE_LIMIT_PER_MINUTE.
+    rate_limit_optin: bool = False
+    rate_limit_per_minute: int = 120
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -120,6 +134,15 @@ class Settings:
                 Path(os.environ["TL2_RECOGNIZED_CORPUS_REGISTRY"])
                 if os.getenv("TL2_RECOGNIZED_CORPUS_REGISTRY") else None
             ),
+            observability_dsn=(
+                (os.getenv("FIELDROUTE_SENTRY_DSN") or os.getenv("SENTRY_DSN") or "").strip() or None
+            ),
+            observability_environment=os.getenv("FIELDROUTE_ENV", "unknown"),
+            observability_traces_sample_rate=float(
+                os.getenv("FIELDROUTE_OBSERVABILITY_TRACES_SAMPLE_RATE", "0") or "0"
+            ),
+            rate_limit_optin=os.getenv("TL2_RATE_LIMIT_OPTIN", "0") == "1",
+            rate_limit_per_minute=int(os.getenv("TL2_RATE_LIMIT_PER_MINUTE", "120") or "120"),
         )
 
     @classmethod

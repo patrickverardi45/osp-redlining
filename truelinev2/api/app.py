@@ -21,7 +21,21 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     if not settings.allowed_origins:
         raise RuntimeError("TL2_ALLOWED_ORIGINS must be set (fail-closed; no wildcard)")
 
+    # Optional error observability — a no-op unless a DSN + sentry-sdk are configured; never raises.
+    from truelinev2.api.observability import init_observability
+    init_observability(settings)
+
     app = FastAPI(title="TrueLine v2", version=__version__)
+    # Rate-limit guardrail (DEFAULT OFF). Added BEFORE CORS so it is the inner layer: an over-limit 429 still
+    # flows back out through CORSMiddleware and carries the CORS headers a browser needs. Health is exempt.
+    if settings.rate_limit_optin:
+        from truelinev2.api.rate_limit import FixedWindowRateLimiter, RateLimitMiddleware
+
+        app.add_middleware(
+            RateLimitMiddleware,
+            limiter=FixedWindowRateLimiter(settings.rate_limit_per_minute, 60),
+            exempt_paths=("/v2/health",),
+        )
     app.add_middleware(
         CORSMiddleware,
         allow_origins=list(settings.allowed_origins),
