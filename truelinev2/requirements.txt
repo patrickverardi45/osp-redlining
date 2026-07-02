@@ -2,8 +2,13 @@
 PyMuPDF>=1.23
 openpyxl>=3.1
 Pillow>=10.0
-pydantic>=2.5
-fastapi>=0.110
-uvicorn>=0.27
+# Web stack: pinned EXACTLY to the validated test venv (repo-root venv, Python 3.11.9). Unpinned
+# lower bounds let CI resolve fastapi 0.139/starlette 1.3, whose route internals diverge from the
+# validated stack and failed 5 route-mounting tests — CI must test the stack we actually validate.
+# Bump these four TOGETHER, deliberately, re-running the full v2 suite.
+pydantic==2.13.4
+fastapi==0.136.1
+starlette==1.0.0
+uvicorn==0.47.0
 # dev/test
 pytest>=8.0
