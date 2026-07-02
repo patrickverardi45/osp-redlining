@@ -9,6 +9,7 @@ surface (no job status/slot change; doctrine flags in every response).
 from __future__ import annotations
 
 import dataclasses
+import json
 from pathlib import Path
 
 import pytest
@@ -209,3 +210,86 @@ def test_no_auto_or_placement_fields_in_stored_record(tmp_path):
     for key in ("redline_manifest", "placement_status", "auto_status", "tier"):
         assert key not in rec
     assert rec["creates_redline"] is False and rec["review_support_only"] is True
+
+
+# --------------------------------------------------------------------------- #
+# PHOTO byte-serving (office-review thumbnail display) — pure READ, same opt-in flag.
+# --------------------------------------------------------------------------- #
+_PHOTO_ROUTE_PATH = "/v2/product/jobs/{job_id}/uploads/{upload_id}/photo"
+
+
+def _photo_routes(app):
+    return [r for r in app.routes if isinstance(r, APIRoute) and r.path == _PHOTO_ROUTE_PATH]
+
+
+def _job_snapshot(store, *, tenant: str = _TENANT, job_id: str = _JOB) -> str:
+    return json.dumps(load_job(store, tenant, job_id), sort_keys=True)
+
+
+def test_photo_route_not_mounted_by_default(tmp_path):
+    assert _photo_routes(_app(tmp_path, enabled=False)) == []
+
+
+def test_photo_route_mounted_when_enabled(tmp_path):
+    assert len(_photo_routes(_app(tmp_path))) == 1
+
+
+def test_photo_serving_exact_bytes_type_and_pure_read(tmp_path):
+    app = _app(tmp_path)
+    c = app.state.tl2
+    store = c.settings.product_store_root
+    _seed_job(store)
+    uid = _photo(store, "start.jpg")
+    before = _job_snapshot(store)
+    resp = fer.get_field_evidence_photo_route(_JOB, uid, ctx=_ctx(), c=c)
+    assert resp.media_type == "image/jpeg"
+    assert Path(resp.path).read_bytes() == b"bytes-start.jpg"
+    # Pure read: serving changed NOTHING on the job (record, lifecycle, slots, uploads).
+    assert _job_snapshot(store) == before
+
+
+def test_photo_wrong_tenant_is_404_without_confirming(tmp_path):
+    app = _app(tmp_path)
+    c = app.state.tl2
+    store = c.settings.product_store_root
+    _seed_job(store)
+    uid = _photo(store, "start.jpg")
+    _seed_job(store, tenant="cp-bbb", job_id="job-2")            # a real second tenant
+    with pytest.raises(HTTPException) as exc:
+        fer.get_field_evidence_photo_route(_JOB, uid, ctx=_ctx(tenant="cp-bbb"), c=c)
+    assert exc.value.status_code == 404                          # never confirms the other tenant's job/upload
+
+
+def test_photo_missing_upload_is_404(tmp_path):
+    app = _app(tmp_path)
+    c = app.state.tl2
+    _seed_job(c.settings.product_store_root)
+    with pytest.raises(HTTPException) as exc:
+        fer.get_field_evidence_photo_route(_JOB, "up-000000000000", ctx=_ctx(), c=c)
+    assert exc.value.status_code == 404
+
+
+def test_photo_non_photo_upload_is_denied(tmp_path):
+    # A recorded PLAN_PDF upload must never be served as an image, even with a valid upload_id.
+    app = _app(tmp_path)
+    c = app.state.tl2
+    store = c.settings.product_store_root
+    _seed_job(store)
+    plan = accept_upload(store, _TENANT, _JOB, kind="PLAN_PDF", filename="plan.pdf",
+                         content=b"%PDF-1.7 not an image", stored_at=_NOW)
+    with pytest.raises(HTTPException) as exc:
+        fer.get_field_evidence_photo_route(_JOB, plan["upload_id"], ctx=_ctx(), c=c)
+    assert exc.value.status_code == 404
+
+
+def test_photo_traversal_upload_id_is_denied(tmp_path):
+    # A traversal-shaped upload_id matches no recorded upload -> uniform 404, no filesystem reach.
+    app = _app(tmp_path)
+    c = app.state.tl2
+    store = c.settings.product_store_root
+    _seed_job(store)
+    _photo(store, "start.jpg")
+    for evil in ("../evil", "..\\evil", "up-x/../../evil"):
+        with pytest.raises(HTTPException) as exc:
+            fer.get_field_evidence_photo_route(_JOB, evil, ctx=_ctx(), c=c)
+        assert exc.value.status_code == 404

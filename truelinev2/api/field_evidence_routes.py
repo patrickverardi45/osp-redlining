@@ -6,7 +6,9 @@ the request context (``customer_project_id == ctx.tenant.value``) — never the 
 Mounted by create_app ONLY when settings.field_evidence_api_optin is True (DEFAULT OFF).
 
 Photos are REFERENCES to job uploads of kind PHOTO made through the EXISTING binary upload route
-(``POST /jobs/{job_id}/uploads``) — this lane adds no binary handling, no camera/GPS, no offline sync.
+(``POST /jobs/{job_id}/uploads``) — this lane WRITES no binaries (no camera/GPS, no offline sync). The one
+binary READ here serves a stored PHOTO upload's bytes back for office-review display (thumbnails), gated by
+the same opt-in flag and resolved tenant/kind/path-safe by ``upload_pipeline.resolve_upload_file``.
 
 DOCTRINE (hard): field evidence SUPPORTS review; it never places. Nothing here touches the engine,
 renderer, placement, job output slots, or lifecycle transitions; submit either transitions the package to
@@ -18,6 +20,7 @@ Endpoints (all tenant + job scoped):
   GET  /jobs/{job_id}/field-evidence/{segment_id}          — read one package (404 if never saved).
   PUT  /jobs/{job_id}/field-evidence/{segment_id}          — create/update the DRAFT package.
   POST /jobs/{job_id}/field-evidence/{segment_id}/submit   — validate required evidence; submit or refuse.
+  GET  /jobs/{job_id}/uploads/{upload_id}/photo            — serve one stored PHOTO upload for review display.
 """
 from __future__ import annotations
 
@@ -25,6 +28,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from truelinev2.api.container import Container
@@ -44,6 +48,11 @@ from truelinev2.contracts.field_evidence import (
     submit_field_evidence,
 )
 from truelinev2.contracts.processing_job import JobNotFoundError, ProcessingJobError
+from truelinev2.contracts.upload_pipeline import (
+    UploadError,
+    UploadFileNotFoundError,
+    resolve_upload_file,
+)
 
 router = APIRouter(prefix="/v2/product")
 
@@ -61,14 +70,15 @@ def _to_http(exc: Exception) -> HTTPException:
     (order matters): missing job/project/package -> 404, cross-project / isolation -> 403, invalid
     slug / payload / locked package / other contract error -> 400. Non-contract errors propagate (a real
     500, never masked)."""
-    if isinstance(exc, (JobNotFoundError, ProjectNotFoundError, FieldEvidenceNotFoundError)):
+    if isinstance(exc, (JobNotFoundError, ProjectNotFoundError, FieldEvidenceNotFoundError,
+                        UploadFileNotFoundError)):
         return HTTPException(status_code=404, detail=str(exc))
     if isinstance(exc, (CrossProjectAccessError, IsolationError)):
         return HTTPException(status_code=403, detail=str(exc))
     return HTTPException(status_code=400, detail=str(exc))
 
 
-_ERRORS = (ProcessingJobError, CustomerProjectError, IsolationError, FieldEvidenceError)
+_ERRORS = (ProcessingJobError, CustomerProjectError, IsolationError, FieldEvidenceError, UploadError)
 
 
 class FieldEvidencePayload(BaseModel):
@@ -119,6 +129,23 @@ def put_field_evidence_route(job_id: str, segment_id: str, req: FieldEvidencePay
                                    req.model_dump(), at=_now(), by=ctx.session_id)
     except _ERRORS as exc:
         raise _to_http(exc)
+
+
+@router.get("/jobs/{job_id}/uploads/{upload_id}/photo")
+def get_field_evidence_photo_route(job_id: str, upload_id: str,
+                                   ctx: RequestContext = Depends(get_context),
+                                   c: Container = Depends(get_container)) -> FileResponse:
+    """Serve ONE stored PHOTO upload's bytes for office review (thumbnail display of the photo references
+    a field-evidence package carries). Tenant comes from the VERIFIED context, never the URL; only an
+    upload RECORDED as kind PHOTO is servable, with its content type from the fixed image extension map.
+    Pure read — no lifecycle, slot, review, closeout, or placement change. 404 for a missing job/upload,
+    a non-photo upload, or an unsafe path (uniform not-found — never confirms cross-tenant/non-photo
+    existence)."""
+    try:
+        resolved = resolve_upload_file(_store_root(c), ctx.tenant.value, job_id, upload_id)
+    except _ERRORS as exc:
+        raise _to_http(exc)
+    return FileResponse(str(resolved["path"]), media_type=resolved["content_type"])
 
 
 @router.post("/jobs/{job_id}/field-evidence/{segment_id}/submit")

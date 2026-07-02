@@ -130,3 +130,47 @@ def accept_upload(store_root, customer_project_id, job_id, *, kind, filename, co
     job["uploads"].append(record)
     write_job(store_root, job)
     return record
+
+
+# --------------------------------------------------------------------------- #
+# Read-only byte-serving resolution (office-review photo display).
+# --------------------------------------------------------------------------- #
+
+# Fixed extension -> served content-type map for PHOTO byte-serving. Serving trusts ONLY the RECORDED
+# upload kind + this map — never a client-declared type; anything outside it is not servable.
+PHOTO_CONTENT_TYPES = {
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".png": "image/png",
+    ".webp": "image/webp",
+}
+
+
+class UploadFileNotFoundError(UploadError):
+    """No servable upload file: unknown upload_id, wrong kind, unsafe path, or missing payload —
+    uniform not-found semantics on purpose (never confirms what exists under another kind/tenant)."""
+
+
+def resolve_upload_file(store_root, customer_project_id, job_id, upload_id, *,
+                        require_kind="PHOTO") -> dict:
+    """Resolve one stored upload payload for READ-ONLY byte-serving (field-evidence office review).
+
+    Tenant-safe by construction (the job loads through ``load_job``) and path-safe: the stored payload
+    must resolve strictly INSIDE the job directory (the same containment assertion ``delete_job`` uses).
+    Only an upload whose RECORDED kind == ``require_kind`` is servable — a mis-declared or non-photo
+    file is never served as an image. Pure read: no record, lifecycle, slot, or status change.
+    Returns ``{"path": Path, "content_type": str}``; raises UploadFileNotFoundError otherwise."""
+    job = load_job(store_root, customer_project_id, job_id)          # exists + isolation first
+    record = next((u for u in job.get("uploads", [])
+                   if u.get("upload_id") == upload_id and u.get("kind") == require_kind), None)
+    if record is None:
+        raise UploadFileNotFoundError(
+            "no %s upload %r on job %r" % (require_kind, upload_id, job_id))
+    content_type = PHOTO_CONTENT_TYPES.get(_ext(record.get("stored_path", "")))
+    if content_type is None:
+        raise UploadFileNotFoundError("upload %r has no servable image extension" % (upload_id,))
+    root = job_dir(store_root, customer_project_id, job_id).resolve()
+    path = (root / str(record.get("stored_path", ""))).resolve()
+    if not path.is_relative_to(root) or not path.is_file():
+        raise UploadFileNotFoundError("upload %r payload is not available" % (upload_id,))
+    return {"path": path, "content_type": content_type}
