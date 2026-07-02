@@ -152,6 +152,24 @@ def test_unrecognized_unplaceable_abstains_with_specific_reasons(tmp_path, monke
     assert load_job(tmp_path, CP, JOB)["status"] == CREATED
 
 
+def test_unreadable_bore_log_abstains_controlled_never_500(tmp_path, monkeypatch):
+    # REGRESSION (staging generic-ready-demo): an ENGINE-READY job whose bore-log FILE the engine's ingest
+    # normalizer cannot read (this fixture's garbage-bytes .xlsx) previously escaped as an unhandled
+    # ValueError -> HTTP 500 on POST /workflow/redline. It must abstain CONTROLLED: named blocker, nothing
+    # rendered, no lifecycle advance, no AUTO/final anything. The REAL engine path runs (no _run_engine patch).
+    reg = _registry(tmp_path, monkeypatch, recognize_plan=False, map_bore=False)
+    _engine_ready_job(tmp_path, with_rbl=True)
+
+    out = pw.run_product_redline(tmp_path, CP, JOB, registry=reg, at=AT, by=BY)   # must not raise
+    assert out["path"] == pw.PATH_ABSTAIN
+    assert out["runnable"] is False and out["rendered"] is False
+    assert out["provenance"] is None                                              # never AUTO/final
+    codes = {b["code"] for b in out["blockers"]}
+    assert "BORE_LOG_FORMAT_UNRECOGNIZED" in codes
+    # No render => no lifecycle advance (stays CREATED); the abstain is review-only support, not a decision.
+    assert load_job(tmp_path, CP, JOB)["status"] == CREATED
+
+
 # --------------------------------------------------------------------------- #
 # B. REVIEW acceptance gate — a REVIEW redline must be accepted before it is packaged.
 # --------------------------------------------------------------------------- #

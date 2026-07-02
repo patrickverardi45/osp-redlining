@@ -206,6 +206,26 @@ def test_no_dialect_blocks(tmp_path, monkeypatch):
     assert "NO_PLAN_DIALECT_RECOGNIZED" in {b["code"] for b in ev["blockers"]}
 
 
+def test_unreadable_bore_log_blocks_named_never_crashes(tmp_path):
+    # REGRESSION (staging generic-ready-demo 500): an engine-ready job whose BORE_LOG file the ENGINE's
+    # ingest normalizer cannot read (the fixture's garbage-bytes .xlsx funnels to load_borelog's
+    # unrecognized-format ValueError) must evaluate to a NAMED blocker — never an unhandled exception.
+    # The REAL _run_engine runs here on purpose (no monkeypatch): the guard under test sits inside it.
+    _job(tmp_path)
+    ev = uce.evaluate_uploaded_corpus_engine_handoff(tmp_path, CP, JOB)
+    assert ev["status"] == "BLOCKED" and ev["runnable"] is False
+    blockers = {b["code"]: b["reason"] for b in ev["blockers"]}
+    assert uce.BORE_LOG_FORMAT_UNRECOGNIZED in blockers
+    # Plain-English, review-support copy: no traceback/exception text, no stored path leakage.
+    reason = blockers[uce.BORE_LOG_FORMAT_UNRECOGNIZED]
+    assert "could not read this bore log" in reason
+    assert "ValueError" not in reason and "payload" not in reason and "\\" not in reason
+    # The render path refuses with the lane's controlled error (route maps it to 409), never a crash.
+    with pytest.raises(uce.UploadedCorpusEngineError) as exc:
+        uce.render_uploaded_corpus_engine_handoff(tmp_path, CP, JOB, at=AT, by=BY)
+    assert uce.BORE_LOG_FORMAT_UNRECOGNIZED in str(exc.value)
+
+
 def test_missing_inputs_block_without_running_engine(tmp_path, monkeypatch):
     # No plan, and the reviewed bore-log never reaches engine-ready -> input blockers, engine NEVER invoked.
     _job(tmp_path, with_plan=False, ready=False)

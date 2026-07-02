@@ -113,6 +113,9 @@ PLAN_PDF_FILE_NOT_AVAILABLE = "PLAN_PDF_FILE_NOT_AVAILABLE"
 BORE_LOG_FILE_NOT_AVAILABLE = "BORE_LOG_FILE_NOT_AVAILABLE"
 NO_PLAN_DIALECT_RECOGNIZED = "NO_PLAN_DIALECT_RECOGNIZED"
 ENGINE_ABSTAINED = "ENGINE_ABSTAINED"
+# The ENGINE's ingest normalizer could not read the bore-log file at all (the product extraction/readiness
+# lanes are more permissive readers, so a job can look READY there while the engine lane stays blocked).
+BORE_LOG_FORMAT_UNRECOGNIZED = "BORE_LOG_FORMAT_UNRECOGNIZED"
 
 
 class UploadedCorpusEngineError(Exception):
@@ -435,7 +438,17 @@ def _run_engine(plan_path, borelog_path):
     (cross-sheet REVIEW coverage). ``matchline`` is the read-only printed-matchline continuity verdict over
     the rendered sheets. Caller owns no plan handle (opened/closed here)."""
     _na = {"verdict": "N/A", "caveats": [], "evidence": []}
-    bore = load_borelog(str(borelog_path))
+    try:
+        bore = load_borelog(str(borelog_path))
+    except ValueError:
+        # Unreadable/unrecognized bore-log FILE (detect_format funnels every non-workbook/garbage file
+        # here). A named input blocker — the caller reports BLOCKED and the workflow abstains with
+        # plain-English copy; this must never escape as an unhandled 500.
+        return None, None, None, None, [], _na, None, {
+            "code": BORE_LOG_FORMAT_UNRECOGNIZED,
+            "reason": "The engine could not read this bore log's file format. Upload the bore log as a "
+                      "standard bore schedule spreadsheet, then run the redline again.",
+        }
     plan = PlanPdf(str(plan_path))
     try:
         dialect = select_dialect(plan)
