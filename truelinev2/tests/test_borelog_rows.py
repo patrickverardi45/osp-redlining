@@ -143,7 +143,9 @@ def test_generic_fallback_row_ids_avoid_existing(tmp_path):
 
 def test_generic_fallback_unrecognized_raises_named_blocker(tmp_path):
     """Neither tier confirms a span -> ONE honest error naming BORE_LOG_FORMAT_UNRECOGNIZED + the
-    extractor's specific refusal reason. No row is ever invented."""
+    extractor's specific refusal reason. No row is ever invented, and the message carries NO filesystem
+    path (a raw reader exception can embed the absolute server path of the stored payload)."""
+    import re
     p = tmp_path / "rows.csv"
     p.write_text("a,b\n1,2\n", encoding="utf-8")
     with pytest.raises(br.BoreLogExtractionError) as exc:
@@ -151,6 +153,10 @@ def test_generic_fallback_unrecognized_raises_named_blocker(tmp_path):
     msg = str(exc.value)
     assert br.BORE_LOG_FORMAT_UNRECOGNIZED in msg
     assert "NO_TABLE_SPAN_COLUMNS" in msg                    # the specific source-level refusal, actionable
+    assert str(tmp_path) not in msg                          # no absolute directory
+    assert p.name not in msg                                 # not even the basename — the UI is per-file already
+    assert not re.search(r"[A-Za-z]:[\\/]", msg)             # no Windows drive-rooted path of any kind
+    assert "\\" not in msg and "/tmp" not in msg             # no path separators / POSIX temp fragments
 
 
 def test_blocker_code_matches_engine_handoff_vocabulary():

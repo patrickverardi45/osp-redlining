@@ -613,13 +613,20 @@ def test_extract_route_generic_span_table_end_to_end(tmp_path):
 
 def test_extract_route_unrecognized_is_400_with_named_blocker(tmp_path):
     """Neither the engine reader nor the generic tier confirms a span -> an honest 400 whose detail names
-    BORE_LOG_FORMAT_UNRECOGNIZED (never a fake row, never a silent success)."""
+    BORE_LOG_FORMAT_UNRECOGNIZED + the specific refusal reason (never a fake row, never a silent success)
+    and carries NO server filesystem path (not the store root, not the stored payload path)."""
+    import re
     c, ctx = _container(tmp_path), _ctx("cp-aaa")
     _seed_reviewed_bore_log(c, ctx)                                   # source content is a,b/1,2 — no span
     with pytest.raises(HTTPException) as exc:
         ppr.extract_bore_log_rows_route("job-1", "rbl-1", ctx=ctx, c=c)
     assert exc.value.status_code == 400
-    assert "BORE_LOG_FORMAT_UNRECOGNIZED" in str(exc.value.detail)
+    detail = str(exc.value.detail)
+    assert "BORE_LOG_FORMAT_UNRECOGNIZED" in detail
+    assert "NO_TABLE_SPAN_COLUMNS" in detail                          # useful refusal reason kept
+    assert str(tmp_path) not in detail                                # no absolute server directory
+    assert "product_store" not in detail and "payload" not in detail  # no stored-payload path fragments
+    assert not re.search(r"[A-Za-z]:[\\/]", detail)                   # no drive-rooted path at all
 
 
 def test_grouping_and_engine_eligibility_gate(tmp_path):

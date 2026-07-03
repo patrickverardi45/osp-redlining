@@ -103,12 +103,14 @@ def _next_row_id(existing: set) -> str:
 _GENERIC_CONFIDENCE = {"HIGH": HIGH, "MEDIUM": MEDIUM}
 
 
-def _generic_span_rows(path, source_upload_id, *, at, by, existing_row_ids, reader_error):
+def _generic_span_rows(path, source_upload_id, *, at, by, existing_row_ids):
     """Fallback tier: parse the file with the SHIPPED generic name-free span extractor (the readiness
     spine's reader — READ-ONLY reuse) and map every SOURCE-CONFIRMED span row into an UNTRUSTED
     ``extracted_row``. A file confirming no span raises one honest ``BoreLogExtractionError`` naming
     ``BORE_LOG_FORMAT_UNRECOGNIZED`` + the extractor's specific refusal reasons (never an invented row,
-    never a silent empty success). Lazy import keeps this module's load light."""
+    never a silent empty success). The refusal message carries ONLY the named code + the extractor's
+    refusal-reason codes — never a filesystem path or a raw reader exception (whose text can embed the
+    absolute server path of the stored payload). Lazy import keeps this module's load light."""
     from truelinev2.harness.span_extractor import extract_spans_from_documents
     from truelinev2.harness.span_source import documents_from_file
 
@@ -117,9 +119,9 @@ def _generic_span_rows(path, source_upload_id, *, at, by, existing_row_ids, read
         reasons = sorted({r.reason for r in extraction.refusals})
         raise BoreLogExtractionError(
             "could not parse the uploaded bore-log file into rows (%s): not a recognized named bore-log "
-            "format (%s), and the generic span reader confirmed no source-tied span — a row must tie a "
-            "start and an end station together as one bore (%s)"
-            % (BORE_LOG_FORMAT_UNRECOGNIZED, reader_error, ", ".join(reasons) or "no readable content"))
+            "format, and the generic span reader confirmed no source-tied span — a row must tie a start "
+            "and an end station together as one bore (%s)"
+            % (BORE_LOG_FORMAT_UNRECOGNIZED, ", ".join(reasons) or "no readable content"))
 
     rows = []
     used = set(existing_row_ids)
@@ -171,9 +173,9 @@ def extract_rows_from_borelog(path, source_upload_id, *, at, by, existing_row_id
     """
     try:
         bore = load_borelog(str(path))
-    except Exception as exc:  # noqa: BLE001 - not a named format -> the generic source-confirmed tier
+    except Exception:  # noqa: BLE001 - not a named format -> the generic source-confirmed tier
         return _generic_span_rows(path, source_upload_id, at=at, by=by,
-                                  existing_row_ids=existing_row_ids, reader_error=exc)
+                                  existing_row_ids=existing_row_ids)
 
     raw = {
         "start_station": bore.station_start,
