@@ -1,12 +1,17 @@
 """Contract tests for the read-only bore-log table extraction adapter (truelinev2/extract/borelog_rows).
 
-The adapter maps a parsed canonical Bore (from the v2 reader) into UNTRUSTED extracted_row dicts. It must:
-never fabricate confidence, leave rows UNREVIEWED (not placement candidates), mirror the manual-entry
-normalized shape, avoid row-id collisions, and raise a single honest error on an unreadable file. The
-underlying reader (load_borelog) is monkeypatched so these stay pure unit tests with no fixture file.
+The adapter maps a bore-log file into UNTRUSTED extracted_row dicts, two-tier: the v2 engine reader FIRST
+(one canonical Bore per file; these tests monkeypatch it so the tier stays a pure unit test), then — only
+when the engine reader does not recognize the file — the SHIPPED generic name-free span extractor (one row
+per SOURCE-CONFIRMED span; exercised here on real tmp_path files through the real extractor). It must:
+never fabricate confidence (engine rows None; generic rows carry the extractor's own source-derived band),
+leave rows UNREVIEWED (not placement candidates), mirror the manual-entry normalized shape, avoid row-id
+collisions, and raise ONE honest error naming BORE_LOG_FORMAT_UNRECOGNIZED when neither tier confirms a
+span. Generic fixtures only — no customer/person/place names.
 """
 from __future__ import annotations
 
+import openpyxl
 import pytest
 
 from truelinev2.contracts import extracted_row as er
@@ -65,3 +70,91 @@ def test_extract_raises_on_unreadable(monkeypatch):
     monkeypatch.setattr(br, "load_borelog", boom)
     with pytest.raises(br.BoreLogExtractionError):
         br.extract_rows_from_borelog("x.xlsx", "up-1", at="t", by="u")
+
+
+# --------------------------------------------------------------------------------------------------- #
+# Generic fallback tier — real tmp_path files through the REAL span extractor (no monkeypatch): a file
+# the engine reader does not recognize still yields reviewable rows when (and only when) a source
+# EXPLICITLY ties two stations together as one bore.
+# --------------------------------------------------------------------------------------------------- #
+def test_generic_fallback_csv_span_table(tmp_path):
+    p = tmp_path / "spans.csv"
+    p.write_text("bore_id,start_station,end_station,footage\nB-1,11+75,13+25,150\nB-2,20+00,21+50,150\n",
+                 encoding="utf-8")
+    rows = br.extract_rows_from_borelog(str(p), "up-1", at="t", by="u")
+    assert [r["row_id"] for r in rows] == ["extracted-1", "extracted-2"]
+    for r in rows:
+        assert r["extraction"]["extraction_method"] == er.TABLE_IMPORT
+        assert r["review"]["status"] == er.UNREVIEWED        # not a placement candidate until reviewed
+        assert r["source_upload_id"] == "up-1"
+    first = rows[0]
+    assert first["normalized"] == {"start_station": "11+75", "end_station": "13+25"}
+    assert first["raw"]["footage_ft"] == 150.0 and first["raw"]["footage_source"] == "PRINTED"
+    assert first["raw"]["span_grammar"] == "EXPLICIT_START_END_COLUMNS"
+    assert first["raw"]["source_bore_ref"] == "B-1"
+    assert first["raw"]["citation"]                          # source citation carried, never invented
+    # confidence is the extractor's OWN source-derived band (explicit columns) — not fabricated
+    assert first["extraction"]["confidence"] == er.HIGH
+
+
+def test_generic_fallback_xlsx_span_table(tmp_path):
+    """A generic XLSX span table (not the engine reader's named shape) extracts via the fallback tier."""
+    p = tmp_path / "spans.xlsx"
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.append(["bore_id", "start_station", "end_station", "footage"])
+    ws.append(["B-1", "11+75", "13+25", 150])
+    ws.append(["B-2", "20+00", "21+50", 150])
+    wb.save(str(p))
+    rows = br.extract_rows_from_borelog(str(p), "up-1", at="t", by="u")
+    assert len(rows) == 2
+    assert rows[0]["normalized"] == {"start_station": "11+75", "end_station": "13+25"}
+    assert rows[1]["normalized"] == {"start_station": "20+00", "end_station": "21+50"}
+    assert rows[0]["raw"]["source_kind"] == "XLSX_TABLE"
+
+
+def test_generic_fallback_pdf_inline_callout(tmp_path):
+    """A text-extractable PDF bore log with an inline station-pair callout extracts one row (MEDIUM —
+    the extractor's own band for the inline grammar)."""
+    fitz = pytest.importorskip("fitz")
+    doc = fitz.open()
+    page = doc.new_page()
+    page.insert_text((72, 72), "bore run 11+75 TO 13+25")
+    p = tmp_path / "bore-log.pdf"
+    doc.save(str(p))
+    doc.close()
+    rows = br.extract_rows_from_borelog(str(p), "up-1", at="t", by="u")
+    assert len(rows) == 1
+    r = rows[0]
+    assert r["normalized"] == {"start_station": "11+75", "end_station": "13+25"}
+    assert r["raw"]["span_grammar"] == "INLINE_STATION_PAIR_CALLOUT"
+    assert r["raw"]["source_kind"] == "PDF_BORE_LOG" and r["raw"]["source_page"] == 1
+    assert r["extraction"]["confidence"] == er.MEDIUM
+    assert r["review"]["status"] == er.UNREVIEWED
+
+
+def test_generic_fallback_row_ids_avoid_existing(tmp_path):
+    p = tmp_path / "spans.csv"
+    p.write_text("start,end\n11+75,13+25\n20+00,21+50\n", encoding="utf-8")
+    rows = br.extract_rows_from_borelog(str(p), "up-1", at="t", by="u",
+                                        existing_row_ids=["extracted-1", "row-1"])
+    assert [r["row_id"] for r in rows] == ["extracted-2", "extracted-3"]
+
+
+def test_generic_fallback_unrecognized_raises_named_blocker(tmp_path):
+    """Neither tier confirms a span -> ONE honest error naming BORE_LOG_FORMAT_UNRECOGNIZED + the
+    extractor's specific refusal reason. No row is ever invented."""
+    p = tmp_path / "rows.csv"
+    p.write_text("a,b\n1,2\n", encoding="utf-8")
+    with pytest.raises(br.BoreLogExtractionError) as exc:
+        br.extract_rows_from_borelog(str(p), "up-1", at="t", by="u")
+    msg = str(exc.value)
+    assert br.BORE_LOG_FORMAT_UNRECOGNIZED in msg
+    assert "NO_TABLE_SPAN_COLUMNS" in msg                    # the specific source-level refusal, actionable
+
+
+def test_blocker_code_matches_engine_handoff_vocabulary():
+    """The locally-defined code stays in sync with the canonical uploaded-corpus engine-handoff vocabulary
+    (defined locally so the extract adapter never imports that module's engine/renderer chain)."""
+    from truelinev2.contracts import uploaded_corpus_engine_handoff as uce
+    assert br.BORE_LOG_FORMAT_UNRECOGNIZED == uce.BORE_LOG_FORMAT_UNRECOGNIZED

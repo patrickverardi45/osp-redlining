@@ -585,6 +585,43 @@ def test_extract_route_missing_rbl_is_404(tmp_path):
     assert exc.value.status_code == 404
 
 
+def test_extract_route_generic_span_table_end_to_end(tmp_path):
+    """A generic uploaded CSV span table (NOT a named engine-reader format) extracts real reviewable rows
+    through the route via the generic fallback tier — UNTRUSTED, UNREVIEWED, and the engine-eligibility
+    gate stays CLOSED until a human reviews + groups (extraction confers no trust)."""
+    from truelinev2.contracts.extracted_row import TABLE_IMPORT
+    c, ctx = _container(tmp_path), _ctx("cp-aaa")
+    _seed_job(c, ctx)
+    csv_bytes = b"bore_id,start_station,end_station,footage\nB-1,11+75,13+25,150\nB-2,20+00,21+50,150\n"
+    up = ppr.register_upload(
+        "job-1", ppr.UploadRegister(kind="BORE_LOG", filename="spans.csv", content_base64=_b64(csv_bytes)),
+        ctx=ctx, c=c)
+    ppr.create_bore_log_review(
+        "job-1", ppr.ReviewedBoreLogCreate(reviewed_bore_log_id="rbl-1", source_upload_id=up["upload_id"]),
+        ctx=ctx, c=c)
+    out = ppr.extract_bore_log_rows_route("job-1", "rbl-1", ctx=ctx, c=c)
+    assert out["extracted_count"] == 2
+    assert out["extracted_row_ids"] == ["extracted-1", "extracted-2"]
+    rows = out["record"]["rows"]
+    assert all(r["extraction"]["extraction_method"] == TABLE_IMPORT for r in rows)
+    assert all(r["review"]["status"] == UNREVIEWED for r in rows)     # never auto-trusted
+    assert rows[0]["normalized"] == {"start_station": "11+75", "end_station": "13+25"}
+    assert rows[0]["extraction"]["confidence"] == "HIGH"              # extractor's own band, not fabricated
+    q = ppr.get_review_queue("job-1", "rbl-1", ctx=ctx, c=c)
+    assert q["engine_ready"] is False                                 # gate unchanged: review + grouping still required
+
+
+def test_extract_route_unrecognized_is_400_with_named_blocker(tmp_path):
+    """Neither the engine reader nor the generic tier confirms a span -> an honest 400 whose detail names
+    BORE_LOG_FORMAT_UNRECOGNIZED (never a fake row, never a silent success)."""
+    c, ctx = _container(tmp_path), _ctx("cp-aaa")
+    _seed_reviewed_bore_log(c, ctx)                                   # source content is a,b/1,2 — no span
+    with pytest.raises(HTTPException) as exc:
+        ppr.extract_bore_log_rows_route("job-1", "rbl-1", ctx=ctx, c=c)
+    assert exc.value.status_code == 400
+    assert "BORE_LOG_FORMAT_UNRECOGNIZED" in str(exc.value.detail)
+
+
 def test_grouping_and_engine_eligibility_gate(tmp_path):
     c, ctx = _container(tmp_path), _ctx("cp-aaa")
     up, _ = _seed_reviewed_bore_log(c, ctx)
