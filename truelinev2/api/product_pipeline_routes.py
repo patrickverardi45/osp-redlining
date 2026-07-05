@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import base64
 import json
+import math
 import re
 from datetime import datetime, timezone
 from pathlib import Path
@@ -1399,7 +1400,13 @@ def render_source_anchor_route(job_id: str, source_anchor_id: str,
 # M2 — uploaded PLAN_PDF page DISPLAY (read-only page metadata + page raster for source-anchor capture).
 # Rasterizes the uploaded plan AS-IS for the browser — NO redline drawn, NO artifact/slot/bundle created.
 # --------------------------------------------------------------------------- #
-_PLAN_RASTER_ZOOM = 2.0
+_PLAN_RASTER_ZOOM = 2.0                 # default browser raster (unchanged: existing behavior byte-identical)
+# Bounds for an on-demand HIGHER-DPI raster (precision source-anchor placement). A dense plan sheet is
+# unreadable when a 2x raster is merely CSS-upscaled, so the viewer may request a crisper raster; the zoom
+# is capped and the longest raster edge is bounded so a large sheet never yields a monster PNG. This is the
+# fitz PAGE raster (the plan AS-IS) — NOT the redline renderer, not engine truth.
+_PLAN_RASTER_ZOOM_MAX = 4.0
+_PLAN_RASTER_MAX_PIXELS = 8000
 
 
 def _require_plan_upload(job, plan_upload_id):
@@ -1410,6 +1417,23 @@ def _require_plan_upload(job, plan_upload_id):
     if upload.get("kind") != PLAN_PDF_KIND:
         raise HTTPException(status_code=400, detail="upload %r is not a PLAN_PDF" % (plan_upload_id,))
     return upload
+
+
+def _bounded_raster_zoom(requested, bounds) -> float:
+    """Clamp a client-requested plan-raster zoom into a safe range (display-only; never errors the viewer).
+    Non-finite / non-positive falls back to the default; the zoom is capped at ``_PLAN_RASTER_ZOOM_MAX`` and
+    further reduced so the longest raster edge stays within ``_PLAN_RASTER_MAX_PIXELS`` (a big sheet never
+    yields a monster PNG)."""
+    z = float(requested)
+    if not math.isfinite(z) or z <= 0:
+        z = _PLAN_RASTER_ZOOM
+    z = min(z, _PLAN_RASTER_ZOOM_MAX)
+    if bounds is not None:
+        x0, y0, x1, y1 = bounds
+        longest = max(x1 - x0, y1 - y0)
+        if longest > 0:
+            z = min(z, _PLAN_RASTER_MAX_PIXELS / longest)
+    return max(1.0, z)
 
 
 @router.get("/jobs/{job_id}/plan-pages/{plan_upload_id}")
@@ -1467,11 +1491,16 @@ def get_plan_page_metadata(job_id: str, plan_upload_id: str,
 
 @router.get("/jobs/{job_id}/plan-pages/{plan_upload_id}/{page_number}/raster")
 def get_plan_page_raster(job_id: str, plan_upload_id: str, page_number: int,
+                         zoom: float = _PLAN_RASTER_ZOOM,
                          ctx: RequestContext = Depends(get_context),
                          c: Container = Depends(get_container)) -> Response:
     """Read-only PNG raster of ONE uploaded PLAN_PDF page (the plan AS-IS — NO redline overlay), returned
-    as image/png bytes for browser display. 404 if the upload/page is missing, 400 if the upload is not a
-    PLAN_PDF. Writes NO PNG to disk, creates no artifacts/slots/bundles, runs no engine."""
+    as image/png bytes for browser display. The optional ``zoom`` query param requests an on-demand
+    higher-DPI raster for precision source-anchor placement on a dense sheet; it defaults to the standard
+    browser zoom (so the default response is unchanged) and is clamped to a safe range (a large sheet never
+    yields a monster PNG) — display-only, never the redline renderer. 404 if the upload/page is missing, 400
+    if the upload is not a PLAN_PDF. Writes NO PNG to disk, creates no artifacts/slots/bundles, runs no
+    engine."""
     cp, store = ctx.tenant.value, _store_root(c)
     try:
         job = load_job(store, cp, job_id)
@@ -1485,7 +1514,8 @@ def get_plan_page_raster(job_id: str, plan_upload_id: str, page_number: int,
     try:
         if page_number < 1 or page_number > plan.page_count:
             raise HTTPException(status_code=404, detail="page %r not in plan" % (page_number,))
-        png = plan.render_page_png(page_number, 0, zoom=_PLAN_RASTER_ZOOM)
+        eff_zoom = _bounded_raster_zoom(zoom, plan.page_bounds_display(page_number, 0))
+        png = plan.render_page_png(page_number, 0, zoom=eff_zoom)
     finally:
         plan.close()
     if png is None:

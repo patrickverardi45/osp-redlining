@@ -1557,6 +1557,39 @@ def test_plan_page_raster_happy_returns_png(tmp_path):
     assert list(Path(c.settings.product_store_root).rglob("*.png")) == []
 
 
+def test_bounded_raster_zoom_clamps_safely():
+    """The on-demand raster zoom is display-only and must never error the viewer: the default is preserved,
+    a high request is capped at the max, a large sheet is pixel-bounded, and garbage falls back to default."""
+    from truelinev2.api.product_pipeline_routes import (
+        _bounded_raster_zoom, _PLAN_RASTER_ZOOM, _PLAN_RASTER_ZOOM_MAX,
+    )
+    small = (0.0, 0.0, 100.0, 100.0)                       # the pixel-edge cap does not bind here
+    assert _bounded_raster_zoom(_PLAN_RASTER_ZOOM, small) == _PLAN_RASTER_ZOOM
+    assert _bounded_raster_zoom(99.0, small) == _PLAN_RASTER_ZOOM_MAX          # capped at the max
+    assert _bounded_raster_zoom(4.0, None) == _PLAN_RASTER_ZOOM_MAX            # no bounds -> only the max cap
+    assert _bounded_raster_zoom(0, small) == _PLAN_RASTER_ZOOM                 # non-positive -> default
+    assert _bounded_raster_zoom(float("nan"), small) == _PLAN_RASTER_ZOOM      # non-finite -> default
+    assert _bounded_raster_zoom(float("inf"), small) == _PLAN_RASTER_ZOOM      # non-finite -> default
+    # a large page: the 8000px edge cap reduces a 4x request to 2x (8000 / 4000)
+    assert _bounded_raster_zoom(4.0, (0.0, 0.0, 4000.0, 3000.0)) == 2.0
+
+
+def test_plan_page_raster_zoom_flows_through(tmp_path):
+    """The optional zoom flows through to the page raster: a lower zoom yields a smaller PNG and a higher
+    zoom a crisper (>=) PNG than the default, while the default response is unchanged. Still no artifact,
+    still read-only (page-size-independent: a lower zoom is always fewer pixels)."""
+    c, ctx = _container(tmp_path), _ctx("cp-aaa")
+    plan = _plan_pdf_only(c, ctx)
+    base = ppr.get_plan_page_raster("job-1", plan, 1, ctx=ctx, c=c)
+    lo = ppr.get_plan_page_raster("job-1", plan, 1, zoom=1.0, ctx=ctx, c=c)
+    hi = ppr.get_plan_page_raster("job-1", plan, 1, zoom=4.0, ctx=ctx, c=c)
+    for r in (base, lo, hi):
+        assert r.status_code == 200 and r.media_type == "image/png" and r.body[:4] == b"\x89PNG"
+    assert len(lo.body) < len(base.body)                  # lower zoom -> fewer pixels/bytes (proves flow-through)
+    assert len(hi.body) >= len(base.body)                 # higher zoom -> crisper-or-equal
+    assert list(Path(c.settings.product_store_root).rglob("*.png")) == []
+
+
 def test_plan_page_raster_wrong_kind_400(tmp_path):
     c, ctx = _container(tmp_path), _ctx("cp-aaa")
     bore = _bore_log_upload(c, ctx)
