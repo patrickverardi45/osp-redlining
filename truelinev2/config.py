@@ -62,6 +62,12 @@ class Settings:
     # evidence SUPPORTS review; it performs NO AUTO, NO placement, NO redline generation. Env var:
     # TL2_FIELD_EVIDENCE_API_OPTIN.
     field_evidence_api_optin: bool = False
+    # UPLOADED-CORPUS AUTO cap. DEFAULT OFF: a raw engine AUTO_SELECT on a customer-uploaded package is CAPPED
+    # to a high-confidence human-reviewable REVIEW candidate (requires accept/reject), so uploaded-corpus
+    # AUTO/final stays OWNER-GATED and closeout/export cannot proceed without human acceptance. ON restores the
+    # engine's AUTO_SELECT as a no-acceptance AUTO placement. The engine's raw verdict/reason are preserved in
+    # the candidate metadata either way. Never touches engine/render/select_dialect. Env: TL2_UPLOADED_CORPUS_AUTO_OPTIN.
+    uploaded_corpus_auto_optin: bool = False
     # OWNER-PACKET-2 activation: consume the reviewed manual adjudication artifact
     # during ingest/resolution. DEFAULT OFF -- OFF is byte-identical (the frozen
     # M8.27 census is unchanged); ON overlays the reviewed corrections/abstains onto
@@ -119,6 +125,7 @@ class Settings:
             product_pipeline_api_optin=os.getenv("TL2_PRODUCT_PIPELINE_API_OPTIN", "0") == "1",
             product_readiness_api_optin=os.getenv("TL2_PRODUCT_READINESS_API_OPTIN", "0") == "1",
             field_evidence_api_optin=os.getenv("TL2_FIELD_EVIDENCE_API_OPTIN", "0") == "1",
+            uploaded_corpus_auto_optin=os.getenv("TL2_UPLOADED_CORPUS_AUTO_OPTIN", "0") == "1",
             manual_adjudications_optin=os.getenv("TRUELINE_MANUAL_ADJUDICATIONS", "0") == "1",
             design_stroke_dir=Path(
                 os.getenv("TL2_DESIGN_STROKE_DIR", str(_DESIGN_STROKE_DIR))

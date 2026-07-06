@@ -133,7 +133,8 @@ def _merge_abstain_blockers(rec_ev, gen):
     return out
 
 
-def run_product_redline(store_root, customer_project_id, job_id, *, registry, at, by) -> dict:
+def run_product_redline(store_root, customer_project_id, job_id, *, registry, at, by,
+                        uploaded_corpus_auto_optin: bool = False) -> dict:
     """Choose + run the correct redline path for a job's uploaded package, IN ORDER (recognized
     deterministic -> uploaded REVIEW/AUTO -> abstain). On a successful render the job advances to PLACED.
     Returns a uniform decision report; never fakes AUTO and never invents geometry. 404 if the job is
@@ -164,7 +165,8 @@ def run_product_redline(store_root, customer_project_id, job_id, *, registry, at
     # whose candidate was already accepted (e.g. from the Review panel) returns that ACCEPTED record. Echo the
     # candidate's current acceptance status back so the caller never has to re-accept and is never stranded:
     # an already-accepted REVIEW reports requires_acceptance=False (ready to assemble), not a fresh gate.
-    gen = generate_review_candidate(store_root, customer_project_id, job_id, at=at, by=by)
+    gen = generate_review_candidate(store_root, customer_project_id, job_id, at=at, by=by,
+                                    uploaded_corpus_auto_optin=uploaded_corpus_auto_optin)
     tier = gen.get("tier")
     if tier in (TIER_REVIEW, TIER_AUTO):
         _advance_to(store_root, customer_project_id, job_id, PLACED,

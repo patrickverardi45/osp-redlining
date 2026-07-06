@@ -75,6 +75,11 @@ SUPERSEDED_PROVENANCE = "HUMAN_CONFIRMED_SOURCE_ANCHOR_SUPERSEDES_ENGINE_REVIEW"
 # AUTO. An engine placement that DOES reach AUTO_SELECT carries the engine's own source-tight evidence.
 NO_PER_BORE_TERMINI = "NO_PER_BORE_TERMINI"
 
+# Named reason a raw engine AUTO_SELECT is HELD at REVIEW for an uploaded/customer package: uploaded-corpus
+# AUTO/final is owner-gated (TL2_UPLOADED_CORPUS_AUTO_OPTIN off), so a source-tight AUTO surfaces as a
+# high-confidence human-reviewable REVIEW candidate. NEVER claims AUTO; the engine's own verdict is preserved.
+UPLOADED_CORPUS_AUTO_OWNER_GATED = "UPLOADED_CORPUS_AUTO_OWNER_GATED"
+
 _ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,62}$")
 
 
@@ -167,8 +172,19 @@ def _why_not_auto(candidate) -> dict:
     return {"auto_blocked": True, "blockers": blockers, "engine_reason": candidate.get("reason")}
 
 
+def _why_not_auto_policy(candidate) -> dict:
+    """Honest metadata when the ENGINE reached AUTO_SELECT but the product CAPPED it to REVIEW: the engine's
+    own tier/reason are preserved and AUTO is blocked purely by the owner-gate policy (not by weak evidence).
+    NEVER asserts AUTO."""
+    return {"auto_blocked": True, "blockers": [UPLOADED_CORPUS_AUTO_OWNER_GATED],
+            "engine_tier": candidate.get("placement_status"),
+            "engine_reason": candidate.get("reason"),
+            "policy": "uploaded-corpus AUTO owner-gated (TL2_UPLOADED_CORPUS_AUTO_OPTIN off)"}
+
+
 def _new_record(*, candidate_id, customer_project_id, job_id, reviewed_bore_log_id, tier, status,
-                provenance, candidate=None, bundle=None, blockers=None, at, by) -> dict:
+                provenance, candidate=None, bundle=None, blockers=None, auto_capped_by_policy=False,
+                at, by) -> dict:
     cand = candidate or {}
     return {
         "record_format": RECORD_FORMAT,
@@ -192,7 +208,10 @@ def _new_record(*, candidate_id, customer_project_id, job_id, reviewed_bore_log_
         "caveats": list(cand.get("caveats") or []),
         "matchline_continuity": cand.get("matchline_continuity"),
         "matchline_evidence": cand.get("matchline_evidence") or [],
-        "why_not_auto": _why_not_auto(cand) if tier == TIER_REVIEW else None,
+        # engine reached AUTO_SELECT but the product policy caps uploaded-corpus AUTO to REVIEW (owner-gated).
+        "auto_capped_by_policy": auto_capped_by_policy,
+        "why_not_auto": (_why_not_auto_policy(cand) if auto_capped_by_policy
+                         else (_why_not_auto(cand) if tier == TIER_REVIEW else None)),
         "coverage": None,                       # per-sheet coverage metrics: a later lane (not solved here)
         "blockers": list(blockers or []),
         "bundle": bundle,
@@ -209,7 +228,8 @@ def _new_record(*, candidate_id, customer_project_id, job_id, reviewed_bore_log_
     }
 
 
-def generate_review_candidate(store_root, customer_project_id, job_id, *, at, by) -> dict:
+def generate_review_candidate(store_root, customer_project_id, job_id, *, at, by,
+                              uploaded_corpus_auto_optin: bool = False) -> dict:
     """Ask the uploaded-corpus engine for this job's redline candidate and record the honest tier.
 
       * REVIEW  -> render the candidate (real dashed FINAL_REDLINE_PNG bundle) and persist a
@@ -240,19 +260,26 @@ def generate_review_candidate(store_root, customer_project_id, job_id, *, at, by
 
     if ev["runnable"]:
         cand = ev["candidate"]
-        if cand["placement_status"] == PlacementStatus.AUTO_SELECT.value:
-            # AUTO: engine-determined, source-tight. No acceptance gate; render deterministically as-is.
+        is_engine_auto = cand["placement_status"] == PlacementStatus.AUTO_SELECT.value
+        if is_engine_auto and uploaded_corpus_auto_optin:
+            # AUTO opt-in (owner-enabled TL2_UPLOADED_CORPUS_AUTO_OPTIN): honor the engine's source-tight
+            # AUTO_SELECT as a no-acceptance AUTO placement, rendered deterministically as-is.
             bundle = uce.render_uploaded_corpus_engine_handoff(
                 store_root, customer_project_id, job_id, at=at, by=by)
             return {"tier": TIER_AUTO, "runnable": True, "candidate_id": None, "record": None,
                     "bundle": bundle, "blockers": [], "requires_acceptance": False}
-        # REVIEW: render the candidate, then record it pending human accept/reject.
+        # REVIEW (default): render the candidate, then record it pending human accept/reject. A raw engine
+        # AUTO_SELECT is CAPPED here to a high-confidence REVIEW candidate unless the owner opted into AUTO --
+        # uploaded-corpus AUTO/final stays owner-gated, so closeout/export cannot proceed without human
+        # acceptance. The engine's raw tier/reason/evidence are preserved in the record metadata
+        # (placement_status / engine_reason / caveats + auto_capped_by_policy + why_not_auto).
         bundle = uce.render_uploaded_corpus_engine_handoff(
             store_root, customer_project_id, job_id, at=at, by=by)
         record = _new_record(
             candidate_id=candidate_id, customer_project_id=customer_project_id, job_id=job_id,
             reviewed_bore_log_id=rbl_id, tier=TIER_REVIEW, status=STATUS_REVIEW_CANDIDATE,
-            provenance=CANDIDATE_PROVENANCE, candidate=cand, bundle=bundle, at=at, by=by)
+            provenance=CANDIDATE_PROVENANCE, candidate=cand, bundle=bundle,
+            auto_capped_by_policy=is_engine_auto, at=at, by=by)
         _write(store_root, record)
         return _report(record)
 

@@ -1170,7 +1170,8 @@ def generate_review_candidate_route(job_id: str,
     candidate fails to render; 404 if the job is missing."""
     cp, store = ctx.tenant.value, _store_root(c)
     try:
-        return generate_review_candidate(store, cp, job_id, at=_now(), by=ctx.session_id)
+        return generate_review_candidate(store, cp, job_id, at=_now(), by=ctx.session_id,
+                                         uploaded_corpus_auto_optin=c.settings.uploaded_corpus_auto_optin)
     except UploadedCorpusEngineError as exc:
         raise HTTPException(status_code=409, detail=str(exc))
     except _CONTRACT_ERRORS as exc:
@@ -1261,7 +1262,8 @@ def run_product_redline_route(job_id: str,
     cp, store = ctx.tenant.value, _store_root(c)
     registry = load_registry(c.settings.recognized_corpus_registry_path)
     try:
-        return run_product_redline(store, cp, job_id, registry=registry, at=_now(), by=ctx.session_id)
+        return run_product_redline(store, cp, job_id, registry=registry, at=_now(), by=ctx.session_id,
+                                   uploaded_corpus_auto_optin=c.settings.uploaded_corpus_auto_optin)
     except (RecognizedCorpusError, UploadedCorpusEngineError, ProductWorkflowError) as exc:
         raise HTTPException(status_code=409, detail=str(exc))
     except _CONTRACT_ERRORS as exc:
