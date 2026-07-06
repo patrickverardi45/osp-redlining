@@ -55,6 +55,7 @@ from truelinev2.contracts.published_bundle_consumer import StaticBundleConsumer
 # Engine + renderer (read-only reuse; this adapter changes none of it).
 from truelinev2.ingest.normalize import load_borelog
 from truelinev2.ingest.pdf import PlanPdf
+from truelinev2.ingest.sheet_label_index import build_sheet_index
 from truelinev2.extract.registry import select_dialect
 from truelinev2.extract.generic_geometry import GenericGeometryDialect
 from truelinev2.match.engine import run_match
@@ -457,7 +458,14 @@ def _run_engine(plan_path, borelog_path):
         placement = None
         if dialect is not None:
             offset = dialect.calibrate(plan, _DEFAULT_OFFSET)
-            placement = run_match(bore, plan, dialect, offset)
+            # C2 (B-ENGINE-SHEET-PAGE-1): resolve each construction-sheet ref to its ACTUAL PDF page from the
+            # plan's own printed title-block "N OF M" labels, instead of treating the sheet number as a raw page
+            # index under a single global offset (a dialect whose calibrate is a no-op otherwise reads the wrong
+            # page and abstains NO_CALLOUTS_EXTRACTED). Falls back to ``offset`` for any sheet the title block
+            # cannot resolve, and to prior behavior entirely on a plan with no title-block index -> product
+            # behavior preserved. Read-only; touches no dialect/renderer/select code.
+            sheet_index = build_sheet_index(plan)
+            placement = run_match(bore, plan, dialect, offset, sheet_index=sheet_index)
 
         # Generic fallback — only when the named path produced no drawable candidate. Reordering is
         # impossible (named dialects are tried first and win whenever they place), so a recognized plan is

@@ -46,6 +46,7 @@ if TYPE_CHECKING:  # M8.2c Step 1: type-only; no runtime import (import graph un
     from truelinev2.match.reverse_anchor import ReverseAnchorContext
     from truelinev2.match.station_axis_interval import StationAxisContext
     from truelinev2.schema.frames import FrameGraph
+    from truelinev2.ingest.sheet_label_index import SheetIndex
 
 
 def _abstain(bore: Bore, tier: str, reason: str) -> Placement:
@@ -58,12 +59,25 @@ def run_match(bore: Bore, plan: PlanPdf, dialect: PlanDialect, offset: int, *,
               collision_gate: Optional["CollisionGate"] = None,
               continuation_graph: Optional["FrameGraph"] = None,
               reverse_anchor: Optional["ReverseAnchorContext"] = None,
-              station_axis: Optional["StationAxisContext"] = None) -> Placement:
+              station_axis: Optional["StationAxisContext"] = None,
+              sheet_index: Optional["SheetIndex"] = None) -> Placement:
     # M8.2c Step 1: ``frame_graph`` is inert plumbing -- threaded into build_chains /
     # score_chain (footage mode) but NEVER consulted yet. None/OFF -> byte-identical M7.
+    # C2 (B-ENGINE-SHEET-PAGE-1): ``sheet_index`` is DEFAULT-OFF (None) -> the scalar
+    # ``offset`` maps every sheet_ref, byte-identical to prior behavior (the deterministic
+    # 50/58 path passes nothing). When a caller supplies the title-block sheet index (the
+    # product-upload handoff), each construction-sheet ref is resolved to its ACTUAL PDF
+    # page from the plan's own printed "N OF M" label instead of a single global offset; an
+    # honest miss (None) falls back to the scalar offset. Page resolution ONLY -- no change
+    # to callout extraction, decide, or status.
     callouts = []
     for s in bore.sheet_refs:
-        callouts.extend(dialect.extract_callouts(plan, s, offset))
+        s_off = offset
+        if sheet_index is not None:
+            resolved = sheet_index.resolve_construction_sheet(s)   # 1-based PDF page, or None (honest miss)
+            if resolved is not None:
+                s_off = int(resolved) - int(s)   # page_index(s, s_off) == resolved - 1 (the resolved PDF page)
+        callouts.extend(dialect.extract_callouts(plan, s, s_off))
     if not callouts:
         return _abstain(bore, "FAIL_SAFE", "NO_CALLOUTS_EXTRACTED")
 

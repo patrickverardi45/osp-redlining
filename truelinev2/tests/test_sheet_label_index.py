@@ -95,6 +95,10 @@ def test_full_mapping_and_offset_match_config(tmp_path):
     # endpoints + count
     assert index.resolve_construction_sheet(1) == 14
     assert index.resolve_construction_sheet(_N_PLAN) == 13 + _N_PLAN
+    # C2 (B-ENGINE-SHEET-PAGE-1) Candidate #3: construction sheet 10 resolves to PDF page 23, never raw
+    # PDF page 10 (a typical-detail sheet) -- the exact mapping the engine handoff must search.
+    assert index.resolve_construction_sheet(10) == 23
+    assert index.pages[9].is_plan_sheet is False        # raw PDF page 10 is NOT a construction plan sheet
     assert sum(1 for p in index.pages if p.is_plan_sheet) == _N_PLAN
     assert sum(1 for p in index.pages if p.sheet_type == SHEET_TYPE_TYPICAL_DETAILS) == _DETAIL_PAGES
     assert sum(1 for p in index.pages if p.sheet_type == SHEET_TYPE_OTHER) == _COVER_PAGES
