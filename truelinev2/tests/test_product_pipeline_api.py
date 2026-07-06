@@ -1352,18 +1352,34 @@ _MINIMAL_PLAN_PDF_B64 = (
     "MjRFNEVDMjgwQzJBQzY1QzM4NEMzQTJDMjg1PjwxQjAyRUMzMkUxRDMwNUYzNDJBRjZFMjI2MkYzNTZDND5dPj4Kc3RhcnR4"
     "cmVmCjI4NAolJUVPRgo=")
 
+# The same minimal blank PDF but with /Rotate 270 (mediabox 612x792 portrait -> fitz renders a 792x612
+# LANDSCAPE page, mirroring the real customer plan). Its page_rect_bounds — the raster/render basis the
+# product routes now use — is (0,0,792,612); page_bounds_display would double-rotate it to (0,-180,612,612).
+# The TEST never imports fitz; it ships these bytes so the routes' read-only PlanPdf resolution runs on a
+# real rotated PDF. Generated once by PyMuPDF.
+_ROT270_PLAN_PDF_B64 = (
+    "JVBERi0xLjcKJcK1wrYKJSBXcml0dGVuIGJ5IE11UERGIDEuMjcuMgoKMSAwIG9iago8PC9UeXBlL0NhdGFsb2cvUGFnZXMg"
+    "MiAwIFIvSW5mbzw8L1Byb2R1Y2VyKE11UERGIDEuMjcuMik+Pj4+CmVuZG9iagoKMiAwIG9iago8PC9UeXBlL1BhZ2VzL0Nv"
+    "dW50IDEvS2lkc1s0IDAgUl0+PgplbmRvYmoKCjMgMCBvYmoKPDw+PgplbmRvYmoKCjQgMCBvYmoKPDwvVHlwZS9QYWdlL01l"
+    "ZGlhQm94WzAgMCA2MTIgNzkyXS9Sb3RhdGUgMjcwL1Jlc291cmNlcyAzIDAgUi9QYXJlbnQgMiAwIFI+PgplbmRvYmoKCnhy"
+    "ZWYKMCA1CjAwMDAwMDAwMDAgNjU1MzUgZiAKMDAwMDAwMDA0MiAwMDAwMCBuIAowMDAwMDAwMTIwIDAwMDAwIG4gCjAwMDAw"
+    "MDAxNzIgMDAwMDAgbiAKMDAwMDAwMDE5MyAwMDAwMCBuIAoKdHJhaWxlcgo8PC9TaXplIDUvUm9vdCAxIDAgUi9JRFs8QzM4"
+    "MTRFNEFDMjlBQzM5Q0MzOTgyMUMzOTBDM0JFNzE+PEI3NkVFODdFM0RGRkMxRkY1RTlCRUFFRTNFOUY5MjUwPl0+PgpzdGFy"
+    "dHhyZWYKMjg2CiUlRU9GCg==")
+
 
 def _cp(x, y):
     return ppr.ControlPoint(x=x, y=y)
 
 
-def _source_anchor_ready(c, ctx, *, job_id="job-1", rbl_id="rbl-main"):
+def _source_anchor_ready(c, ctx, *, job_id="job-1", rbl_id="rbl-main", plan_b64=_MINIMAL_PLAN_PDF_B64):
     """Project + job + a real PLAN_PDF upload + an engine-ready reviewed_bore_log. Returns the PLAN_PDF
-    upload id (the source-anchor's plan_upload_id)."""
+    upload id (the source-anchor's plan_upload_id). ``plan_b64`` selects the plan PDF (default flat;
+    ``_ROT270_PLAN_PDF_B64`` for the rotated-page bounds regression)."""
     bore = _bore_log_upload(c, ctx, job_id)                  # creates project + job + a BORE_LOG upload
     plan = ppr.register_upload(
         job_id, ppr.UploadRegister(kind="PLAN_PDF", filename="plan.pdf",
-                                   content_base64=_MINIMAL_PLAN_PDF_B64), ctx=ctx, c=c)
+                                   content_base64=plan_b64), ctx=ctx, c=c)
     ppr.create_bore_log_review(
         job_id, ppr.ReviewedBoreLogCreate(reviewed_bore_log_id=rbl_id, source_upload_id=bore),
         ctx=ctx, c=c)
@@ -1519,6 +1535,36 @@ def test_plan_page_metadata_happy(tmp_path):
     assert page["bounds"] == {"x0": 0.0, "y0": 0.0, "x1": 612.0, "y1": 792.0}
     assert page["width"] == 612.0 and page["height"] == 792.0
     assert page["zoom"] == 2.0 and page["raster_width"] == 1224 and page["raster_height"] == 1584
+
+
+def test_plan_page_metadata_uses_page_rect_bounds_on_rotated_plan(tmp_path):
+    # Regression for the manual-redline misalignment on rotated plans (the real customer plan is rotation
+    # 270): the plan-page bounds the browser captures clicks against must be page_rect_bounds — the raster/
+    # render basis — NOT the double-rotated page_bounds_display that shifted the redline off the marked route.
+    c, ctx = _container(tmp_path), _ctx("cp-rot")
+    ppr.create_project(ppr.ProjectCreate(display_name="Rot"), ctx=ctx, c=c)
+    ppr.create_processing_job(ppr.JobCreate(job_id="job-1"), ctx=ctx, c=c)
+    plan = ppr.register_upload("job-1", ppr.UploadRegister(
+        kind="PLAN_PDF", filename="rot.pdf", content_base64=_ROT270_PLAN_PDF_B64), ctx=ctx, c=c)["upload_id"]
+    page = ppr.get_plan_page_metadata("job-1", plan, ctx=ctx, c=c)["pages"][0]
+    # rotation 270: fitz renders a 792x612 LANDSCAPE page -> that (page.rect) is the click/raster/render basis.
+    assert page["bounds"] == {"x0": 0.0, "y0": 0.0, "x1": 792.0, "y1": 612.0}
+    assert (page["width"], page["height"]) == (792.0, 612.0)             # NOT the broken (612, 792) portrait
+    assert page["raster_width"] == round(792.0 * page["zoom"])           # raster follows the same landscape basis
+    assert page["raster_height"] == round(612.0 * page["zoom"])
+
+
+def test_source_anchor_click_bounds_use_page_rect_basis_on_rotated_plan(tmp_path):
+    # The create-time renderability bounds come from _resolve_plan_page_bounds -> page_rect_bounds. On the
+    # rotated (792x612 landscape) plan, control points at x=700 fall IN bounds ONLY under page_rect_bounds;
+    # they are OUT of the double-rotated page_bounds_display (whose width is 612) -> in-bounds proves the switch.
+    c, ctx = _container(tmp_path), _ctx("cp-rot2")
+    plan = _source_anchor_ready(c, ctx, plan_b64=_ROT270_PLAN_PDF_B64)
+    rec = ppr.create_source_anchor_route("job-1", ppr.SourceAnchorCreate(
+        source_anchor_id="sa-rot", plan_upload_id=plan, reviewed_bore_log_id="rbl-main",
+        page_number=1, control_points=[_cp(700.0, 300.0), _cp(750.0, 350.0)]), ctx=ctx, c=c)
+    assert rec["checks"]["all_control_points_in_bounds"] is True         # in (0,0,792,612); OUT of (0,-180,612,612)
+    assert rec["status"] == "VALIDATED" and rec["renderable"] is True and rec["blockers"] == []
 
 
 def test_plan_page_metadata_wrong_kind_400(tmp_path):

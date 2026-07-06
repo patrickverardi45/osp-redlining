@@ -1314,7 +1314,7 @@ def _resolve_plan_page_bounds(store, customer_project_id, job_id, plan_upload_id
     try:
         if page_number > plan.page_count:
             return None
-        return plan.page_bounds_display(page_number, 0)     # offset 0 -> page_index = page_number - 1
+        return plan.page_rect_bounds(page_number, 0)        # display space matching the raster + render_clip
     finally:
         plan.close()
 
@@ -1465,7 +1465,7 @@ def get_plan_page_metadata(job_id: str, plan_upload_id: str,
         by_page = {p.pdf_page_number: p for p in index.pages}
         pages = []
         for n in range(1, plan.page_count + 1):
-            bounds = plan.page_bounds_display(n, 0)         # offset 0 -> page_index = page_number - 1
+            bounds = plan.page_rect_bounds(n, 0)            # display space matching the raster + render_clip
             if bounds is None:
                 continue
             x0, y0, x1, y1 = bounds
@@ -1516,7 +1516,7 @@ def get_plan_page_raster(job_id: str, plan_upload_id: str, page_number: int,
     try:
         if page_number < 1 or page_number > plan.page_count:
             raise HTTPException(status_code=404, detail="page %r not in plan" % (page_number,))
-        eff_zoom = _bounded_raster_zoom(zoom, plan.page_bounds_display(page_number, 0))
+        eff_zoom = _bounded_raster_zoom(zoom, plan.page_rect_bounds(page_number, 0))
         png = plan.render_page_png(page_number, 0, zoom=eff_zoom)
     finally:
         plan.close()

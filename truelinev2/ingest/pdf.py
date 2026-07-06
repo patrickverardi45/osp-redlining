@@ -49,11 +49,27 @@ class PlanPdf:
         ys = [p.y for p in corners]
         return (float(min(xs)), float(min(ys)), float(max(xs)), float(max(ys)))
 
+    def page_rect_bounds(self, sheet: int, offset: int
+                         ) -> Optional[Tuple[float, float, float, float]]:
+        """Display-space page rectangle (x0, y0, x1, y1) EXACTLY as fitz renders it — i.e. ``page.rect``,
+        which ALREADY reflects page rotation and matches BOTH ``render_page_png`` (``get_pixmap``) and
+        ``render_clip``. Use this for browser click-capture bounds so human-marked points live in the same
+        coordinate space the stroke renderer draws in. (``page_bounds_display`` additionally multiplies by
+        ``rotation_matrix``, which DOUBLE-rotates a rotated page: correct for raw text/vector coords, WRONG
+        for the raster/stroke round-trip — a 270° page then yields a negative-origin, aspect-swapped rect.)
+        Read-only: opens no pixmap, rasterizes nothing. Identical to ``page_bounds_display`` for an
+        unrotated page (``rotation_matrix`` is the identity)."""
+        page = self._page(sheet, offset)
+        if page is None:
+            return None
+        r = page.rect
+        return (float(r.x0), float(r.y0), float(r.x1), float(r.y1))
+
     def render_page_png(self, sheet: int, offset: int, *, zoom: float = 2.0) -> Optional[bytes]:
         """Full-page PNG raster of ONE page (the uploaded plan AS-IS — NO overlay, NO redline drawn), as
         in-memory bytes for browser display + human source-anchor capture. Returns None if the page index
         is out of range. Writes nothing to disk. The pixmap covers the page's display-space rect scaled by
-        ``zoom``, so a raster pixel maps linearly back onto ``page_bounds_display`` for click capture."""
+        ``zoom``, so a raster pixel maps linearly back onto ``page_rect_bounds`` for click capture."""
         page = self._page(sheet, offset)
         if page is None:
             return None
