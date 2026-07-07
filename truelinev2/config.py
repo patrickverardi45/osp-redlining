@@ -95,6 +95,11 @@ class Settings:
     # points this at a registry file. Real corpus NAMES + fingerprints are deployment DATA, never baked in
     # code. Env var: TL2_RECOGNIZED_CORPUS_REGISTRY.
     recognized_corpus_registry_path: Optional[Path] = None
+    # Product API AUDIT LOG (append-only JSONL) path. DEFAULT None -> when the product API is mounted, the
+    # audit middleware resolves a default path under the gitignored store tree (<store_root>/../audit/...).
+    # Set to override the location. Records request METADATA only (never bodies/tokens/cookies). The
+    # middleware is added by create_app only when the product API is mounted. Env: TL2_PRODUCT_AUDIT_LOG.
+    product_audit_log_path: Optional[Path] = None
     # --- Production-ops baseline: observability + rate-limit guardrail (default-off seams) --------------- #
     # Optional error observability (Sentry-style). DEFAULT None -> no-op: init_observability returns False and
     # never raises, so local/dev/CI runs are untouched. A DSN + the OPTIONAL sentry-sdk package activate it;
@@ -146,6 +151,9 @@ class Settings:
             recognized_corpus_registry_path=(
                 Path(os.environ["TL2_RECOGNIZED_CORPUS_REGISTRY"])
                 if os.getenv("TL2_RECOGNIZED_CORPUS_REGISTRY") else None
+            ),
+            product_audit_log_path=(
+                Path(os.environ["TL2_PRODUCT_AUDIT_LOG"]) if os.getenv("TL2_PRODUCT_AUDIT_LOG") else None
             ),
             observability_dsn=(
                 (os.getenv("FIELDROUTE_SENTRY_DSN") or os.getenv("SENTRY_DSN") or "").strip() or None

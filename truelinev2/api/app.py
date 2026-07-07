@@ -26,6 +26,15 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     init_observability(settings)
 
     app = FastAPI(title="TrueLine v2", version=__version__)
+    # Product API audit log (append-only JSONL; best-effort, never breaks a request). Added FIRST so it is the
+    # INNERMOST middleware and records the true product-route status (including a destructive-gate 403). Only
+    # when the product API is mounted; records request METADATA only (never bodies/tokens/cookies).
+    if settings.product_pipeline_api_optin:
+        from truelinev2.api.audit import ProductAuditMiddleware
+
+        audit_path = settings.product_audit_log_path or (
+            settings.product_store_root.parent / "audit" / "product_api_audit.jsonl")
+        app.add_middleware(ProductAuditMiddleware, log_path=audit_path)
     # Rate-limit guardrail (DEFAULT OFF). Added BEFORE CORS so it is the inner layer: an over-limit 429 still
     # flows back out through CORSMiddleware and carries the CORS headers a browser needs. Health is exempt.
     if settings.rate_limit_optin:
