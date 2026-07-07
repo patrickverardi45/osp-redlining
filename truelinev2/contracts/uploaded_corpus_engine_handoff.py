@@ -503,7 +503,9 @@ def _run_engine(plan_path, borelog_path):
                           else _extra_sheet_legs(plan, used, offset, bore, cand.sheet,
                                                  sheet_index=sheet_index))
             render_sheets = {int(cand.sheet)} | {int(l["sheet"]) for l in extra_legs}
-            matchline = _matchline_continuity(plan, offset, bore, render_sheets)
+            # Slice 1'/C2: matchline reads each sheet's title-block-resolved PDF page, not the raw scalar
+            # index — same sheet_index the winner extraction and cross-sheet legs used above.
+            matchline = _matchline_continuity(plan, offset, bore, render_sheets, sheet_index=sheet_index)
         else:
             extra_legs, matchline = [], _na
         return bore, placement, offset, getattr(used, "name", None), extra_legs, matchline, used, generic_blocker
@@ -516,6 +518,23 @@ def _candidate(placement):
     if placement is None or placement.status == PlacementStatus.ABSTAIN:
         return None
     return placement.matched_callouts[0] if placement.matched_callouts else None
+
+
+def _resolved_sheet_offset(sheet, offset, sheet_index) -> int:
+    """The per-sheet page offset that maps an ENGINEERING construction-sheet number to the offset landing
+    ``PlanPdf.page_index`` (= ``sheet + offset - 1``) on that sheet's RESOLVED 1-based PDF page. This is the
+    single Slice 1'/C2 resolution rule shared by every page-reading site in this module: when the plan's
+    title-block "N OF M" index (``sheet_index``) resolves the sheet, return ``resolved - sheet`` (so front
+    matter before the numbered construction sheets is skipped); otherwise return the caller's scalar
+    ``offset`` unchanged — byte-identical to prior behavior on any plan with no resolvable index
+    (``sheet_index`` None, or an honest per-sheet miss). The engineering sheet number is NEVER redefined;
+    only the PDF page it is READ from is corrected. The resolved 1-based page is always
+    ``sheet + returned_offset``."""
+    if sheet_index is not None:
+        resolved = sheet_index.resolve_construction_sheet(sheet)   # 1-based PDF page, or None (honest miss)
+        if resolved is not None:
+            return int(resolved) - int(sheet)
+    return int(offset)
 
 
 def _extra_sheet_legs(plan, dialect, offset, bore, winner_sheet, sheet_index=None):
@@ -532,11 +551,7 @@ def _extra_sheet_legs(plan, dialect, offset, bore, winner_sheet, sheet_index=Non
     lo, hi = bore.station_start_ft, bore.station_end_ft
     legs = []
     for sheet in sorted({int(s) for s in (bore.sheet_refs or [])} - {int(winner_sheet)}):
-        s_off = offset
-        if sheet_index is not None:
-            resolved = sheet_index.resolve_construction_sheet(sheet)   # 1-based PDF page, or None (honest miss)
-            if resolved is not None:
-                s_off = int(resolved) - int(sheet)
+        s_off = _resolved_sheet_offset(sheet, offset, sheet_index)   # shared Slice 1'/C2 resolution rule
         callouts = [c for c in dialect.extract_callouts(plan, sheet, s_off)
                     if c.bbox and c.to_ft >= lo and c.from_ft <= hi]
         if not callouts:
@@ -595,18 +610,29 @@ def _shared_boundary_station(cross_ab, cross_ba, lo, hi):
     return None
 
 
-def _matchline_continuity(plan, offset, bore, render_sheets) -> dict:
+def _matchline_continuity(plan, offset, bore, render_sheets, sheet_index=None) -> dict:
     """Validate, from PRINTED matchline evidence ONLY, whether the rendered per-sheet legs are continuous
     across the matchline. Read-only: reuses ``see_sheet_crossings`` for printed boundary-STATION equations
     (the strict CONFIRMED tier) and a SEE-SHEET adjacency check for the no-station case. Never fakes
-    continuity, never changes geometry. Returns {verdict, caveats, evidence}."""
+    continuity, never changes geometry. Returns {verdict, caveats, evidence}.
+
+    Page resolution (matches Slice 1'/C2, via ``_resolved_sheet_offset``): the matchline grammar is read
+    from each engineering sheet's RESOLVED PDF page — its title-block "N OF M" page when ``sheet_index``
+    resolves it, else the scalar ``offset`` (byte-identical fallback). Previously this read ``plan.lines``
+    at the raw scalar page index, so on a plan with front matter it scanned the WRONG pages (cover / detail
+    sheets) and silently found no matchline equations, mis-reporting continuity as UNVERIFIED. Engineering
+    sheet numbers stay the ``pair`` identity; the pages actually read are carried SEPARATELY in each
+    evidence row's ``pdf_pages`` (advisory). Verdict tiers/thresholds are unchanged — only the pages the
+    evidence is read from are corrected."""
     sheets = sorted({int(s) for s in (render_sheets or [])})
     if len(sheets) < 2:
         return {"verdict": "N/A", "caveats": [], "evidence": []}
     lo, hi = bore.station_start_ft, bore.station_end_ft
     evidence, confirmed, adjacent = [], 0, 0
     for a, b in zip(sheets, sheets[1:]):
-        la, lb = plan.lines(a, offset), plan.lines(b, offset)
+        off_a = _resolved_sheet_offset(a, offset, sheet_index)
+        off_b = _resolved_sheet_offset(b, offset, sheet_index)
+        la, lb = plan.lines(a, off_a), plan.lines(b, off_b)
         cross_ab = see_sheet_crossings(la, b, _MATCHLINE_KEYWORD)
         cross_ba = see_sheet_crossings(lb, a, _MATCHLINE_KEYWORD)
         shared = _shared_boundary_station(cross_ab, cross_ba, lo, hi)
@@ -615,7 +641,11 @@ def _matchline_continuity(plan, offset, bore, render_sheets) -> dict:
             confirmed += 1
         elif sees:
             adjacent += 1
-        evidence.append({"pair": [a, b], "see_sheet_a_to_b": _sheet_sees(la, b),
+        evidence.append({"pair": [a, b],
+                         # RESOLVED 1-based PDF pages the grammar was READ from — a SEPARATE axis from the
+                         # engineering ``pair`` (equals ``pair`` on any plan with no title-block index).
+                         "pdf_pages": [int(a) + int(off_a), int(b) + int(off_b)],
+                         "see_sheet_a_to_b": _sheet_sees(la, b),
                          "see_sheet_b_to_a": _sheet_sees(lb, a),
                          "shared_boundary_station_ft": shared})
     pairs = len(sheets) - 1
