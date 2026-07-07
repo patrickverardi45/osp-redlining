@@ -34,6 +34,7 @@ from truelinev2.api.container import Container
 from truelinev2.api.deps import get_container, get_context
 from truelinev2.api.guards import assert_destructive_enabled
 from truelinev2.context import IsolationError, RequestContext
+from truelinev2.store.snapshot import snapshot_store
 from truelinev2.contracts.customer_project import (
     CrossProjectAccessError,
     CustomerProjectError,
@@ -458,10 +459,22 @@ def delete_processing_job(job_id: str,
     # unchanged. See truelinev2/api/guards.py.
     assert_destructive_enabled(c.settings)
     cp, store = ctx.tenant.value, _store_root(c)
+    # Confirm the job exists (tenant-scoped) BEFORE snapshotting/deleting, so a missing / cross-tenant id is
+    # a clean 404/403 with no wasted snapshot.
     try:
-        return delete_job(store, cp, job_id)
+        load_job(store, cp, job_id)
     except _CONTRACT_ERRORS as exc:
         raise _to_http(exc)
+    # Phase 3: best-effort point-in-time snapshot of the served store BEFORE deletion, so an accidental
+    # delete stays recoverable. A snapshot failure is RECORDED but does NOT block the (owner-enabled,
+    # gated + audited) delete. See truelinev2/store/snapshot.py.
+    snap = snapshot_store(store, reason="pre-delete-%s" % job_id)
+    try:
+        result = delete_job(store, cp, job_id)
+    except _CONTRACT_ERRORS as exc:
+        raise _to_http(exc)
+    return {**result, "snapshot": {"ok": snap["ok"], "snapshot_path": snap["snapshot_path"],
+                                   "file_count": snap["file_count"], "error": snap["error"]}}
 
 
 # --------------------------------------------------------------------------- #
