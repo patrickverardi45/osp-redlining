@@ -143,6 +143,13 @@ def _generic_span_rows(path, source_upload_id, *, at, by, existing_row_ids):
             raw["end_structure"] = span.end_structure
         if span.detail.get("source_bore_ref"):
             raw["source_bore_ref"] = span.detail["source_bore_ref"]
+        # Slice 2: the bore log's OWN print/sheet reference, when the source table carries one — raw text
+        # and parsed engineering-sheet ints SEPARATELY (mirrors the strict tier's sheet_refs/print_raw so
+        # the review gate and the readiness lane see one shape). Absent column -> absent keys, never guessed.
+        if span.print_raw:
+            raw["print_raw"] = span.print_raw
+        if span.sheet_refs:
+            raw["sheet_refs"] = list(span.sheet_refs)
         # normalized = candidate SUGGESTIONS (never truth); the same shape as manual/engine-reader rows so
         # the existing review gate treats a generic row identically.
         normalized = {"start_station": span.start_station, "end_station": span.end_station}

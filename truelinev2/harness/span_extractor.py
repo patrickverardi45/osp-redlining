@@ -62,6 +62,28 @@ _START_STRUCT_COLS = {"start_structure", "from_structure", "start_struct", "from
 _END_STRUCT_COLS = {"end_structure", "to_structure", "end_struct", "to_struct"}
 _START_ROLE_WORDS = {"start", "begin", "entry", "from", "entrance"}
 _END_ROLE_WORDS = {"end", "finish", "exit", "to"}
+# Print # / plan-sheet reference column (Slice 2): the bore log's own statement of WHICH plan sheet(s) the
+# bore appears on — the first locator of the print-ref reasoning chain (print ref -> engineering sheet ->
+# resolved PDF page -> station span). Carried ONLY when such a column exists; never derived from stations,
+# footage, or PDF pages ("page" is deliberately NOT a synonym — a PDF-page axis is not a sheet identity).
+_PRINT_COLS = {"print", "print #", "print#", "print no", "print no.", "print_no", "print number",
+               "print ref", "print_ref", "prints",
+               "sheet", "sheet #", "sheet#", "sheet no", "sheet no.", "sheet_no", "sheet number",
+               "sheets", "sheet ref", "sheet_ref", "sheet refs", "sheet_refs",
+               "plan sheet", "plan_sheet", "plan sheets", "plan_sheets"}
+
+
+def _sheet_refs_from_print(print_val) -> Tuple[int, ...]:
+    """Parse a print/sheet cell into engineering-sheet ints: every digit run, in print order, de-duped —
+    the SAME rule as the strict reader (``ingest.borelog_brenham.sheets_from_print``, test-locked to it).
+    Defined locally because this generic name-free module must not import a named dialect module. The raw
+    cell text travels separately (``SpanRow.print_raw``) so nothing is lost by parsing."""
+    out: List[int] = []
+    for n in re.findall(r"\d+", str(print_val or "")):
+        v = int(n)
+        if v not in out:
+            out.append(v)
+    return tuple(out)
 
 # Unlimited leading digits (matching the canonical stations.parse_station) + digit boundaries so a longer
 # number is never re-anchored to a trailing substring (e.g. "1000+00" is one token, never "000+00").
@@ -87,11 +109,17 @@ class SpanRow:
     citation: str
     bbox: Optional[Tuple[float, float, float, float]]
     detail: Dict[str, Any] = field(default_factory=dict)
+    # Slice 2 (additive; both empty unless the source table has a print/sheet column): the bore log's OWN
+    # plan-sheet reference — raw source text and parsed engineering-sheet ints carried SEPARATELY, so the
+    # readiness lane can later reason print ref -> sheet identity -> resolved PDF page. Never guessed.
+    print_raw: Optional[str] = None
+    sheet_refs: Tuple[int, ...] = ()
 
     def to_dict(self) -> dict:
         d = dict(self.__dict__)
         d["bbox"] = list(self.bbox) if self.bbox else None
         d["detail"] = dict(self.detail)
+        d["sheet_refs"] = list(self.sheet_refs)
         return d
 
 
@@ -162,7 +190,8 @@ def _num(cell: str) -> Optional[float]:
 
 def _make_span(doc: SourceDocument, idx: int, s: Tuple[str, float], e: Tuple[str, float],
                printed_footage: Optional[float], start_struct: Optional[str], end_struct: Optional[str],
-               bore_ref: Optional[str], *, citation: str, confidence: str, grammar: str) -> SpanRow:
+               bore_ref: Optional[str], *, citation: str, confidence: str, grammar: str,
+               print_raw: Optional[str] = None) -> SpanRow:
     start_sta, start_ft = s
     end_sta, end_ft = e
     if end_ft < start_ft:                                 # normalize low -> high (both are source stations)
@@ -181,7 +210,9 @@ def _make_span(doc: SourceDocument, idx: int, s: Tuple[str, float], e: Tuple[str
                    source_kind=doc.source_kind, start_station=start_sta, end_station=end_sta, footage=footage,
                    start_structure=(start_struct or None), end_structure=(end_struct or None),
                    status=SPAN_ROW_CONFIRMED, confidence=confidence, citation=citation[:200], bbox=None,
-                   detail=detail)
+                   detail=detail,
+                   print_raw=(str(print_raw) if print_raw else None),
+                   sheet_refs=_sheet_refs_from_print(print_raw))
 
 
 def _parse_table(doc: SourceDocument, id_offset: int) -> List[SpanRow]:
@@ -191,6 +222,8 @@ def _parse_table(doc: SourceDocument, id_offset: int) -> List[SpanRow]:
     ss_i, es_i = _find_col(header, _START_STRUCT_COLS), _find_col(header, _END_STRUCT_COLS)
     id_i = _find_col(header, _ID_COLS)
     out: List[SpanRow] = []
+
+    pr_i = _find_col(header, _PRINT_COLS)                 # Slice 2: optional print/sheet reference column
 
     if start_i is not None and end_i is not None:         # shape A: explicit start + end columns
         for row in doc.table.rows:
@@ -202,7 +235,8 @@ def _parse_table(doc: SourceDocument, id_offset: int) -> List[SpanRow]:
                 doc, id_offset + len(out), s, e, printed,
                 _cell(row, ss_i) or None, _cell(row, es_i) or None, _cell(row, id_i) or None,
                 citation=" | ".join(c for c in row if c), confidence=CONF_HIGH,
-                grammar="EXPLICIT_START_END_COLUMNS"))
+                grammar="EXPLICIT_START_END_COLUMNS",
+                print_raw=_cell(row, pr_i) or None))
         return out
 
     sta_i, role_i = _find_col(header, _STATION_COLS), _find_col(header, _ROLE_COLS)
@@ -221,7 +255,9 @@ def _parse_table(doc: SourceDocument, id_offset: int) -> List[SpanRow]:
             out.append(_make_span(
                 doc, id_offset, starts[0][0], ends[0][0], None, None, None,
                 _cell(starts[0][1], id_i) or None if id_i is not None else None,
-                citation="labeled start/end rows", confidence=CONF_HIGH, grammar="LABELED_START_END_ROWS"))
+                citation="labeled start/end rows", confidence=CONF_HIGH, grammar="LABELED_START_END_ROWS",
+                # the span is one bore across the two labeled rows: start row's print cell, else end row's
+                print_raw=_cell(starts[0][1], pr_i) or _cell(ends[0][1], pr_i) or None))
         return out
 
     return []                                             # no span-bearing columns
