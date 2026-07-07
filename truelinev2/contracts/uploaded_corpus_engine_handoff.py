@@ -456,6 +456,7 @@ def _run_engine(plan_path, borelog_path):
         used = dialect
         offset = _DEFAULT_OFFSET
         placement = None
+        sheet_index = None            # title-block index; built only when a named dialect runs (C2)
         if dialect is not None:
             offset = dialect.calibrate(plan, _DEFAULT_OFFSET)
             # C2 (B-ENGINE-SHEET-PAGE-1): resolve each construction-sheet ref to its ACTUAL PDF page from the
@@ -495,7 +496,12 @@ def _run_engine(plan_path, borelog_path):
         if cand is not None and cand.bbox:
             # The generic lane places a single clipped bore stroke (no cross-sheet leg assembly yet); named
             # dialects keep their per-sheet cross-sheet REVIEW legs.
-            extra_legs = [] if is_generic else _extra_sheet_legs(plan, used, offset, bore, cand.sheet)
+            # Slice 1': extra legs get the SAME per-sheet title-block resolution the winner's extraction
+            # used (run_match/C2) — a referenced construction sheet behind front matter reads ITS page,
+            # not the raw page index (which silently found nothing and dropped the leg).
+            extra_legs = ([] if is_generic
+                          else _extra_sheet_legs(plan, used, offset, bore, cand.sheet,
+                                                 sheet_index=sheet_index))
             render_sheets = {int(cand.sheet)} | {int(l["sheet"]) for l in extra_legs}
             matchline = _matchline_continuity(plan, offset, bore, render_sheets)
         else:
@@ -512,16 +518,26 @@ def _candidate(placement):
     return placement.matched_callouts[0] if placement.matched_callouts else None
 
 
-def _extra_sheet_legs(plan, dialect, offset, bore, winner_sheet):
+def _extra_sheet_legs(plan, dialect, offset, bore, winner_sheet, sheet_index=None):
     """Source-supported drawn legs on REFERENCED sheets OTHER than the winner's sheet — the cross-sheet
     REVIEW coverage. A leg = the drawn bore-layer extents on that sheet that overlap the bore's station span,
     with a stroke polyline along them (page coords). NEVER a connecting segment across sheets: each leg is
     built only from that sheet's OWN drawn geometry; a sheet with no overlapping drawn extent yields no leg
-    (honest partial coverage). The winner's own sheet keeps its existing single-callout render."""
+    (honest partial coverage). The winner's own sheet keeps its existing single-callout render.
+
+    Slice 1': each leg records the 1-based PDF page its callouts were extracted from (``pdf_page``). When
+    ``sheet_index`` (the plan's title-block "N OF M" index) resolves a referenced construction sheet,
+    extraction reads THAT page — mirroring run_match's C2 resolution — else the scalar ``offset`` maps it
+    byte-identically to prior behavior. The construction-sheet number itself is never redefined."""
     lo, hi = bore.station_start_ft, bore.station_end_ft
     legs = []
     for sheet in sorted({int(s) for s in (bore.sheet_refs or [])} - {int(winner_sheet)}):
-        callouts = [c for c in dialect.extract_callouts(plan, sheet, offset)
+        s_off = offset
+        if sheet_index is not None:
+            resolved = sheet_index.resolve_construction_sheet(sheet)   # 1-based PDF page, or None (honest miss)
+            if resolved is not None:
+                s_off = int(resolved) - int(sheet)
+        callouts = [c for c in dialect.extract_callouts(plan, sheet, s_off)
                     if c.bbox and c.to_ft >= lo and c.from_ft <= hi]
         if not callouts:
             continue
@@ -535,6 +551,7 @@ def _extra_sheet_legs(plan, dialect, offset, bore, winner_sheet):
                 bx0, by0, bx1, by1 = c.bbox
                 pts += [(float(bx0), float(by0)), (float(bx1), float(by1))]
         legs.append({"sheet": sheet,
+                     "pdf_page": int(sheet) + int(s_off),   # the page the callouts were READ from
                      "from_ft": round(min(c.from_ft for c in callouts), 1),
                      "to_ft": round(max(c.to_ft for c in callouts), 1),
                      "stroke_points": pts})
@@ -666,6 +683,10 @@ def evaluate_uploaded_corpus_engine_handoff(store_root, customer_project_id, job
             "generic_fallback": dialect_name == _GENERIC_DIALECT_NAME,
             "caveats": list(placement.caveats) + _adapter_caveats(bore, render_sheets) + matchline["caveats"],
             "sheet": candidate.sheet,
+            # Slice 1': the RESOLVED 1-based PDF page the candidate was extracted from (Callout.page —
+            # title-block resolution when available, else sheet+offset). Reported SEPARATELY from the
+            # engineering sheet number so no consumer ever conflates the two axes.
+            "pdf_page": int(candidate.page),
             "referenced_sheets": list(bore.sheet_refs),
             "render_sheets": render_sheets,
             "extra_leg_sheets": [int(l["sheet"]) for l in extra_legs],
@@ -781,6 +802,16 @@ def _summary(store_root, customer_project_id, job_id, handoff, *, log_id, placem
     }
 
 
+def _render_content_key(plan_name, borelog_name, log_id, status_value, legs) -> str:
+    """Idempotency key for one engine render: identical content -> the same engine_run_id/bundle. Slice 1':
+    each leg's RESOLVED ``pdf_page`` is part of the key, so a corrected page resolution mints a NEW engine
+    run — the idempotency short-circuit can never replay a stale wrong-page bundle as current content."""
+    blob = json.dumps({"plan": plan_name, "bore": borelog_name, "log": log_id, "status": status_value,
+                       "legs": [[l["sheet"], l["pdf_page"], l["stroke_points"]] for l in legs]},
+                      sort_keys=True).encode("utf-8")
+    return hashlib.sha256(blob).hexdigest()[:16]
+
+
 def render_uploaded_corpus_engine_handoff(store_root, customer_project_id, job_id, *, at, by) -> dict:
     """Run the engine; if it places a drawable candidate, render the redline stroke along the DRAWN route and
     publish it as a job-local FINAL_REDLINE_PNG bundle (bundle_origin UPLOADED_CORPUS_ENGINE), setting the
@@ -812,15 +843,21 @@ def render_uploaded_corpus_engine_handoff(store_root, customer_project_id, job_i
     winner_points = ([(float(p[0]), float(p[1])) for p in winner_centerline]
                      if winner_centerline and len(winner_centerline) >= 2
                      else [(float(wx0), float(wy0)), (float(wx1), float(wy1))])
-    legs = [{"sheet": int(candidate.sheet), "stroke_points": winner_points}]
-    legs += [{"sheet": int(l["sheet"]), "stroke_points": l["stroke_points"]} for l in extra_legs]
+    # Slice 1': every leg carries BOTH axes — ``sheet`` (the engineering/construction sheet number: the
+    # filename + manifest identity, unchanged) and ``pdf_page`` (the RESOLVED 1-based PDF page the leg's
+    # geometry was extracted from: the raster target). The winner's page is the callout's own extraction
+    # truth (Callout.page = sheet + offset-actually-used, i.e. the title-block-resolved page when C2
+    # resolved it, else the scalar mapping — so this is byte-identical whenever the two agree). Stubbed/
+    # legacy extra legs without pdf_page fall back to the scalar mapping exactly as before.
+    legs = [{"sheet": int(candidate.sheet), "pdf_page": int(candidate.page),
+             "stroke_points": winner_points}]
+    legs += [{"sheet": int(l["sheet"]),
+              "pdf_page": int(l.get("pdf_page", int(l["sheet"]) + int(offset))),
+              "stroke_points": l["stroke_points"]} for l in extra_legs]
 
-    # Idempotent content key over (plan, bore-log, status, ALL leg geometry): identical content -> same bundle.
-    key_blob = json.dumps({"plan": plan_path.name, "bore": borelog_path.name, "log": log_id,
-                           "status": placement.status.value,
-                           "legs": [[l["sheet"], l["stroke_points"]] for l in legs]},
-                          sort_keys=True).encode("utf-8")
-    engine_run_id = "uce-render-%s" % hashlib.sha256(key_blob).hexdigest()[:16]
+    # Idempotent content key over (plan, bore-log, status, ALL leg geometry incl. resolved pages).
+    engine_run_id = "uce-render-%s" % _render_content_key(
+        plan_path.name, borelog_path.name, log_id, placement.status.value, legs)
 
     try:
         prior = load_handoff(store_root, customer_project_id, job_id, engine_run_id)
@@ -839,7 +876,13 @@ def render_uploaded_corpus_engine_handoff(store_root, customer_project_id, job_i
         rendered = []                                          # one FINAL_REDLINE_PNG per rendered sheet leg
         for leg in legs:
             png = render_redline_stroke(
-                plan, bore_id=log_id, sheet=leg["sheet"], offset=offset,
+                # Slice 1' (page-resolution fix): rasterize the RESOLVED page. render_redline_stroke keys
+                # its page as page_index(sheet, offset) = sheet + offset - 1, so a per-leg offset of
+                # (pdf_page - sheet) lands exactly on the leg's own extraction page while the ``sheet``
+                # argument — and therefore the artifact FILENAME (…_s{sheet}_…) and manifest identity —
+                # keeps meaning the construction sheet. No renderer change; page targeting only.
+                plan, bore_id=log_id, sheet=leg["sheet"],
+                offset=int(leg["pdf_page"]) - int(leg["sheet"]),
                 stroke_points=leg["stroke_points"], status=placement.status.value,
                 reason=placement.reason, out_dir=str(render_src),
                 # Customer-facing product artifact: NO diagnostic caption band. The status /
