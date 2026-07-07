@@ -45,6 +45,7 @@ jobs:
             truelinev2/tests/test_product_audit.py \
             truelinev2/tests/test_store_snapshot.py \
             truelinev2/tests/test_atomic_json.py \
+            truelinev2/tests/test_render_canary.py \
             truelinev2/tests/test_product_readiness_wiring.py \
             truelinev2/tests/test_product_workflow.py \
             truelinev2/tests/test_product_workflow_seed.py \
