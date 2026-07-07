@@ -68,6 +68,11 @@ class Settings:
     # engine's AUTO_SELECT as a no-acceptance AUTO placement. The engine's raw verdict/reason are preserved in
     # the candidate metadata either way. Never touches engine/render/select_dialect. Env: TL2_UPLOADED_CORPUS_AUTO_OPTIN.
     uploaded_corpus_auto_optin: bool = False
+    # DESTRUCTIVE product-route gate. DEFAULT OFF -> destructive product API routes (job delete today,
+    # plus any future clear/reset/purge) are BLOCKED with a stable 403 unless explicitly enabled. NOT auth
+    # and NO change to the tenant/session model -- a fail-closed footgun guard so an accidental or casual
+    # call cannot delete customer data. Env var: TL2_ENABLE_DESTRUCTIVE_PRODUCT_ROUTES.
+    enable_destructive_product_routes: bool = False
     # OWNER-PACKET-2 activation: consume the reviewed manual adjudication artifact
     # during ingest/resolution. DEFAULT OFF -- OFF is byte-identical (the frozen
     # M8.27 census is unchanged); ON overlays the reviewed corrections/abstains onto
@@ -126,6 +131,7 @@ class Settings:
             product_readiness_api_optin=os.getenv("TL2_PRODUCT_READINESS_API_OPTIN", "0") == "1",
             field_evidence_api_optin=os.getenv("TL2_FIELD_EVIDENCE_API_OPTIN", "0") == "1",
             uploaded_corpus_auto_optin=os.getenv("TL2_UPLOADED_CORPUS_AUTO_OPTIN", "0") == "1",
+            enable_destructive_product_routes=os.getenv("TL2_ENABLE_DESTRUCTIVE_PRODUCT_ROUTES", "0") == "1",
             manual_adjudications_optin=os.getenv("TRUELINE_MANUAL_ADJUDICATIONS", "0") == "1",
             design_stroke_dir=Path(
                 os.getenv("TL2_DESIGN_STROKE_DIR", str(_DESIGN_STROKE_DIR))

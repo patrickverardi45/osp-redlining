@@ -109,7 +109,7 @@ PRODUCT_PATHS = {
 }
 
 
-def _settings(tmp_path: Path, *, enabled: bool) -> Settings:
+def _settings(tmp_path: Path, *, enabled: bool, destructive: bool = False) -> Settings:
     return dataclasses.replace(
         Settings.for_proof(),
         artifact_root=tmp_path / "artifacts",
@@ -118,11 +118,12 @@ def _settings(tmp_path: Path, *, enabled: bool) -> Settings:
         product_pipeline_api_optin=enabled,
         product_store_root=tmp_path / "product_store",
         product_billing_cost_rules_path=tmp_path / "cost_rules.json",
+        enable_destructive_product_routes=destructive,
     )
 
 
-def _container(tmp_path: Path):
-    return create_app(_settings(tmp_path, enabled=True)).state.tl2
+def _container(tmp_path: Path, *, destructive: bool = False):
+    return create_app(_settings(tmp_path, enabled=True, destructive=destructive)).state.tl2
 
 
 def _product_routes(app):
@@ -235,7 +236,7 @@ def test_job_create_and_get(tmp_path):
 
 
 def test_delete_processing_job_route(tmp_path):
-    c, ctx = _container(tmp_path), _ctx("cp-aaa")
+    c, ctx = _container(tmp_path, destructive=True), _ctx("cp-aaa")
     ppr.create_project(ppr.ProjectCreate(display_name="Label"), ctx=ctx, c=c)
     ppr.create_processing_job(ppr.JobCreate(job_id="job-1"), ctx=ctx, c=c)
     out = ppr.delete_processing_job("job-1", ctx=ctx, c=c)
@@ -246,7 +247,7 @@ def test_delete_processing_job_route(tmp_path):
 
 
 def test_delete_missing_job_route_is_404(tmp_path):
-    c, ctx = _container(tmp_path), _ctx("cp-aaa")
+    c, ctx = _container(tmp_path, destructive=True), _ctx("cp-aaa")
     ppr.create_project(ppr.ProjectCreate(display_name="Label"), ctx=ctx, c=c)
     with pytest.raises(HTTPException) as exc:
         ppr.delete_processing_job("job-nope", ctx=ctx, c=c)
@@ -254,7 +255,7 @@ def test_delete_missing_job_route_is_404(tmp_path):
 
 
 def test_delete_is_tenant_scoped_route(tmp_path):
-    c = _container(tmp_path)
+    c = _container(tmp_path, destructive=True)
     a = _ctx("cp-aaa")
     ppr.create_project(ppr.ProjectCreate(display_name="A"), ctx=a, c=c)
     ppr.create_processing_job(ppr.JobCreate(job_id="job-1"), ctx=a, c=c)

@@ -32,6 +32,7 @@ from pydantic import BaseModel
 
 from truelinev2.api.container import Container
 from truelinev2.api.deps import get_container, get_context
+from truelinev2.api.guards import assert_destructive_enabled
 from truelinev2.context import IsolationError, RequestContext
 from truelinev2.contracts.customer_project import (
     CrossProjectAccessError,
@@ -452,6 +453,10 @@ def delete_processing_job(job_id: str,
     delete its OWN job. 404 if the job is missing (incl. a cross-tenant id); 403 on a cross-project record.
     POST (not DELETE) so no CORS method change is needed. No engine / render / status promotion — pure store
     removal."""
+    # Fail-closed footgun gate (default BLOCKED): refuse before touching the store unless the operator
+    # set TL2_ENABLE_DESTRUCTIVE_PRODUCT_ROUTES=1. NOT auth; the tenant/isolation checks below are
+    # unchanged. See truelinev2/api/guards.py.
+    assert_destructive_enabled(c.settings)
     cp, store = ctx.tenant.value, _store_root(c)
     try:
         return delete_job(store, cp, job_id)
