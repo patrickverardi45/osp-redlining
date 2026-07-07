@@ -23,6 +23,7 @@ import json
 import re
 from pathlib import Path
 
+from truelinev2.contracts.atomic_json import write_json_atomic
 from truelinev2.contracts.customer_project import assert_same_project, validate_customer_project_id
 from truelinev2.contracts.processing_job import job_dir, load_job, validate_job_id
 from truelinev2.contracts.reviewed_bore_log import (
@@ -276,8 +277,7 @@ def create_source_anchor(store_root, customer_project_id, job_id, *, source_anch
         "updated_at": at,
         "audit": [{"action": "source_anchor_created", "at": at, "by": by, "to": status, "reason": None}],
     }
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
+    write_json_atomic(path, record)       # atomic (temp + fsync + os.replace); creates parents
     return record
 
 

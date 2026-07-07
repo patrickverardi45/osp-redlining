@@ -27,6 +27,7 @@ import re
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from pathlib import Path
 
+from truelinev2.contracts.atomic_json import write_json_atomic
 from truelinev2.contracts.billing_summary import job_effective_footage
 from truelinev2.contracts.customer_project import assert_same_project, validate_customer_project_id
 from truelinev2.contracts.extracted_row import row_review_passes
@@ -128,8 +129,7 @@ def save_job_pricing(store_root, customer_project_id, processing_job_id, *, cost
               "exceptions": _normalize_exceptions(exceptions),
               "provenance": PROVENANCE_OPERATOR_ENTERED, "updated_at": at, "updated_by": by}
     path = job_pricing_path(store_root, customer_project_id, processing_job_id)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
+    write_json_atomic(path, record)       # atomic (temp + fsync + os.replace); creates parents
     return record
 
 

@@ -18,6 +18,7 @@ import json
 import re
 from pathlib import Path
 
+from truelinev2.contracts.atomic_json import write_json_atomic
 from truelinev2.contracts.customer_project import assert_same_project, validate_customer_project_id
 from truelinev2.contracts.processing_job import job_dir, load_job, validate_job_id
 from truelinev2.contracts.extracted_row import (
@@ -128,8 +129,7 @@ def create_reviewed_bore_log(store_root, customer_project_id, processing_job_id,
         "groups": [],
         "audit": [{"action": "reviewed_bore_log_created", "at": at, "by": by, "reason": None}],
     }
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(rbl, indent=2) + "\n", encoding="utf-8")
+    write_json_atomic(path, rbl)          # atomic (temp + fsync + os.replace); creates parents
     return rbl
 
 
@@ -171,8 +171,7 @@ def write_reviewed_bore_log(store_root, rbl) -> str:
     jid = validate_job_id(rbl["processing_job_id"])
     rid = validate_reviewed_bore_log_id(rbl["reviewed_bore_log_id"])
     path = _rbl_path(store_root, cp, jid, rid)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(rbl, indent=2) + "\n", encoding="utf-8")
+    write_json_atomic(path, rbl)          # atomic (temp + fsync + os.replace); creates parents
     return str(path)
 
 

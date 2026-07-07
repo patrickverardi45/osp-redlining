@@ -19,6 +19,7 @@ import re
 import shutil
 from pathlib import Path
 
+from truelinev2.contracts.atomic_json import write_json_atomic
 from truelinev2.contracts.customer_project import (
     assert_same_project,
     project_root,
@@ -122,8 +123,7 @@ def create_job(store_root, customer_project_id, job_id, created_at, created_by) 
         "audit": [{"from": None, "to": CREATED, "at": created_at,
                    "by": created_by, "reason": "job created"}],
     }
-    jpath.parent.mkdir(parents=True, exist_ok=True)
-    jpath.write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
+    write_json_atomic(jpath, record)      # atomic (temp + fsync + os.replace); creates parents
     return record
 
 
@@ -180,8 +180,7 @@ def write_job(store_root, job) -> str:
     cp = validate_customer_project_id(job["customer_project_id"])
     jid = validate_job_id(job["job_id"])
     jpath = _job_record_path(store_root, cp, jid)
-    jpath.parent.mkdir(parents=True, exist_ok=True)
-    jpath.write_text(json.dumps(job, indent=2) + "\n", encoding="utf-8")
+    write_json_atomic(jpath, job)         # atomic (temp + fsync + os.replace); creates parents
     return str(jpath)
 
 

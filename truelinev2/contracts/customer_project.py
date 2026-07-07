@@ -20,6 +20,8 @@ import os
 import re
 from pathlib import Path
 
+from truelinev2.contracts.atomic_json import write_json_atomic
+
 CUSTOMER_PROJECTS_SUBDIR = "customer_projects"
 PROJECT_RECORD_FILENAME = "_customer_project.json"
 RECORD_FORMAT = "trueline-customer-project-1"
@@ -98,8 +100,7 @@ def create_customer_project(store_root, customer_project_id, display_name, creat
         "display_name": display_name,
         "created_at": created_at,
     }
-    (pdir / PROJECT_RECORD_FILENAME).write_text(
-        json.dumps(record, indent=2) + "\n", encoding="utf-8")
+    write_json_atomic(pdir / PROJECT_RECORD_FILENAME, record)   # atomic; parent pre-created above
     return record
 
 
