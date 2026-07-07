@@ -315,3 +315,35 @@ def test_result_leaks_no_filesystem_or_temp_path(tmp_path):
     for row in result["span_rows"]:
         sf = row["source_file"] or ""
         assert "/" not in sf and "\\" not in sf
+
+
+# --------------------------------------------------------------------------- #
+# Slice 3 — route-level sheet selection: omitted plan_sheet derives (default preserved for ref-less
+# packages), explicit stays validated. The full derivation behavior matrix is covered at the bridge
+# level in test_readiness_sheet_resolution.py.
+# --------------------------------------------------------------------------- #
+def test_run_without_plan_sheet_derives_and_preserves_default(tmp_path):
+    # The QA scenario's bore CSV has NO print/sheet column, so the derived run must land on the prior
+    # sheet-1 default (source says so) and reach the SAME READY outcome the explicit runs assert.
+    app = _app(tmp_path)
+    c = app.state.tl2
+    by_key = {s.key: s for s in SCENARIOS}
+    _seed_scenario(tmp_path, c.settings.product_store_root, by_key["complete_ready"])
+    result = prr.run_review_readiness(_JOB, ctx=_ctx(), c=c)   # plan_sheet OMITTED -> derive
+    ctx_out = result["sheet_context"]
+    assert ctx_out["source"] == "DEFAULT_PLAN_SHEET"
+    assert ctx_out["engineering_sheet"] == 1 and ctx_out["pdf_page"] == 1
+    assert result["readiness_status"] == "READY_FOR_REVIEW_REDLINE"
+    # the persisted result carries the same context (the GET endpoint serves this file verbatim)
+    persisted = json.loads((prr._readiness_dir(c.settings.product_store_root, _TENANT, _JOB)
+                            / prr.RESULT_FILENAME).read_text(encoding="utf-8"))
+    assert persisted["sheet_context"]["source"] == "DEFAULT_PLAN_SHEET"
+
+
+def test_run_rejects_non_positive_plan_sheet(tmp_path):
+    app = _app(tmp_path)
+    c = app.state.tl2
+    _seed_job(c.settings.product_store_root)
+    with pytest.raises(HTTPException) as exc:
+        prr.run_review_readiness(_JOB, plan_sheet=0, ctx=_ctx(), c=c)
+    assert exc.value.status_code == 400

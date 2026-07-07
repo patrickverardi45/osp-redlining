@@ -50,6 +50,88 @@ READY_STATUS = "READY_FOR_REVIEW_REDLINE"
 _REVIEW_CANDIDATE_NOTICE = ("REVIEW candidate — human-reviewable; NOT AUTO, NOT final placement, "
                             "NOT a status promotion")
 
+# --- Slice 3: sheet derivation (print-ref -> engineering sheet -> resolved PDF page) -------------------- #
+# ``sheet_context.source`` values — HOW the evaluated sheet was chosen:
+SHEET_SOURCE_EXPLICIT = "EXPLICIT_PLAN_SHEET"                    # caller passed plan_sheet (raw-page semantics)
+SHEET_SOURCE_SHEET_REF = "BORE_LOG_SHEET_REF_TITLE_BLOCK_RESOLVED"   # bore-log print ref + title-block index
+SHEET_SOURCE_DEFAULT = "DEFAULT_PLAN_SHEET"                      # no print/sheet ref -> the prior default (1)
+# Named refusals (result ``readiness_status`` values at this bridge level, like NO_SPINE_INPUT): the run is
+# REFUSED rather than evaluated on a guessed page.
+SHEET_REF_UNRESOLVED = "SHEET_REF_UNRESOLVED"                    # ref exists; title block cannot place it
+MULTI_SHEET_REFS_UNSUPPORTED = "MULTI_SHEET_REFS_UNSUPPORTED"    # >1 distinct ref; the spine is single-sheet/run
+_DEFAULT_PLAN_SHEET = 1
+
+
+def _sheet_context(engineering_sheet, pdf_page, source, sheet_refs, print_refs, refusal, reason) -> Dict[str, Any]:
+    """The result's ``sheet_context``: WHICH engineering sheet was chosen, WHICH PDF page backs it, and WHY —
+    the two axes are carried SEPARATELY (engineering sheet identity is never redefined by page resolution).
+    ``sheet_offset`` is the PlanPdf.page_index offset (pdf_page - engineering_sheet), None when unresolved."""
+    return {"engineering_sheet": engineering_sheet, "pdf_page": pdf_page,
+            "sheet_offset": (None if engineering_sheet is None or pdf_page is None
+                             else int(pdf_page) - int(engineering_sheet)),
+            "source": source, "sheet_refs": [int(r) for r in sheet_refs],
+            "print_refs": [str(p) for p in print_refs], "refusal": refusal, "reason": reason}
+
+
+def _derive_sheet_context(pkg, plan_path) -> Dict[str, Any]:
+    """Derive the sheet to evaluate from the package's OWN bore-log print/sheet references (the Slice-2
+    ``SpanRow.sheet_refs``/``print_raw`` fields), resolving the engineering sheet to its PDF page through the
+    plan's title-block index — the SAME Slice 1'/C2 rule the uploaded-corpus render and matchline use.
+
+    Honest by construction: NO refs -> the prior default (sheet 1, raw semantics) so ref-less packages behave
+    byte-identically; MULTIPLE distinct refs -> the named MULTI_SHEET_REFS_UNSUPPORTED refusal (this spine
+    evaluates one sheet per run); ONE ref that the title block cannot place (or no readable/titled plan) ->
+    the named SHEET_REF_UNRESOLVED refusal. A sheet ref is NEVER treated as a raw page index and a page is
+    never guessed. Read-only; the extraction re-run is the same deterministic reader the spine itself uses."""
+    from truelinev2.harness.span_extractor import extract_spans_from_folder
+
+    extraction = extract_spans_from_folder(str(pkg))
+    refs: List[int] = []
+    prints: List[str] = []
+    for s in extraction.spans:
+        for r in s.sheet_refs:
+            if int(r) not in refs:
+                refs.append(int(r))
+        if s.print_raw and s.print_raw not in prints:
+            prints.append(s.print_raw)
+
+    if not refs:
+        return _sheet_context(
+            _DEFAULT_PLAN_SHEET, _DEFAULT_PLAN_SHEET, SHEET_SOURCE_DEFAULT, [], prints, None,
+            "the bore-log rows carry no print/sheet reference; evaluating plan sheet %d (the prior default)"
+            % _DEFAULT_PLAN_SHEET)
+    if len(refs) > 1:
+        return _sheet_context(
+            None, None, None, refs, prints, MULTI_SHEET_REFS_UNSUPPORTED,
+            "the bore-log rows reference %d distinct plan sheets (%s); this lane evaluates ONE sheet per "
+            "run — split the bore log by sheet or run with an explicit plan_sheet"
+            % (len(refs), ", ".join(str(r) for r in refs)))
+
+    ref = refs[0]
+    resolved = None
+    if plan_path:
+        try:
+            from truelinev2.ingest.pdf import PlanPdf
+            from truelinev2.ingest.sheet_label_index import build_sheet_index
+
+            plan = PlanPdf(str(plan_path))
+            try:
+                resolved = build_sheet_index(plan).resolve_construction_sheet(ref)
+            finally:
+                plan.close()
+        except Exception:  # noqa: BLE001 — an unreadable plan resolves nothing; refuse below, never guess
+            resolved = None
+    if resolved is None:
+        return _sheet_context(
+            ref, None, None, refs, prints, SHEET_REF_UNRESOLVED,
+            "the bore log references plan sheet %d but the plan's title-block index could not resolve it to "
+            "a PDF page; verify the plan set's sheet labels or run with an explicit plan_sheet — refusing "
+            "rather than guessing a page" % ref)
+    return _sheet_context(
+        ref, int(resolved), SHEET_SOURCE_SHEET_REF, refs, prints, None,
+        "bore-log print/sheet reference %d resolved to PDF page %d by the plan's title-block index"
+        % (ref, int(resolved)))
+
 
 def _safe_view_name(original_filename: Any, upload_id: str, ext: str) -> str:
     """A filesystem-safe basename for the ephemeral view, derived from the (untrusted) uploaded filename. Strips any
@@ -182,17 +264,21 @@ _LANE_INVARIANTS = {"is_review_candidate": True, "performs_auto": False,
                     "performs_placement": False, "promotes_status": False}
 
 
-def _no_readiness_result(status: str, recommended: Optional[str], reason: str) -> Dict[str, Any]:
-    """A refusal result for a package that never reached the classifier (no spine input / unresolved)."""
+def _no_readiness_result(status: str, recommended: Optional[str], reason: str,
+                         sheet_context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """A refusal result for a package that never reached the classifier (no spine input / unresolved /
+    sheet-ref refusal). ``sheet_context`` (Slice 3) records how far sheet derivation got before refusing."""
     return {**_LANE_INVARIANTS, "readiness_status": status, "stage": None, "ready": False,
             "recommended_next_input": recommended, "draws_anything": False,
             "review_candidate_status": "REVIEW_CANDIDATE_REFUSED", "generated_visual": False,
             "refusal_reason": reason, "candidate": None, "artifacts": [], "span_rows": [],
-            "anchor_bindings": [], "route_verifications": [], "notice": _REVIEW_CANDIDATE_NOTICE, "detail": {}}
+            "anchor_bindings": [], "route_verifications": [], "notice": _REVIEW_CANDIDATE_NOTICE,
+            "sheet_context": sheet_context, "detail": {}}
 
 
 def _result(readiness, review_status: str, generated: bool, refusal_reason: Optional[str],
-            candidate: Optional[dict], artifact_names: Sequence[str], *, render_error: bool) -> Dict[str, Any]:
+            candidate: Optional[dict], artifact_names: Sequence[str], *, render_error: bool,
+            sheet_context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     report = readiness.report
     return {**_LANE_INVARIANTS,
             "readiness_status": report.status, "stage": report.stage, "ready": report.ready,
@@ -204,10 +290,11 @@ def _result(readiness, review_status: str, generated: bool, refusal_reason: Opti
             "anchor_bindings": _anchor_bindings(readiness.bindings),
             "route_verifications": _route_verifications(readiness.routes),
             "notice": _REVIEW_CANDIDATE_NOTICE,
+            "sheet_context": sheet_context,
             "detail": ({"render_error": True} if render_error else {})}
 
 
-def run_job_readiness(uploads: Sequence[Dict[str, Any]], job_files_root, *, plan_sheet: int = 1,
+def run_job_readiness(uploads: Sequence[Dict[str, Any]], job_files_root, *, plan_sheet: Optional[int] = None,
                       artifact_dir=None) -> Dict[str, Any]:
     """Run the shipped read-only readiness / REVIEW-candidate spine on a job's uploaded files and return a
     product-safe result dict.
@@ -218,6 +305,13 @@ def run_job_readiness(uploads: Sequence[Dict[str, Any]], job_files_root, *, plan
     overlay PNGs into ``artifact_dir`` ONLY when the status is exactly READY_FOR_REVIEW_REDLINE; every refusal draws
     nothing). The ephemeral view is deleted afterwards. Read-only wrt the product: no AUTO, no placement, no status
     promotion, no store/render/api coupling.
+
+    Sheet selection (Slice 3): ``plan_sheet=None`` (the default) derives the sheet from the bore log's OWN
+    print/sheet references and resolves it to its PDF page through the plan's title-block index
+    (``_derive_sheet_context`` — same rule as Slice 1'/C2); no refs -> the prior default (sheet 1) preserved;
+    an unresolvable or multi-sheet ref -> a NAMED refusal (never a guessed page). An EXPLICIT ``plan_sheet``
+    keeps the pre-slice raw-page semantics verbatim. Every result carries ``sheet_context`` (both axes:
+    engineering sheet identity + resolved PDF page + source/refusal reason).
 
     ``artifact_dir`` (when given) is where the REVIEW candidate PNGs are written; the returned candidate's
     ``artifact_before`` / ``artifact_after`` are basenames under that dir (the API maps them to served URLs)."""
@@ -234,24 +328,41 @@ def run_job_readiness(uploads: Sequence[Dict[str, Any]], job_files_root, *, plan
                 "no plan / bore-log / route upload with a stored payload to evaluate")
 
         source = discover_package(pkg)
-        readiness = run_package_route_readiness(pkg, plan_sheet=int(plan_sheet))
+        if plan_sheet is not None:                             # explicit caller choice: raw-page semantics, unchanged
+            sheet_ctx = _sheet_context(int(plan_sheet), int(plan_sheet), SHEET_SOURCE_EXPLICIT, [], [], None,
+                                       "explicit plan_sheet=%d (raw page semantics, caller-chosen)"
+                                       % int(plan_sheet))
+        else:
+            sheet_ctx = _derive_sheet_context(pkg, source.plan_path)
+            if sheet_ctx["refusal"]:
+                recommended = ("split the bore log by plan sheet or run with an explicit plan_sheet"
+                               if sheet_ctx["refusal"] == MULTI_SHEET_REFS_UNSUPPORTED
+                               else "verify the plan's title-block sheet labels or run with an explicit "
+                                    "plan_sheet")
+                return _no_readiness_result(sheet_ctx["refusal"], recommended, sheet_ctx["reason"],
+                                            sheet_context=sheet_ctx)
+
+        readiness = run_package_route_readiness(pkg, plan_sheet=int(sheet_ctx["engineering_sheet"]),
+                                                plan_sheet_offset=int(sheet_ctx["sheet_offset"] or 0))
         if readiness is None:                                  # defensive — a materialized view always has a manifest
             return _no_readiness_result(
                 "SOURCE_UNRESOLVED", "verify the uploaded plan / bore-log are readable",
-                "the uploaded package could not be resolved for readiness")
+                "the uploaded package could not be resolved for readiness", sheet_context=sheet_ctx)
 
         art = Path(artifact_dir) if artifact_dir is not None else None
         try:
             # build_review_candidate self-gates on READY -> a non-READY status writes ZERO artifacts even with art
-            # set; only a READY package renders the overlay.
+            # set; only a READY package renders the overlay (on the SAME resolved page the observers read —
+            # readiness.routes.sheet + sheet_offset).
             candidate_report = build_review_candidate(readiness, plan_path=source.plan_path, artifact_dir=art)
             candidate, artifact_names = _candidate_dict(candidate_report, art)
             return _result(readiness, candidate_report.candidate_status, candidate_report.generated_visual,
-                           candidate_report.refusal_reason, candidate, artifact_names, render_error=False)
+                           candidate_report.refusal_reason, candidate, artifact_names, render_error=False,
+                           sheet_context=sheet_ctx)
         except Exception:                                      # noqa: BLE001 — an overlay render failure is not a 500
             _remove_pngs(art)                                  # drop any partially-written overlay
             return _result(readiness, "REVIEW_CANDIDATE_REFUSED", False,
                            "the source package is READY, but the REVIEW candidate overlay could not be rendered "
-                           "this run (try again)", None, [], render_error=True)
+                           "this run (try again)", None, [], render_error=True, sheet_context=sheet_ctx)
     finally:
         shutil.rmtree(work_dir, ignore_errors=True)

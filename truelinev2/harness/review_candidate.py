@@ -211,7 +211,10 @@ def build_review_candidate(readiness, *, plan_path=None, artifact_dir=None) -> R
         return _refused(status, extra="READY without a matching source span / bound anchor")
 
     geometry = tuple(verification.route_geometry)
-    sheet = readiness.routes.sheet                         # the page the geometry was verified on (never diverges)
+    # The page the geometry was verified on (never diverges): sheet = the ENGINEERING sheet, sheet_offset =
+    # the report's own page resolution (Slice 3; 0 = raw-page semantics) -> PDF page = sheet + sheet_offset.
+    sheet = readiness.routes.sheet
+    sheet_offset = int(getattr(readiness.routes, "sheet_offset", 0) or 0)
     before = after = None
     generated = False
     if artifact_dir is not None and plan_path and geometry:
@@ -219,7 +222,8 @@ def build_review_candidate(readiness, *, plan_path=None, artifact_dir=None) -> R
         out_dir.mkdir(parents=True, exist_ok=True)
         before = str(out_dir / ("review_candidate_%s_before.png" % verification.span_id))
         after = str(out_dir / ("review_candidate_%s_after.png" % verification.span_id))
-        render_review_candidate_overlay(plan_path, sheet, geometry, out_before=before, out_after=after)
+        render_review_candidate_overlay(plan_path, sheet, geometry, out_before=before, out_after=after,
+                                        offset=sheet_offset)
         generated = True
 
     route_summary = {

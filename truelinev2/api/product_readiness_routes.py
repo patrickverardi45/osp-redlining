@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse
@@ -97,15 +98,21 @@ def _with_served_artifacts(result: dict, job_id: str) -> dict:
 
 
 @router.post("/jobs/{job_id}/review-readiness/run")
-def run_review_readiness(job_id: str, plan_sheet: int = 1,
+def run_review_readiness(job_id: str, plan_sheet: Optional[int] = None,
                          ctx: RequestContext = Depends(get_context),
                          c: Container = Depends(get_container)) -> dict:
     """Run the source-backed readiness / REVIEW-candidate spine on the authenticated tenant's job uploads and
     persist + return the product-safe result. A REVIEW candidate overlay (before/after PNGs) is drawn ONLY when the
     spine reports exactly READY_FOR_REVIEW_REDLINE (through the gated review_candidate builder); every refusal writes
     no artifact. Read-only wrt the job: no AUTO, no placement, no status promotion, no output slot, no lifecycle
-    transition. 404 if the job is missing (incl. cross-tenant); 400 on an invalid plan_sheet."""
-    if not isinstance(plan_sheet, int) or plan_sheet < 1:
+    transition. 404 if the job is missing (incl. cross-tenant); 400 on an invalid plan_sheet.
+
+    ``plan_sheet`` (Slice 3): OMITTED (the new default) -> the bridge derives the sheet from the bore log's own
+    print/sheet references and resolves it to its PDF page via the plan's title-block index (no refs -> the prior
+    sheet-1 default preserved; unresolvable / multi-sheet refs -> a NAMED refusal result, never a guessed page).
+    An EXPLICIT positive integer keeps the pre-slice raw-page semantics verbatim. The result's ``sheet_context``
+    reports the engineering sheet and the resolved PDF page SEPARATELY, with the source/refusal reason."""
+    if plan_sheet is not None and (not isinstance(plan_sheet, int) or plan_sheet < 1):
         raise HTTPException(status_code=400, detail="plan_sheet must be a positive integer")
     cp, store = ctx.tenant.value, _store_root(c)
     try:

@@ -41,11 +41,16 @@ Both are independent, default-OFF flags. Staging enables both. Identity is the v
 
 | Method + path | Purpose |
 | --- | --- |
-| `POST /v2/product/jobs/{job_id}/review-readiness/run?plan_sheet=1` | Run the spine on the job's uploads; persist + return the product-safe result. Draws a REVIEW candidate overlay **only** when `READY_FOR_REVIEW_REDLINE`. |
+| `POST /v2/product/jobs/{job_id}/review-readiness/run[?plan_sheet=N]` | Run the spine on the job's uploads; persist + return the product-safe result. Draws a REVIEW candidate overlay **only** when `READY_FOR_REVIEW_REDLINE`. |
 | `GET /v2/product/jobs/{job_id}/review-readiness` | Read the last persisted result (404 if never run). |
 | `GET /v2/product/jobs/{job_id}/review-readiness/artifacts/{path}` | Serve one persisted REVIEW-candidate PNG (path-safe; `.png` only; traversal refused). |
 
-`plan_sheet` (query, default `1`) is the plan page the spine binds/verifies on. Single-sheet per run is the spine's
+`plan_sheet` (query, optional): OMITTED, the bridge derives the sheet from the bore log's own print/sheet
+references and resolves it to its PDF page through the plan's title-block index (no refs -> the prior sheet-1
+default is preserved; an unresolvable ref -> the named `SHEET_REF_UNRESOLVED` refusal; multiple distinct refs ->
+the named `MULTI_SHEET_REFS_UNSUPPORTED` refusal — a page is never guessed). An EXPLICIT positive integer keeps
+the raw-page semantics verbatim. Every result carries `sheet_context` (the engineering sheet identity and the
+resolved PDF page reported SEPARATELY, plus the source/refusal reason). Single-sheet per run is the spine's
 current limitation (a bore that spans construction sheets is a later concern).
 
 ### Result shape (product-safe, UI-ready)

@@ -106,6 +106,11 @@ class RouteVerificationReport:
     plan_present: bool
     sheet: int
     detail: Dict[str, Any] = field(default_factory=dict)
+    # Slice 3 (additive, default 0 = raw-page semantics unchanged): the page offset the geometry was
+    # verified with — PDF page = sheet + sheet_offset (PlanPdf.page_index convention). Carried ON the
+    # report so a downstream consumer (the REVIEW-candidate overlay) can never rasterize a different
+    # page than the observers read; ``sheet`` stays the ENGINEERING sheet identity.
+    sheet_offset: int = 0
 
     @property
     def any_route_ready(self) -> bool:
@@ -117,7 +122,8 @@ class RouteVerificationReport:
 
     def to_dict(self) -> dict:
         return {"verifications": [v.to_dict() for v in self.verifications], "plan_present": self.plan_present,
-                "sheet": self.sheet, "any_route_ready": self.any_route_ready,
+                "sheet": self.sheet, "sheet_offset": self.sheet_offset,
+                "any_route_ready": self.any_route_ready,
                 "any_evaluated": self.any_evaluated, "detail": dict(self.detail)}
 
 
@@ -250,6 +256,7 @@ def verify_extraction_routes(plan_path: Optional[str], report: EndpointBindingRe
                                             detail={"reason": "bound binding but no plan to verify against"}))
                          for b in bindings]
         return RouteVerificationReport(tuple(verifications), plan_present=plan_present, sheet=sheet,
+                                       sheet_offset=int(offset),
                                        detail={"span_count": len(bindings), "plan_opened": False})
 
     from truelinev2.ingest.pdf import PlanPdf
@@ -270,6 +277,7 @@ def verify_extraction_routes(plan_path: Optional[str], report: EndpointBindingRe
             except Exception:                              # noqa: BLE001
                 pass
     return RouteVerificationReport(tuple(verifications), plan_present=plan_present, sheet=sheet,
+                                   sheet_offset=int(offset),
                                    detail={"span_count": len(bindings), "plan_opened": True})
 
 
@@ -309,11 +317,16 @@ class PackageRouteReadiness:
                 "bindings": self.bindings.to_dict(), "routes": self.routes.to_dict()}
 
 
-def run_package_route_readiness(package_dir, *, plan_sheet: int = 1,
+def run_package_route_readiness(package_dir, *, plan_sheet: int = 1, plan_sheet_offset: int = 0,
                                 allow_live: bool = False) -> Optional[PackageRouteReadiness]:
     """End-to-end ROUTE stage: discover the package, run the source-span extractor, bind each span's endpoints
     (ANCHOR stage), verify the drawn route between the bound anchors (this stage), feed the resulting AnchorEvidence
-    + RouteEvidence into the readiness adapter, and classify. Read-only; draws nothing."""
+    + RouteEvidence into the readiness adapter, and classify. Read-only; draws nothing.
+
+    Slice 3: ``plan_sheet_offset`` (default 0 = raw-page semantics, byte-identical for every existing caller)
+    lets a caller that has RESOLVED the engineering sheet to its actual PDF page (title-block index — the
+    Slice 1'/C2 rule) evaluate there: the observers read PDF page ``plan_sheet + plan_sheet_offset``
+    (``PlanPdf.page_index`` convention) while ``plan_sheet`` keeps meaning the ENGINEERING sheet."""
     from truelinev2.harness.endpoint_binding import anchor_evidence_for_package, bind_extraction_endpoints
     from truelinev2.harness.readiness_adapter import run_readiness_with_spans
     from truelinev2.harness.readiness_source import discover_package
@@ -321,9 +334,11 @@ def run_package_route_readiness(package_dir, *, plan_sheet: int = 1,
 
     source = discover_package(package_dir)
     extraction = extract_spans_from_folder(str(package_dir))
-    binding_report = bind_extraction_endpoints(source.plan_path, extraction, sheet=plan_sheet)
+    binding_report = bind_extraction_endpoints(source.plan_path, extraction, sheet=plan_sheet,
+                                               offset=int(plan_sheet_offset))
     anchor = anchor_evidence_for_package(binding_report)
-    route_report = verify_extraction_routes(source.plan_path, binding_report, sheet=plan_sheet)
+    route_report = verify_extraction_routes(source.plan_path, binding_report, sheet=plan_sheet,
+                                            offset=int(plan_sheet_offset))
     route = route_evidence_for_package(route_report)
     pr = run_readiness_with_spans(package_dir, allow_live=allow_live, anchor=anchor, route=route)
     if pr is None:
