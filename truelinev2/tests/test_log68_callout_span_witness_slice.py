@@ -254,10 +254,132 @@ def test_leader_backed_anchors_accepted():
     assert xy == (10.0, 20.0) and refusal is None
 
 
+# --- chain-reach uniqueness pure gates (no fixture) --------------------------------------------------------
+
+def _drive_to_chain_reach(monkeypatch, tips, predicate):
+    """Drive _callout_box_anchor to the chain-reach stage: unique phrase bbox -> AMBIGUOUS_LEADER first pass
+    -> a unique innermost row box (nested pair) -> AMBIGUOUS_LEADER retry -> chain-reach over ``tips`` with
+    the supplied ``predicate``. Returns (xy, refusal, detail)."""
+    from truelinev2.extract.plan_view_anchor_resolver import AMBIGUOUS_ANCHOR, AnchorResolution
+
+    class _FakePlan:
+        def search(self, s, o, t):
+            return [[0.0, 0.0, 60.0, 16.0]]        # the unique phrase bbox
+
+        def vector_segments(self, s, o):
+            return []
+
+    words = [{"text": "STA 5+03 TO STA 6+79", "xc": 30.0, "yc": 8.0}]
+    amb = AnchorResolution(AMBIGUOUS_ANCHOR, None, None, None, False, {"leader_trace": "AMBIGUOUS_LEADER"})
+    monkeypatch.setattr(S, "resolve_label_anchor", lambda *a, **k: amb)
+    outer, inner = _box(-5, -5, 100, 100), _box(-1, -1, 61, 17)      # inner nests, both contain the phrase
+    monkeypatch.setattr(S, "_label_boxes", lambda draw, xy: [outer, inner])
+    monkeypatch.setattr(S, "_leaders", lambda draw, box: list(tips))
+    return S._callout_box_anchor(_FakePlan(), 17, 13, words, [], leg_predicate=predicate)
+
+
+def test_chain_reach_zero_survivors_refuses(monkeypatch):
+    tips = [(0.0, 0.0, 1.0, 1.0), (0.0, 0.0, 2.0, 2.0), (0.0, 0.0, 3.0, 3.0)]
+    pred = lambda xy: (False, S.NO_CONDUIT_CHAIN_AT_START, None)
+    xy, refusal, detail = _drive_to_chain_reach(monkeypatch, tips, pred)
+    assert xy is None and refusal == S.LEADER_CHAIN_REACH_NONE
+    cr = detail["chain_reach"]
+    assert cr["leader_tips"] == 3 and cr["survivor_count"] == 0
+    assert len(cr["candidates"]) == 3                        # per-candidate elimination log present
+    assert all(c["eliminated_by"] == S.NO_CONDUIT_CHAIN_AT_START and c["passes"] is False
+               for c in cr["candidates"])
+
+
+def test_chain_reach_exactly_one_survivor_accepted(monkeypatch):
+    tips = [(0.0, 0.0, 1.0, 1.0), (0.0, 0.0, 9.0, 9.0), (0.0, 0.0, 3.0, 3.0)]
+    pred = lambda xy: (True, "closes", 176.0) if xy == (9.0, 9.0) else (False, S.CLOSURE_FAILED, None)
+    xy, refusal, detail = _drive_to_chain_reach(monkeypatch, tips, pred)
+    assert refusal is None and xy == (9.0, 9.0)
+    cr = detail["chain_reach"]
+    assert cr["survivor_count"] == 1 and cr["survivor"] == [9.0, 9.0]
+    assert detail["method"] == S._CHAIN_REACH_METHOD and detail["mode"] == S._CHAIN_REACH_MODE
+    passing = [c for c in cr["candidates"] if c["passes"]]
+    assert len(passing) == 1 and passing[0]["tip"] == [9.0, 9.0] and passing[0]["drawn_ft"] == 176.0
+
+
+def test_chain_reach_multiple_survivors_refuses(monkeypatch):
+    tips = [(0.0, 0.0, 1.0, 1.0), (0.0, 0.0, 2.0, 2.0), (0.0, 0.0, 3.0, 3.0)]
+    pred = lambda xy: (xy in ((1.0, 1.0), (3.0, 3.0)), "closes", 176.0)   # two close -> not unique
+    xy, refusal, detail = _drive_to_chain_reach(monkeypatch, tips, pred)
+    assert xy is None and refusal == S.LEADER_CHAIN_REACH_NOT_UNIQUE
+    assert detail["chain_reach"]["survivor_count"] == 2
+
+
+def test_chain_reach_tests_every_candidate_without_rendering(monkeypatch):
+    """Every leader tip is tested exactly once; the predicate — not a render — decides. No PNG is produced
+    (the anchor stage structurally cannot draw)."""
+    calls = []
+    tips = [(0.0, 0.0, float(i), float(i)) for i in range(1, 6)]
+    pred = lambda xy: (calls.append(xy), (False, S.NO_CONDUIT_CHAIN_AT_START, None))[1]
+    xy, refusal, detail = _drive_to_chain_reach(monkeypatch, tips, pred)
+    assert len(calls) == 5 and refusal == S.LEADER_CHAIN_REACH_NONE   # one predicate call per candidate
+
+
+def test_chain_reach_sibling_eliminated_tip_is_not_a_survivor(monkeypatch):
+    """A tip whose leg is refused by the sibling gate is eliminated (never a survivor) — the sibling gate is
+    inside the shared predicate (_bind_leg_from_start)."""
+    tips = [(0.0, 0.0, 1.0, 1.0), (0.0, 0.0, 2.0, 2.0)]
+    pred = lambda xy: (False, S.SIBLING_BLEED_DETECTED, None)
+    xy, refusal, detail = _drive_to_chain_reach(monkeypatch, tips, pred)
+    assert xy is None and refusal == S.LEADER_CHAIN_REACH_NONE
+    assert all(c["eliminated_by"] == S.SIBLING_BLEED_DETECTED for c in detail["chain_reach"]["candidates"])
+
+
+def test_chain_reach_not_entered_without_predicate(monkeypatch):
+    """Without a leg_predicate the innermost retry keeps its own CALLOUT_LEADER_AMBIGUOUS (no chain-reach)."""
+    from truelinev2.extract.plan_view_anchor_resolver import AMBIGUOUS_ANCHOR, AnchorResolution
+
+    class _FakePlan:
+        def search(self, s, o, t):
+            return [[0.0, 0.0, 60.0, 16.0]]
+
+        def vector_segments(self, s, o):
+            return []
+    monkeypatch.setattr(S, "resolve_label_anchor",
+                        lambda *a, **k: AnchorResolution(AMBIGUOUS_ANCHOR, None, None, None, False,
+                                                         {"leader_trace": "AMBIGUOUS_LEADER"}))
+    monkeypatch.setattr(S, "_label_boxes", lambda draw, xy: [_box(-5, -5, 100, 100), _box(-1, -1, 61, 17)])
+    xy, refusal, detail = S._callout_box_anchor(_FakePlan(), 17, 13,
+                                                [{"text": "STA 5+03 TO STA 6+79", "xc": 30.0, "yc": 8.0}], [])
+    assert refusal == S.CALLOUT_LEADER_AMBIGUOUS and "chain_reach" not in detail
+
+
+def test_bind_leg_from_start_no_conduit_refuses():
+    """The shared predicate helper refuses honestly with an empty conduit set (real call, no fixture)."""
+    lb = S._bind_leg_from_start((0.0, 0.0), words=[], draw=[], conduit=[], chain_lines=[],
+                                partners=[20], end_sta="6+79", span=176.0, leg_sheet=17)
+    assert lb.ok is False and lb.status == S.NO_CONDUIT_CHAIN_AT_START and lb.route is None
+
+
+def test_leaders_import_sync():
+    from truelinev2.extract.leader_symbol_trace import _leaders as tracer_leaders
+    assert S._leaders is tracer_leaders
+
+
 # --- fixture-gated live proof (deterministic on the real plan) --------------------------------------------
 
 def _plan_present() -> bool:
     return Path(_PLAN).is_file()
+
+
+def test_live_chain_reach_eliminates_all_candidates(tmp_path):
+    """Deterministic live pin: on the real plan the unique callout box has 8 leaders; NONE produce a closing
+    source-backed leg (7 land on no conduit, 1 fails 176' closure) -> LEADER_CHAIN_REACH_NONE, zero render."""
+    if not _plan_present():
+        return
+    r = S.run_slice(plan_path=_PLAN, out_dir=str(tmp_path))["result"]
+    assert r["status"] == S.LEADER_CHAIN_REACH_NONE and r["rendered"] is False and r["png"] is None
+    cr = r["detail"]["callout_box_fallback"]["chain_reach"]
+    assert cr["leader_tips"] == 8 and cr["survivor_count"] == 0
+    assert len(cr["candidates"]) == 8
+    reasons = sorted(c["eliminated_by"] for c in cr["candidates"])
+    assert reasons.count(S.NO_CONDUIT_CHAIN_AT_START) == 7 and reasons.count(S.CLOSURE_FAILED) == 1
+    assert not list(tmp_path.glob("*.png"))
 
 
 def test_clean_station_anchor_path_never_enters_fallback(tmp_path, monkeypatch):
@@ -290,9 +412,9 @@ def test_live_slice_renders_exactly_one_review_stroke_or_named_abstain(tmp_path)
         assert r["detail"]["end_station"] == "6+79" and r["detail"]["start_station"] == "5+03"
         assert list(r["detail"]["stroke_rgb"]) == [220, 25, 25]
         # anchor evidence must be leader-backed in EITHER mode (bare station or callout-box fallback)
-        assert r["detail"]["anchor_mode"] in ("BARE_STATION", "CALLOUT_BOX_LEADER")
-        assert r["detail"]["anchor_method"] in ("LEADER_TRACED_SYMBOL", "LEADER_TIP")
-        if r["detail"]["anchor_mode"] == "CALLOUT_BOX_LEADER":   # original ambiguity context preserved
+        assert r["detail"]["anchor_mode"] in ("BARE_STATION", "CALLOUT_BOX_LEADER", "CALLOUT_BOX_LEADER_CHAIN_REACH")
+        assert r["detail"]["anchor_method"] in ("LEADER_TRACED_SYMBOL", "LEADER_TIP", "CHAIN_REACH_LEADER_TIP")
+        if r["detail"]["anchor_mode"].startswith("CALLOUT_BOX_LEADER"):   # original ambiguity context preserved
             assert r["detail"]["anchor_evidence"]["original_start_anchor"] == S.START_ANCHOR_AMBIGUOUS
         # sibling containment: the drawn span closes at ~176', never the +42' 7+21 over-run
         assert abs(r["detail"]["drawn_ft"] - r["detail"]["span_ft"]) <= S.CLOSURE_REL_TOL * r["detail"]["span_ft"]
@@ -308,7 +430,8 @@ def test_live_slice_renders_exactly_one_review_stroke_or_named_abstain(tmp_path)
                                S.LEG_NOT_SOURCE_BACKED, S.CLOSURE_FAILED, S.RENDER_PRODUCED_NO_STROKE,
                                S.CALLOUT_BOX_NOT_FOUND, S.CALLOUT_BOX_AMBIGUOUS,
                                S.CALLOUT_LEADER_AMBIGUOUS, S.CALLOUT_ANCHOR_NOT_LEADER_BACKED,
-                               S.CALLOUT_ROW_BOX_NOT_PHRASE_CONTAINING, S.CALLOUT_ROW_BOX_NOT_NESTED}
+                               S.CALLOUT_ROW_BOX_NOT_PHRASE_CONTAINING, S.CALLOUT_ROW_BOX_NOT_NESTED,
+                               S.LEADER_CHAIN_REACH_NONE, S.LEADER_CHAIN_REACH_NOT_UNIQUE}
         assert not pngs and r["png"] is None
 
 

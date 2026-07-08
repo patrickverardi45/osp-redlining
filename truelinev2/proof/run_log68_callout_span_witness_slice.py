@@ -41,7 +41,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from truelinev2.config import _REPO_ROOT
-from truelinev2.extract.leader_symbol_trace import _BOX_MARGIN, _label_boxes  # read-only reuse (never edited)
+from truelinev2.extract.leader_symbol_trace import _BOX_MARGIN, _label_boxes, _leaders  # read-only reuse (never edited)
 from truelinev2.extract.leader_symbol_trace import AMBIGUOUS_LEADER
 from truelinev2.extract.plan_view_anchor_resolver import (
     AMBIGUOUS_ANCHOR,
@@ -92,6 +92,16 @@ _CALLOUT_PHRASE = "STA %s TO STA %s" % (_CALLOUT_START_STA, _CALLOUT_END_STA)
 _BOX_PAD = 6.0                      # pt: word-center containment pad around the searched callout bbox
 _LEADER_METHODS = ("LEADER_TRACED_SYMBOL", "LEADER_TIP")   # the ONLY accepted anchor evidence in this mode
 
+# --- chain-reach uniqueness (entered ONLY when the unique innermost row STILL has >= 2 leaders) ------------ #
+# When the callout box is unique but N leaders leave it, we DO NOT pick by direction/proximity/length. Every
+# leader tip is tested against the SAME physical predicate — seed the conduit chain at the tip, uniquely reach
+# the 6+79 matchline, close to 176' — and accepted ONLY if EXACTLY ONE tip's leg closes (0 or >= 2 -> abstain).
+# The survivor's provenance is physical (chain reach), not the tracer's leader-uniqueness, so it gets its OWN
+# method name and NEVER claims LEADER_TRACED_SYMBOL. This is the sweep's committed chain-reach pattern, applied
+# per-candidate — a binary source-backed predicate + exactly-one survivor, NOT a preference heuristic.
+_CHAIN_REACH_METHOD = "CHAIN_REACH_LEADER_TIP"
+_CHAIN_REACH_MODE = "CALLOUT_BOX_LEADER_CHAIN_REACH"
+
 # --- result statuses ------------------------------------------------------------------------------------- #
 REVIEW_CANDIDATE_RENDERED = "LOG68_CALLOUT_SPAN_REVIEW_CANDIDATE_RENDERED"    # the single positive
 WITNESS_NOT_FOUND = "WITNESS_NOT_FOUND"
@@ -106,6 +116,8 @@ CALLOUT_LEADER_AMBIGUOUS = "CALLOUT_LEADER_AMBIGUOUS"
 CALLOUT_ANCHOR_NOT_LEADER_BACKED = "CALLOUT_ANCHOR_NOT_LEADER_BACKED"
 CALLOUT_ROW_BOX_NOT_PHRASE_CONTAINING = "CALLOUT_ROW_BOX_NOT_PHRASE_CONTAINING"
 CALLOUT_ROW_BOX_NOT_NESTED = "CALLOUT_ROW_BOX_NOT_NESTED"
+LEADER_CHAIN_REACH_NONE = "LEADER_CHAIN_REACH_NONE"                # 0 leader tips produce a closing leg
+LEADER_CHAIN_REACH_NOT_UNIQUE = "LEADER_CHAIN_REACH_NOT_UNIQUE"    # >= 2 leader tips produce a closing leg
 NO_CONDUIT_CHAIN_AT_START = "NO_CONDUIT_CHAIN_AT_START"
 MATCHLINE_ENDPOINT_NOT_FOUND = "MATCHLINE_ENDPOINT_NOT_FOUND"
 SIBLING_BLEED_DETECTED = "SIBLING_BLEED_DETECTED"
@@ -247,7 +259,7 @@ def _row_forbidden_token(words, chosen: Dict[str, Any]) -> Optional[str]:
     return _forbidden_tokens_absent(*row)
 
 
-def _callout_box_anchor(plan, sheet: int, offset: int, words, draw
+def _callout_box_anchor(plan, sheet: int, offset: int, words, draw, leg_predicate=None
                         ) -> Tuple[Optional[Tuple[float, float]], Optional[str], Dict[str, Any]]:
     """Anchor the start from the UNIQUE printed callout box + its own leader (the fallback for the ambiguous
     bare station token). Returns (xy | None, refusal | None, detail). Composes ONLY shipped observers:
@@ -305,7 +317,104 @@ def _callout_box_anchor(plan, sheet: int, offset: int, words, draw
     detail["anchor"] = res2.to_dict()
     rr["mode"] = "INNERMOST_ROW_BOX"
     xy2, refusal2 = _accept_leader_anchor(res2)
-    return xy2, refusal2, detail
+    if refusal2 != CALLOUT_LEADER_AMBIGUOUS or leg_predicate is None:
+        return xy2, refusal2, detail          # accepted, a non-ambiguity refusal, or no predicate to test with
+
+    # --- chain-reach uniqueness (entered ONLY when the unique innermost row STILL has >= 2 leaders) --------
+    # The row box is unique but several leader segments leave it, so the tracer's leader hop stays ambiguous.
+    # DO NOT pick by direction/proximity/length: test EACH leader tip against the SAME physical predicate (seed
+    # chain -> unique 6+79 matchline -> 176' closure -> terminal = boundary) and accept ONLY a unique survivor.
+    tips = _leaders([d for d in draw if id(d) not in rej_ids],
+                    (float(chosen["x0"]), float(chosen["y0"]), float(chosen["x1"]), float(chosen["y1"])))
+    cr: Dict[str, Any] = {"leader_tips": len(tips), "candidates": []}
+    detail["chain_reach"] = cr
+    survivors: List[Tuple[float, float]] = []
+    for (_ax, _ay, tx, ty) in tips:                 # tip is the far endpoint (box end first; see _leaders)
+        ok, why, dft = leg_predicate((float(tx), float(ty)))
+        cr["candidates"].append({"tip": [round(float(tx), 1), round(float(ty), 1)], "passes": bool(ok),
+                                 "eliminated_by": None if ok else why,
+                                 "drawn_ft": round(float(dft), 1) if (ok and dft is not None) else None})
+        if ok:
+            survivors.append((float(tx), float(ty)))
+    cr["survivor_count"] = len(survivors)
+    if len(survivors) == 0:
+        return None, LEADER_CHAIN_REACH_NONE, detail
+    if len(survivors) > 1:
+        return None, LEADER_CHAIN_REACH_NOT_UNIQUE, detail
+    cr["survivor"] = [round(survivors[0][0], 1), round(survivors[0][1], 1)]
+    detail["method"] = _CHAIN_REACH_METHOD               # physical provenance, NOT the tracer's leader-uniqueness
+    detail["mode"] = _CHAIN_REACH_MODE
+    return survivors[0], None, detail
+
+
+@dataclass(frozen=True)
+class _LegBind:
+    """Outcome of binding ONE start_xy to the sheet-local leg (chain -> unique 6+79 matchline -> 176' closure
+    -> terminal = boundary). ``ok`` True with route/bnd/drawn_ft; else a NAMED refusal + reason. ``sub_chain``
+    carries the evidence-chain lines to splice into the caller. Read-only; renders NOTHING (this is also the
+    chain-reach candidate predicate — it must never draw)."""
+    ok: bool
+    status: Optional[str]
+    reason: str
+    route: Optional[List[Any]] = None
+    bnd: Optional[Tuple[float, float]] = None
+    drawn_ft: Optional[float] = None
+    sub_chain: Tuple[str, ...] = ()
+    detail: Dict[str, Any] = field(default_factory=dict)
+
+
+def _bind_leg_from_start(start_xy: Tuple[float, float], *, words, draw, conduit, chain_lines, partners,
+                         end_sta: str, span, leg_sheet: int) -> _LegBind:
+    """Bind the single sheet-local leg from ``start_xy``: seed the conduit chain, uniquely reach the printed
+    ``end_sta`` SEE-SHEET matchline boundary, close against the printed span, and require the terminal vertex
+    to BE the boundary (never past it). The SAME gates the main flow uses and the chain-reach predicate tests
+    per candidate — one source of truth. Read-only; draws nothing."""
+    sub: List[str] = []
+    seed = (start_xy[0] - _SEED_EPS, start_xy[1] - _SEED_EPS, start_xy[0] + _SEED_EPS, start_xy[1] + _SEED_EPS)
+    chain_segs = connected_chain(conduit, seed)
+    if not chain_segs:
+        return _LegBind(False, NO_CONDUIT_CHAIN_AT_START,
+                        "no source-backed conduit chain is connected to the bound start on sheet %d "
+                        "(fiber/generic path or off-conduit anchor) — refusing" % leg_sheet)
+    partner_crossings = [c for p in partners for c in see_sheet_crossings(chain_lines, p, "MATCHLINE")]
+    end_crossings = [c for c in partner_crossings if end_sta in c]
+    if not end_crossings:
+        return _LegBind(False, MATCHLINE_ENDPOINT_NOT_FOUND,
+                        "no printed SEE-SHEET matchline crossing carries the callout end %s to a partner sheet "
+                        "%s on sheet %d" % (end_sta, partners, leg_sheet))
+    bleed = _forbidden_tokens_absent(*["/".join(c) for c in end_crossings])
+    if bleed is not None:
+        return _LegBind(False, SIBLING_BLEED_DETECTED,
+                        "the selected end matchline crossing also carries the forbidden sibling continuation "
+                        "station %s — refusing to bind into the sibling bore" % bleed)
+    bnd, reach, uniq = locate_matchline_boundary(words, draw, end_sta, chain_segs)
+    if bnd is None or not uniq:
+        return _LegBind(False, MATCHLINE_ENDPOINT_NOT_FOUND,
+                        "the callout end matchline %s is not uniquely reached by the start chain on sheet %d "
+                        "(reach %s, unique %s)" % (end_sta, leg_sheet, reach, uniq))
+    sub.append("end bound at MATCHLINE STA %s (SEE SHEET %s) boundary (%.1f, %.1f)"
+               % (end_sta, partners, bnd[0], bnd[1]))
+    route, ok = _ordered_leg(chain_segs, start_xy, tuple(bnd))
+    if not ok:
+        return _LegBind(False, LEG_NOT_SOURCE_BACKED,
+                        "the start -> matchline leg is not a source-backed ordered conduit route on sheet %d"
+                        % leg_sheet, sub_chain=tuple(sub))
+    drawn_ft = route_length(route) / SCALE
+    closes = abs(drawn_ft - float(span)) <= CLOSURE_REL_TOL * float(span)
+    sub.append("leg closure: drawn %.1f ft vs printed span %d ft (tol %d%%) -> %s"
+               % (drawn_ft, int(span), int(CLOSURE_REL_TOL * 100), "closes" if closes else "FAILS"))
+    if not closes:
+        return _LegBind(False, CLOSURE_FAILED,
+                        "leg draws %.1f ft vs printed span %d ft (> %d%%) — a partial/over-run (would bleed into "
+                        "the sibling continuation) — refusing"
+                        % (drawn_ft, int(span), int(CLOSURE_REL_TOL * 100)), route=route, bnd=tuple(bnd),
+                        drawn_ft=drawn_ft, sub_chain=tuple(sub),
+                        detail={"drawn_ft": round(drawn_ft, 1), "span_ft": int(span)})
+    if route[-1] != tuple(bnd):
+        return _LegBind(False, MATCHLINE_ENDPOINT_NOT_FOUND,
+                        "the leg's terminal vertex is not the matchline boundary — refusing", route=route,
+                        bnd=tuple(bnd), sub_chain=tuple(sub))
+    return _LegBind(True, None, "closes", route=route, bnd=tuple(bnd), drawn_ft=drawn_ft, sub_chain=tuple(sub))
 
 
 def bind_and_render(plan_path: str, *, out_dir: Optional[str] = None, render: bool = True) -> Log68SliceResult:
@@ -369,10 +478,19 @@ def bind_and_render(plan_path: str, *, out_dir: Optional[str] = None, render: bo
         partners = chain_out["partner_sheets"]
         words, draw = plan.words(leg_sheet, offset), plan.line_items(leg_sheet, offset)
         chain_lines = plan.lines(leg_sheet, offset)
+        conduit = [x for x in draw if x.get("layer") in BASE_CONDUIT]
         chain = [
             "unique DIRECT_BORE_CALLOUT_SPAN_WITNESS %s TO %s (%s') on engineering sheet %d -> PDF page %d"
             % (start_sta, end_sta, int(span), leg_sheet, pdf_page),
         ]
+
+        def _leg_predicate(tip_xy: Tuple[float, float]):
+            """The physical chain-reach predicate for the callout-box fallback: does a chain seeded at ``tip_xy``
+            reach the UNIQUE end matchline and CLOSE to the printed span? -> (ok, elimination_reason, drawn_ft).
+            Renders NOTHING — candidate testing never draws."""
+            lb = _bind_leg_from_start(tip_xy, words=words, draw=draw, conduit=conduit, chain_lines=chain_lines,
+                                      partners=partners, end_sta=end_sta, span=span, leg_sheet=leg_sheet)
+            return lb.ok, (lb.status or "closes"), lb.drawn_ft
 
         # --- start: source-bound plan-view anchor at the callout START station (never nearest-snap) --------
         ar = resolve_plan_view_anchor_for_path(str(plan_path), leg_sheet, float(start_ft), offset=offset)
@@ -381,7 +499,8 @@ def bind_and_render(plan_path: str, *, out_dir: Optional[str] = None, render: bo
             # FALLBACK (only entered here): the bare token is non-unique on the sheet, but the FULL callout
             # phrase is unique — anchor from the callout BOX + its own leader. Refusals stay named and carry
             # the original START_ANCHOR_AMBIGUOUS context; a clean bare-station resolve NEVER reaches this.
-            xy, fb_refusal, fb_detail = _callout_box_anchor(plan, leg_sheet, offset, words, draw)
+            xy, fb_refusal, fb_detail = _callout_box_anchor(plan, leg_sheet, offset, words, draw,
+                                                            leg_predicate=_leg_predicate)
             anchor_detail["callout_box_fallback"] = fb_detail
             anchor_detail["original_start_anchor"] = START_ANCHOR_AMBIGUOUS
             if fb_refusal is not None:
@@ -390,10 +509,11 @@ def bind_and_render(plan_path: str, *, out_dir: Optional[str] = None, render: bo
                                "refused (%s) — human pick, never a guess" % (start_sta, leg_sheet, fb_refusal),
                                chain=chain, detail=anchor_detail)
             start_xy = xy
-            method = (fb_detail.get("anchor") or {}).get("method")
-            anchor_detail["anchor_mode"] = "CALLOUT_BOX_LEADER"
-            chain.append("bare start %s ambiguous -> UNIQUE callout box '%s' -> leader-backed anchor at "
-                         "(%.1f, %.1f) via %s" % (start_sta, _CALLOUT_PHRASE, start_xy[0], start_xy[1], method))
+            method = fb_detail.get("method") or (fb_detail.get("anchor") or {}).get("method")
+            anchor_detail["anchor_mode"] = fb_detail.get("mode", "CALLOUT_BOX_LEADER")
+            chain.append("bare start %s ambiguous -> UNIQUE callout box '%s' -> %s anchor at "
+                         "(%.1f, %.1f) via %s" % (start_sta, _CALLOUT_PHRASE, anchor_detail["anchor_mode"],
+                                                  start_xy[0], start_xy[1], method))
         elif not ar.resolved or ar.x is None or ar.y is None:
             return _refuse(START_ANCHOR_UNRESOLVED,
                            "the callout start %s did not source-bind to a plan-view anchor on sheet %d (%s)"
@@ -404,58 +524,14 @@ def bind_and_render(plan_path: str, *, out_dir: Optional[str] = None, render: bo
             anchor_detail["anchor_mode"] = "BARE_STATION"
             chain.append("start %s bound at (%.1f, %.1f) via %s" % (start_sta, start_xy[0], start_xy[1], method))
 
-        # --- leg: the source-backed conduit chain connected to the bound start (empty -> abstain) ----------
-        conduit = [x for x in draw if x.get("layer") in BASE_CONDUIT]
-        seed = (start_xy[0] - _SEED_EPS, start_xy[1] - _SEED_EPS, start_xy[0] + _SEED_EPS, start_xy[1] + _SEED_EPS)
-        chain_segs = connected_chain(conduit, seed)
-        if not chain_segs:
-            return _refuse(NO_CONDUIT_CHAIN_AT_START,
-                           "no source-backed conduit chain is connected to the bound start %s on sheet %d "
-                           "(fiber/generic path or off-conduit anchor) — refusing" % (start_sta, leg_sheet),
-                           chain=chain)
-
-        # --- end: the printed SEE-SHEET matchline boundary the chain reaches at the callout END station ----
-        # gate 1: the END station must sit on a printed SEE-SHEET crossing to a PARTNER sheet (the identity),
-        # and that crossing must NOT carry a forbidden sibling continuation station.
-        partner_crossings = [c for p in partners for c in see_sheet_crossings(chain_lines, p, "MATCHLINE")]
-        end_crossings = [c for c in partner_crossings if end_sta in c]
-        if not end_crossings:
-            return _refuse(MATCHLINE_ENDPOINT_NOT_FOUND,
-                           "no printed SEE-SHEET matchline crossing carries the callout end %s to a partner "
-                           "sheet %s on sheet %d" % (end_sta, partners, leg_sheet), chain=chain)
-        bleed = _forbidden_tokens_absent(*["/".join(c) for c in end_crossings])
-        if bleed is not None:
-            return _refuse(SIBLING_BLEED_DETECTED,
-                           "the selected end matchline crossing also carries the forbidden sibling continuation "
-                           "station %s — refusing to bind into the sibling bore" % bleed, chain=chain)
-        # gate 2: the chain must UNIQUELY reach that matchline boundary at the END station
-        bnd, reach, uniq = locate_matchline_boundary(words, draw, end_sta, chain_segs)
-        if bnd is None or not uniq:
-            return _refuse(MATCHLINE_ENDPOINT_NOT_FOUND,
-                           "the callout end matchline %s is not uniquely reached by the start chain on sheet %d "
-                           "(reach %s, unique %s)" % (end_sta, leg_sheet, reach, uniq), chain=chain)
-        chain.append("end bound at MATCHLINE STA %s (SEE SHEET %s) boundary (%.1f, %.1f)"
-                     % (end_sta, partners, bnd[0], bnd[1]))
-
-        # --- leg source-backing + printed-span closure (the false-positive / sibling-bleed backstop) -------
-        route, ok = _ordered_leg(chain_segs, start_xy, tuple(bnd))
-        if not ok:
-            return _refuse(LEG_NOT_SOURCE_BACKED,
-                           "the start -> matchline leg is not a source-backed ordered conduit route on sheet %d"
-                           % leg_sheet, chain=chain)
-        drawn_ft = route_length(route) / SCALE
-        closes = abs(drawn_ft - float(span)) <= CLOSURE_REL_TOL * float(span)
-        chain.append("leg closure: drawn %.1f ft vs printed span %d ft (tol %d%%) -> %s"
-                     % (drawn_ft, int(span), int(CLOSURE_REL_TOL * 100), "closes" if closes else "FAILS"))
-        if not closes:
-            return _refuse(CLOSURE_FAILED,
-                           "leg draws %.1f ft vs printed span %d ft (> %d%%) — a partial/over-run (would bleed "
-                           "into the sibling continuation) — refusing" % (drawn_ft, int(span), int(CLOSURE_REL_TOL * 100)),
-                           chain=chain, detail={"drawn_ft": round(drawn_ft, 1), "span_ft": int(span)})
-        # hard containment backstop: the terminal vertex IS the matchline boundary (never past it)
-        if route[-1] != tuple(bnd):
-            return _refuse(MATCHLINE_ENDPOINT_NOT_FOUND,
-                           "the leg's terminal vertex is not the matchline boundary — refusing", chain=chain)
+        # --- leg + unique end matchline + printed-span closure + terminal-at-boundary, via the shared binder
+        #     (the SAME gates the chain-reach predicate tested per candidate — one source of truth) ----------
+        lb = _bind_leg_from_start(start_xy, words=words, draw=draw, conduit=conduit, chain_lines=chain_lines,
+                                  partners=partners, end_sta=end_sta, span=span, leg_sheet=leg_sheet)
+        chain.extend(lb.sub_chain)
+        if not lb.ok:
+            return _refuse(lb.status, lb.reason, chain=chain, detail=lb.detail)
+        route, bnd, drawn_ft = lb.route, lb.bnd, lb.drawn_ft
 
         detail = {"engineering_sheet": leg_sheet, "pdf_page": pdf_page, "partner_sheets": partners,
                   "anchor_mode": anchor_detail.get("anchor_mode"), "anchor_method": method,
