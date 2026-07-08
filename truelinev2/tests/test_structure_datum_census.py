@@ -111,3 +111,48 @@ def test_report_shape_of_skip_is_json_serializable():
     r = census.run_census(corpus_dir="/no/corpus", plan_path="/no/plan.pdf")
     json.dumps(r)                                              # must be serializable + non-crashing
     assert r["skipped"] is True
+
+
+# --------------------------------------------------------------------------------------------------------- #
+# Authoritative-frontier reconciliation: the census records the closure/render LEDGER (not run_match) as the
+# real "converted" signal, and maps every ledger category onto a reconciliation category.
+# --------------------------------------------------------------------------------------------------------- #
+def test_ledger_reconciliation_map_is_total_and_correct():
+    import truelinev2.proof.run_all_redlines_closure_ledger as L
+    assert census.reconcile_ledger_category(L.ENGINE_PLACED) == census.ALREADY_RENDER_FRONTIER_PLACED
+    assert census.reconcile_ledger_category(L.SEAM_RENDER_PROVEN) == census.ALREADY_RENDER_FRONTIER_PLACED
+    assert census.reconcile_ledger_category(L.HELD_BACK) == census.OWNER_PROMOTION_HOLD
+    assert census.reconcile_ledger_category(L.STILL_BLOCKED_NAMED) == census.OWNER_LOCKED_ABSTAIN
+    assert census.reconcile_ledger_category(L.UNMODELED_TERMINUS) == census.TERMINUS_OR_PARENT_CHILD_EVIDENCE_BLOCKER
+    assert census.reconcile_ledger_category(L.PARENT_CHILD) == census.TERMINUS_OR_PARENT_CHILD_EVIDENCE_BLOCKER
+    assert census.reconcile_ledger_category(L.SOURCE_OWNER) == census.SOURCE_OCR_OWNER_CONFIRMATION_NEEDED
+    assert census.reconcile_ledger_category(L.CROSS_SHEET) == census.TRUE_CROSS_SHEET_FRAME_JOIN_GAP
+    # total: every authoritative ledger category maps to a known reconciliation category
+    for cat in L.ALL_CATEGORIES:
+        assert census.reconcile_ledger_category(cat) in census.RECONCILIATION_CATEGORIES
+    # unknown / absent -> OTHER (never crashes, never a run_match guess)
+    assert census.reconcile_ledger_category("SOMETHING_NEW") == census.OTHER_LEDGER_REFUSAL
+    assert census.reconcile_ledger_category(None) == census.OTHER_LEDGER_REFUSAL
+
+
+def test_frontier_status_is_ledger_driven_not_run_match():
+    import inspect
+    import truelinev2.proof.run_all_redlines_closure_ledger as L
+    # STRUCTURAL PROOF: frontier_status is a function of (ledger, bore_id) only — no run_match input, so the
+    # authoritative frontier can never be controlled by the default-flag baseline.
+    assert list(inspect.signature(census.frontier_status).parameters) == ["ledger", "bore_id"]
+    ledger = {"log15": {"placed": True, "category": L.ENGINE_PLACED}}
+    fs = census.frontier_status(ledger, "bore_log15")            # bore-log stem -> ledger key
+    assert fs["in_render_ledger"] and fs["render_frontier_placed"] is True
+    assert fs["ledger_reconciliation"] == census.ALREADY_RENDER_FRONTIER_PLACED
+    # a bore absent from the ledger -> not-placed + OTHER (no fallback to run_match)
+    absent = census.frontier_status(ledger, "bore_log99")
+    assert absent["in_render_ledger"] is False and absent["render_frontier_placed"] is False
+    assert absent["ledger_reconciliation"] == census.OTHER_LEDGER_REFUSAL
+
+
+def test_frontier_loader_skips_honestly_without_truth_table(monkeypatch, tmp_path):
+    # If the gitignored engine truth table is absent, the frontier is honestly EMPTY (never substituted by
+    # run_match): _load_frontier_ledger returns {} rather than crashing or guessing.
+    monkeypatch.setattr(census, "_REPO_ROOT", tmp_path)         # no truth table under this root
+    assert census._load_frontier_ledger() == {}

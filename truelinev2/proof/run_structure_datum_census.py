@@ -136,13 +136,85 @@ def _engine_placed(bore, plan, dialect, offset: int, sheet_index) -> Dict[str, A
         return {"placed": False, "status": "ENGINE_ERROR", "tier": None, "reason": str(exc)[:120]}
 
 
-def census_bore(bore, plan, plan_path: str, dialect, offset: int, sheet_index) -> Dict[str, Any]:
+# --- AUTHORITATIVE frontier reconciliation ---------------------------------------------------------------- #
+# The product's real "converted" set is the closure/render-ledger frontier (the render/publish path + the
+# M8.4/M8.5/M8.8 opt-in fallbacks + the SEE-SHEET seam render), NOT default-flag ``run_match`` (which abstains
+# on cross-sheet bores by design). Reconcile each MULTI_REF pass-through against that ledger so the census stops
+# reporting an already-render-proven cross-sheet bore as a cold gap.
+ALREADY_RENDER_FRONTIER_PLACED = "ALREADY_RENDER_FRONTIER_PLACED"
+OWNER_PROMOTION_HOLD = "OWNER_PROMOTION_HOLD"
+OWNER_LOCKED_ABSTAIN = "OWNER_LOCKED_ABSTAIN"
+TERMINUS_OR_PARENT_CHILD_EVIDENCE_BLOCKER = "TERMINUS_OR_PARENT_CHILD_EVIDENCE_BLOCKER"
+SOURCE_OCR_OWNER_CONFIRMATION_NEEDED = "SOURCE_OCR_OWNER_CONFIRMATION_NEEDED"
+TRUE_CROSS_SHEET_FRAME_JOIN_GAP = "TRUE_CROSS_SHEET_FRAME_JOIN_GAP"
+OTHER_LEDGER_REFUSAL = "OTHER_LEDGER_REFUSAL"
+RECONCILIATION_CATEGORIES = (ALREADY_RENDER_FRONTIER_PLACED, OWNER_PROMOTION_HOLD, OWNER_LOCKED_ABSTAIN,
+                             TERMINUS_OR_PARENT_CHILD_EVIDENCE_BLOCKER, SOURCE_OCR_OWNER_CONFIRMATION_NEEDED,
+                             TRUE_CROSS_SHEET_FRAME_JOIN_GAP, OTHER_LEDGER_REFUSAL)
+
+
+def _ledger_reconciliation_map() -> Dict[str, str]:
+    """closure-ledger category (imported CONSTANTS -> robust to value edits) -> reconciliation category."""
+    from truelinev2.proof import run_all_redlines_closure_ledger as L
+    return {
+        L.ENGINE_PLACED: ALREADY_RENDER_FRONTIER_PLACED,
+        L.SEAM_RENDER_PROVEN: ALREADY_RENDER_FRONTIER_PLACED,
+        L.HELD_BACK: OWNER_PROMOTION_HOLD,
+        L.STILL_BLOCKED_NAMED: OWNER_LOCKED_ABSTAIN,
+        L.UNMODELED_TERMINUS: TERMINUS_OR_PARENT_CHILD_EVIDENCE_BLOCKER,
+        L.PARENT_CHILD: TERMINUS_OR_PARENT_CHILD_EVIDENCE_BLOCKER,
+        L.SOURCE_OWNER: SOURCE_OCR_OWNER_CONFIRMATION_NEEDED,
+        L.CROSS_SHEET: TRUE_CROSS_SHEET_FRAME_JOIN_GAP,
+    }
+
+
+def reconcile_ledger_category(category: Optional[str]) -> str:
+    """TOTAL: any ledger category (or unknown / absent) -> a reconciliation category (unknown -> OTHER)."""
+    try:
+        return _ledger_reconciliation_map().get(category, OTHER_LEDGER_REFUSAL)
+    except Exception:  # noqa: BLE001 - ledger module unavailable -> unknown
+        return OTHER_LEDGER_REFUSAL
+
+
+def _load_frontier_ledger() -> Dict[str, Dict[str, Any]]:
+    """The AUTHORITATIVE render/closure-ledger frontier status per bore (``placed`` + ``category``), read-only
+    (``build_ledger`` is a pure function over the engine truth table + adjudication). Honest EMPTY when the
+    gitignored inputs are absent (CI-safe), so the frontier can never fall back onto run_match."""
+    try:
+        from truelinev2.ingest.manual_adjudication import load_adjudication
+        from truelinev2.proof.run_all_redlines_closure_ledger import build_ledger
+        truth = _REPO_ROOT / "data" / "outputs" / "final_engine_truth_table" / "final_engine_truth_table.json"
+        if not truth.is_file():
+            return {}
+        rows = json.loads(truth.read_text(encoding="utf-8"))["rows"]
+        led = build_ledger(rows, load_adjudication())
+        return {k: {"placed": bool(v.get("placed")), "category": v.get("category")} for k, v in led.items()}
+    except Exception:  # noqa: BLE001 - any absence -> honest empty frontier (never a run_match substitute)
+        return {}
+
+
+def frontier_status(ledger: Dict[str, Dict[str, Any]], bore_id: str) -> Dict[str, Any]:
+    """The authoritative frontier status for one bore, a function of the LEDGER ONLY (no run_match parameter),
+    so the frontier can never be driven by the default-flag baseline. Ledger key is e.g. ``log15``."""
+    v = (ledger or {}).get(str(bore_id).replace("bore_", ""))
+    if v is None:
+        return {"in_render_ledger": False, "render_frontier_placed": False, "render_frontier_category": None,
+                "ledger_reconciliation": OTHER_LEDGER_REFUSAL}
+    return {"in_render_ledger": True, "render_frontier_placed": bool(v["placed"]),
+            "render_frontier_category": v["category"],
+            "ledger_reconciliation": reconcile_ledger_category(v["category"])}
+
+
+def census_bore(bore, plan, plan_path: str, dialect, offset: int, sheet_index,
+                ledger: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """Classify ONE real bore. Records the full print-ref chain, per-endpoint observer status, span-vs-sheet
-    range, matchline implication, the engine CONTROL baseline, and the bucket. Read-only; nothing is drawn."""
+    range, matchline implication, the AUTHORITATIVE render-frontier status + reconciliation, the (informational)
+    default-run_match baseline, and the bucket. Read-only; nothing is drawn."""
     span = _span_row(bore)
     ctx = _sheet_context(bore, sheet_index)
     result = sdr.reason_structure_datum(span, ctx, plan_path)
     baseline = _engine_placed(bore, plan, dialect, offset, sheet_index)
+    fs = frontier_status(ledger or {}, span.span_id)
 
     start_ft, end_ft = parse_station(bore.station_start), parse_station(bore.station_end)
     eng_sheet, pdf_page, off = ctx["engineering_sheet"], ctx["pdf_page"], ctx["sheet_offset"]
@@ -192,7 +264,13 @@ def census_bore(bore, plan, plan_path: str, dialect, offset: int, sheet_index) -
         "endpoint_start": _w(w_start), "endpoint_end": _w(w_end),
         "reasoner_status": result.status, "reasoner_ready": result.ready,
         "far_endpoint_supported": far_supported,
-        "engine_baseline": baseline, "control": baseline["placed"],
+        # AUTHORITATIVE product frontier (closure/render ledger) — the real "converted" signal:
+        "in_render_ledger": fs["in_render_ledger"], "render_frontier_placed": fs["render_frontier_placed"],
+        "render_frontier_category": fs["render_frontier_category"],
+        "ledger_reconciliation": fs["ledger_reconciliation"],
+        # informational ONLY (NOT the frontier): default-flag run_match abstains on cross-sheet bores by design.
+        "engine_baseline_default_run_match": baseline, "default_run_match_placed": baseline["placed"],
+        "control": baseline["placed"],
         "span_exceeds_printed_sheet": span_exceeds, "matchline_implicated": matchline_implicated,
     }
 
@@ -234,11 +312,12 @@ def run_census(corpus_dir: Optional[str] = None, plan_path: Optional[str] = None
         dialect = select_dialect(plan)
         offset = dialect.calibrate(plan, 13) if dialect is not None else 13
         idx = build_sheet_index(plan)
+        ledger = _load_frontier_ledger()   # AUTHORITATIVE frontier (empty -> honest; never a run_match substitute)
         for lp in logs:
             try:
                 bore = load_borelog(str(lp))
                 bore.bore_id = lp.stem
-                rows.append(census_bore(bore, plan, str(plan_path), dialect, offset, idx))
+                rows.append(census_bore(bore, plan, str(plan_path), dialect, offset, idx, ledger=ledger))
             except Exception as exc:  # noqa: BLE001 - an unreadable bore is recorded as OTHER_REFUSAL, never placed
                 rows.append({"bore_id": lp.stem, "bucket": OTHER_REFUSAL, "reasoner_status": "READ_ERROR",
                              "reason": str(exc)[:140], "control": False})
@@ -246,15 +325,25 @@ def run_census(corpus_dir: Optional[str] = None, plan_path: Optional[str] = None
         plan.close()
 
     counts = {b: sum(1 for r in rows if r.get("bucket") == b) for b in ALL_BUCKETS}
+    multi = [r for r in rows if r.get("bucket") == MULTI_REF_PASS_THROUGH]
+    multi_reconciliation = {c: sum(1 for r in multi if r.get("ledger_reconciliation") == c)
+                            for c in RECONCILIATION_CATEGORIES}
     report = {
         "milestone": "structure-datum refusal census (read-only)",
+        "authoritative_frontier": "closure/render ledger (final_engine_truth_table + adjudication); "
+                                  "run_match is an informational baseline only",
         "corpus_dir": corpus_dir, "plan_path": Path(plan_path).name, "plan_pages": page_count,
-        "log_count": len(rows), "bucket_counts": counts,
+        "frontier_ledger_loaded": bool(ledger), "log_count": len(rows), "bucket_counts": counts,
+        # the FIX: MULTI_REF is a true reasoner fact, but this reconciliation (authoritative ledger) shows how
+        # many of those pass-throughs already render / are owner-held / are the ONE true cross-sheet gap.
+        "multi_ref_reconciliation": multi_reconciliation,
         "aggregate": {
-            "control": sum(1 for r in rows if r.get("control")),
-            "cold_subject": sum(1 for r in rows if not r.get("control")),
+            "render_frontier_placed": sum(1 for r in rows if r.get("render_frontier_placed")),
+            "default_run_match_placed": sum(1 for r in rows if r.get("default_run_match_placed")),
+            "multi_ref_total": len(multi),
+            "multi_ref_already_converting": multi_reconciliation[ALREADY_RENDER_FRONTIER_PLACED],
+            "true_cross_sheet_frame_join_gap": multi_reconciliation[TRUE_CROSS_SHEET_FRAME_JOIN_GAP],
             "span_exceeds": sum(1 for r in rows if r.get("span_exceeds_printed_sheet")),
-            "matchline_implicated": sum(1 for r in rows if r.get("matchline_implicated")),
             "candidate_produced": counts[CANDIDATE_PRODUCED],
             "convertible_by_pickcard": counts[AMBIGUOUS_ONLY_FAR_SUPPORTED],
         },
