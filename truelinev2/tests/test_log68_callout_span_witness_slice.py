@@ -130,6 +130,119 @@ def test_leader_ambiguity_refused():
     assert xy is None and refusal == S.CALLOUT_LEADER_AMBIGUOUS
 
 
+def _box(x0, y0, x1, y1):
+    return {"x0": x0, "y0": y0, "x1": x1, "y1": y1}
+
+
+_PHRASE_BB = (10.0, 10.0, 60.0, 16.0)
+
+
+def test_innermost_row_box_unique_nested():
+    outer = _box(0, 0, 100, 100)
+    mid = _box(5, 5, 80, 40)
+    row = _box(8, 8, 70, 18)                       # innermost, contains the phrase bbox
+    chosen, rejected, refusal = S._innermost_row_box([outer, mid, row], _PHRASE_BB)
+    assert refusal is None and chosen is row
+    assert len(rejected) == 2 and row not in rejected
+
+
+def test_innermost_row_box_rejects_subcell_frames_too():
+    """A sub-cell frame (contains the word, NOT the phrase) is not a survivor but IS rejected/filtered."""
+    outer = _box(0, 0, 100, 100)
+    row = _box(8, 8, 70, 18)
+    subcell = _box(9, 9, 30, 15)                   # too narrow for the phrase
+    chosen, rejected, refusal = S._innermost_row_box([outer, row, subcell], _PHRASE_BB)
+    assert refusal is None and chosen is row and subcell in rejected
+
+
+def test_innermost_row_box_non_nested_overlap_refuses():
+    phrase = (45.0, 5.0, 65.0, 15.0)
+    a = _box(0, 0, 70, 20)                         # both contain the phrase, neither nests in the other
+    b = _box(40, 0, 120, 20)                       # (beyond the tracer margin in x, both directions)
+    chosen, rejected, refusal = S._innermost_row_box([a, b], phrase)
+    assert chosen is None and refusal == S.CALLOUT_ROW_BOX_NOT_NESTED
+
+
+def test_coincident_duplicates_are_one_physical_frame():
+    """CAD exports emit the SAME callout box several times (fill + border + duplicates). Mutual containment
+    = identity (SAME_POINT_TOL analogue): dedup to one representative, never a refusal — this is the REAL
+    log68 shape (3 identical rects + a ~0.8pt border + the sheet title-block frame)."""
+    d1, d2, d3 = _box(826.2, 187.6, 930.2, 217.8), _box(826.2, 187.6, 930.2, 217.8), _box(826.2, 187.6, 930.2, 217.8)
+    border = _box(825.5, 186.8, 931.0, 218.5)
+    title_blk = _box(37.1, 63.4, 1165.7, 760.0)
+    phrase = (829.4, 191.9, 884.8, 197.0)
+    chosen, rejected, refusal = S._innermost_row_box([d1, d2, d3, border, title_blk], phrase)
+    assert refusal is None
+    assert chosen in (d1, d2, d3)                          # smallest representative of the coincident class
+    assert len(rejected) == 4 and title_blk in rejected and border in rejected
+
+
+def test_innermost_row_box_zero_phrase_containing_refuses():
+    chosen, rejected, refusal = S._innermost_row_box([_box(9, 9, 30, 15)], _PHRASE_BB)
+    assert chosen is None and refusal == S.CALLOUT_ROW_BOX_NOT_PHRASE_CONTAINING
+
+
+def test_forbidden_token_inside_chosen_row_refuses():
+    row = _box(0, 0, 100, 20)
+    words_ok = [{"text": "STA 5+03 TO STA 6+79", "xc": 30, "yc": 10}]
+    words_bad = words_ok + [{"text": "7+21", "xc": 80, "yc": 10}]
+    assert S._row_forbidden_token(words_ok, row) is None
+    assert S._row_forbidden_token(words_bad, row) == "7+21"
+    outside = [{"text": "4+54", "xc": 500, "yc": 500}]      # outside the row frame -> not the row's token
+    assert S._row_forbidden_token(outside, row) is None
+
+
+def test_label_boxes_import_sync():
+    """The retry enumerates candidates with the TRACER'S OWN _label_boxes (read-only import, semantics
+    identical): size-floor + word-center containment."""
+    from truelinev2.extract.leader_symbol_trace import _label_boxes as tracer_label_boxes
+    assert S._label_boxes is tracer_label_boxes
+    frame = _box(0, 0, 100, 20)
+    glyph = _box(9, 9, 12, 12)                     # fails the size floor
+    assert S._label_boxes([frame, glyph], (30.0, 10.0)) == [frame]
+
+
+def test_retry_only_enters_after_first_pass_ambiguous_leader(monkeypatch):
+    """A first-pass acceptance (or a non-box-hop refusal) must NEVER reach the row retry."""
+    from truelinev2.extract.plan_view_anchor_resolver import ANCHOR_RESOLVED_TO_SYMBOL, AnchorResolution
+
+    class _FakePlan:
+        def search(self, sheet, offset, text):
+            return [[0.0, 0.0, 60.0, 16.0]]
+        def vector_segments(self, sheet, offset):
+            return []
+
+    words = [{"text": "5+03", "xc": 30.0, "yc": 10.0}]
+    monkeypatch.setattr(S, "resolve_label_anchor",
+                        lambda *a, **k: AnchorResolution(ANCHOR_RESOLVED_TO_SYMBOL, 1.0, 2.0,
+                                                         "LEADER_TRACED_SYMBOL", False))
+
+    def _boom(*a, **k):
+        raise AssertionError("row retry entered despite a first-pass leader-backed anchor")
+    monkeypatch.setattr(S, "_label_boxes", _boom)
+    xy, refusal, detail = S._callout_box_anchor(_FakePlan(), 17, 13, words, [])
+    assert xy == (1.0, 2.0) and refusal is None and "row_retry" not in detail
+
+
+def test_retry_keeps_named_refusal_when_ambiguity_is_not_the_box_hop(monkeypatch):
+    """First-pass AMBIGUOUS_LEADER but <= 1 label box (word/leader-hop ambiguity) -> original refusal."""
+    from truelinev2.extract.plan_view_anchor_resolver import AMBIGUOUS_ANCHOR, AnchorResolution
+
+    class _FakePlan:
+        def search(self, sheet, offset, text):
+            return [[0.0, 0.0, 60.0, 16.0]]
+        def vector_segments(self, sheet, offset):
+            return []
+
+    words = [{"text": "5+03", "xc": 30.0, "yc": 10.0}]
+    amb = AnchorResolution(AMBIGUOUS_ANCHOR, None, None, None, False, {"leader_trace": "AMBIGUOUS_LEADER"})
+    monkeypatch.setattr(S, "resolve_label_anchor", lambda *a, **k: amb)
+    monkeypatch.setattr(S, "_label_boxes", lambda draw, xy: [])
+    xy, refusal, detail = S._callout_box_anchor(_FakePlan(), 17, 13, words, [])
+    assert xy is None and refusal == S.CALLOUT_LEADER_AMBIGUOUS
+    assert detail["row_retry"]["label_box_candidates"] == 0
+
+
 def test_leader_backed_anchors_accepted():
     from truelinev2.extract.plan_view_anchor_resolver import (
         ANCHOR_RESOLVED_TO_LEADER_TIP,
@@ -194,7 +307,8 @@ def test_live_slice_renders_exactly_one_review_stroke_or_named_abstain(tmp_path)
                                S.MATCHLINE_ENDPOINT_NOT_FOUND, S.SIBLING_BLEED_DETECTED,
                                S.LEG_NOT_SOURCE_BACKED, S.CLOSURE_FAILED, S.RENDER_PRODUCED_NO_STROKE,
                                S.CALLOUT_BOX_NOT_FOUND, S.CALLOUT_BOX_AMBIGUOUS,
-                               S.CALLOUT_LEADER_AMBIGUOUS, S.CALLOUT_ANCHOR_NOT_LEADER_BACKED}
+                               S.CALLOUT_LEADER_AMBIGUOUS, S.CALLOUT_ANCHOR_NOT_LEADER_BACKED,
+                               S.CALLOUT_ROW_BOX_NOT_PHRASE_CONTAINING, S.CALLOUT_ROW_BOX_NOT_NESTED}
         assert not pngs and r["png"] is None
 
 

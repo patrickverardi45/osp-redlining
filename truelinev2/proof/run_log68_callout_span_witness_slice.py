@@ -41,6 +41,8 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from truelinev2.config import _REPO_ROOT
+from truelinev2.extract.leader_symbol_trace import _BOX_MARGIN, _label_boxes  # read-only reuse (never edited)
+from truelinev2.extract.leader_symbol_trace import AMBIGUOUS_LEADER
 from truelinev2.extract.plan_view_anchor_resolver import (
     AMBIGUOUS_ANCHOR,
     AnchorResolution,
@@ -102,6 +104,8 @@ CALLOUT_BOX_NOT_FOUND = "CALLOUT_BOX_NOT_FOUND"
 CALLOUT_BOX_AMBIGUOUS = "CALLOUT_BOX_AMBIGUOUS"
 CALLOUT_LEADER_AMBIGUOUS = "CALLOUT_LEADER_AMBIGUOUS"
 CALLOUT_ANCHOR_NOT_LEADER_BACKED = "CALLOUT_ANCHOR_NOT_LEADER_BACKED"
+CALLOUT_ROW_BOX_NOT_PHRASE_CONTAINING = "CALLOUT_ROW_BOX_NOT_PHRASE_CONTAINING"
+CALLOUT_ROW_BOX_NOT_NESTED = "CALLOUT_ROW_BOX_NOT_NESTED"
 NO_CONDUIT_CHAIN_AT_START = "NO_CONDUIT_CHAIN_AT_START"
 MATCHLINE_ENDPOINT_NOT_FOUND = "MATCHLINE_ENDPOINT_NOT_FOUND"
 SIBLING_BLEED_DETECTED = "SIBLING_BLEED_DETECTED"
@@ -183,6 +187,66 @@ def _accept_leader_anchor(res: AnchorResolution) -> Tuple[Optional[Tuple[float, 
     return None, CALLOUT_ANCHOR_NOT_LEADER_BACKED
 
 
+def _box_contains(outer: Dict[str, Any], x0: float, y0: float, x1: float, y1: float,
+                  m: float = _BOX_MARGIN) -> bool:
+    """True when rect (x0,y0,x1,y1) lies inside drawing ``outer``'s bbox within the tracer's own margin."""
+    return (float(outer["x0"]) - m <= x0 and x1 <= float(outer["x1"]) + m
+            and float(outer["y0"]) - m <= y0 and y1 <= float(outer["y1"]) + m)
+
+
+def _same_frame(a: Dict[str, Any], b: Dict[str, Any]) -> bool:
+    """MUTUAL containment within the tracer's own margin = COINCIDENT representations of ONE physical drawn
+    frame (CAD exports emit the same callout box several times: fill + border + duplicates). This is identity
+    recognition — the exact analogue of the codebase's SAME_POINT_TOL / symbol-footprint dedup — never a
+    choice between different frames."""
+    return (_box_contains(a, float(b["x0"]), float(b["y0"]), float(b["x1"]), float(b["y1"]))
+            and _box_contains(b, float(a["x0"]), float(a["y0"]), float(a["x1"]), float(a["y1"])))
+
+
+def _innermost_row_box(candidates: Sequence[Dict[str, Any]], phrase_bbox: Sequence[float]
+                       ) -> Tuple[Optional[Dict[str, Any]], List[Dict[str, Any]], Optional[str]]:
+    """The UNIQUE innermost callout ROW frame: of the label boxes framing the word, keep those that contain
+    the FULL printed phrase bbox; group coincident duplicates into ONE physical frame (``_same_frame``); then
+    require exactly one frame CLASS nested inside every other (the unique minimum of the containment partial
+    order — strict geometry, no area score, no ranking between DIFFERENT frames). Returns (chosen | None,
+    rejected_frames, refusal | None): ``chosen`` is the innermost class's deterministic representative (the
+    smallest rect, coordinate-lexicographic tiebreak — coincident rects are geometrically interchangeable);
+    ``rejected`` is EVERY other candidate drawing (other classes, sub-cell frames, AND the chosen class's
+    duplicate exports), so a retry trace sees exactly ONE label box. 0 survivors / no unique innermost class
+    -> named refusal (genuinely different non-nested frames are never chosen between)."""
+    px0, py0, px1, py1 = (float(v) for v in phrase_bbox)
+    survivors = [b for b in candidates if _box_contains(b, px0, py0, px1, py1)]
+    if not survivors:
+        return None, [], CALLOUT_ROW_BOX_NOT_PHRASE_CONTAINING
+    # coincidence classes over the survivors (greedy by mutual containment — transitive at these tolerances)
+    classes: List[List[Dict[str, Any]]] = []
+    for b in survivors:
+        for cls in classes:
+            if _same_frame(b, cls[0]):
+                cls.append(b)
+                break
+        else:
+            classes.append([b])
+    inner = [cls for cls in classes
+             if all(cls is other or _box_contains(other[0], float(cls[0]["x0"]), float(cls[0]["y0"]),
+                                                  float(cls[0]["x1"]), float(cls[0]["y1"]))
+                    for other in classes)]
+    if len(inner) != 1:
+        return None, [], CALLOUT_ROW_BOX_NOT_NESTED
+    chosen = min(inner[0], key=lambda d: ((float(d["x1"]) - float(d["x0"])) * (float(d["y1"]) - float(d["y0"])),
+                                          float(d["x0"]), float(d["y0"]), float(d["x1"]), float(d["y1"])))
+    return chosen, [b for b in candidates if b is not chosen], None
+
+
+def _row_forbidden_token(words, chosen: Dict[str, Any]) -> Optional[str]:
+    """The first FORBIDDEN sibling station printed INSIDE the chosen row frame (word-center containment,
+    tracer margin), else None — the chosen row must belong to THIS bore's callout, never a sibling's."""
+    row = [str(w.get("text", "")) for w in words
+           if _box_contains(chosen, float(w.get("xc", 0)), float(w.get("yc", 0)),
+                            float(w.get("xc", 0)), float(w.get("yc", 0)))]
+    return _forbidden_tokens_absent(*row)
+
+
 def _callout_box_anchor(plan, sheet: int, offset: int, words, draw
                         ) -> Tuple[Optional[Tuple[float, float]], Optional[str], Dict[str, Any]]:
     """Anchor the start from the UNIQUE printed callout box + its own leader (the fallback for the ambiguous
@@ -205,11 +269,43 @@ def _callout_box_anchor(plan, sheet: int, offset: int, words, draw
     if len(label_words) != 1:               # cannot isolate ONE label word inside the unique box -> refuse
         return None, CALLOUT_ANCHOR_NOT_LEADER_BACKED, detail
     lw = label_words[0]
-    res = resolve_label_anchor(inside, draw, plan.vector_segments(sheet, offset),
-                               label_token=str(lw["text"]), label_xy=(float(lw["xc"]), float(lw["yc"])))
+    label_token, label_xy = str(lw["text"]), (float(lw["xc"]), float(lw["yc"]))
+    shapes = plan.vector_segments(sheet, offset)
+    res = resolve_label_anchor(inside, draw, shapes, label_token=label_token, label_xy=label_xy)
     detail["anchor"] = res.to_dict()
     xy, refusal = _accept_leader_anchor(res)
-    return xy, refusal, detail
+    if refusal != CALLOUT_LEADER_AMBIGUOUS or res.detail.get("leader_trace") != AMBIGUOUS_LEADER:
+        return xy, refusal, detail          # accepted, or a refusal the row retry cannot help
+
+    # --- innermost-row retry (entered ONLY after a first-pass AMBIGUOUS_LEADER) ---------------------------
+    # The stacked callout table frames >= 2 label boxes around the word, so the uniqueness-mandatory tracer
+    # refused. Select the UNIQUE innermost phrase-containing row frame by strict containment geometry, drop
+    # the other frame drawings from line_items, and re-run the UNCHANGED shared tracer once — its own
+    # leader/tip/symbol uniqueness gates stay authoritative. Words + whole-sheet shapes are untouched.
+    candidates = _label_boxes(draw, label_xy)
+    rr: Dict[str, Any] = {"label_box_candidates": len(candidates)}
+    detail["row_retry"] = rr
+    if len(candidates) <= 1:                # the ambiguity was NOT the box hop — the retry cannot help
+        return None, CALLOUT_LEADER_AMBIGUOUS, detail
+    chosen, rejected, row_refusal = _innermost_row_box(candidates, bbox)
+    rr["phrase_containing"] = sum(1 for b in candidates
+                                  if _box_contains(b, x0, y0, x1, y1))
+    if row_refusal is not None:
+        return None, row_refusal, detail
+    rr["chosen_bbox"] = [round(float(chosen[k]), 1) for k in ("x0", "y0", "x1", "y1")]
+    rr["rejected_frames"] = len(rejected)
+    tok = _row_forbidden_token(words, chosen)
+    if tok is not None:
+        rr["forbidden_token"] = tok
+        return None, SIBLING_BLEED_DETECTED, detail
+    rej_ids = {id(b) for b in rejected}
+    res2 = resolve_label_anchor(inside, [d for d in draw if id(d) not in rej_ids], shapes,
+                                label_token=label_token, label_xy=label_xy)
+    detail["first_pass_anchor"] = detail["anchor"]
+    detail["anchor"] = res2.to_dict()
+    rr["mode"] = "INNERMOST_ROW_BOX"
+    xy2, refusal2 = _accept_leader_anchor(res2)
+    return xy2, refusal2, detail
 
 
 def bind_and_render(plan_path: str, *, out_dir: Optional[str] = None, render: bool = True) -> Log68SliceResult:
