@@ -52,7 +52,11 @@ EXTRA_NAME_FREE_TEXT_PATHS = [
     _ROOT / "tests" / "test_review_candidate.py",
     _ROOT / "tests" / "test_product_readiness_wiring.py",
     _ROOT / "tests" / "test_structure_datum_reasoning.py",
+    _ROOT / "tests" / "test_printed_identity_witness_probe.py",
+    _ROOT / "tests" / "test_log68_callout_span_witness_slice.py",
     _ROOT / "proof" / "run_cold_package_readiness_census.py",
+    _ROOT / "proof" / "run_printed_identity_witness_probe.py",
+    _ROOT / "proof" / "run_log68_callout_span_witness_slice.py",
 ]
 
 
