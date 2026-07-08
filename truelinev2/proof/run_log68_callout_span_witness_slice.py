@@ -41,7 +41,12 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from truelinev2.config import _REPO_ROOT
-from truelinev2.extract.plan_view_anchor_resolver import AMBIGUOUS_ANCHOR, resolve_plan_view_anchor_for_path
+from truelinev2.extract.plan_view_anchor_resolver import (
+    AMBIGUOUS_ANCHOR,
+    AnchorResolution,
+    resolve_label_anchor,
+    resolve_plan_view_anchor_for_path,
+)
 # Read-only reuse of the callout-route sweep's PROVEN geometry helpers + constants (identical semantics; the
 # sweep is never edited). SCALE / CLOSURE_REL_TOL / BASE_CONDUIT / _ordered_leg / route_length /
 # locate_matchline_boundary / connected_chain / see_sheet_crossings are the single source of render truth.
@@ -74,6 +79,17 @@ _CALLOUT_END_STA = "6+79"
 _FORBIDDEN_SIBLING_STATIONS = ("7+21", "4+54")
 _SEED_EPS = 1.0                     # a point-sized seed bbox around the bound start anchor (chain seeding)
 
+# --- callout-box anchor FALLBACK (entered ONLY on a bare-station AMBIGUOUS_ANCHOR) ------------------------- #
+# The bare token 5+03 prints in >= 2 callouts on the sheet (this bore's start AND a neighbor's end), so the
+# station-token resolver honestly refuses. The FULL callout phrase, however, is UNIQUE (probe-proven), so the
+# fallback anchors from the unique callout BOX + its own leader: phrase search -> exactly-1 bbox -> words
+# FILTERED to that bbox (label identity confined to THIS callout instance; leader/symbol geometry stays
+# whole-sheet) -> the existing resolve_label_anchor -> accept ONLY leader-backed evidence. A Tier-2 proximity
+# symbol near the box could be a SIBLING's structure -> refused (zero-false beats coverage).
+_CALLOUT_PHRASE = "STA %s TO STA %s" % (_CALLOUT_START_STA, _CALLOUT_END_STA)
+_BOX_PAD = 6.0                      # pt: word-center containment pad around the searched callout bbox
+_LEADER_METHODS = ("LEADER_TRACED_SYMBOL", "LEADER_TIP")   # the ONLY accepted anchor evidence in this mode
+
 # --- result statuses ------------------------------------------------------------------------------------- #
 REVIEW_CANDIDATE_RENDERED = "LOG68_CALLOUT_SPAN_REVIEW_CANDIDATE_RENDERED"    # the single positive
 WITNESS_NOT_FOUND = "WITNESS_NOT_FOUND"
@@ -82,6 +98,10 @@ ADJUDICATED_SPAN_UNAVAILABLE = "ADJUDICATED_SPAN_UNAVAILABLE"
 SHEET_REF_UNRESOLVED = "SHEET_REF_UNRESOLVED"
 START_ANCHOR_AMBIGUOUS = "START_ANCHOR_AMBIGUOUS"
 START_ANCHOR_UNRESOLVED = "START_ANCHOR_UNRESOLVED"
+CALLOUT_BOX_NOT_FOUND = "CALLOUT_BOX_NOT_FOUND"
+CALLOUT_BOX_AMBIGUOUS = "CALLOUT_BOX_AMBIGUOUS"
+CALLOUT_LEADER_AMBIGUOUS = "CALLOUT_LEADER_AMBIGUOUS"
+CALLOUT_ANCHOR_NOT_LEADER_BACKED = "CALLOUT_ANCHOR_NOT_LEADER_BACKED"
 NO_CONDUIT_CHAIN_AT_START = "NO_CONDUIT_CHAIN_AT_START"
 MATCHLINE_ENDPOINT_NOT_FOUND = "MATCHLINE_ENDPOINT_NOT_FOUND"
 SIBLING_BLEED_DETECTED = "SIBLING_BLEED_DETECTED"
@@ -141,6 +161,55 @@ def _forbidden_tokens_absent(*texts: str) -> Optional[str]:
         if re.search(r"\b" + re.escape(tok) + r"\b", blob):
             return tok
     return None
+
+
+def _unique_callout_bbox(bboxes: Sequence[Sequence[float]]) -> Tuple[Optional[Tuple[float, ...]], Optional[str]]:
+    """(bbox, None) for EXACTLY one phrase hit; else (None, named refusal). Pure — never picks among >= 2."""
+    if not bboxes:
+        return None, CALLOUT_BOX_NOT_FOUND
+    if len(bboxes) > 1:
+        return None, CALLOUT_BOX_AMBIGUOUS
+    return tuple(float(v) for v in bboxes[0]), None
+
+
+def _accept_leader_anchor(res: AnchorResolution) -> Tuple[Optional[Tuple[float, float]], Optional[str]]:
+    """(xy, None) ONLY for a leader-backed resolution (LEADER_TRACED_SYMBOL / LEADER_TIP); else (None, named
+    refusal). Ambiguity (the resolver's AMBIGUOUS_ANCHOR) -> CALLOUT_LEADER_AMBIGUOUS; anything unresolved or
+    proximity/route-tier -> CALLOUT_ANCHOR_NOT_LEADER_BACKED (a nearby symbol may belong to a SIBLING). Pure."""
+    if res.status == AMBIGUOUS_ANCHOR:
+        return None, CALLOUT_LEADER_AMBIGUOUS
+    if res.resolved and res.method in _LEADER_METHODS and res.x is not None and res.y is not None:
+        return (float(res.x), float(res.y)), None
+    return None, CALLOUT_ANCHOR_NOT_LEADER_BACKED
+
+
+def _callout_box_anchor(plan, sheet: int, offset: int, words, draw
+                        ) -> Tuple[Optional[Tuple[float, float]], Optional[str], Dict[str, Any]]:
+    """Anchor the start from the UNIQUE printed callout box + its own leader (the fallback for the ambiguous
+    bare station token). Returns (xy | None, refusal | None, detail). Composes ONLY shipped observers:
+    ``plan.search`` (phrase -> bbox), then ``resolve_label_anchor`` over the words INSIDE that bbox (the label
+    identity is confined to THIS callout instance) with whole-sheet line_items/shapes for leader geometry.
+    Accepts leader-backed evidence only; every other outcome is a NAMED refusal, never a guess."""
+    detail: Dict[str, Any] = {"phrase": _CALLOUT_PHRASE, "mode": "CALLOUT_BOX_LEADER"}
+    bbs = plan.search(sheet, offset, _CALLOUT_PHRASE)
+    detail["phrase_bbox_hits"] = len(bbs)
+    bbox, refusal = _unique_callout_bbox(bbs)
+    if refusal is not None:
+        return None, refusal, detail
+    x0, y0, x1, y1 = bbox
+    inside = [w for w in words
+              if (x0 - _BOX_PAD) <= float(w.get("xc", 0)) <= (x1 + _BOX_PAD)
+              and (y0 - _BOX_PAD) <= float(w.get("yc", 0)) <= (y1 + _BOX_PAD)]
+    label_words = [w for w in inside if _CALLOUT_START_STA in str(w.get("text", ""))]
+    detail["box_words"], detail["label_word_candidates"] = len(inside), len(label_words)
+    if len(label_words) != 1:               # cannot isolate ONE label word inside the unique box -> refuse
+        return None, CALLOUT_ANCHOR_NOT_LEADER_BACKED, detail
+    lw = label_words[0]
+    res = resolve_label_anchor(inside, draw, plan.vector_segments(sheet, offset),
+                               label_token=str(lw["text"]), label_xy=(float(lw["xc"]), float(lw["yc"])))
+    detail["anchor"] = res.to_dict()
+    xy, refusal = _accept_leader_anchor(res)
+    return xy, refusal, detail
 
 
 def bind_and_render(plan_path: str, *, out_dir: Optional[str] = None, render: bool = True) -> Log68SliceResult:
@@ -211,17 +280,33 @@ def bind_and_render(plan_path: str, *, out_dir: Optional[str] = None, render: bo
 
         # --- start: source-bound plan-view anchor at the callout START station (never nearest-snap) --------
         ar = resolve_plan_view_anchor_for_path(str(plan_path), leg_sheet, float(start_ft), offset=offset)
+        anchor_detail: Dict[str, Any] = {"bare_station_anchor": ar.to_dict()}
         if ar.status == AMBIGUOUS_ANCHOR:
-            return _refuse(START_ANCHOR_AMBIGUOUS,
-                           "the callout start %s resolves to >= 2 plausible anchors on sheet %d — human pick, "
-                           "never a guess" % (start_sta, leg_sheet), chain=chain,
-                           detail={"anchor": ar.to_dict()})
-        if not ar.resolved or ar.x is None or ar.y is None:
+            # FALLBACK (only entered here): the bare token is non-unique on the sheet, but the FULL callout
+            # phrase is unique — anchor from the callout BOX + its own leader. Refusals stay named and carry
+            # the original START_ANCHOR_AMBIGUOUS context; a clean bare-station resolve NEVER reaches this.
+            xy, fb_refusal, fb_detail = _callout_box_anchor(plan, leg_sheet, offset, words, draw)
+            anchor_detail["callout_box_fallback"] = fb_detail
+            anchor_detail["original_start_anchor"] = START_ANCHOR_AMBIGUOUS
+            if fb_refusal is not None:
+                return _refuse(fb_refusal,
+                               "bare start %s is ambiguous on sheet %d and the callout-box leader fallback "
+                               "refused (%s) — human pick, never a guess" % (start_sta, leg_sheet, fb_refusal),
+                               chain=chain, detail=anchor_detail)
+            start_xy = xy
+            method = (fb_detail.get("anchor") or {}).get("method")
+            anchor_detail["anchor_mode"] = "CALLOUT_BOX_LEADER"
+            chain.append("bare start %s ambiguous -> UNIQUE callout box '%s' -> leader-backed anchor at "
+                         "(%.1f, %.1f) via %s" % (start_sta, _CALLOUT_PHRASE, start_xy[0], start_xy[1], method))
+        elif not ar.resolved or ar.x is None or ar.y is None:
             return _refuse(START_ANCHOR_UNRESOLVED,
                            "the callout start %s did not source-bind to a plan-view anchor on sheet %d (%s)"
-                           % (start_sta, leg_sheet, ar.status), chain=chain, detail={"anchor": ar.to_dict()})
-        start_xy = (float(ar.x), float(ar.y))
-        chain.append("start %s bound at (%.1f, %.1f) via %s" % (start_sta, start_xy[0], start_xy[1], ar.method))
+                           % (start_sta, leg_sheet, ar.status), chain=chain, detail=anchor_detail)
+        else:
+            start_xy = (float(ar.x), float(ar.y))
+            method = ar.method
+            anchor_detail["anchor_mode"] = "BARE_STATION"
+            chain.append("start %s bound at (%.1f, %.1f) via %s" % (start_sta, start_xy[0], start_xy[1], method))
 
         # --- leg: the source-backed conduit chain connected to the bound start (empty -> abstain) ----------
         conduit = [x for x in draw if x.get("layer") in BASE_CONDUIT]
@@ -277,6 +362,8 @@ def bind_and_render(plan_path: str, *, out_dir: Optional[str] = None, render: bo
                            "the leg's terminal vertex is not the matchline boundary — refusing", chain=chain)
 
         detail = {"engineering_sheet": leg_sheet, "pdf_page": pdf_page, "partner_sheets": partners,
+                  "anchor_mode": anchor_detail.get("anchor_mode"), "anchor_method": method,
+                  "anchor_evidence": anchor_detail,
                   "start_station": start_sta, "end_station": end_sta, "span_ft": int(span),
                   "drawn_ft": round(drawn_ft, 1), "start_xy": [round(start_xy[0], 1), round(start_xy[1], 1)],
                   "matchline_boundary_xy": [round(float(bnd[0]), 1), round(float(bnd[1]), 1)],

@@ -84,12 +84,83 @@ def test_no_engine_store_api_wiring_guard():
 def test_single_target_is_log68_only():
     assert S._LOG_ID == "log68"
     assert (S._CALLOUT_START_STA, S._CALLOUT_END_STA) == ("5+03", "6+79")
+    assert S._CALLOUT_PHRASE == "STA 5+03 TO STA 6+79"
+
+
+# --- callout-box fallback pure gates -----------------------------------------------------------------------
+
+def _fake_anchor(status, method, xy=(10.0, 20.0)):
+    from truelinev2.extract.plan_view_anchor_resolver import AnchorResolution
+    x, y = (xy if xy else (None, None))
+    return AnchorResolution(status, x, y, method, False)
+
+
+def test_callout_bbox_not_found_refuses():
+    bbox, refusal = S._unique_callout_bbox([])
+    assert bbox is None and refusal == S.CALLOUT_BOX_NOT_FOUND
+
+
+def test_callout_bbox_ambiguous_refuses():
+    bbox, refusal = S._unique_callout_bbox([[0, 0, 1, 1], [5, 5, 6, 6]])
+    assert bbox is None and refusal == S.CALLOUT_BOX_AMBIGUOUS
+    bbox, refusal = S._unique_callout_bbox([[0.0, 1.0, 2.0, 3.0]])
+    assert bbox == (0.0, 1.0, 2.0, 3.0) and refusal is None
+
+
+def test_proximity_only_anchor_refused():
+    from truelinev2.extract.plan_view_anchor_resolver import ANCHOR_RESOLVED_TO_SYMBOL
+    xy, refusal = S._accept_leader_anchor(_fake_anchor(ANCHOR_RESOLVED_TO_SYMBOL, "PROXIMITY_SYMBOL"))
+    assert xy is None and refusal == S.CALLOUT_ANCHOR_NOT_LEADER_BACKED
+
+
+def test_unresolved_and_route_tier_anchors_refused():
+    from truelinev2.extract.plan_view_anchor_resolver import (
+        ANCHOR_RESOLVED_TO_ROUTE_ENDPOINT,
+        UNMEASURABLE,
+    )
+    assert S._accept_leader_anchor(_fake_anchor(UNMEASURABLE, None, xy=None))[1] == \
+        S.CALLOUT_ANCHOR_NOT_LEADER_BACKED
+    assert S._accept_leader_anchor(_fake_anchor(ANCHOR_RESOLVED_TO_ROUTE_ENDPOINT, "ROUTE_TERMINUS"))[1] == \
+        S.CALLOUT_ANCHOR_NOT_LEADER_BACKED
+
+
+def test_leader_ambiguity_refused():
+    from truelinev2.extract.plan_view_anchor_resolver import AMBIGUOUS_ANCHOR
+    xy, refusal = S._accept_leader_anchor(_fake_anchor(AMBIGUOUS_ANCHOR, None, xy=None))
+    assert xy is None and refusal == S.CALLOUT_LEADER_AMBIGUOUS
+
+
+def test_leader_backed_anchors_accepted():
+    from truelinev2.extract.plan_view_anchor_resolver import (
+        ANCHOR_RESOLVED_TO_LEADER_TIP,
+        ANCHOR_RESOLVED_TO_SYMBOL,
+    )
+    xy, refusal = S._accept_leader_anchor(_fake_anchor(ANCHOR_RESOLVED_TO_SYMBOL, "LEADER_TRACED_SYMBOL"))
+    assert xy == (10.0, 20.0) and refusal is None
+    xy, refusal = S._accept_leader_anchor(_fake_anchor(ANCHOR_RESOLVED_TO_LEADER_TIP, "LEADER_TIP"))
+    assert xy == (10.0, 20.0) and refusal is None
 
 
 # --- fixture-gated live proof (deterministic on the real plan) --------------------------------------------
 
 def _plan_present() -> bool:
     return Path(_PLAN).is_file()
+
+
+def test_clean_station_anchor_path_never_enters_fallback(tmp_path, monkeypatch):
+    """A RESOLVED bare-station anchor must bypass the callout-box fallback entirely (ordering guard)."""
+    if not _plan_present():
+        return
+    from truelinev2.extract.plan_view_anchor_resolver import ANCHOR_RESOLVED_TO_SYMBOL, AnchorResolution
+    monkeypatch.setattr(S, "resolve_plan_view_anchor_for_path",
+                        lambda *a, **k: AnchorResolution(ANCHOR_RESOLVED_TO_SYMBOL, 10.0, 20.0,
+                                                         "LEADER_TRACED_SYMBOL", False))
+
+    def _boom(*a, **k):
+        raise AssertionError("callout-box fallback entered despite a clean bare-station anchor")
+    monkeypatch.setattr(S, "_callout_box_anchor", _boom)
+    r = S.bind_and_render(_PLAN, out_dir=str(tmp_path))          # downstream gates may abstain; that's fine
+    assert r.status != S.START_ANCHOR_AMBIGUOUS                  # and _boom never fired
 
 
 def test_live_slice_renders_exactly_one_review_stroke_or_named_abstain(tmp_path):
@@ -105,14 +176,25 @@ def test_live_slice_renders_exactly_one_review_stroke_or_named_abstain(tmp_path)
         assert r["png"] and Path(r["png"]).is_file()
         assert r["detail"]["end_station"] == "6+79" and r["detail"]["start_station"] == "5+03"
         assert list(r["detail"]["stroke_rgb"]) == [220, 25, 25]
+        # anchor evidence must be leader-backed in EITHER mode (bare station or callout-box fallback)
+        assert r["detail"]["anchor_mode"] in ("BARE_STATION", "CALLOUT_BOX_LEADER")
+        assert r["detail"]["anchor_method"] in ("LEADER_TRACED_SYMBOL", "LEADER_TIP")
+        if r["detail"]["anchor_mode"] == "CALLOUT_BOX_LEADER":   # original ambiguity context preserved
+            assert r["detail"]["anchor_evidence"]["original_start_anchor"] == S.START_ANCHOR_AMBIGUOUS
         # sibling containment: the drawn span closes at ~176', never the +42' 7+21 over-run
         assert abs(r["detail"]["drawn_ft"] - r["detail"]["span_ft"]) <= S.CLOSURE_REL_TOL * r["detail"]["span_ft"]
+        # the leg terminates AT the 6+79 matchline boundary (never past it into sheet-20 territory)
+        assert r["detail"]["matchline_boundary_xy"] is not None
+        chain_blob = " ".join(r["evidence_chain"])
+        assert "4+54" not in chain_blob and "7+21" not in chain_blob
     else:
         # any gate may abstain — but ONLY with a named refusal, and it must draw NOTHING
         assert r["status"] in {S.WITNESS_NOT_FOUND, S.WITNESS_AMBIGUOUS, S.START_ANCHOR_AMBIGUOUS,
                                S.START_ANCHOR_UNRESOLVED, S.NO_CONDUIT_CHAIN_AT_START,
                                S.MATCHLINE_ENDPOINT_NOT_FOUND, S.SIBLING_BLEED_DETECTED,
-                               S.LEG_NOT_SOURCE_BACKED, S.CLOSURE_FAILED, S.RENDER_PRODUCED_NO_STROKE}
+                               S.LEG_NOT_SOURCE_BACKED, S.CLOSURE_FAILED, S.RENDER_PRODUCED_NO_STROKE,
+                               S.CALLOUT_BOX_NOT_FOUND, S.CALLOUT_BOX_AMBIGUOUS,
+                               S.CALLOUT_LEADER_AMBIGUOUS, S.CALLOUT_ANCHOR_NOT_LEADER_BACKED}
         assert not pngs and r["png"] is None
 
 
