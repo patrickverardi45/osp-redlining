@@ -297,6 +297,35 @@
               "generic_fallback": {"type": "boolean", "description": "true => placed by the name-free generic-geometry fallback (no recognized convention)."}
             },
             "description": "Present (non-null) ONLY on bundle_origin UPLOADED_CORPUS_ENGINE manifests: the REVIEW placement-candidate state + graded confidence + reasons/warnings for a general uploaded-project placement. ABSENT on deterministic/recognized manifests (which are FINAL drawn truth, never review candidates), so those stay byte-identical."
+          },
+          "station_dots": {
+            "type": "array",
+            "description": "Present ONLY on bundle_origin HUMAN_CONFIRMED_SOURCE_ANCHOR manifests: interval/footage dots along the human-confirmed redline (every 50' by default plus the final endpoint), each clickable and carrying that bore's log info. ABSENT on deterministic/recognized/uploaded manifests (which never emit it), so those stay byte-identical. Never AUTO and never part of the deterministic frontier.",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["index", "footage_along", "xy_display", "provenance"],
+              "properties": {
+                "index": {"type": "integer", "minimum": 0, "description": "0-based dot order along the redline."},
+                "footage_along": {"type": "number", "minimum": 0, "description": "Feet from the redline start (self-calibrated from the reviewed row footage / drawn length)."},
+                "station": {"type": ["string", "null"], "description": "start_station + footage_along, only when the start station parses; else null (footage_along still present)."},
+                "xy_display": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["x", "y"],
+                  "properties": {"x": {"type": "number"}, "y": {"type": "number"}},
+                  "description": "Dot position in the plan page's PDF display space (the renderer's stroke space)."
+                },
+                "depth": {"type": ["string", "null"]},
+                "boc": {"type": ["string", "null"]},
+                "date": {"type": ["string", "null"]},
+                "crew": {"type": ["string", "null"]},
+                "print": {"type": ["string", "null"]},
+                "notes": {"type": ["string", "null"]},
+                "bore_log_id": {"type": ["string", "null"]},
+                "provenance": {"type": "string", "enum": ["HUMAN_CONFIRMED_CONTROL_POINTS"], "description": "Always human-confirmed; never AUTO."}
+              }
+            }
           }
         }
       }

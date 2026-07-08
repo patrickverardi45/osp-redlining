@@ -319,13 +319,16 @@ def build_source_anchor_manifest(anchor_entries, *, project_id, project_name, en
     ``bundle_origin = HUMAN_CONFIRMED_SOURCE_ANCHOR``. ``mock_example`` is false; artifact sha256/bytes are
     filled by the publisher. ``closure``/``coverage`` are null (no station footage is solved or invented).
     Each entry is {"source_anchor": <record>, "artifact_path": <manifest-relative png>, "sheet": <int>,
-    "construction_sheet": <int|None>}. ``sheet``/``page_number`` are the 1-based PDF page index the stroke
-    rendered on; ``construction_sheet`` is the CONSTRUCTION sheet number printed on that page (e.g. PDF page
-    20 -> "7 OF 30" -> 7). The manifest's ``source_sheets`` + artifact ``sheet`` report the construction
-    sheet (the unit the engine/recognized bundles use), falling back to the PDF page number when the page
-    has no plan-sheet label (so closeout never mislabels the sheet). Counts derive from the logs, so the
-    published manifest reconciles. Per-job + per-bundle only — never summed into the deterministic 50/58
-    frontier."""
+    "construction_sheet": <int|None>, "station_dots": <list|None>}. ``sheet``/``page_number`` are the 1-based
+    PDF page index the stroke rendered on; ``construction_sheet`` is the CONSTRUCTION sheet number printed on
+    that page (e.g. PDF page 20 -> "7 OF 30" -> 7). The manifest's ``source_sheets`` + artifact ``sheet``
+    report the construction sheet (the unit the engine/recognized bundles use), falling back to the PDF page
+    number when the page has no plan-sheet label (so closeout never mislabels the sheet). ``station_dots`` is
+    ADDITIVE (default [] when the caller supplies none, so old callers/manifests are unaffected): the
+    interval/footage dots along the human redline, each clickable + carrying that bore's log info; it is
+    emitted ONLY on this human-confirmed builder, so deterministic/recognized/uploaded manifests never carry
+    it and stay byte-identical. Counts derive from the logs, so the published manifest reconciles. Per-job +
+    per-bundle only — never summed into the deterministic 50/58 frontier."""
     logs = []
     for entry in anchor_entries:
         sa = entry["source_anchor"]
@@ -358,6 +361,7 @@ def build_source_anchor_manifest(anchor_entries, *, project_id, project_name, en
             "evidence": [{"kind": "OWNER_REVIEW", "ref": "source_anchor/%s" % sa["source_anchor_id"],
                           "note": "human-confirmed control points marked on the uploaded plan page"}],
             "warnings": [],
+            "station_dots": list(entry.get("station_dots") or []),   # additive: interval dots (default [])
         })
     n = len(logs)
     status_counts = {k: 0 for k in _MANIFEST_STATUS_KEYS}

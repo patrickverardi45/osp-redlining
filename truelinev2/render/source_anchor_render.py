@@ -21,6 +21,12 @@ from pathlib import Path
 from truelinev2.ingest.pdf import PlanPdf
 from truelinev2.ingest.sheet_label_index import build_sheet_index, construction_sheet_for_page
 from truelinev2.render.crop import render_redline_stroke
+from truelinev2.render.station_dots import (
+    compute_station_dots,
+    dot_xys,
+    resolve_bore_fields,
+    stroke_polyline_with_dots,
+)
 from truelinev2.contracts.processing_job import job_dir, load_job
 from truelinev2.contracts.reviewed_bore_log import (
     ReviewedBoreLogNotFoundError,
@@ -57,6 +63,30 @@ RENDER_ENGINE_HEAD = "human-confirmed-source-anchor"   # not a deterministic ren
 
 def _stroke_points(sa) -> list:
     return [(float(p["x"]), float(p["y"])) for p in sa.get("control_points", [])]
+
+
+def _dots_for_anchor(store_root, customer_project_id, job_id, sa) -> tuple:
+    """Interval/footage dots for one anchor + the reviewed-row footage used to self-calibrate them. Best-effort
+    and NON-FATAL: any missing row/footage -> ([], None) so the render still draws the bare human redline. Reads
+    the reviewed_bore_log (already validated at anchor creation) for the row's footage/start-station/log info;
+    infers NO geometry (dots are interpolated only along the human control-point polyline)."""
+    try:
+        rbl = load_reviewed_bore_log(store_root, customer_project_id, job_id, sa["reviewed_bore_log_id"])
+    except ReviewedBoreLogNotFoundError:
+        return [], None
+    rows = rbl.get("rows", [])
+    row_ids = sa.get("row_ids") or []
+    row = next((r for r in rows if r.get("row_id") in row_ids), None) if row_ids else (rows[0] if rows else None)
+    fields = resolve_bore_fields(row)
+    footage = fields["footage"]
+    if not footage or footage <= 0:
+        return [], None
+    info = dict(fields["info"])
+    if not info.get("bore_log_id"):                    # fall back to the reviewed-bore-log id when the row
+        info["bore_log_id"] = sa.get("reviewed_bore_log_id")   # carries no explicit bore id
+    dots = compute_station_dots(sa.get("control_points", []), footage=footage,
+                                start_station=fields["start_station"], info=info)
+    return dots, footage
 
 
 def _plan_path_for(store_root, customer_project_id, job_id, job, plan_upload_id):
@@ -154,12 +184,19 @@ def render_job_source_anchors(store_root, customer_project_id, job_id, source_an
         if plan_path is None:
             raise SourceAnchorStateError("PLAN_PDF for source_anchor %r is not available" % sa_id)
         page = int(sa["page_number"])                       # 1-based PDF page index the stroke renders on
+        # Additive: interval/footage dots along THIS human redline (best-effort; [] never blocks the render).
+        dots, footage = _dots_for_anchor(store_root, customer_project_id, job_id, sa)
+        if dots and footage:                            # augment the drawn polyline so the dot marks get rings
+            stroke_pts = stroke_polyline_with_dots(sa.get("control_points", []), footage=footage)
+            mandatory = tuple(dot_xys(dots)) + ((stroke_pts[0], stroke_pts[-1]) if stroke_pts else ())
+        else:
+            stroke_pts, mandatory = _stroke_points(sa), ()
         plan = PlanPdf(str(plan_path))
         try:
             png = render_redline_stroke(
-                plan, bore_id=sa_id, sheet=page, offset=0, stroke_points=_stroke_points(sa),
+                plan, bore_id=sa_id, sheet=page, offset=0, stroke_points=stroke_pts,
                 status=RENDER_STATUS, reason="human-confirmed source anchor %s" % sa_id,
-                out_dir=str(render_src))
+                out_dir=str(render_src), mandatory_points=mandatory)
             # Honest sheet labelling: the manifest reports the CONSTRUCTION sheet number printed on that PDF
             # page (e.g. PDF page 20 -> "7 OF 30" -> 7), matching the unit the engine/recognized bundles use
             # for source_sheets. Falls back to the PDF page number when the page carries no plan-sheet label.
@@ -174,7 +211,7 @@ def render_job_source_anchors(store_root, customer_project_id, job_id, source_an
         manifest_path = "artifacts/%s/%s" % (sa_id, Path(png).name)
         artifact_map[manifest_path] = png
         entries.append({"source_anchor": sa, "artifact_path": manifest_path, "sheet": page,
-                        "construction_sheet": construction_sheet})
+                        "construction_sheet": construction_sheet, "station_dots": dots})
 
     manifest_input = build_source_anchor_manifest(
         entries, project_id=customer_project_id, project_name=customer_project_id,
