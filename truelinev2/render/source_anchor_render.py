@@ -114,17 +114,24 @@ def _content_key(anchors) -> str:
 
 
 def _summary(store_root, customer_project_id, job_id, handoff, anchor_ids) -> dict:
-    """Render summary built from the finalized handoff + the durable bundle (manifest-backed read)."""
+    """Render summary built from the finalized handoff + the durable bundle (manifest-backed read).
+    ``station_dots`` (additive, {log_id: [...]}) surfaces the manifest's clickable interval/footage dots so
+    the web can show them without a second manifest fetch — human-confirmed lane only, never AUTO."""
     ab = handoff.get("artifact_bundle_attachment") or {}
     mf = handoff.get("manifest_attachment") or {}
     bundle_id = ab.get("bundle_id")
     artifacts = []
+    station_dots = {}
     if bundle_id:
         bundle_store = job_dir(store_root, customer_project_id, job_id) / BUNDLE_STORE_SUBDIR
         bundle = StaticBundleConsumer(bundle_store, enable=True).open_bundle(bundle_id)
         for log_id, art in bundle.final_artifacts():
             artifacts.append({"log_id": log_id, "path": art.get("path"), "sha256": art.get("sha256"),
                               "bytes": art.get("bytes"), "kind": art.get("kind")})
+        for lg in bundle.manifest.get("logs", []):
+            dots = lg.get("station_dots") or []
+            if dots:
+                station_dots[lg.get("log_id")] = dots
     return {
         "status": handoff["status"],
         "bundle_id": bundle_id,
@@ -132,6 +139,7 @@ def _summary(store_root, customer_project_id, job_id, handoff, anchor_ids) -> di
         "artifact_count": ab.get("artifact_count"),
         "source_anchor_ids": list(anchor_ids),
         "artifacts": artifacts,
+        "station_dots": station_dots,           # additive: {source_anchor_id: [dot, ...]}, {} when none
         "redline_manifest_slot": mf.get("store_relative_path"),
         "artifact_bundle_slot": ab.get("store_relative_path"),
     }

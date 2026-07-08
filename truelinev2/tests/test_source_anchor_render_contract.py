@@ -272,6 +272,18 @@ def test_render_places_station_dots_with_bore_info(tmp_path):
     assert png.is_file() and png.read_bytes()[:4] == b"\x89PNG"
 
 
+def test_render_summary_surfaces_station_dots_for_the_web(tmp_path):
+    """The render response (what the web consumes) carries the manifest's dots additively — idempotent
+    re-render included — so the UI needs no second manifest fetch."""
+    plan = _ready_job(tmp_path, row_raw=_FOOTAGE_ROW)
+    _anchor(tmp_path, plan)
+    for summary in (_render(tmp_path), _render(tmp_path)):        # fresh render + idempotent replay
+        dots = summary["station_dots"]["sa-1"]
+        assert [d["footage_along"] for d in dots] == [0.0, 50.0, 100.0, 150.0, 176.0]
+        assert dots[0]["station"] == "5+03" and dots[-1]["station"] == "6+79"
+        assert all(d["provenance"] == "HUMAN_CONFIRMED_CONTROL_POINTS" for d in dots)
+
+
 def test_render_without_footage_row_still_renders_no_dots(tmp_path):
     plan = _ready_job(tmp_path)                                                 # default row: no footage
     _anchor(tmp_path, plan)
