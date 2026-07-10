@@ -89,12 +89,24 @@ _TRIPLE_RE = re.compile(
     r"(?P<depth>\d+(?:\.\d+)?)\s*'?\s+(?P<boc>\d+(?:\.\d+)?)\s*'?",
     re.IGNORECASE,
 )
-_HEADER_FIELD_PATTERNS = {
-    "date": re.compile(r"(?im)^\s*DATE\s*[:#-]?\s*(.+?)\s*$"),
-    "crew": re.compile(r"(?im)^\s*CREW\s*[:#-]?\s*(.+?)\s*$"),
-    "job_name": re.compile(r"(?im)^\s*JOB\s*NAME\s*[:#-]?\s*(.+?)\s*$"),
-    "print_raw": re.compile(r"(?im)^\s*PRINT\s*#?\s*[:#-]?\s*(.+?)\s*$"),
+
+# Header label -> the sequence of bare (punctuation-stripped) UPPERCASE tokens that spells it out ("Job
+# Name" prints as two words; the other three are one). Positional, not regex-over-text: a real form's
+# label and its value are often SEPARATE text runs that PyMuPDF's plain "text" mode does not concatenate
+# onto one line -- see ``_parse_header_positional`` below.
+_HEADER_LABEL_TOKENS = {
+    "date": ("DATE",),
+    "crew": ("CREW",),
+    "job_name": ("JOB", "NAME"),
+    "print_raw": ("PRINT",),
 }
+# Bounded search geometry (PDF points) for locating a label's VALUE by position -- fail-closed: anything
+# outside these bounds is simply not found (NOT_PRESENT), never guessed.
+_VALUE_RIGHT_MAX_GAP = 220.0     # max horizontal gap from the label's right edge to the FIRST value word
+_VALUE_RIGHT_INTERNAL_GAP = 40.0  # max gap BETWEEN consecutive value words (stops before sweeping the next field)
+_VALUE_RIGHT_MAX_SPAN = 260.0    # max total width a same-line value may span from the label's right edge
+_VALUE_BELOW_Y_TOL = 1.8         # multiples of label height -- max vertical drop to a below-label value
+_VALUE_BELOW_X_TOL = 40.0        # max horizontal drift of a below-label value's left edge from the label's
 
 
 # --------------------------------------------------------------------------- #
@@ -112,6 +124,31 @@ def _pdf_page_texts(pdf_bytes: bytes) -> List[str]:
         return []
     try:
         return [(doc[i].get_text("text") or "") for i in range(doc.page_count)]
+    finally:
+        doc.close()
+
+
+def _pdf_page_words(pdf_bytes: bytes) -> List[List[dict]]:
+    """Per-page WORD tokens with DISPLAY-space bboxes (PyMuPDF ``get_text('words')``), one list per page in
+    order. Positional counterpart to ``_pdf_page_texts``: lets the header parser locate a printed label's
+    value by PROXIMITY instead of assuming the label and its value share one extracted text line (a real
+    form's actual failure mode -- the label and value are often separate text runs)."""
+    import fitz  # lazy
+
+    try:
+        doc = fitz.open(stream=bytes(pdf_bytes), filetype="pdf")
+    except Exception:  # noqa: BLE001 - unreadable PDF -> zero pages, never a raised exception here
+        return []
+    try:
+        out: List[List[dict]] = []
+        for i in range(doc.page_count):
+            words = []
+            for w in doc[i].get_text("words") or ():
+                x0, y0, x1, y1, text = float(w[0]), float(w[1]), float(w[2]), float(w[3]), w[4]
+                words.append({"text": text, "x0": x0, "y0": y0, "x1": x1, "y1": y1,
+                             "yc": (y0 + y1) / 2.0, "height": max(y1 - y0, 1.0)})
+            out.append(words)
+        return out
     finally:
         doc.close()
 
@@ -165,16 +202,94 @@ def _blank_header() -> dict:
 
 
 # --------------------------------------------------------------------------- #
-# TEXT_LAYER parsing -- tolerant header + ladder-row regex reader over a page's own extracted text.
+# TEXT_LAYER parsing -- positional header capture (word bboxes) + a tolerant ladder-row regex reader over
+# the page's own extracted text.
 # --------------------------------------------------------------------------- #
-def _parse_header(lines: List[str]) -> dict:
+def _norm_label_token(text: str) -> str:
+    """Fold one word token to bare uppercase letters (drops attached punctuation like "DATE:"/"PRINT#:")."""
+    return re.sub(r"[^A-Za-z]", "", text or "").upper()
+
+
+def _find_label_span(words: List[dict], tokens: Tuple[str, ...]) -> Optional[List[int]]:
+    """First run of consecutive word INDICES whose normalized text exactly spells ``tokens`` in order
+    (e.g. ("JOB","NAME") matches word tokens "Job" "Name:"). None if no such run exists."""
+    n = len(tokens)
+    for i in range(len(words) - n + 1):
+        if all(_norm_label_token(words[i + j]["text"]) == tokens[j] for j in range(n)):
+            return list(range(i, i + n))
+    return None
+
+
+def _value_words_right(words: List[dict], label_words: List[dict], exclude: set) -> List[dict]:
+    """Bounded rightward search: word(s) on the SAME printed line (y-overlap within the label's own height)
+    strictly right of the label, stopping at the first internal gap that looks like the start of the NEXT
+    field. Fail-closed -- returns [] rather than guessing when nothing qualifies within the bounds."""
+    end_x = max(w["x1"] for w in label_words)
+    yc = sum(w["yc"] for w in label_words) / len(label_words)
+    tol = max(w["height"] for w in label_words) * 0.9
+    candidates = [w for i, w in enumerate(words)
+                 if i not in exclude and w["x0"] > end_x and abs(w["yc"] - yc) <= tol
+                 and (w["x0"] - end_x) <= _VALUE_RIGHT_MAX_GAP]
+    candidates.sort(key=lambda w: w["x0"])
+    out: List[dict] = []
+    prev_x1: Optional[float] = None      # None -> the NEXT check is the label-to-first-word gap (generous)
+    for w in candidates:
+        gap = (w["x0"] - end_x) if prev_x1 is None else (w["x0"] - prev_x1)
+        limit = _VALUE_RIGHT_MAX_GAP if prev_x1 is None else _VALUE_RIGHT_INTERNAL_GAP
+        if gap > limit:
+            break
+        if w["x1"] - end_x > _VALUE_RIGHT_MAX_SPAN:
+            break
+        out.append(w)
+        prev_x1 = w["x1"]
+    return out
+
+
+def _value_words_below(words: List[dict], label_words: List[dict], exclude: set) -> List[dict]:
+    """Bounded downward search (forms vary: a value printed on the line BELOW its label instead of beside
+    it) -- the nearest line under the label whose left edge roughly aligns with the label's own left edge.
+    Fail-closed -- [] when nothing qualifies within the bounds."""
+    x0 = min(w["x0"] for w in label_words)
+    y1 = max(w["y1"] for w in label_words)
+    h = max(w["height"] for w in label_words)
+    candidates = [w for i, w in enumerate(words)
+                 if i not in exclude and w["yc"] > y1 and (w["yc"] - y1) <= h * _VALUE_BELOW_Y_TOL
+                 and abs(w["x0"] - x0) <= _VALUE_BELOW_X_TOL]
+    if not candidates:
+        return []
+    candidates.sort(key=lambda w: (w["yc"], w["x0"]))
+    first_yc = candidates[0]["yc"]
+    same_line = sorted((w for w in candidates if abs(w["yc"] - first_yc) < h * 0.6), key=lambda w: w["x0"])
+    return same_line
+
+
+def _parse_header_positional(words: List[dict]) -> dict:
+    """Locate each of the 4 header labels by TEXT (not position) then its value by POSITION: nearest word
+    run to the label's right (same printed line), else the nearest line below, within bounded distances.
+    A label not found, or found with no value within bounds, stays NOT_PRESENT -- fail-closed, never a
+    fuzzy guess beyond this positional rule."""
     header = _blank_header()
-    for field, pattern in _HEADER_FIELD_PATTERNS.items():
-        for line in lines:
-            m = pattern.match(line)
-            if m and m.group(1).strip():
-                header[field] = _read_cell(m.group(1).strip(), verbatim=line.strip())
-                break
+    if not words:
+        return header
+    spans: Dict[str, List[int]] = {}
+    for field, tokens in _HEADER_LABEL_TOKENS.items():
+        span = _find_label_span(words, tokens)
+        if span is not None:
+            spans[field] = span
+    label_idx_set = {i for span in spans.values() for i in span}   # a label's own tokens are never a value
+    for field, idxs in spans.items():
+        label_words = [words[i] for i in idxs]
+        value_words = _value_words_right(words, label_words, label_idx_set)
+        if not value_words:
+            value_words = _value_words_below(words, label_words, label_idx_set)
+        if not value_words:
+            continue
+        text = " ".join(w["text"] for w in value_words).strip(" :#-\t")
+        if not text:
+            continue
+        verbatim = (" ".join(w["text"] for w in label_words) + " "
+                   + " ".join(w["text"] for w in value_words)).strip()
+        header[field] = _read_cell(text, verbatim=verbatim)
     return header
 
 
@@ -204,14 +319,15 @@ def _parse_ladder(lines: List[str]) -> List[dict]:
     return readings
 
 
-def _text_layer_page(source: dict, text: str, *, extractor: str = "text_layer_parser") -> dict:
+def _text_layer_page(source: dict, text: str, words: Optional[List[dict]] = None, *,
+                     extractor: str = "text_layer_parser") -> dict:
     lines = [ln for ln in text.splitlines() if ln.strip()]
     record = {
         "record_format": PAGE_RECORD_FORMAT,
         "source": source,
         "method": TEXT_LAYER,
         "extractor": extractor,
-        "header": _parse_header(lines),
+        "header": _parse_header_positional(words or []),
         "readings": _parse_ladder(lines),
         "page_status": EXTRACTED,
         "refusal": None,
@@ -390,12 +506,14 @@ def extract_handwritten(upload_bytes: bytes, filename: str, *, upload_id: str,
     pages: List[dict] = []
     if ext == ".pdf":
         texts = _pdf_page_texts(data)
+        words_by_page = _pdf_page_words(data)
         page_count = len(texts) or 1
         for idx, text in enumerate(texts):
             source = {"upload_id": upload_id, "sha256": sha, "file_name": str(filename),
                      "page_index": idx, "page_count": page_count}
             if text.strip():
-                pages.append(_text_layer_page(source, text))
+                page_words = words_by_page[idx] if idx < len(words_by_page) else []
+                pages.append(_text_layer_page(source, text, page_words))
             else:
                 png = rasterize_page(data, idx) or b""
                 pages.append(_vision_page(source, png, provider_name=provider_name,

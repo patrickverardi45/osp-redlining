@@ -72,6 +72,23 @@ def _blank_pdf_bytes(page_count=1) -> bytes:
     return data
 
 
+def _pdf_bytes_positioned(pages_items) -> bytes:
+    """One PDF, one page per ``pages_items`` entry, each entry a list of ``(x, y, text)`` placements at
+    EXPLICIT coordinates -- lets a test put a label and its value in genuinely SEPARATE text runs (the real
+    form's actual header-capture failure mode: ``get_text('text')`` does not concatenate them onto one
+    line, but their word bboxes are still positionally adjacent)."""
+    import fitz
+
+    doc = fitz.open()
+    for items in pages_items:
+        page = doc.new_page(width=612, height=792)
+        for x, y, text in items:
+            page.insert_text((x, y), text, fontsize=10)
+    data = doc.tobytes()
+    doc.close()
+    return data
+
+
 def _jpeg_bytes() -> bytes:
     from PIL import Image
 
@@ -159,6 +176,57 @@ def test_text_layer_tolerates_sation_misprint_and_sta_variants():
     assert len(out["proposals"]) == 1
     proposal = out["proposals"][0]
     assert proposal["start_station"] == "0+00" and proposal["end_station"] == "1+50"
+
+
+def test_positional_header_same_line_separate_text_runs():
+    # The real-form failure mode: label and value are SEPARATE insert_text runs (not one concatenated
+    # string), with a genuine gap between them -- a naive per-line regex over get_text('text') can miss
+    # this; the positional (word-bbox) capture must not.
+    items = [
+        (72, 100, "DATE"), (150, 100, "6/1/2026"),
+        (72, 120, "CREW"), (150, 120, "JS"),
+        (72, 140, "Job"), (105, 140, "Name"), (170, 140, "Test Loop"),
+        (72, 160, "Print"), (160, 160, "29,30,31"),
+        (72, 200, "STA 0+00 3.5 5'"), (72, 218, "STA 0+50 3.5 5'"), (72, 236, "STA 1+00 3.5 5'"),
+    ]
+    out = extract_handwritten(_pdf_bytes_positioned([items]), "log.pdf", upload_id="up-1")
+    header = out["pages"][0]["header"]
+    assert header["date"]["value"] == "6/1/2026" and header["date"]["status"] == READ
+    assert header["crew"]["value"] == "JS"
+    assert header["job_name"]["value"] == "Test Loop"
+    assert header["print_raw"]["value"] == "29,30,31"
+    assert len(out["proposals"]) == 1
+    assert out["proposals"][0]["sheet_refs"] == [29, 30, 31]
+
+
+def test_positional_header_value_printed_below_label():
+    # Forms vary: some print the value on the line BELOW its label instead of beside it -- a case the old
+    # single-line regex approach could never resolve at all.
+    items = [
+        (72, 100, "DATE"), (72, 118, "6/1/2026"),
+        (72, 140, "CREW"), (72, 158, "JS"),
+        (72, 180, "Job"), (105, 180, "Name"), (72, 198, "Test Loop"),
+        (72, 220, "Print"), (72, 238, "29,30,31"),
+        (72, 280, "STA 0+00 3.5 5'"), (72, 298, "STA 0+50 3.5 5'"),
+    ]
+    out = extract_handwritten(_pdf_bytes_positioned([items]), "log.pdf", upload_id="up-1")
+    header = out["pages"][0]["header"]
+    assert header["date"]["value"] == "6/1/2026"
+    assert header["crew"]["value"] == "JS"
+    assert header["job_name"]["value"] == "Test Loop"
+    assert header["print_raw"]["value"] == "29,30,31"
+
+
+def test_page_without_header_still_extracts_ladder_with_fields_not_present():
+    lines = ["STA 0+00 3.5 5'", "STA 0+50 3.5 5'", "STA 1+00 3.5 5'"]
+    out = extract_handwritten(_pdf_bytes([lines]), "log.pdf", upload_id="up-1")
+    header = out["pages"][0]["header"]
+    for field in ("date", "crew", "job_name", "print_raw"):
+        assert header[field]["status"] == NOT_PRESENT and header[field]["value"] is None
+    assert len(out["proposals"]) == 1                        # ladder unaffected by the missing header
+    proposal = out["proposals"][0]
+    assert proposal["start_station"] == "0+00" and proposal["end_station"] == "1+00"
+    assert proposal["date"] is None and proposal["crew"] is None and proposal["notes"] is None
 
 
 def test_text_layer_descending_only_page_yields_zero_proposals_and_ledger_flags_it():
