@@ -169,6 +169,23 @@ def test_resolve_bore_fields_generic_extractor_keys():
     assert f["footage"] == 176.0 and f["start_station"] == "5+03" and f["info"]["print"] == "17"
 
 
+def test_resolve_bore_fields_depth_boc_min_ft_aliases():
+    """The strict-reader + generic-extractor lanes both write depth_min_ft/boc_min_ft (borelog_rows.py) —
+    these must resolve onto the SAME dot info keys ("depth"/"boc") a manually-typed row uses, so the dot
+    payload is identical regardless of which lane produced the row."""
+    row = {"raw": {"start_station": "5+03", "end_station": "6+79", "footage_ft": 176.0,
+                   "depth_min_ft": 42.0, "boc_min_ft": 48.0}}
+    f = SD.resolve_bore_fields(row)
+    assert f["info"]["depth"] == "42.0" and f["info"]["boc"] == "48.0"
+
+
+def test_resolve_bore_fields_depth_boc_absent_stays_none():
+    """No depth/boc column at all -> both info keys stay honestly None (never a fabricated zero)."""
+    row = {"raw": {"start_station": "5+03", "end_station": "6+79", "footage_ft": 176.0}}
+    f = SD.resolve_bore_fields(row)
+    assert f["info"]["depth"] is None and f["info"]["boc"] is None
+
+
 def test_footage_coercion_handles_units_and_numbers():
     assert SD.resolve_bore_fields({"raw": {"footage": 176}})["footage"] == 176.0
     assert SD.resolve_bore_fields({"raw": {"length": "176 ft"}})["footage"] == 176.0
