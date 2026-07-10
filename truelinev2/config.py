@@ -114,6 +114,18 @@ class Settings:
     # never interfere with the Access challenge. Env: TL2_RATE_LIMIT_OPTIN, TL2_RATE_LIMIT_PER_MINUTE.
     rate_limit_optin: bool = False
     rate_limit_per_minute: int = 120
+    # --- Phase-1 handwritten/scanned bore-log extraction (Wave 2: extract seam + API). DEFAULT OFF -- OFF is
+    # byte-identical (no image BORE_LOG uploads accepted, no third extraction tier, no fan-out/review/source
+    # routes). No vendor/model name lives here or anywhere in this seam -- the provider is opaque runtime
+    # data (a deployment-supplied label), and this wave ships NO network provider (the registry is empty).
+    handwritten_borelog_extraction_optin: bool = False
+    # Hard timeout (seconds) around one page's vision-provider call (threading-based wrapper; a provider that
+    # never returns cannot hang extraction forever). Env: TL2_HANDWRITTEN_BORELOG_TIMEOUT_SECONDS.
+    handwritten_borelog_timeout_seconds: int = 90
+    # Deployment-selected vision-provider NAME (opaque runtime data -- looked up in a provider registry that
+    # is EMPTY in this wave, so any value here still refuses honestly with HANDWRITTEN_VISION_PROVIDER_NOT_CONFIGURED
+    # until a real provider is wired in a later, separately-authorized change). Env: TL2_HANDWRITTEN_BORELOG_PROVIDER.
+    handwritten_borelog_provider: Optional[str] = None
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -164,6 +176,15 @@ class Settings:
             ),
             rate_limit_optin=os.getenv("TL2_RATE_LIMIT_OPTIN", "0") == "1",
             rate_limit_per_minute=int(os.getenv("TL2_RATE_LIMIT_PER_MINUTE", "120") or "120"),
+            handwritten_borelog_extraction_optin=(
+                os.getenv("TL2_HANDWRITTEN_BORELOG_EXTRACTION_OPTIN", "0") == "1"
+            ),
+            handwritten_borelog_timeout_seconds=int(
+                os.getenv("TL2_HANDWRITTEN_BORELOG_TIMEOUT_SECONDS", "90") or "90"
+            ),
+            handwritten_borelog_provider=(
+                os.getenv("TL2_HANDWRITTEN_BORELOG_PROVIDER", "").strip() or None
+            ),
         )
 
     @classmethod

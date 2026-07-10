@@ -53,6 +53,19 @@ LOW = "LOW"
 MEDIUM = "MEDIUM"
 CELL_CONFIDENCE_LEVELS = (LOW, MEDIUM)
 
+# Evidence-status vocabulary: the status label attached to a DERIVED series (SpanProposal.cell_evidence[*]
+# ['status'], see _series_evidence_entry below) -- DISTINCT from Cell.status (3 values, above), which
+# describes ONE cell's own read state. A series spans every reading in one run for one field (e.g. every
+# depth_ft cell across a run's stations); its evidence-status summarizes what that WHOLE series supports
+# for the one derived SpanProposal field:
+#   READ        -- every READ cell in the series agreed on one value (that value is the derived field).
+#   UNREADABLE  -- at least one cell in the series is UNREADABLE (the field is left unresolved, never guessed).
+#   NOT_PRESENT -- no cell in the series was ever READ (the field was never printed/filled).
+#   VARIED      -- more than one READ cell in the series disagreed (the field is left unresolved, never
+#                  guessed) -- this 4th value has NO Cell.status counterpart; it can only describe a series.
+VARIED = "VARIED"
+EVIDENCE_STATUSES = (READ, UNREADABLE, NOT_PRESENT, VARIED)
+
 # HandwrittenPageExtraction.page_status
 EXTRACTED = "EXTRACTED"
 REFUSED = "REFUSED"
@@ -252,7 +265,7 @@ def _series_value(run: List[Tuple[float, Dict[str, Any]]], field: str):
     first = read_cells[0]["value"]
     if all(_values_agree(c["value"], first) for c in read_cells):
         return _coerce_float(first), READ, cells
-    return None, "VARIED", cells
+    return None, VARIED, cells
 
 
 def _cell_evidence_entry(cell: Dict[str, Any], page_index: int) -> Dict[str, Any]:

@@ -32,7 +32,9 @@ from __future__ import annotations
 
 import openpyxl
 
-from truelinev2.contracts.extracted_row import HIGH, MEDIUM, TABLE_IMPORT, new_extracted_row
+from truelinev2.contracts.extracted_row import HIGH, MEDIUM, OCR, TABLE_IMPORT, TEXT_PARSE, new_extracted_row
+from truelinev2.extract.handwritten_borelog import HANDWRITTEN_NO_USABLE_ROWS
+from truelinev2.contracts.handwritten_extraction import TEXT_LAYER, VISION_OCR
 from truelinev2.ingest.normalize import load_borelog
 
 _ROW_ID_PREFIX = "extracted"
@@ -40,6 +42,10 @@ _ROW_ID_PREFIX = "extracted"
 # Kept in sync with contracts.uploaded_corpus_engine_handoff.BORE_LOG_FORMAT_UNRECOGNIZED (test-locked);
 # defined locally so this extract adapter never imports that module's engine/renderer dependency chain.
 BORE_LOG_FORMAT_UNRECOGNIZED = "BORE_LOG_FORMAT_UNRECOGNIZED"
+
+# Phase-1 handwritten extraction (third tier): SpanProposal.method (via its originating page) -> the
+# extracted_row extraction_method vocabulary.
+_HANDWRITTEN_METHOD_TO_EXTRACTION_METHOD = {TEXT_LAYER: TEXT_PARSE, VISION_OCR: OCR}
 
 
 class BoreLogExtractionError(Exception):
@@ -186,25 +192,104 @@ def _generic_span_rows(path, source_upload_id, *, at, by, existing_row_ids):
     return rows
 
 
-def extract_rows_from_borelog(path, source_upload_id, *, at, by, existing_row_ids=()):
-    """Parse ONE uploaded bore-log file into UNTRUSTED ``extracted_row`` dicts (TABLE_IMPORT, UNREVIEWED).
+class _RowsWithLedger(list):
+    """A plain list of extracted rows carrying one ADDITIVE attribute: the Phase-1 handwritten extraction's
+    page_ledger (see extract/handwritten_borelog.py::build_page_ledger). Only the third (handwritten) tier
+    ever returns this subclass; the strict + generic tiers return a plain ``list`` unchanged (so
+    ``getattr(rows, "page_ledger", None)`` is the byte-identical-safe way for a caller to detect it)."""
 
-    Two deterministic tiers, engine reader FIRST (a file it recognizes yields byte-identical rows to the
-    pre-fallback behavior): the v2 reader yields one canonical bore span per file (start/end stations +
-    footage + candidate sheet refs as raw). When it does not recognize the file, the generic span extractor
-    yields one row PER source-confirmed span instead (simple CSV/XLSX span tables, labeled start/end rows,
-    inline station-pair callouts, text-PDF bore logs). The caller appends them via
-    ``reviewed_bore_log.add_extracted_rows``; this function places no geometry, fabricates no confidence,
-    and confers no engine eligibility.
+    def __init__(self, rows, page_ledger):
+        super().__init__(rows)
+        self.page_ledger = page_ledger
 
-    Raises ``BoreLogExtractionError`` (naming ``BORE_LOG_FORMAT_UNRECOGNIZED``) when NEITHER tier finds a
-    source-confirmed span.
+
+def _handwritten_tier_rows(path, source_upload_id, *, at, by, existing_row_ids, handwritten_extractor):
+    """Third tier: run the Phase-1 handwritten extractor over the source file's bytes, map every
+    ``SpanProposal`` into an UNTRUSTED ``extracted_row`` (extraction_method TEXT_PARSE for a TEXT_LAYER
+    page, OCR for a VISION_OCR page), and carry the page_ledger on the returned list for the route. Zero
+    proposals raises ``BoreLogExtractionError`` naming ``HANDWRITTEN_NO_USABLE_ROWS`` with the ledger
+    attached to the exception (never a filesystem path)."""
+    result = handwritten_extractor(path)
+    proposals = list(result.get("proposals") or [])
+    ledger = list(result.get("page_ledger") or [])
+    if not proposals:
+        err = BoreLogExtractionError(
+            "the handwritten extractor found no usable station run on any page (%s); see page_ledger for "
+            "the specific per-page reason" % HANDWRITTEN_NO_USABLE_ROWS)
+        err.page_ledger = ledger
+        raise err
+
+    page_method = {p["source"]["page_index"]: p["method"] for p in (result.get("pages") or [])}
+    page_extractor = {p["source"]["page_index"]: p["extractor"] for p in (result.get("pages") or [])}
+
+    rows = []
+    used = set(existing_row_ids)
+    for proposal in proposals:
+        page_index = proposal["source"]["page_index"]
+        method = _HANDWRITTEN_METHOD_TO_EXTRACTION_METHOD.get(page_method.get(page_index), TEXT_PARSE)
+        raw = dict(proposal)
+        if method == OCR:
+            # OCR-ONLY PREFLIGHT LOCK (reviewed_bore_adapter.py's OCR_ROW_REQUIRES_EXPLICIT_FOOTAGE): the
+            # SpanProposal's own footage_ft is DERIVED_FROM_STATIONS -- computed from the SAME two OCR
+            # station reads the adapter's docstring warns against silently multiplying together. Carrying
+            # it under the recognized "footage_ft" alias would make the adapter treat it as a genuinely
+            # EXPLICIT footage (present + positive is accepted regardless of method) and defeat the whole
+            # preflight. Drop it from raw for OCR rows ONLY (footage_derivation/station_readings stay, so
+            # nothing is hidden -- the adapter simply then sees footage as ABSENT and declines honestly,
+            # exactly as it does for a truly footage-less row). A human CORRECTED footage always wins via
+            # review.corrected_values (precedence: corrected_values > normalized > raw) regardless of this.
+            raw.pop("footage_ft", None)
+        source_evidence = {
+            "sha256": proposal["source"]["sha256"], "file": proposal["source"]["file_name"],
+            "page_index": page_index, "region": None,
+        }
+        normalized = {"start_station": proposal["start_station"], "end_station": proposal["end_station"]}
+        row_id = _next_row_id(used)
+        used.add(row_id)
+        rows.append(new_extracted_row(
+            row_id, source_upload_id, raw=raw, normalized=normalized,
+            extraction_method=method, extractor_name=page_extractor.get(page_index),
+            confidence=proposal.get("confidence"), warnings=proposal.get("warnings") or [],
+            source_evidence=source_evidence, cell_evidence=proposal.get("cell_evidence"),
+            at=at, by=by,
+        ))
+    return _RowsWithLedger(rows, ledger)
+
+
+def extract_rows_from_borelog(path, source_upload_id, *, at, by, existing_row_ids=(),
+                              handwritten_extractor=None):
+    """Parse ONE uploaded bore-log file into UNTRUSTED ``extracted_row`` dicts (UNREVIEWED).
+
+    Three tiers, in order (each strictly a FALLBACK from the one before -- a file recognized by an earlier
+    tier yields byte-identical rows to the pre-fallback behavior):
+      1. the v2 engine reader (TABLE_IMPORT) -- one canonical bore span per file,
+      2. the generic source-confirmed span extractor (TABLE_IMPORT) -- one row PER confirmed span,
+      3. (ONLY when ``handwritten_extractor`` is supplied) the Phase-1 handwritten extractor (TEXT_PARSE /
+         OCR) -- one row per ``SpanProposal``, run ONLY after tier 2 raises its own refusal.
+
+    ``handwritten_extractor`` DEFAULTS to None: tier 3 never runs and a tier-2 refusal is RE-RAISED
+    UNCHANGED (byte-identical to before this evolution). When supplied, it must be a callable
+    ``(path) -> {"pages", "proposals", "page_ledger"}`` (see extract/handwritten_borelog.py::
+    extract_handwritten; the route builds this closure from settings so this module stays config-free).
+
+    The caller appends the returned rows via ``reviewed_bore_log.add_extracted_rows``; this function places
+    no geometry, fabricates no confidence, and confers no engine eligibility.
+
+    Raises ``BoreLogExtractionError`` (naming ``BORE_LOG_FORMAT_UNRECOGNIZED`` when tier 3 did not run, or
+    ``HANDWRITTEN_NO_USABLE_ROWS`` when it ran but found nothing) when no tier finds a usable row.
     """
     try:
         bore = load_borelog(str(path))
     except Exception:  # noqa: BLE001 - not a named format -> the generic source-confirmed tier
-        return _generic_span_rows(path, source_upload_id, at=at, by=by,
-                                  existing_row_ids=existing_row_ids)
+        try:
+            return _generic_span_rows(path, source_upload_id, at=at, by=by,
+                                      existing_row_ids=existing_row_ids)
+        except BoreLogExtractionError:
+            if handwritten_extractor is None:
+                raise
+            return _handwritten_tier_rows(path, source_upload_id, at=at, by=by,
+                                          existing_row_ids=existing_row_ids,
+                                          handwritten_extractor=handwritten_extractor)
 
     raw = {
         "start_station": bore.station_start,

@@ -563,7 +563,8 @@ def test_extract_route_adds_untrusted_table_import_rows(tmp_path, monkeypatch):
     c, ctx = _container(tmp_path), _ctx("cp-aaa")
     up, _ = _seed_reviewed_bore_log(c, ctx)
 
-    def fake_extract(path, source_upload_id, *, at, by, existing_row_ids=()):  # noqa: ARG001
+    def fake_extract(path, source_upload_id, *, at, by, existing_row_ids=(),
+                     handwritten_extractor=None):  # noqa: ARG001
         return [new_extracted_row("extracted-1", source_upload_id,
                                   raw={"start_station": "0+00", "end_station": "2+99", "footage_ft": 299.0},
                                   normalized={"start_station": "0+00", "end_station": "2+99"},
