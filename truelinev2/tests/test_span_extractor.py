@@ -20,6 +20,8 @@ import ast
 import json
 from pathlib import Path
 
+import openpyxl
+
 from truelinev2.harness.review_readiness import (
     MISSING_BORE_SPAN_SOURCE,
     NO_SOURCE_CONFIRMED_SPAN,
@@ -140,6 +142,118 @@ def test_shape_b_no_depth_boc_columns_stays_none(tmp_path):
     p.write_bytes(borelog_xlsx("11+75", "13+25"))                 # no boc column, depth column present
     r = extract_spans_from_xlsx(str(p)).spans[0]
     assert r.boc is None                                          # honest absence, no fabricated 0
+
+
+# --- bore id / date / crew / notes source-backed carry-through (additive; never invented) ---------------- #
+
+def _xlsx(path, header, rows) -> None:
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.append(list(header))
+    for r in rows:
+        ws.append(list(r))
+    wb.save(str(path))
+
+
+def test_shape_a_carries_bore_id_date_crew_notes(tmp_path):
+    """Shape A (explicit start/end columns): each row is its OWN bore -> bore id/date/crew/notes are THAT
+    row's own values, never blended across rows (mirrors the depth/BOC rule above)."""
+    p = tmp_path / "schedule.csv"
+    p.write_text(
+        "start,end,bore_id,date,crew,notes\n"
+        "11+75,13+25,B-1,2026-01-05,Crew A,soft soil\n"
+        "20+00,21+50,B-2,2026-01-06,Crew B,rock encountered\n",
+        encoding="utf-8")
+    ext = extract_spans_from_csv(str(p))
+    assert ext.spans[0].bore_id == "B-1" and ext.spans[0].date == "2026-01-05"
+    assert ext.spans[0].crew == "Crew A" and ext.spans[0].notes == "soft soil"
+    assert ext.spans[1].bore_id == "B-2" and ext.spans[1].date == "2026-01-06"
+    assert ext.spans[1].crew == "Crew B" and ext.spans[1].notes == "rock encountered"
+
+
+def test_shape_a_missing_bore_id_date_crew_notes_columns_stays_none(tmp_path):
+    p = tmp_path / "schedule.csv"
+    p.write_text("start,end\n11+75,13+25\n", encoding="utf-8")
+    r = extract_spans_from_csv(str(p)).spans[0]
+    assert r.bore_id is None and r.date is None and r.crew is None and r.notes is None
+
+
+def test_shape_a_empty_cell_is_absent_not_fabricated(tmp_path):
+    p = tmp_path / "schedule.csv"
+    p.write_text("start,end,bore_id,crew\n11+75,13+25,,\n", encoding="utf-8")
+    r = extract_spans_from_csv(str(p)).spans[0]
+    assert r.bore_id is None and r.crew is None            # empty cell -> absent, never ""
+
+
+def test_bore_id_column_synonym_variants(tmp_path):
+    for i, header_name in enumerate(["bore_id", "bore id", "bore", "id", "bore #", "bore no"]):
+        p = tmp_path / ("bore-id-%d.csv" % i)
+        p.write_text("start,end,%s\n11+75,13+25,B-%d\n" % (header_name, i), encoding="utf-8")
+        r = extract_spans_from_csv(str(p)).spans[0]
+        assert r.bore_id == "B-%d" % i, header_name
+
+
+def test_date_column_synonym_variants(tmp_path):
+    for i, header_name in enumerate(["date", "bore date", "install date", "drill date"]):
+        p = tmp_path / ("date-%d.csv" % i)
+        p.write_text("start,end,%s\n11+75,13+25,2026-01-0%d\n" % (header_name, i + 1), encoding="utf-8")
+        r = extract_spans_from_csv(str(p)).spans[0]
+        assert r.date == "2026-01-0%d" % (i + 1), header_name
+
+
+def test_crew_column_synonym_variants(tmp_path):
+    for i, header_name in enumerate(["crew", "crew name"]):
+        p = tmp_path / ("crew-%d.csv" % i)
+        p.write_text("start,end,%s\n11+75,13+25,Crew-%d\n" % (header_name, i), encoding="utf-8")
+        r = extract_spans_from_csv(str(p)).spans[0]
+        assert r.crew == "Crew-%d" % i, header_name
+
+
+def test_notes_column_synonym_variants(tmp_path):
+    for i, header_name in enumerate(["notes", "note", "comments", "comment", "remarks"]):
+        p = tmp_path / ("notes-%d.csv" % i)
+        p.write_text("start,end,%s\n11+75,13+25,note-%d\n" % (header_name, i), encoding="utf-8")
+        r = extract_spans_from_csv(str(p)).spans[0]
+        assert r.notes == "note-%d" % i, header_name
+
+
+def test_shape_b_labeled_rows_carries_bore_id_date_crew_notes_from_start_row(tmp_path):
+    """Shape B (single station col + labeled start/end rows, ROLE column named 'point' so it does not
+    collide with a separate free-text 'notes' column): bore id/date/crew/notes are free-text metadata, so
+    they mirror the pre-existing print_raw precedent for this shape -- the start row's own cell, else the
+    end row's -- never a table-wide smear across unrelated rows."""
+    p = tmp_path / "log.xlsx"
+    _xlsx(p, ["station", "point", "bore_id", "date", "crew", "notes"],
+          [["11+75", "bore start", "B-1", "2026-01-05", "Crew A", "soft soil"],
+           ["13+25", "bore end", "B-1", "2026-01-05", "Crew A", "soft soil"]])
+    r = extract_spans_from_xlsx(str(p)).spans[0]
+    assert r.bore_id == "B-1" and r.date == "2026-01-05" and r.crew == "Crew A" and r.notes == "soft soil"
+
+
+def test_shape_b_falls_back_to_end_row_when_start_row_cell_is_empty(tmp_path):
+    p = tmp_path / "log.xlsx"
+    _xlsx(p, ["station", "point", "bore_id"],
+          [["11+75", "bore start", ""], ["13+25", "bore end", "B-9"]])
+    r = extract_spans_from_xlsx(str(p)).spans[0]
+    assert r.bore_id == "B-9"                              # start row empty -> falls back to end row
+
+
+def test_shape_b_no_bore_id_date_crew_notes_columns_stays_none(tmp_path):
+    p = tmp_path / "log.xlsx"
+    _xlsx(p, ["station", "point"], [["11+75", "bore start"], ["13+25", "bore end"]])
+    r = extract_spans_from_xlsx(str(p)).spans[0]
+    assert r.bore_id is None and r.date is None and r.crew is None and r.notes is None
+
+
+def test_shape_b_role_column_named_notes_never_smears_role_word_as_notes(tmp_path):
+    """When the shape-B ROLE column itself is named 'notes' (the existing name-free Brenham-shape fixture,
+    ``harness.synth.borelog_xlsx``, uses exactly this header), its cell text is the ROLE WORD
+    ('bore start'/'bore end'), not free-text notes -- there is no genuine per-row notes association in that
+    case, so notes stays honestly absent rather than reporting the role label as if it were a note."""
+    p = tmp_path / "bore-log.xlsx"
+    p.write_bytes(borelog_xlsx("11+75", "13+25"))
+    r = extract_spans_from_xlsx(str(p)).spans[0]
+    assert r.notes is None
 
 
 def test_footage_printed_overrides_computed(tmp_path):

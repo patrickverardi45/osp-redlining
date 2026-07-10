@@ -159,6 +159,19 @@ def _generic_span_rows(path, source_upload_id, *, at, by, existing_row_ids):
             raw["depth_min_ft"] = span.depth
         if span.boc is not None:
             raw["boc_min_ft"] = span.boc
+        # Bore id/date/crew/notes (additive): the span extractor's OWN source-backed free-text values
+        # (span_extractor.py's bore-id/date/crew/notes column detection), carried under PLAIN keys --
+        # station_dots.py::_FIELD_ALIASES (read-only here) already aliases bore_id/date/crew/notes, so no
+        # renderer change is needed for these to resolve on the station-dot info card. Absent column ->
+        # absent key, never a fabricated empty value.
+        if span.bore_id:
+            raw["bore_id"] = span.bore_id
+        if span.date:
+            raw["date"] = span.date
+        if span.crew:
+            raw["crew"] = span.crew
+        if span.notes:
+            raw["notes"] = span.notes
         # normalized = candidate SUGGESTIONS (never truth); the same shape as manual/engine-reader rows so
         # the existing review gate treats a generic row identically.
         normalized = {"start_station": span.start_station, "end_station": span.end_station}
