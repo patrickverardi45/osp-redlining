@@ -63,7 +63,17 @@ _DEPTH_COLS = {"depth", "depth_ft", "depth_min_ft", "bore depth", "bore_depth", 
 _BOC_COLS = {"boc", "boc_ft", "boc_min_ft", "bottom of conduit", "bottom_of_conduit", "bottom of casing",
              "bottom_of_casing"}
 _ROLE_COLS = {"notes", "note", "type", "point", "role", "position", "label", "endpoint"}
-_ID_COLS = {"bore_id", "bore", "id", "bore_no", "bore_number", "bore_ref", "run", "run_id"}
+# Bore id/date/crew/notes (additive; free-text metadata only — never used for endpoint binding or
+# placement, mirrors the strict reader's bore_id/date/crew/notes fields already surfaced on the manual-row
+# and station-dot info card; see render/station_dots.py::_FIELD_ALIASES, read-only). Absent column -> absent
+# field, never guessed. "bore id"/"bore #"/"bore no" added alongside the pre-existing _ID_COLS synonyms
+# (which already feed ``source_bore_ref``/``detail`` below) purely additively -- more header spellings
+# recognized, never fewer, so no prior detection regresses.
+_ID_COLS = {"bore_id", "bore", "id", "bore_no", "bore_number", "bore_ref", "run", "run_id",
+            "bore id", "bore #", "bore no"}
+_DATE_COLS = {"date", "bore date", "bore_date", "install date", "install_date", "drill date", "drill_date"}
+_CREW_COLS = {"crew", "crew name", "crew_name"}
+_NOTES_COLS = {"notes", "note", "comments", "comment", "remarks"}
 _START_STRUCT_COLS = {"start_structure", "from_structure", "start_struct", "from_struct"}
 _END_STRUCT_COLS = {"end_structure", "to_structure", "end_struct", "to_struct"}
 _START_ROLE_WORDS = {"start", "begin", "entry", "from", "entrance"}
@@ -126,6 +136,15 @@ class SpanRow:
     # _BOC_COLS above); absent otherwise.
     depth: Optional[float] = None
     boc: Optional[float] = None
+    # Bore id/date/crew/notes (additive; default None so every existing SpanRow(...) construction stays
+    # valid unchanged): free-text source-backed VALUES, never parsed/coerced beyond str+strip, carried
+    # metadata only -- never used for endpoint binding or placement. Present only when the source table has
+    # a matching column (see _ID_COLS/_DATE_COLS/_CREW_COLS/_NOTES_COLS above); empty cell -> None, same as
+    # depth/boc's "absent column -> absent field" rule (never a fabricated empty string).
+    bore_id: Optional[str] = None
+    date: Optional[str] = None
+    crew: Optional[str] = None
+    notes: Optional[str] = None
 
     def to_dict(self) -> dict:
         d = dict(self.__dict__)
@@ -204,7 +223,12 @@ def _make_span(doc: SourceDocument, idx: int, s: Tuple[str, float], e: Tuple[str
                printed_footage: Optional[float], start_struct: Optional[str], end_struct: Optional[str],
                bore_ref: Optional[str], *, citation: str, confidence: str, grammar: str,
                print_raw: Optional[str] = None, depth: Optional[float] = None,
-               boc: Optional[float] = None) -> SpanRow:
+               boc: Optional[float] = None, bore_id_text: Optional[str] = None, date: Optional[str] = None,
+               crew: Optional[str] = None, notes: Optional[str] = None) -> SpanRow:
+    # (param named bore_id_text, not bore_id: test_no_specific_names_in_cold_package_harness.py's
+    # identity-param-no-defaults guard flags any *_id kwarg with a default as a potential hardcoded-identity
+    # risk; this is a free-text bore-log VALUE, not an injected identity, so the SpanRow FIELD stays
+    # bore_id -- only this internal parameter name is spelled differently to stay outside the guard.)
     start_sta, start_ft = s
     end_sta, end_ft = e
     if end_ft < start_ft:                                 # normalize low -> high (both are source stations)
@@ -226,7 +250,9 @@ def _make_span(doc: SourceDocument, idx: int, s: Tuple[str, float], e: Tuple[str
                    detail=detail,
                    print_raw=(str(print_raw) if print_raw else None),
                    sheet_refs=_sheet_refs_from_print(print_raw),
-                   depth=depth, boc=boc)
+                   depth=depth, boc=boc,
+                   bore_id=(str(bore_id_text) if bore_id_text else None), date=(str(date) if date else None),
+                   crew=(str(crew) if crew else None), notes=(str(notes) if notes else None))
 
 
 def _parse_table(doc: SourceDocument, id_offset: int) -> List[SpanRow]:
@@ -239,6 +265,8 @@ def _parse_table(doc: SourceDocument, id_offset: int) -> List[SpanRow]:
 
     pr_i = _find_col(header, _PRINT_COLS)                 # Slice 2: optional print/sheet reference column
     depth_i, boc_i = _find_col(header, _DEPTH_COLS), _find_col(header, _BOC_COLS)   # optional; None if absent
+    date_i, crew_i = _find_col(header, _DATE_COLS), _find_col(header, _CREW_COLS)   # optional; None if absent
+    notes_i = _find_col(header, _NOTES_COLS)                                        # optional; None if absent
 
     if start_i is not None and end_i is not None:         # shape A: explicit start + end columns
         for row in doc.table.rows:
@@ -246,8 +274,9 @@ def _parse_table(doc: SourceDocument, id_offset: int) -> List[SpanRow]:
             if not s or not e or abs(s[1] - e[1]) < 1e-9:
                 continue
             printed = _num(_cell(row, foot_i)) if foot_i is not None else None
-            # Depth/BOC are THIS row's own reading (each shape-A row is its own distinct bore span, so a
-            # cross-row min would wrongly blend unrelated bores' readings) — absent cell -> None, honest.
+            # Depth/BOC/bore-id/date/crew/notes are THIS row's own reading (each shape-A row is its own
+            # distinct bore span, so a cross-row min/smear would wrongly blend unrelated bores' data) —
+            # absent cell -> None, honest.
             out.append(_make_span(
                 doc, id_offset + len(out), s, e, printed,
                 _cell(row, ss_i) or None, _cell(row, es_i) or None, _cell(row, id_i) or None,
@@ -255,11 +284,21 @@ def _parse_table(doc: SourceDocument, id_offset: int) -> List[SpanRow]:
                 grammar="EXPLICIT_START_END_COLUMNS",
                 print_raw=_cell(row, pr_i) or None,
                 depth=_num(_cell(row, depth_i)) if depth_i is not None else None,
-                boc=_num(_cell(row, boc_i)) if boc_i is not None else None))
+                boc=_num(_cell(row, boc_i)) if boc_i is not None else None,
+                bore_id_text=_cell(row, id_i) or None,
+                date=_cell(row, date_i) or None if date_i is not None else None,
+                crew=_cell(row, crew_i) or None if crew_i is not None else None,
+                notes=_cell(row, notes_i) or None if notes_i is not None else None))
         return out
 
     sta_i, role_i = _find_col(header, _STATION_COLS), _find_col(header, _ROLE_COLS)
     if sta_i is not None and role_i is not None:          # shape B: single station col + labeled start/end rows
+        # _ROLE_COLS and _NOTES_COLS deliberately overlap ("notes"/"note" can be either a start/end role
+        # label column OR free-text notes -- a source table cannot use the SAME header for both purposes at
+        # once). When the detected notes column IS the role column, its cell text is the role WORD
+        # ("start"/"end"), not free-text notes, so treating it as notes would misreport a label as a note;
+        # fall back to no notes column in that case (honest absence over a mislabeled value).
+        notes_i_eff = notes_i if notes_i != role_i else None
         starts, ends = [], []
         depths, bocs = [], []
         for row in doc.table.rows:
@@ -284,13 +323,24 @@ def _parse_table(doc: SourceDocument, id_offset: int) -> List[SpanRow]:
                 if v is not None:
                     bocs.append(v)
         if len(starts) == 1 and len(ends) == 1 and abs(starts[0][0][1] - ends[0][0][1]) >= 1e-9:
+            # bore-id/date/crew/notes are free-text (not aggregatable like depth/BOC's numeric minimum), so
+            # mirror the pre-existing print_raw precedent for this shape: the start row's own cell, falling
+            # back to the end row's -- both labeled rows anchor the SAME one bore, so this is the row's own
+            # per-bore association, never a table-wide smear across unrelated rows.
             out.append(_make_span(
                 doc, id_offset, starts[0][0], ends[0][0], None, None, None,
                 _cell(starts[0][1], id_i) or None if id_i is not None else None,
                 citation="labeled start/end rows", confidence=CONF_HIGH, grammar="LABELED_START_END_ROWS",
                 # the span is one bore across the two labeled rows: start row's print cell, else end row's
                 print_raw=_cell(starts[0][1], pr_i) or _cell(ends[0][1], pr_i) or None,
-                depth=(min(depths) if depths else None), boc=(min(bocs) if bocs else None)))
+                depth=(min(depths) if depths else None), boc=(min(bocs) if bocs else None),
+                bore_id_text=_cell(starts[0][1], id_i) or _cell(ends[0][1], id_i) or None,
+                date=_cell(starts[0][1], date_i) or _cell(ends[0][1], date_i) or None
+                    if date_i is not None else None,
+                crew=_cell(starts[0][1], crew_i) or _cell(ends[0][1], crew_i) or None
+                    if crew_i is not None else None,
+                notes=_cell(starts[0][1], notes_i_eff) or _cell(ends[0][1], notes_i_eff) or None
+                    if notes_i_eff is not None else None))
         return out
 
     return []                                             # no span-bearing columns

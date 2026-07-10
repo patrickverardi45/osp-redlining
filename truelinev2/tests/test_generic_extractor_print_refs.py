@@ -132,6 +132,10 @@ def test_existing_generic_row_shape_unchanged(tmp_path):
     assert set(row["raw"].keys()) == {
         "start_station", "end_station", "footage_ft", "footage_source", "source_file",
         "source_page", "source_kind", "span_grammar", "citation", "source_bore_ref",
+        # bore_id is additive (this ticket's bore-id/date/crew/notes carry-through): the fixture's
+        # bore_id column is now ALSO surfaced under the plain key station_dots.py aliases, alongside the
+        # pre-existing source_bore_ref -- no key above was removed, renamed, or reordered away.
+        "bore_id",
     }
     assert row["raw"]["footage_ft"] == 150.0 and row["raw"]["footage_source"] == "PRINTED"
     assert row["raw"]["span_grammar"] == "EXPLICIT_START_END_COLUMNS"

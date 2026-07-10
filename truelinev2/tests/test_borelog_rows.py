@@ -133,6 +133,26 @@ def test_generic_fallback_pdf_inline_callout(tmp_path):
     assert r["review"]["status"] == er.UNREVIEWED
 
 
+def test_generic_fallback_carries_bore_id_date_crew_notes_when_present(tmp_path):
+    """Bore id/date/crew/notes columns, WHEN the source table carries them, travel through the generic
+    extraction tier into raw under PLAIN keys (bore_id/date/crew/notes) -- station_dots.py's
+    _FIELD_ALIASES already aliases these exact keys (read-only; no renderer change needed here)."""
+    p = tmp_path / "spans.csv"
+    p.write_text("bore_id,start_station,end_station,footage,date,crew,notes\n"
+                 "B-1,11+75,13+25,150,2026-01-05,Crew A,soft soil\n", encoding="utf-8")
+    raw = br.extract_rows_from_borelog(str(p), "up-1", at="t", by="u")[0]["raw"]
+    assert raw["bore_id"] == "B-1"
+    assert raw["date"] == "2026-01-05" and raw["crew"] == "Crew A" and raw["notes"] == "soft soil"
+
+
+def test_generic_fallback_omits_bore_id_date_crew_notes_when_absent(tmp_path):
+    """No bore-id/date/crew/notes column -> no key at all (never a fabricated/empty value)."""
+    p = tmp_path / "spans.csv"
+    p.write_text("start_station,end_station,footage\n11+75,13+25,150\n", encoding="utf-8")
+    raw = br.extract_rows_from_borelog(str(p), "up-1", at="t", by="u")[0]["raw"]
+    assert "bore_id" not in raw and "date" not in raw and "crew" not in raw and "notes" not in raw
+
+
 def test_generic_fallback_row_ids_avoid_existing(tmp_path):
     p = tmp_path / "spans.csv"
     p.write_text("start,end\n11+75,13+25\n20+00,21+50\n", encoding="utf-8")
