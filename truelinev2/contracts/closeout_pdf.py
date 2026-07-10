@@ -24,6 +24,8 @@ Honesty / boundaries (mirrors export_bundle):
 """
 from __future__ import annotations
 
+import re
+
 import fitz  # PyMuPDF — standard PDF engine (infrastructure, not TrueLine code)
 
 from truelinev2.contracts.customer_project import validate_customer_project_id
@@ -36,6 +38,7 @@ from truelinev2.contracts.closeout_review import (
 from truelinev2.contracts.export_package import (
     ExportPackageNotFoundError, export_package_view, load_export_package,
 )
+from truelinev2.contracts.extracted_row import CONFIRMED, CORRECTED
 from truelinev2.contracts.kmz_export import EXPORTABLE as KMZ_EXPORTABLE_STATUS, evaluate_export
 from truelinev2.contracts.reviewed_bore_log import list_reviewed_bore_logs
 from truelinev2.contracts.export_bundle import placement_candidate_summary
@@ -219,6 +222,77 @@ def _drawn_footage(manifest):
     return round(total, 1) if seen else None
 
 
+# Case-insensitive field aliases for pulling a reviewed row's own bore-log values, reimplemented LOCALLY
+# (never imported from render/) so this contract-only PDF module stays render-import-free — mirrors the
+# SAME alias-tolerance idea already used by ``render.station_dots.resolve_bore_fields`` and
+# ``contracts.reviewed_bore_adapter._FIELD_ALIASES``: a free-form extractor may spell a column
+# ``footage``/``footage_ft``, ``depth``/``depth_min_ft``, etc., and every spelling must resolve identically.
+_ROW_NUM_RE = re.compile(r"[-+]?\d*\.?\d+")
+_ROW_FIELD_ALIASES = {
+    "start_station": ("start_station", "start_sta", "from_station", "sta_start", "start"),
+    "end_station": ("end_station", "end_sta", "to_station", "sta_end", "end"),
+    "footage": ("footage_ft", "footage", "ft", "feet", "length", "bore_footage"),
+    "depth": ("depth_min_ft", "depth", "bore_depth"),
+    "boc": ("boc_min_ft", "boc", "bottom_of_conduit"),
+}
+
+
+def _row_norm_key(k) -> str:
+    return re.sub(r"[^a-z0-9]+", "_", str(k).strip().lower()).strip("_")
+
+
+def _row_effective_values(row) -> dict:
+    """Effective bore-log values for ONE extracted row by precedence raw < normalized < review.corrected
+    (human CORRECTED wins last) -- the SAME precedence ``render.station_dots.resolve_bore_fields`` and
+    ``contracts.reviewed_bore_adapter._effective_values`` already use, reimplemented here so this module
+    imports neither. Keys folded via ``_row_norm_key`` for alias matching."""
+    merged: dict = {}
+    for layer in (row.get("raw"), row.get("normalized"), (row.get("review") or {}).get("corrected_values")):
+        if isinstance(layer, dict):
+            for k, v in layer.items():
+                merged[_row_norm_key(k)] = v
+    return merged
+
+
+def _row_pick(merged, aliases):
+    for a in aliases:
+        if a in merged and merged[a] not in (None, ""):
+            return merged[a]
+    return None
+
+
+def _row_num(value):
+    """Coerce a numeric-ish cell ("42", "42 ft", 42, 42.0) to float; None when absent/non-numeric --
+    never a fabricated 0."""
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    m = _ROW_NUM_RE.search(str(value))
+    return float(m.group(0)) if m else None
+
+
+def _row_summary_line(row) -> str:
+    """One human-readable closeout line for a CONFIRMED/CORRECTED reviewed row: station span + footage
+    ALWAYS, depth/BOC appended ONLY when the source actually carries them (effective corrected > normalized
+    > raw value) -- never an invented placeholder for a row with no depth/BOC column at all."""
+    v = _row_effective_values(row)
+    start = _row_pick(v, _ROW_FIELD_ALIASES["start_station"])
+    end = _row_pick(v, _ROW_FIELD_ALIASES["end_station"])
+    footage = _row_num(_row_pick(v, _ROW_FIELD_ALIASES["footage"]))
+    depth = _row_num(_row_pick(v, _ROW_FIELD_ALIASES["depth"]))
+    boc = _row_num(_row_pick(v, _ROW_FIELD_ALIASES["boc"]))
+    span = "%s -> %s" % (start or "?", end or "?")
+    parts = [span]
+    if footage is not None:
+        parts.append("%s ft" % footage)
+    if depth is not None:
+        parts.append("depth %s ft" % depth)
+    if boc is not None:
+        parts.append("BOC %s ft" % boc)
+    return ", ".join(parts)
+
+
 def build_closeout_pdf(store_root, customer_project_id, job_id) -> tuple:
     """Render the job's closeout packet PDF from EXISTING trusted output. Returns (pdf_bytes, filename).
     Raises NoCloseoutPdfError if the job has no validated redline bundle yet (not ready)."""
@@ -338,6 +412,13 @@ def build_closeout_pdf(store_root, customer_project_id, job_id) -> tuple:
         ready = r.get("engine_ready")
         d.kv("Reviewed bore-log %s" % rid,
              "%d row(s), %d group(s), engine_ready=%s" % (len(rows), len(groups), ready))
+        # Additive per-row line for every human-REVIEWED row (CONFIRMED/CORRECTED -- the same states that
+        # make a row a placement candidate, extracted_row.REVIEW_PASS_STATUSES): station span + footage
+        # always, depth/BOC appended ONLY when the source actually carries them. UNREVIEWED/REJECTED rows
+        # are not yet trusted customer-facing facts and are intentionally left out of this listing.
+        for row in rows:
+            if (row.get("review") or {}).get("status") in (CONFIRMED, CORRECTED):
+                d.bullet(_row_summary_line(row), color=_GRAY)
 
     # 7. Engine path / REVIEW status (only when relevant)
     if origin == _REVIEW_LANE_ORIGIN:

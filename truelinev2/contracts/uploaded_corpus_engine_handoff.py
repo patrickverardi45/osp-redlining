@@ -37,6 +37,7 @@ from pathlib import Path
 
 from truelinev2.contracts.customer_project import validate_customer_project_id
 from truelinev2.contracts.processing_job import job_dir, load_job, validate_job_id
+from truelinev2.contracts.reviewed_bore_adapter import bore_from_reviewed_rows
 from truelinev2.contracts.reviewed_bore_log import (
     is_engine_ready,
     list_reviewed_bore_logs,
@@ -420,7 +421,7 @@ def _confidence(placement, candidate, bore, signals):
             "correction_recommended": correction}
 
 
-def _run_engine(plan_path, borelog_path):
+def _run_engine(plan_path, borelog_path, rbl=None):
     """Run the shipped engine on the resolved files. Returns (bore, placement, offset, dialect_name,
     extra_legs, matchline, dialect). The DEFAULT (all-off) match path is used — no opt-in gates — so this
     mirrors the deterministic engine's default behavior for a RECOGNIZED plan.
@@ -437,19 +438,44 @@ def _run_engine(plan_path, borelog_path):
 
     ``extra_legs`` are source-supported drawn legs on REFERENCED sheets OTHER than the winner's sheet
     (cross-sheet REVIEW coverage). ``matchline`` is the read-only printed-matchline continuity verdict over
-    the rendered sheets. Caller owns no plan handle (opened/closed here)."""
+    the rendered sheets. Caller owns no plan handle (opened/closed here).
+
+    STRICT-READER FALLBACK (reviewed-row adapter): ``rbl`` is the job's resolved reviewed_bore_log (already
+    verified engine-ready by the caller's ``_resolve_inputs``), optional so a bare 2-arg call (and every
+    existing 2-arg test double that monkeypatches this function) keeps working unchanged. When
+    ``load_borelog`` cannot read the bore-log FILE (ValueError) and ``rbl`` was supplied, this tries
+    ``reviewed_bore_adapter.bore_from_reviewed_rows`` BEFORE giving up: a fail-closed adapter that hands
+    back a real ``Bore`` ONLY when the human-reviewed rows unambiguously describe exactly one bore with
+    parseable stations and a positive footage (see that module's docstring). When the adapter declines, this
+    returns the SAME named blocker as before — customer-facing copy byte-identical — with an additive
+    ``reviewed_rows_detail`` key naming why. When the adapter SUCCEEDS, every line below this point runs
+    EXACTLY the pre-existing code path (dialect selection, calibration, matching, generic fallback) on the
+    adapter's ``Bore`` — nothing downstream changes. A bore-log file the strict reader already parses is
+    completely unaffected (``rbl`` is never even consulted): this is a NEW fallback lane, not a change to the
+    byte-identical strict-reader path."""
     _na = {"verdict": "N/A", "caveats": [], "evidence": []}
+    bore_source = None
     try:
         bore = load_borelog(str(borelog_path))
     except ValueError:
         # Unreadable/unrecognized bore-log FILE (detect_format funnels every non-workbook/garbage file
-        # here). A named input blocker — the caller reports BLOCKED and the workflow abstains with
-        # plain-English copy; this must never escape as an unhandled 500.
-        return None, None, None, None, [], _na, None, {
-            "code": BORE_LOG_FORMAT_UNRECOGNIZED,
-            "reason": "The engine could not read this bore log's file format. Upload the bore log as a "
-                      "standard bore schedule spreadsheet, then run the redline again.",
-        }
+        # here). Before dead-ending, consult the job's human-REVIEWED rows (fail-closed; declines rather
+        # than guesses) -- ONLY reached here, so a file the strict reader parses never takes this branch.
+        adapted, detail = ((None, None) if rbl is None
+                           else bore_from_reviewed_rows(rbl, source_filename=Path(borelog_path).name))
+        if adapted is None:
+            # A named input blocker — the caller reports BLOCKED and the workflow abstains with
+            # plain-English copy; this must never escape as an unhandled 500.
+            blocker = {
+                "code": BORE_LOG_FORMAT_UNRECOGNIZED,
+                "reason": "The engine could not read this bore log's file format. Upload the bore log as a "
+                          "standard bore schedule spreadsheet, then run the redline again.",
+            }
+            if rbl is not None:
+                blocker["reviewed_rows_detail"] = detail   # additive-only: why the adapter declined
+            return None, None, None, None, [], _na, None, blocker
+        bore = adapted
+        bore_source = "REVIEWED_ROWS_ADAPTER"
     plan = PlanPdf(str(plan_path))
     try:
         dialect = select_dialect(plan)
@@ -508,6 +534,11 @@ def _run_engine(plan_path, borelog_path):
             matchline = _matchline_continuity(plan, offset, bore, render_sheets, sheet_index=sheet_index)
         else:
             extra_legs, matchline = [], _na
+        if bore_source:
+            # Additive-only provenance marker on the existing matchline/verdict dict already threaded
+            # through this return tuple (no tuple-shape change) — read by the caller and surfaced into its
+            # OWN report dicts (evaluate_'s "candidate" block, render_'s manifest warnings + summary).
+            matchline["bore_source"] = bore_source
         return bore, placement, offset, getattr(used, "name", None), extra_legs, matchline, used, generic_blocker
     finally:
         plan.close()
@@ -676,7 +707,7 @@ def evaluate_uploaded_corpus_engine_handoff(store_root, customer_project_id, job
     matchline = {"verdict": "N/A", "caveats": [], "evidence": []}
     if plan_path is not None and borelog_path is not None:
         bore, placement, offset, dialect_name, extra_legs, matchline, used, generic_blocker = _run_engine(
-            plan_path, borelog_path)
+            plan_path, borelog_path, rbl=rbl)
         if placement is None:
             # Surface the generic lane's SPECIFIC abstain reason (e.g. NO_DRAWN_RUN_OVER_SPAN) when it ran but
             # placed nothing drawable; otherwise the package matched no plan dialect at all. (The broader split
@@ -730,6 +761,12 @@ def evaluate_uploaded_corpus_engine_handoff(store_root, customer_project_id, job
         # (signals empty -> output byte-identical to the proven ODOT/Brenham REVIEW path).
         if signals:
             out["candidate"]["confidence"] = _confidence(placement, candidate, bore, signals)
+        # Additive-only: present ONLY when the strict-reader fallback adapter supplied this bore (a file the
+        # strict reader parses never sets this -> byte-identical for every existing/recognized path). This
+        # read-only report dict is NOT the redline_manifest (no schema to respect), so the marker lives here
+        # directly rather than needing a warnings-string workaround.
+        if matchline.get("bore_source"):
+            out["candidate"]["bore_source"] = matchline["bore_source"]
     return out
 
 
@@ -750,18 +787,26 @@ def _placement_candidate_block(confidence, dialect) -> dict:
 
 
 def _manifest_input(log_id, *, placement, bore, legs, project_id, matchline_caveats=(),
-                    confidence=None, dialect=None) -> dict:
+                    confidence=None, dialect=None, bore_source=None) -> dict:
     """Job-local single-log manifest for the engine-rendered redline (mock_example:false). ``legs`` is a list
     of {sheet, artifact_path}: one FINAL_REDLINE_PNG per rendered sheet (the winner's sheet plus any
     cross-sheet legs). One log (one bore) with one artifact per sheet; source_sheets = all rendered sheets.
     ``matchline_caveats`` are the read-only printed-matchline continuity annotations (metadata only).
     ``confidence`` (when supplied) is the graded REVIEW confidence — surfaced in the free-form warnings (the
-    structured per-log placement_candidate block + its schema are an additive follow-on)."""
+    structured per-log placement_candidate block + its schema are an additive follow-on). ``bore_source``
+    (when supplied, e.g. "REVIEWED_ROWS_ADAPTER") is surfaced as a free-form warning string ONLY — the
+    manifest's ``placement_candidate`` object is schema-locked (``additionalProperties: false``), so a new
+    structured field there is a separate, schema-reviewed follow-on; the plain warnings array has no such
+    restriction."""
     status_value = placement.status.value
     provenance = _PROVENANCE_BY_STATUS.get(status_value, "OWNER_CONFIRMED_HUMAN_ADJUSTABLE")
     auto = status_value == PlacementStatus.AUTO_SELECT.value
     sheets = sorted({int(l["sheet"]) for l in legs})
     conf_warnings = []
+    if bore_source:
+        conf_warnings.append(
+            "bore sourced via %s (the strict bore-log file reader could not parse this file; the engine ran "
+            "on human-REVIEWED extracted rows instead)" % bore_source)
     if confidence is not None:
         conf_warnings.append("placement confidence %s (%.2f)"
                              % (confidence.get("band"), confidence.get("score", 0.0)))
@@ -810,7 +855,8 @@ def _manifest_input(log_id, *, placement, bore, legs, project_id, matchline_cave
     }
 
 
-def _summary(store_root, customer_project_id, job_id, handoff, *, log_id, placement, dialect_name) -> dict:
+def _summary(store_root, customer_project_id, job_id, handoff, *, log_id, placement, dialect_name,
+            bore_source=None) -> dict:
     ab = handoff.get("artifact_bundle_attachment") or {}
     mf = handoff.get("manifest_attachment") or {}
     bundle_id = ab.get("bundle_id")
@@ -821,7 +867,7 @@ def _summary(store_root, customer_project_id, job_id, handoff, *, log_id, placem
         for lid, art in bundle.final_artifacts():
             arts.append({"log_id": lid, "path": art.get("path"), "sha256": art.get("sha256"),
                          "bytes": art.get("bytes"), "kind": art.get("kind")})
-    return {
+    out = {
         "status": handoff["status"], "bundle_id": bundle_id,
         "bundle_origin": BUNDLE_ORIGIN_UPLOADED_CORPUS_ENGINE,
         "placement_status": placement.status.value, "reason": placement.reason,
@@ -830,6 +876,12 @@ def _summary(store_root, customer_project_id, job_id, handoff, *, log_id, placem
         "redline_manifest_slot": mf.get("store_relative_path"),
         "artifact_bundle_slot": ab.get("store_relative_path"),
     }
+    if bore_source:
+        # Additive-only: the key is present ONLY when the strict-reader fallback adapter actually supplied
+        # the bore for this render -- ABSENT (not None) on every existing/recognized/named-dialect path, so
+        # a strict-reader-success summary is byte-identical to before this adapter existed.
+        out["bore_source"] = bore_source
+    return out
 
 
 def _render_content_key(plan_name, borelog_name, log_id, status_value, legs) -> str:
@@ -856,7 +908,8 @@ def render_uploaded_corpus_engine_handoff(store_root, customer_project_id, job_i
         raise UploadedCorpusEngineError("not runnable: %s" % "; ".join(b["code"] for b in blockers))
 
     bore, placement, offset, dialect_name, extra_legs, matchline, used, _generic_blocker = _run_engine(
-        plan_path, borelog_path)
+        plan_path, borelog_path, rbl=rbl)
+    bore_source = matchline.get("bore_source")   # set ONLY when the reviewed-row adapter supplied this bore
     candidate = _candidate(placement)
     if candidate is None or not candidate.bbox:
         ev = evaluate_uploaded_corpus_engine_handoff(store_root, customer_project_id, job_id)
@@ -893,7 +946,8 @@ def render_uploaded_corpus_engine_handoff(store_root, customer_project_id, job_i
         prior = load_handoff(store_root, customer_project_id, job_id, engine_run_id)
         if prior.get("status") == SUCCEEDED:
             return _summary(store_root, customer_project_id, job_id, prior,
-                            log_id=log_id, placement=placement, dialect_name=dialect_name)
+                            log_id=log_id, placement=placement, dialect_name=dialect_name,
+                            bore_source=bore_source)
     except HandoffNotFoundError:
         pass
 
@@ -935,7 +989,7 @@ def render_uploaded_corpus_engine_handoff(store_root, customer_project_id, job_i
         log_id, placement=placement, bore=bore,
         legs=[{"sheet": r["sheet"], "artifact_path": r["artifact_path"]} for r in rendered],
         project_id=customer_project_id, matchline_caveats=matchline["caveats"],
-        confidence=confidence, dialect=dialect_name)
+        confidence=confidence, dialect=dialect_name, bore_source=bore_source)
     input_path = render_src / "_input_manifest.json"
     input_path.write_text(json.dumps(manifest_input, indent=2), encoding="utf-8")
 
@@ -949,4 +1003,4 @@ def render_uploaded_corpus_engine_handoff(store_root, customer_project_id, job_i
         raise UploadedCorpusEngineError("engine handoff did not succeed (%s): %s"
                                         % (handoff.get("status"), "; ".join(handoff.get("errors") or [])))
     return _summary(store_root, customer_project_id, job_id, handoff,
-                    log_id=log_id, placement=placement, dialect_name=dialect_name)
+                    log_id=log_id, placement=placement, dialect_name=dialect_name, bore_source=bore_source)

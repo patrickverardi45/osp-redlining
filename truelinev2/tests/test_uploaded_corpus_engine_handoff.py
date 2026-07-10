@@ -98,7 +98,7 @@ def _patch_engine(monkeypatch, *, placement, bore=None, extra_legs=(), matchline
     # 7th value = the dialect OBJECT used (None here -> no traced centerline / no confidence signals,
     # so the stub renders the bbox-extent exactly as before; the string ``dialect`` stays the name label).
     monkeypatch.setattr(uce, "_run_engine",
-                        lambda plan_path, borelog_path: (b, placement, 0, dialect, list(extra_legs), ml, None, None))
+                        lambda plan_path, borelog_path, rbl=None: (b, placement, 0, dialect, list(extra_legs), ml, None, None))
 
 
 def _patch_render(monkeypatch, captions_seen=None):
@@ -139,6 +139,10 @@ def test_review_candidate_renders_job_local_bundle(tmp_path, monkeypatch):
     assert summary["artifact_count"] == 1
     assert summary["artifacts"] and all(a["kind"] == "FINAL_REDLINE_PNG" for a in summary["artifacts"])
     assert all(a["sha256"] and a["bytes"] for a in summary["artifacts"])
+    # Strict-reader-success equivalence (F2): the reviewed-row adapter never ran on this path (no
+    # bore_source stamped on the matchline), so the summary dict must carry NO "bore_source" key at all --
+    # not even a ``None`` placeholder -- keeping this shape byte-identical to before the adapter existed.
+    assert "bore_source" not in summary
     # PRODUCT artifacts are rendered caption-free: the render call opts out of the diagnostic band;
     # bore id / status / reason remain STRUCTURED manifest/summary fields (asserted above/below),
     # never burned into customer-facing pixels.
@@ -167,6 +171,20 @@ def test_review_candidate_renders_job_local_bundle(tmp_path, monkeypatch):
 
     again = uce.render_uploaded_corpus_engine_handoff(tmp_path, CP, JOB, at=AT, by=BY)
     assert again["bundle_id"] == summary["bundle_id"]          # idempotent by content
+
+
+def test_summary_stamps_bore_source_only_when_adapter_supplied_it(tmp_path, monkeypatch):
+    # The other half of the F2 equivalence guard: when _run_engine DID stamp a bore_source (the reviewed-row
+    # adapter path), the summary's "bore_source" key must be PRESENT with that value -- proving the key is
+    # additive/conditional, not simply removed.
+    _job(tmp_path)
+    ml_with_source = {"verdict": "N/A", "caveats": [], "evidence": [], "bore_source": "REVIEWED_ROWS_ADAPTER"}
+    _patch_engine(monkeypatch, placement=_placement(PlacementStatus.REVIEW,
+                                                    caveats=["DRAWN_EXTENT_EXCEEDS_BORE_SPAN"]),
+                  matchline=ml_with_source)
+    _patch_render(monkeypatch)
+    summary = uce.render_uploaded_corpus_engine_handoff(tmp_path, CP, JOB, at=AT, by=BY)
+    assert summary["bore_source"] == "REVIEWED_ROWS_ADAPTER"
 
 
 def test_auto_select_renders_deterministic_provenance(tmp_path, monkeypatch):
@@ -200,7 +218,7 @@ def test_engine_abstain_blocks_and_renders_nothing(tmp_path, monkeypatch):
 def test_no_dialect_blocks(tmp_path, monkeypatch):
     _job(tmp_path)
     monkeypatch.setattr(uce, "_run_engine",
-                        lambda plan_path, borelog_path: (_bore(), None, 0, None, [], _NA_MATCHLINE, None, None))
+                        lambda plan_path, borelog_path, rbl=None: (_bore(), None, 0, None, [], _NA_MATCHLINE, None, None))
     ev = uce.evaluate_uploaded_corpus_engine_handoff(tmp_path, CP, JOB)
     assert ev["status"] == "BLOCKED"
     assert "NO_PLAN_DIALECT_RECOGNIZED" in {b["code"] for b in ev["blockers"]}

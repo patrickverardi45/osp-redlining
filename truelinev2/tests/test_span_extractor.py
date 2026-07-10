@@ -106,6 +106,42 @@ def test_optional_structures_are_captured(tmp_path):
     assert r.start_structure == "HH-1" and r.end_structure == "VLT-2"
 
 
+# --- depth/BOC (bottom-of-conduit) source-backed carry-through (additive; never invented) -------------------- #
+
+def test_shape_a_explicit_columns_carries_depth_and_boc(tmp_path):
+    """Shape A (explicit start/end columns): each row is its OWN bore -> depth/BOC are THAT row's reading,
+    never blended across rows."""
+    p = tmp_path / "schedule.csv"
+    p.write_text("start,end,depth,boc\n11+75,13+25,4.5,5.0\n20+00,21+50,6.0,7.5\n", encoding="utf-8")
+    ext = extract_spans_from_csv(str(p))
+    assert ext.spans[0].depth == 4.5 and ext.spans[0].boc == 5.0
+    assert ext.spans[1].depth == 6.0 and ext.spans[1].boc == 7.5
+
+
+def test_shape_a_missing_depth_boc_columns_stays_none(tmp_path):
+    p = tmp_path / "schedule.csv"
+    p.write_text("start,end\n11+75,13+25\n", encoding="utf-8")
+    r = extract_spans_from_csv(str(p)).spans[0]
+    assert r.depth is None and r.boc is None
+
+
+def test_shape_b_labeled_rows_carries_min_depth_and_boc(tmp_path):
+    """Shape B (single station col + labeled start/end rows): depth/BOC is the MINIMUM reading recorded
+    anywhere in the bore-log table (mirrors the strict reader's depth_min_ft / boc_min_ft semantics), not
+    just the two labeled rows."""
+    p = tmp_path / "bore-log.xlsx"
+    p.write_bytes(borelog_xlsx("11+75", "13+25", depth=5.0, boc=6.0))
+    r = extract_spans_from_xlsx(str(p)).spans[0]
+    assert r.depth == 5.0 and r.boc == 6.0
+
+
+def test_shape_b_no_depth_boc_columns_stays_none(tmp_path):
+    p = tmp_path / "bore-log.xlsx"
+    p.write_bytes(borelog_xlsx("11+75", "13+25"))                 # no boc column, depth column present
+    r = extract_spans_from_xlsx(str(p)).spans[0]
+    assert r.boc is None                                          # honest absence, no fabricated 0
+
+
 def test_footage_printed_overrides_computed(tmp_path):
     p = tmp_path / "s.csv"
     p.write_text("start,end,length\n11+75,13+25,148\n", encoding="utf-8")

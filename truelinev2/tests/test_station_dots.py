@@ -97,6 +97,39 @@ def test_stroke_polyline_with_dots_merges_and_dedups_endpoint():
     assert xs == sorted(xs)                                          # arc-length ordered
 
 
+def test_two_point_anchor_stroke_is_exactly_collinear():
+    """PRODUCT RULE (locked): a two-click HUMAN_CONFIRMED anchor renders a STRAIGHT segment — the dot
+    vertices are linear interpolations ON that segment (never route-followed, smoothed, bent, snapped, or
+    conduit-derived). Every stroke vertex must have ~zero perpendicular deviation from the click-to-click
+    line and lie BETWEEN the clicks; the first/last vertices are exactly the clicks."""
+    a, b = (150.0, 300.0), (460.0, 380.0)
+    pts = SD.stroke_polyline_with_dots([{"x": a[0], "y": a[1]}, {"x": b[0], "y": b[1]}], footage=176.0)
+    assert pts[0] == a and pts[-1] == b
+    L = math.hypot(b[0] - a[0], b[1] - a[1])
+    for (x, y) in pts:
+        dev = abs((b[0] - a[0]) * (a[1] - y) - (a[0] - x) * (b[1] - a[1])) / L
+        assert dev < 1e-9, "stroke vertex off the straight segment: %r (dev %.3g)" % ((x, y), dev)
+        t = ((x - a[0]) * (b[0] - a[0]) + (y - a[1]) * (b[1] - a[1])) / (L * L)
+        assert -1e-9 <= t <= 1 + 1e-9, "stroke vertex outside the segment"
+    # ... and the same for a steep/reversed segment (no axis assumption)
+    pts2 = SD.stroke_polyline_with_dots([{"x": 400.0, "y": 50.0}, {"x": 380.0, "y": 700.0}], footage=100.0)
+    (a2, b2) = pts2[0], pts2[-1]
+    L2 = math.hypot(b2[0] - a2[0], b2[1] - a2[1])
+    assert all(abs((b2[0] - a2[0]) * (a2[1] - y) - (a2[0] - x) * (b2[1] - a2[1])) / L2 < 1e-9 for x, y in pts2)
+
+
+def test_two_point_anchor_dots_lie_on_the_straight_segment():
+    a, b = (150.0, 300.0), (460.0, 380.0)
+    dots = SD.compute_station_dots([{"x": a[0], "y": a[1]}, {"x": b[0], "y": b[1]}],
+                                   footage=176.0, start_station="5+03")
+    assert [d["footage_along"] for d in dots] == [0.0, 50.0, 100.0, 150.0, 176.0]
+    L = math.hypot(b[0] - a[0], b[1] - a[1])
+    for d in dots:
+        x, y = d["xy_display"]["x"], d["xy_display"]["y"]
+        dev = abs((b[0] - a[0]) * (a[1] - y) - (a[0] - x) * (b[1] - a[1])) / L
+        assert dev < 0.02, "dot off the straight segment: %r" % (d,)   # 0.01-rounding of the payload only
+
+
 def test_dot_xys_extracts_positions():
     dots = SD.compute_station_dots(_LINE, footage=100.0)
     assert SD.dot_xys(dots) == [(d["xy_display"]["x"], d["xy_display"]["y"]) for d in dots]
@@ -125,6 +158,32 @@ def test_resolve_bore_fields_sparse_row_is_none_safe():
     assert f["footage"] is None and f["start_station"] is None
     assert all(v is None for v in f["info"].values())
     assert SD.resolve_bore_fields(None)["footage"] is None
+
+
+def test_resolve_bore_fields_generic_extractor_keys():
+    """Rows produced by the PRODUCT's generic span extractor use footage_ft / print_raw keys — they must
+    resolve (verification-exposed integration truth, not a synthetic column set)."""
+    row = {"raw": {"start_station": "5+03", "end_station": "6+79", "footage_ft": 176.0, "print_raw": "17",
+                   "sheet_refs": [17]}, "normalized": {"start_station": "5+03"}}
+    f = SD.resolve_bore_fields(row)
+    assert f["footage"] == 176.0 and f["start_station"] == "5+03" and f["info"]["print"] == "17"
+
+
+def test_resolve_bore_fields_depth_boc_min_ft_aliases():
+    """The strict-reader + generic-extractor lanes both write depth_min_ft/boc_min_ft (borelog_rows.py) —
+    these must resolve onto the SAME dot info keys ("depth"/"boc") a manually-typed row uses, so the dot
+    payload is identical regardless of which lane produced the row."""
+    row = {"raw": {"start_station": "5+03", "end_station": "6+79", "footage_ft": 176.0,
+                   "depth_min_ft": 42.0, "boc_min_ft": 48.0}}
+    f = SD.resolve_bore_fields(row)
+    assert f["info"]["depth"] == "42.0" and f["info"]["boc"] == "48.0"
+
+
+def test_resolve_bore_fields_depth_boc_absent_stays_none():
+    """No depth/boc column at all -> both info keys stay honestly None (never a fabricated zero)."""
+    row = {"raw": {"start_station": "5+03", "end_station": "6+79", "footage_ft": 176.0}}
+    f = SD.resolve_bore_fields(row)
+    assert f["info"]["depth"] is None and f["info"]["boc"] is None
 
 
 def test_footage_coercion_handles_units_and_numbers():

@@ -150,6 +150,15 @@ def _generic_span_rows(path, source_upload_id, *, at, by, existing_row_ids):
             raw["print_raw"] = span.print_raw
         if span.sheet_refs:
             raw["sheet_refs"] = list(span.sheet_refs)
+        # Depth/BOC (additive): the span extractor's OWN source-backed reading (span_extractor.py's
+        # depth/boc column detection), carried under the SAME keys the strict reader already writes
+        # (depth_min_ft / boc_min_ft — see the tier above and _read_optional_fields) so both lanes present
+        # identically to the review gate / station-dot info / closeout surfaces downstream. Absent column ->
+        # absent key, never a fabricated zero.
+        if span.depth is not None:
+            raw["depth_min_ft"] = span.depth
+        if span.boc is not None:
+            raw["boc_min_ft"] = span.boc
         # normalized = candidate SUGGESTIONS (never truth); the same shape as manual/engine-reader rows so
         # the existing review gate treats a generic row identically.
         normalized = {"start_station": span.start_station, "end_station": span.end_station}

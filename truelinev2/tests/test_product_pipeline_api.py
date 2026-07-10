@@ -1828,7 +1828,7 @@ def _engine_ready_job(c, ctx, monkeypatch, *, placement_status=PlacementStatus.R
                           matched_callouts=callouts)
     na = {"verdict": "N/A", "caveats": [], "evidence": []}
     monkeypatch.setattr(uce, "_run_engine",
-                        lambda p, bl: (bore, placement, 0, "generic", [], na, None, None))
+                        lambda p, bl, rbl=None: (bore, placement, 0, "generic", [], na, None, None))
     monkeypatch.setattr(uce, "render_redline_stroke", _fake_render_png)
 
 

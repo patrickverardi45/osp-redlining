@@ -34,13 +34,16 @@ _NUM_RE = re.compile(r"[-+]?\d*\.?\d+")
 # stores values as free-form keys across raw / normalized / corrected layers (no fixed column schema yet), so
 # we resolve by a small alias set. These are DATA keys, not code identities — no customer/name tokens.
 _FIELD_ALIASES: Dict[str, Tuple[str, ...]] = {
-    "footage": ("footage", "ft", "feet", "length", "bore_footage"),
+    "footage": ("footage", "footage_ft", "ft", "feet", "length", "bore_footage"),
     "start_station": ("start_station", "start", "start_sta", "from_station", "sta_start", "s"),
-    "depth": ("depth", "bore_depth"),
-    "boc": ("boc", "bottom_of_conduit"),
+    # depth_min_ft/boc_min_ft are the generic-extractor + strict-reader keys (borelog_rows.py) for the
+    # SAME depth/BOC values manual rows spell "depth"/"boc" — alias both so a source-backed reading from
+    # either lane resolves identically on this dot's info payload (never invented when absent).
+    "depth": ("depth", "bore_depth", "depth_min_ft"),
+    "boc": ("boc", "bottom_of_conduit", "boc_min_ft"),
     "date": ("date", "bore_date", "install_date"),
     "crew": ("crew", "crew_name"),
-    "print": ("print", "print_no", "print_number", "print_num", "sheet_print"),
+    "print": ("print", "print_raw", "print_no", "print_number", "print_num", "sheet_print"),
     "notes": ("notes", "note", "comment", "comments"),
     "bore_log_id": ("bore_id", "bore_log_id", "bore", "id"),
 }

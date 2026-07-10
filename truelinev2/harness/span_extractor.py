@@ -56,6 +56,12 @@ _END_COLS = {"end", "end_station", "end_sta", "to", "to_station", "to_sta", "fin
 _STATION_COLS = {"station", "sta", "stationing", "station_ft"}
 _FOOTAGE_COLS = {"footage", "footage_ft", "length", "length_ft", "span", "span_ft", "feet", "ft", "lf",
                  "bore_length", "bore_length_ft"}
+# Depth/BOC (bottom-of-conduit/casing) reading columns (additive; carried metadata only — never used for
+# endpoint binding or placement, mirrors the strict reader's depth_min_ft / the extract-tier's boc_min_ft;
+# see extract/borelog_rows.py). Absent column -> absent field, never guessed.
+_DEPTH_COLS = {"depth", "depth_ft", "depth_min_ft", "bore depth", "bore_depth", "min depth", "min_depth"}
+_BOC_COLS = {"boc", "boc_ft", "boc_min_ft", "bottom of conduit", "bottom_of_conduit", "bottom of casing",
+             "bottom_of_casing"}
 _ROLE_COLS = {"notes", "note", "type", "point", "role", "position", "label", "endpoint"}
 _ID_COLS = {"bore_id", "bore", "id", "bore_no", "bore_number", "bore_ref", "run", "run_id"}
 _START_STRUCT_COLS = {"start_structure", "from_structure", "start_struct", "from_struct"}
@@ -114,6 +120,12 @@ class SpanRow:
     # readiness lane can later reason print ref -> sheet identity -> resolved PDF page. Never guessed.
     print_raw: Optional[str] = None
     sheet_refs: Tuple[int, ...] = ()
+    # Depth/BOC (additive; default None so every existing SpanRow(...) construction across the readiness
+    # spine stays valid unchanged): source-backed readings, carried metadata only — never derived, never
+    # used for endpoint binding. Present only when the source table has a matching column (see _DEPTH_COLS/
+    # _BOC_COLS above); absent otherwise.
+    depth: Optional[float] = None
+    boc: Optional[float] = None
 
     def to_dict(self) -> dict:
         d = dict(self.__dict__)
@@ -191,7 +203,8 @@ def _num(cell: str) -> Optional[float]:
 def _make_span(doc: SourceDocument, idx: int, s: Tuple[str, float], e: Tuple[str, float],
                printed_footage: Optional[float], start_struct: Optional[str], end_struct: Optional[str],
                bore_ref: Optional[str], *, citation: str, confidence: str, grammar: str,
-               print_raw: Optional[str] = None) -> SpanRow:
+               print_raw: Optional[str] = None, depth: Optional[float] = None,
+               boc: Optional[float] = None) -> SpanRow:
     start_sta, start_ft = s
     end_sta, end_ft = e
     if end_ft < start_ft:                                 # normalize low -> high (both are source stations)
@@ -212,7 +225,8 @@ def _make_span(doc: SourceDocument, idx: int, s: Tuple[str, float], e: Tuple[str
                    status=SPAN_ROW_CONFIRMED, confidence=confidence, citation=citation[:200], bbox=None,
                    detail=detail,
                    print_raw=(str(print_raw) if print_raw else None),
-                   sheet_refs=_sheet_refs_from_print(print_raw))
+                   sheet_refs=_sheet_refs_from_print(print_raw),
+                   depth=depth, boc=boc)
 
 
 def _parse_table(doc: SourceDocument, id_offset: int) -> List[SpanRow]:
@@ -224,6 +238,7 @@ def _parse_table(doc: SourceDocument, id_offset: int) -> List[SpanRow]:
     out: List[SpanRow] = []
 
     pr_i = _find_col(header, _PRINT_COLS)                 # Slice 2: optional print/sheet reference column
+    depth_i, boc_i = _find_col(header, _DEPTH_COLS), _find_col(header, _BOC_COLS)   # optional; None if absent
 
     if start_i is not None and end_i is not None:         # shape A: explicit start + end columns
         for row in doc.table.rows:
@@ -231,17 +246,22 @@ def _parse_table(doc: SourceDocument, id_offset: int) -> List[SpanRow]:
             if not s or not e or abs(s[1] - e[1]) < 1e-9:
                 continue
             printed = _num(_cell(row, foot_i)) if foot_i is not None else None
+            # Depth/BOC are THIS row's own reading (each shape-A row is its own distinct bore span, so a
+            # cross-row min would wrongly blend unrelated bores' readings) — absent cell -> None, honest.
             out.append(_make_span(
                 doc, id_offset + len(out), s, e, printed,
                 _cell(row, ss_i) or None, _cell(row, es_i) or None, _cell(row, id_i) or None,
                 citation=" | ".join(c for c in row if c), confidence=CONF_HIGH,
                 grammar="EXPLICIT_START_END_COLUMNS",
-                print_raw=_cell(row, pr_i) or None))
+                print_raw=_cell(row, pr_i) or None,
+                depth=_num(_cell(row, depth_i)) if depth_i is not None else None,
+                boc=_num(_cell(row, boc_i)) if boc_i is not None else None))
         return out
 
     sta_i, role_i = _find_col(header, _STATION_COLS), _find_col(header, _ROLE_COLS)
     if sta_i is not None and role_i is not None:          # shape B: single station col + labeled start/end rows
         starts, ends = [], []
+        depths, bocs = [], []
         for row in doc.table.rows:
             st = _station_from_cell(_cell(row, sta_i))
             if not st:
@@ -251,13 +271,26 @@ def _parse_table(doc: SourceDocument, id_offset: int) -> List[SpanRow]:
                 starts.append((st, row))
             elif words & _END_ROLE_WORDS:
                 ends.append((st, row))
+            # This shape is ONE bore printed across every row of the table (unlike shape A's per-row
+            # bores), so its depth/BOC is the MINIMUM reading over ALL rows — the same "minimum recorded
+            # reading for the bore" semantics the strict reader (bore.depth_min_ft) and the extract-tier's
+            # boc_min_ft already use, not just the two labeled start/end rows.
+            if depth_i is not None:
+                v = _num(_cell(row, depth_i))
+                if v is not None:
+                    depths.append(v)
+            if boc_i is not None:
+                v = _num(_cell(row, boc_i))
+                if v is not None:
+                    bocs.append(v)
         if len(starts) == 1 and len(ends) == 1 and abs(starts[0][0][1] - ends[0][0][1]) >= 1e-9:
             out.append(_make_span(
                 doc, id_offset, starts[0][0], ends[0][0], None, None, None,
                 _cell(starts[0][1], id_i) or None if id_i is not None else None,
                 citation="labeled start/end rows", confidence=CONF_HIGH, grammar="LABELED_START_END_ROWS",
                 # the span is one bore across the two labeled rows: start row's print cell, else end row's
-                print_raw=_cell(starts[0][1], pr_i) or _cell(ends[0][1], pr_i) or None))
+                print_raw=_cell(starts[0][1], pr_i) or _cell(ends[0][1], pr_i) or None,
+                depth=(min(depths) if depths else None), boc=(min(bocs) if bocs else None)))
         return out
 
     return []                                             # no span-bearing columns

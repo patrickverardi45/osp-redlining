@@ -293,6 +293,30 @@ def test_render_without_footage_row_still_renders_no_dots(tmp_path):
     assert manifest["logs"][0]["station_dots"] == []                           # no footage -> no dots, no crash
 
 
+def test_two_point_anchor_renders_a_straight_stroke(tmp_path, monkeypatch):
+    """PRODUCT RULE (locked at the RENDER seam): a two-click HUMAN_CONFIRMED anchor hands the renderer a
+    STRAIGHT stroke — every vertex collinear with the two clicks (zero perpendicular deviation), endpoints
+    exactly the clicks, no route-following/conduit vertex ever inserted. Dots ride ON that segment."""
+    import math
+    import truelinev2.render.source_anchor_render as R
+    plan = _ready_job(tmp_path, row_raw=_FOOTAGE_ROW)
+    _anchor(tmp_path, plan)                                        # TWO_PTS: exactly two clicked points
+    captured = {}
+    orig = R.render_redline_stroke
+    def spy(p, bore_id, sheet, offset, stroke_points, **kw):
+        captured["pts"] = [tuple(q) for q in stroke_points]
+        return orig(p, bore_id, sheet, offset, stroke_points, **kw)
+    monkeypatch.setattr(R, "render_redline_stroke", spy)
+    assert _render(tmp_path)["status"] == "SUCCEEDED"
+    pts = captured["pts"]
+    a, b = (TWO_PTS[0]["x"], TWO_PTS[0]["y"]), (TWO_PTS[1]["x"], TWO_PTS[1]["y"])
+    assert pts[0] == a and pts[-1] == b and len(pts) >= 2
+    L = math.hypot(b[0] - a[0], b[1] - a[1])
+    for (x, y) in pts:
+        dev = abs((b[0] - a[0]) * (a[1] - y) - (a[0] - x) * (b[1] - a[1])) / L
+        assert dev < 1e-9, "renderer received a non-collinear vertex %r (dev %.3g)" % ((x, y), dev)
+
+
 def test_render_adapter_imports_no_engine_path():
     import ast
     src = (Path(__file__).resolve().parents[1] / "render" / "source_anchor_render.py").read_text(
