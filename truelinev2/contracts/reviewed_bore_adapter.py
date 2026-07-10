@@ -17,9 +17,11 @@ placement input:
   2. it resolves to EXACTLY ONE engine-eligible row (single-bore-per-job is the current product scope; more
      than one eligible row is an unmodeled multi-bore relationship, not something this adapter guesses at),
   3. the row's EFFECTIVE start + end stations (see precedence below) both parse via ``stations.parse_station``,
-  4. a positive footage exists: either an explicit footage value, or -- when none is present -- the absolute
-     station delta (``|end_ft - start_ft|``), which is used ONLY as a fallback and is flagged with an
-     informational detail (never silently substituted without a trace).
+  4. a positive footage exists: either an explicit footage value, or -- ONLY when the footage field is truly
+     ABSENT (no footage/footage_ft alias key, or an empty value) -- the absolute station delta
+     (``|end_ft - start_ft|``), flagged with an informational detail (never silently substituted without a
+     trace). A footage field that IS present but zero, negative, or non-numeric DECLINES outright (fail-
+     closed: the source's own numbers are inconsistent -- never silently replaced by the station delta).
 
 Effective row values are resolved by the SAME precedence the reviewed-row rendering surface already uses
 (``render.station_dots.py::resolve_bore_fields`` -- corrected_values > normalized > raw, human CORRECTED
@@ -51,6 +53,12 @@ ZERO_ELIGIBLE_ROWS = "ZERO_ELIGIBLE_ROWS"
 MULTIPLE_ELIGIBLE_ROWS = "MULTIPLE_ELIGIBLE_ROWS"
 STATION_UNPARSEABLE = "STATION_UNPARSEABLE"
 NO_POSITIVE_FOOTAGE = "NO_POSITIVE_FOOTAGE"
+# A footage field is PRESENT (a non-empty footage/footage_ft alias key exists on the effective row) but its
+# value is inconsistent with the source's own numbers -- fail-closed DECLINES rather than silently falling
+# back to the station delta (that fallback is reserved for a footage field that is truly ABSENT; see
+# ``bore_from_reviewed_rows`` below). Distinct codes so a caller can tell "not a number" from "zero/negative".
+FOOTAGE_NOT_NUMERIC = "FOOTAGE_NOT_NUMERIC"
+NONPOSITIVE_FOOTAGE = "NONPOSITIVE_FOOTAGE"
 
 # Informational (NOT a decline) note returned alongside a successfully-built Bore when its footage came
 # from the station delta rather than an explicit footage column -- so a caller can log/surface the honest
@@ -173,8 +181,16 @@ def bore_from_reviewed_rows(rbl: dict, *, source_filename: str) -> Tuple[Optiona
         return None, STATION_UNPARSEABLE
 
     detail = None
-    footage = _coerce_ft(_pick(merged, _FIELD_ALIASES["footage"]))
-    if footage is None or footage <= 0:
+    footage_raw = _pick(merged, _FIELD_ALIASES["footage"])
+    if footage_raw is not None:
+        # Footage field is PRESENT (a non-empty alias key) -- trust it or decline; NEVER fall back to the
+        # station delta here (that fallback is reserved for a truly absent field, below).
+        footage = _coerce_ft(footage_raw)
+        if footage is None:
+            return None, FOOTAGE_NOT_NUMERIC
+        if footage <= 0:
+            return None, NONPOSITIVE_FOOTAGE
+    else:
         delta = abs(end_ft - start_ft)
         if delta <= 0:
             return None, NO_POSITIVE_FOOTAGE

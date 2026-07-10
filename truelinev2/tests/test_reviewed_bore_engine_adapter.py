@@ -33,7 +33,9 @@ from truelinev2.contracts.reviewed_bore_log import (
 )
 from truelinev2.contracts.reviewed_bore_adapter import (
     FOOTAGE_FROM_STATION_DELTA,
+    FOOTAGE_NOT_NUMERIC,
     MULTIPLE_ELIGIBLE_ROWS,
+    NONPOSITIVE_FOOTAGE,
     NOT_ENGINE_READY,
     NO_POSITIVE_FOOTAGE,
     STATION_UNPARSEABLE,
@@ -157,6 +159,40 @@ def test_multiple_eligible_rows_declines():
     rbl = _rbl([row1, row2], [_group(["row-1", "row-2"])])   # both CONFIRMED + grouped -> both eligible
     bore, reason = bore_from_reviewed_rows(rbl, source_filename="x.csv")
     assert bore is None and reason == MULTIPLE_ELIGIBLE_ROWS
+
+
+def test_explicit_zero_footage_declines_not_station_delta():
+    # Footage field is PRESENT (explicit "0") even though start/end stations differ (a real 150' delta) --
+    # a present-but-invalid footage must DECLINE, never silently fall back to the station delta.
+    row = _row("row-1", raw={"start_station": "0+00", "end_station": "1+50", "footage": "0"})
+    rbl = _rbl([row], [_group(["row-1"])])
+    bore, reason = bore_from_reviewed_rows(rbl, source_filename="x.csv")
+    assert bore is None and reason == NONPOSITIVE_FOOTAGE
+
+
+def test_explicit_negative_footage_declines_not_station_delta():
+    row = _row("row-1", raw={"start_station": "0+00", "end_station": "1+50", "footage": "-25"})
+    rbl = _rbl([row], [_group(["row-1"])])
+    bore, reason = bore_from_reviewed_rows(rbl, source_filename="x.csv")
+    assert bore is None and reason == NONPOSITIVE_FOOTAGE
+
+
+def test_explicit_non_numeric_footage_declines():
+    row = _row("row-1", raw={"start_station": "0+00", "end_station": "1+50", "footage": "n/a"})
+    rbl = _rbl([row], [_group(["row-1"])])
+    bore, reason = bore_from_reviewed_rows(rbl, source_filename="x.csv")
+    assert bore is None and reason == FOOTAGE_NOT_NUMERIC
+
+
+def test_empty_footage_value_still_falls_back_to_station_delta():
+    # An empty-string footage value counts as ABSENT (same as no key at all) -- the station-delta fallback
+    # still applies and still carries its honest-provenance detail.
+    row = _row("row-1", raw={"start_station": "0+00", "end_station": "1+50", "footage": ""})
+    rbl = _rbl([row], [_group(["row-1"])])
+    bore, detail = bore_from_reviewed_rows(rbl, source_filename="x.csv")
+    assert bore is not None
+    assert bore.span_ft == pytest.approx(150.0)
+    assert detail == FOOTAGE_FROM_STATION_DELTA
 
 
 def test_footage_fallback_from_station_delta_carries_detail():

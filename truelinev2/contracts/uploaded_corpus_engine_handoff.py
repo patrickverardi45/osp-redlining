@@ -867,7 +867,7 @@ def _summary(store_root, customer_project_id, job_id, handoff, *, log_id, placem
         for lid, art in bundle.final_artifacts():
             arts.append({"log_id": lid, "path": art.get("path"), "sha256": art.get("sha256"),
                          "bytes": art.get("bytes"), "kind": art.get("kind")})
-    return {
+    out = {
         "status": handoff["status"], "bundle_id": bundle_id,
         "bundle_origin": BUNDLE_ORIGIN_UPLOADED_CORPUS_ENGINE,
         "placement_status": placement.status.value, "reason": placement.reason,
@@ -875,10 +875,13 @@ def _summary(store_root, customer_project_id, job_id, handoff, *, log_id, placem
         "artifact_count": ab.get("artifact_count"), "artifacts": arts,
         "redline_manifest_slot": mf.get("store_relative_path"),
         "artifact_bundle_slot": ab.get("store_relative_path"),
-        # Additive-only: present ONLY when the strict-reader fallback adapter supplied the bore for this
-        # render (None on every existing/recognized/named-dialect path -> byte-identical there).
-        "bore_source": bore_source,
     }
+    if bore_source:
+        # Additive-only: the key is present ONLY when the strict-reader fallback adapter actually supplied
+        # the bore for this render -- ABSENT (not None) on every existing/recognized/named-dialect path, so
+        # a strict-reader-success summary is byte-identical to before this adapter existed.
+        out["bore_source"] = bore_source
+    return out
 
 
 def _render_content_key(plan_name, borelog_name, log_id, status_value, legs) -> str:
