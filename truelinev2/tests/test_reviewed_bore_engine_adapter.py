@@ -19,7 +19,7 @@ from pathlib import Path
 import pytest
 
 from truelinev2.contracts.customer_project import create_customer_project
-from truelinev2.contracts.extracted_row import CONFIRMED, MANUAL_ENTRY, new_extracted_row, review_row
+from truelinev2.contracts.extracted_row import CONFIRMED, MANUAL_ENTRY, OCR, new_extracted_row, review_row
 from truelinev2.contracts.processing_job import create_job, job_dir
 from truelinev2.contracts.reviewed_bore_log import (
     GROUPING_CONFIRMED,
@@ -38,6 +38,7 @@ from truelinev2.contracts.reviewed_bore_adapter import (
     NONPOSITIVE_FOOTAGE,
     NOT_ENGINE_READY,
     NO_POSITIVE_FOOTAGE,
+    OCR_ROW_REQUIRES_EXPLICIT_FOOTAGE,
     STATION_UNPARSEABLE,
     bore_from_reviewed_rows,
 )
@@ -68,9 +69,9 @@ _PDF = base64.b64decode(
 # --------------------------------------------------------------------------- #
 # Hand-built reviewed_bore_log dict helpers (no store/job scaffolding needed).
 # --------------------------------------------------------------------------- #
-def _row(row_id, raw, *, normalized=None, status=CONFIRMED, corrected_values=None):
+def _row(row_id, raw, *, normalized=None, status=CONFIRMED, corrected_values=None, method=MANUAL_ENTRY):
     row = new_extracted_row(row_id, "up-1", raw=raw, normalized=(normalized or {}),
-                            extraction_method=MANUAL_ENTRY, at=AT, by=BY)
+                            extraction_method=method, at=AT, by=BY)
     if status is not None:
         review_row(row, status, at=AT, by=BY, corrected_values=corrected_values)
     return row
@@ -202,6 +203,45 @@ def test_footage_fallback_from_station_delta_carries_detail():
     assert bore is not None
     assert bore.span_ft == pytest.approx(150.0)
     assert detail == FOOTAGE_FROM_STATION_DELTA
+
+
+# --------------------------------------------------------------------------- #
+# Additive: the OCR-only footage preflight (Phase-1 handwritten extraction). Non-OCR methods keep the
+# EXISTING station-delta fallback byte-identical; an OCR row with no usable explicit footage declines
+# instead of ever deriving one.
+# --------------------------------------------------------------------------- #
+def test_ocr_row_with_absent_footage_declines_named_not_derived():
+    row = _row("row-1", raw={"start_station": "0+00", "end_station": "1+50"}, method=OCR)  # no footage key
+    rbl = _rbl([row], [_group(["row-1"])])
+    bore, reason = bore_from_reviewed_rows(rbl, source_filename="x.jpg")
+    assert bore is None and reason == OCR_ROW_REQUIRES_EXPLICIT_FOOTAGE
+
+
+def test_ocr_row_with_nonpositive_footage_declines_named():
+    row = _row("row-1", raw={"start_station": "0+00", "end_station": "1+50", "footage": "0"}, method=OCR)
+    rbl = _rbl([row], [_group(["row-1"])])
+    bore, reason = bore_from_reviewed_rows(rbl, source_filename="x.jpg")
+    assert bore is None and reason == OCR_ROW_REQUIRES_EXPLICIT_FOOTAGE
+
+
+def test_ocr_row_with_explicit_positive_footage_succeeds():
+    row = _row("row-1", raw={"start_station": "0+00", "end_station": "1+50", "footage": "150"}, method=OCR)
+    rbl = _rbl([row], [_group(["row-1"])])
+    bore, detail = bore_from_reviewed_rows(rbl, source_filename="x.jpg")
+    assert bore is not None and detail is None
+    assert bore.span_ft == pytest.approx(150.0)
+
+
+def test_non_ocr_methods_keep_station_delta_fallback_byte_identical():
+    # SAME input as the OCR-declines case above, minus the method -- derivation still happens exactly as
+    # before this ticket, for every non-OCR extraction method.
+    for method in (MANUAL_ENTRY, "TABLE_IMPORT", "TEXT_PARSE"):
+        row = _row("row-1", raw={"start_station": "0+00", "end_station": "1+50"}, method=method)
+        rbl = _rbl([row], [_group(["row-1"])])
+        bore, detail = bore_from_reviewed_rows(rbl, source_filename="x.csv")
+        assert bore is not None
+        assert bore.span_ft == pytest.approx(150.0)
+        assert detail == FOOTAGE_FROM_STATION_DELTA
 
 
 def test_bore_field_fidelity():

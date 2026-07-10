@@ -64,10 +64,19 @@ def _require_nonempty_str(value, label) -> str:
 
 
 def new_extracted_row(row_id, source_upload_id, *, raw, normalized, extraction_method,
-                      extractor_name=None, confidence=None, warnings=None, at, by) -> dict:
+                      extractor_name=None, confidence=None, warnings=None,
+                      source_evidence=None, cell_evidence=None, at, by) -> dict:
     """Build one UNTRUSTED extracted_row (status UNREVIEWED, not a candidate) with an opening audit
     entry. `normalized` holds candidate SUGGESTIONS, never truth. `extractor_name` is opaque runtime
-    data (a tool/provider label, or None) — never a hardcoded provider name in code."""
+    data (a tool/provider label, or None) — never a hardcoded provider name in code.
+
+    `source_evidence` ({sha256, file, page_index, region|None}) and `cell_evidence`
+    ({field: {status, page_index, region|None, verbatim|None}}) are ADDITIVE OPTIONAL per-cell
+    provenance (Phase-1 handwritten-extraction contract, see contracts/handwritten_extraction.py). When
+    omitted (the default, and every existing TABLE_IMPORT/MANUAL_ENTRY/TEXT_PARSE call site) the
+    `extraction` dict is byte-identical to before this evolution — the keys are added ONLY when the
+    caller actually supplies them, so old-shape rows (missing these keys entirely) remain valid without
+    any schema migration."""
     _require_nonempty_str(row_id, "row_id")
     _require_nonempty_str(source_upload_id, "source_upload_id")
     if extraction_method not in EXTRACTION_METHODS:
@@ -76,15 +85,20 @@ def new_extracted_row(row_id, source_upload_id, *, raw, normalized, extraction_m
     if confidence is not None and confidence not in CONFIDENCE_LEVELS:
         raise ExtractedRowError(
             "confidence must be None or one of %r (got %r)" % (CONFIDENCE_LEVELS, confidence))
+    extraction = {
+        "extraction_method": extraction_method,
+        "extractor_name": extractor_name,          # opaque runtime data (nullable)
+        "confidence": confidence,                  # optional (may be None for manual/import)
+        "warnings": list(warnings or []),
+    }
+    if source_evidence is not None:
+        extraction["source_evidence"] = dict(source_evidence)
+    if cell_evidence is not None:
+        extraction["cell_evidence"] = {k: dict(v) for k, v in cell_evidence.items()}
     return {
         "row_id": row_id,
         "source_upload_id": source_upload_id,
-        "extraction": {
-            "extraction_method": extraction_method,
-            "extractor_name": extractor_name,          # opaque runtime data (nullable)
-            "confidence": confidence,                  # optional (may be None for manual/import)
-            "warnings": list(warnings or []),
-        },
+        "extraction": extraction,
         "raw": dict(raw),                              # raw extracted/imported/entered values
         "normalized": dict(normalized),                # candidate suggestions — never truth
         "review": {
