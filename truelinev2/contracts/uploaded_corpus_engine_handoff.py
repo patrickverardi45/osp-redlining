@@ -31,7 +31,6 @@ Honesty / boundaries:
 from __future__ import annotations
 
 import hashlib
-import inspect
 import json
 import re
 from pathlib import Path
@@ -545,22 +544,6 @@ def _run_engine(plan_path, borelog_path, rbl=None):
         plan.close()
 
 
-def _call_run_engine(plan_path, borelog_path, rbl):
-    """Call ``_run_engine`` threading ``rbl`` (the resolved reviewed_bore_log) ONLY when the callable
-    currently bound to that name accepts it. ``_run_engine`` itself accepts an optional ``rbl`` kwarg (the
-    strict-reader fallback adapter needs it), but this module's existing test suite monkeypatches
-    ``_run_engine`` with 2-arg test doubles (``lambda plan_path, borelog_path: ...``) that predate the
-    adapter and must keep working completely unchanged. Introspecting the CURRENT ``_run_engine`` (the real
-    function or a monkeypatched double) keeps both call shapes correct without touching any test double."""
-    try:
-        accepts_rbl = "rbl" in inspect.signature(_run_engine).parameters
-    except (TypeError, ValueError):
-        accepts_rbl = False
-    if accepts_rbl:
-        return _run_engine(plan_path, borelog_path, rbl=rbl)
-    return _run_engine(plan_path, borelog_path)
-
-
 def _candidate(placement):
     """The winning matched callout (drawn extent) for a placed candidate, else None."""
     if placement is None or placement.status == PlacementStatus.ABSTAIN:
@@ -723,8 +706,8 @@ def evaluate_uploaded_corpus_engine_handoff(store_root, customer_project_id, job
     used = None
     matchline = {"verdict": "N/A", "caveats": [], "evidence": []}
     if plan_path is not None and borelog_path is not None:
-        bore, placement, offset, dialect_name, extra_legs, matchline, used, generic_blocker = _call_run_engine(
-            plan_path, borelog_path, rbl)
+        bore, placement, offset, dialect_name, extra_legs, matchline, used, generic_blocker = _run_engine(
+            plan_path, borelog_path, rbl=rbl)
         if placement is None:
             # Surface the generic lane's SPECIFIC abstain reason (e.g. NO_DRAWN_RUN_OVER_SPAN) when it ran but
             # placed nothing drawable; otherwise the package matched no plan dialect at all. (The broader split
@@ -921,8 +904,8 @@ def render_uploaded_corpus_engine_handoff(store_root, customer_project_id, job_i
     if plan_path is None or borelog_path is None or rbl is None:
         raise UploadedCorpusEngineError("not runnable: %s" % "; ".join(b["code"] for b in blockers))
 
-    bore, placement, offset, dialect_name, extra_legs, matchline, used, _generic_blocker = _call_run_engine(
-        plan_path, borelog_path, rbl)
+    bore, placement, offset, dialect_name, extra_legs, matchline, used, _generic_blocker = _run_engine(
+        plan_path, borelog_path, rbl=rbl)
     bore_source = matchline.get("bore_source")   # set ONLY when the reviewed-row adapter supplied this bore
     candidate = _candidate(placement)
     if candidate is None or not candidate.bbox:

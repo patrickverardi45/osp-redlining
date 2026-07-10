@@ -76,8 +76,8 @@ def _patch(monkeypatch, *, status, reason):
                 station_end="44+08", station_start_ft=3890.0, station_end_ft=4408.0, span_ft=518.0)
     placement = _placement(status, reason=reason)
     monkeypatch.setattr(uce, "_run_engine",
-                        lambda plan_path, borelog_path: (bore, placement, 0, "brenham", [], _NA_MATCHLINE,
-                                                         None, None))
+                        lambda plan_path, borelog_path, rbl=None: (bore, placement, 0, "brenham", [], _NA_MATCHLINE,
+                                                                   None, None))
 
     def fake_render(plan, bore_id, sheet, offset, stroke_points, *, status, reason, out_dir, caption=True):
         import os
