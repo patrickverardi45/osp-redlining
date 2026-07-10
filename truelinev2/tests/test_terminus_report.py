@@ -38,6 +38,7 @@ from truelinev2.contracts.reviewed_bore_log import (
     set_grouping_status,
 )
 from truelinev2.contracts.terminus_report import (
+    BORE_LOG_FORMAT_UNRECOGNIZED,
     NO_ENGINE_READY_REVIEWED_BORE_LOG,
     NO_PLAN_PDF_UPLOAD,
     STATUS_EVALUATED,
@@ -314,3 +315,66 @@ def test_route_returns_evidence_and_isolates_tenants(tmp_path):
     with pytest.raises(HTTPException) as exc2:
         ppr.get_terminus_evidence("job-absent", ctx=require_context("cp-route", "sess-1"), c=c)
     assert exc2.value.status_code == 404
+
+
+# --------------------------------------------------------------------------- #
+# (7) A strict-unreadable (generic/refusal-lane) bore-log is a NAMED blocker — never an unhandled 500.
+#     Regression for the staging Gate-1 smoke finding: an ENGINE-READY reviewed bore-log whose SOURCE FILE
+#     the strict reader refuses (rows human-reviewed via the generic lane) crashed the display route.
+# --------------------------------------------------------------------------- #
+# A structured span CSV the GENERIC extractor reads but the STRICT engine reader refuses (the primary
+# customer refusal-lane shape). Content is synthetic and name-free.
+_GENERIC_SPAN_CSV = (
+    b"Bore ID,Print #,Start Station,End Station,Footage,Depth,BOC,Date,Crew,Notes\n"
+    b"B-1,\"3\",5+50,10+92,542,4.2,4.7,2026-04-02,Day Crew,street crossing proof\n"
+)
+
+
+def test_report_strict_unreadable_borelog_blocks_honestly_never_raises(tmp_path):
+    store = tmp_path / "store"
+    _provision_job(store, "cp-generic", "job-generic",
+                   plan_bytes=plan_tight_red_run(),
+                   borelogs=[("rbl-main", "g-1", "bore_log.csv", _GENERIC_SPAN_CSV, 1)])
+    report = terminus_evidence_report(store, "cp-generic", "job-generic")   # must NOT raise
+    assert report["status"] == STATUS_NO_INPUTS and report["runnable"] is False
+    assert report["plan_present"] is True and report["termini"] == []
+    blockers = {b["code"]: b["reason"] for b in report["blockers"]}
+    assert BORE_LOG_FORMAT_UNRECOGNIZED in blockers
+    # the reason names the BORE, never a server path (the raw reader error embeds the absolute path)
+    reason = blockers[BORE_LOG_FORMAT_UNRECOGNIZED]
+    assert "rbl-main" in reason
+    assert str(tmp_path) not in reason and "\\" not in reason and "payload" not in reason
+
+
+def test_report_mixed_readable_and_unreadable_bore_logs_still_evaluates(tmp_path):
+    store = tmp_path / "store"
+    _provision_job(store, "cp-mixed", "job-mixed",
+                   plan_bytes=plan_tight_red_run(),
+                   borelogs=[
+                       ("rbl-ok", "g-a", "bore_log_a.xlsx", borelog_xlsx(), 1),
+                       ("rbl-gen", "g-b", "bore_log_b.csv", _GENERIC_SPAN_CSV, 1),
+                   ])
+    report = terminus_evidence_report(store, "cp-mixed", "job-mixed")
+    # the strict-readable bore still evaluates; the unreadable one is a per-bore NAMED blocker
+    assert report["status"] == STATUS_EVALUATED and report["runnable"] is True
+    assert [e["reviewed_bore_log_id"] for e in report["termini"]] == ["rbl-ok"]
+    assert BORE_LOG_FORMAT_UNRECOGNIZED in {b["code"] for b in report["blockers"]}
+
+
+def test_blocker_literal_mirrors_engine_handoff_vocabulary():
+    # Shared UI copy: the display observer's literal must equal the engine handoff's (defined locally in
+    # terminus_report on purpose — the AST observer-only gate forbids importing the handoff there).
+    from truelinev2.contracts import uploaded_corpus_engine_handoff as uce
+    assert BORE_LOG_FORMAT_UNRECOGNIZED == uce.BORE_LOG_FORMAT_UNRECOGNIZED
+
+
+def test_route_strict_unreadable_borelog_returns_report_not_500(tmp_path):
+    store = tmp_path / "product_store"
+    _provision_job(store, "cp-refusal", "job-refusal",
+                   plan_bytes=plan_tight_red_run(),
+                   borelogs=[("rbl-main", "g-1", "bore_log.csv", _GENERIC_SPAN_CSV, 1)])
+    c = _container(tmp_path, store)
+    # Before the fix this raised the reader's ValueError out of the route (HTTP 500 on staging).
+    out = ppr.get_terminus_evidence("job-refusal", ctx=require_context("cp-refusal", "sess-1"), c=c)
+    assert out["status"] == STATUS_NO_INPUTS
+    assert BORE_LOG_FORMAT_UNRECOGNIZED in {b["code"] for b in out["blockers"]}

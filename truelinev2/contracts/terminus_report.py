@@ -16,6 +16,9 @@ Honesty rules (inherited from the terminus model):
     reviewed bore-log (the same gate the REVIEW candidate uses), so the panel matches what the engine placed;
   * a missing input is reported as a NAMED blocker (mirroring the uploaded-corpus engine vocabulary), never
     an invented endpoint and never a silent empty;
+  * an ENGINE-READY bore-log whose FILE the strict reader cannot parse (the generic/refusal lane: rows were
+    human-reviewed but the source is no strict bore schedule) is a NAMED ``BORE_LOG_FORMAT_UNRECOGNIZED``
+    blocker for that bore — never an unhandled 500 and never a server path in the reason;
   * the per-endpoint source_bound / blocker honesty comes straight from ``extract_termini`` unchanged.
 
 Name-free: no customer/project/location/operator literal lives here.
@@ -40,6 +43,11 @@ NO_PLAN_PDF_UPLOAD = "NO_PLAN_PDF_UPLOAD"
 PLAN_PDF_FILE_NOT_AVAILABLE = "PLAN_PDF_FILE_NOT_AVAILABLE"
 NO_ENGINE_READY_REVIEWED_BORE_LOG = "NO_ENGINE_READY_REVIEWED_BORE_LOG"
 BORE_LOG_FILE_NOT_AVAILABLE = "BORE_LOG_FILE_NOT_AVAILABLE"
+# The strict terminus reader (the ENGINE's ingest normalizer) could not read the bore-log FILE itself — the
+# generic extraction/readiness lanes are more permissive, so a human-reviewed ENGINE-READY bore-log can still
+# be terminus-unreadable. Mirrors the uploaded-corpus engine handoff literal (defined locally on purpose:
+# this observer module imports no placement/mutation contract; vocabulary agreement is test-locked).
+BORE_LOG_FORMAT_UNRECOGNIZED = "BORE_LOG_FORMAT_UNRECOGNIZED"
 
 
 def _blocker(code, reason) -> dict:
@@ -104,7 +112,18 @@ def terminus_evidence_report(store_root, customer_project_id, job_id) -> dict:
             continue
         if plan_path is None:
             continue                                                # plan already reported missing above
-        evidence = extract_termini(plan_path, bore_path)            # read-only observer; no engine/render
+        try:
+            evidence = extract_termini(plan_path, bore_path)        # read-only observer; no engine/render
+        except ValueError:
+            # The strict reader refuses this bore-log FILE (``load_borelog`` funnels every non-workbook /
+            # garbage source here — e.g. a generic-lane CSV whose ROWS were human-reviewed). Mirror the
+            # engine handoff's refusal branch: report the NAMED blocker and keep going, so the display
+            # observer never escapes as an unhandled 500 and never leaks a server path in the reason.
+            blockers.append(_blocker(
+                BORE_LOG_FORMAT_UNRECOGNIZED,
+                "Reviewed bore-log %r source file is not readable by the strict terminus reader; endpoint "
+                "evidence is unavailable for this bore." % rbl.get("reviewed_bore_log_id")))
+            continue
         termini.append({
             "reviewed_bore_log_id": rbl.get("reviewed_bore_log_id"),
             "source_upload_id": rbl.get("source_upload_id"),

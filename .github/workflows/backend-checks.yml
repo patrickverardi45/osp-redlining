@@ -41,6 +41,7 @@ jobs:
             truelinev2/tests/test_field_evidence_contract.py \
             truelinev2/tests/test_upload_pipeline_contract.py \
             truelinev2/tests/test_product_pipeline_api.py \
+            truelinev2/tests/test_terminus_report.py \
             truelinev2/tests/test_destructive_route_gate.py \
             truelinev2/tests/test_product_audit.py \
             truelinev2/tests/test_store_snapshot.py \
