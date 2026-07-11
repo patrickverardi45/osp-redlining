@@ -72,4 +72,6 @@ jobs:
             truelinev2/tests/test_source_anchor_render_contract.py \
             truelinev2/tests/test_source_anchor_manual_route.py \
             truelinev2/tests/test_review_candidate.py \
+            truelinev2/tests/test_station_dots.py \
+            truelinev2/tests/test_station_marks.py \
             -q

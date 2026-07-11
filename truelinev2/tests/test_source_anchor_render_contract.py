@@ -211,9 +211,13 @@ _FOOTAGE_ROW = {"Bore ID": "B-9", "Print #": "17", "Start Station": "5+03", "End
 
 
 def test_build_manifest_carries_station_dots_additively_and_validates():
+    # LOCK UPDATE (Mission 8 addendum, owner's STATION-DOT CONTRACT, ``.foreman/scratch/m8/design-dots.md``):
+    # ``origin`` is now REQUIRED on every station_dots item (schema-enforced) -- this literal dot dict
+    # gains it so the fixture stays schema-valid; no other field changes.
     from truelinev2.contracts.redline_manifest_publisher import (
         load_schema, reconciliation_errors, validate_manifest)
     dots = [{"index": 0, "footage_along": 50.0, "station": "5+53", "xy_display": {"x": 1.0, "y": 2.0},
+             "origin": "SOURCE_RECORDED",
              "depth": "42", "boc": "48", "date": "2026-03-01", "crew": "Night", "print": "17",
              "notes": "vacant HDPE", "bore_log_id": "B-9",
              "provenance": "HUMAN_CONFIRMED_CONTROL_POINTS"}]
@@ -249,6 +253,12 @@ def test_deterministic_example_manifest_still_validates_against_updated_schema()
 
 
 def test_render_places_station_dots_with_bore_info(tmp_path):
+    # LOCK UPDATE (Mission 8 addendum, owner's STATION-DOT CONTRACT, ``.foreman/scratch/m8/design-dots.md``):
+    # ``_FOOTAGE_ROW`` carries no ``station_readings`` series (start/end/footage only), so this is now the
+    # SPAN_ENDPOINTS lane -- depth/BOC/notes are NOT per-station data on this row (they are NOT attached to
+    # any mark) and every dot is tagged with its ``origin``. Bore-level date/crew/print/bore_log_id stay
+    # attached to EVERY dot exactly as before; footage_along/station values are UNCHANGED (same recorded
+    # span endpoints + same derived-interval arithmetic labels the pre-addendum ladder already produced).
     plan = _ready_job(tmp_path, row_raw=_FOOTAGE_ROW)
     _anchor(tmp_path, plan)
     summary = _render(tmp_path)
@@ -257,11 +267,18 @@ def test_render_places_station_dots_with_bore_info(tmp_path):
     dots = manifest["logs"][0]["station_dots"]
     assert [d["footage_along"] for d in dots] == [0.0, 50.0, 100.0, 150.0, 176.0]   # start + 50' + endpoint
     assert [d["station"] for d in dots] == ["5+03", "5+53", "6+03", "6+53", "6+79"]  # start station clickable
+    assert [d["origin"] for d in dots] == ["SOURCE_RECORDED", "DERIVED_INTERVAL", "DERIVED_INTERVAL",
+                                           "DERIVED_INTERVAL", "SOURCE_RECORDED"]
     d0 = dots[0]
     assert d0["footage_along"] == 0.0 and d0["station"] == "5+03"               # the start point is in payload
-    assert d0["depth"] == "42" and d0["boc"] == "48" and d0["crew"] == "Night" and d0["print"] == "17"
-    assert d0["notes"] == "vacant HDPE" and d0["bore_log_id"] == "B-9"
+    assert d0["crew"] == "Night" and d0["print"] == "17" and d0["date"] == "2026-03-01"
+    assert d0["bore_log_id"] == "B-9"
+    # depth/BOC/notes are the row's BORE-LEVEL values, never per-station data on a span-endpoints row --
+    # honestly absent on every dot (never fabricated as if they were a station reading).
+    assert all("depth" not in d and "boc" not in d and "notes" not in d for d in dots)
     assert all(d["provenance"] == "HUMAN_CONFIRMED_CONTROL_POINTS" for d in dots)
+    assert manifest["logs"][0]["station_marks_basis"] == "SPAN_ENDPOINTS"
+    assert manifest["logs"][0]["station_marks_warnings"] == []
     # provenance/frontier doctrine intact — dots are NEVER AUTO / never the deterministic frontier
     assert manifest["provenance_counts"]["DETERMINISTIC_AUTO"] == 0
     assert all(lg["provenance"] == "OWNER_CONFIRMED_HUMAN_ADJUSTABLE" for lg in manifest["logs"])
@@ -291,6 +308,102 @@ def test_render_without_footage_row_still_renders_no_dots(tmp_path):
     assert summary["status"] == "SUCCEEDED"                                     # render is robust
     manifest = _bundle_manifest(tmp_path, summary["bundle_id"])
     assert manifest["logs"][0]["station_dots"] == []                           # no footage -> no dots, no crash
+
+
+# --------------------------------------------------------------------------- #
+# Station-dot contract addendum (Mission 8, owner's contract, ``.foreman/scratch/m8/design-dots.md``):
+# render-integration coverage for the three ``build_station_marks`` bases, end to end through the real
+# render adapter (not just the pure unit tests in test_station_marks.py).
+# --------------------------------------------------------------------------- #
+def _cell(value, verbatim=None, status="READ", confidence="MEDIUM"):
+    return {"value": value, "verbatim": verbatim, "status": status, "confidence": confidence, "region": None}
+
+
+def _reading(station, depth, boc, *, station_verbatim=None, row_index=0):
+    return {"station": _cell(station, verbatim=station_verbatim or ("STA %s" % station)),
+           "depth_ft": _cell(depth), "boc_ft": _cell(boc), "column_index": 0, "row_index": row_index}
+
+
+_WP23_ROW = {
+    "start_station": "3+50", "end_station": "4+08", "footage_ft": 58.0,
+    "depth_ft": 5.0, "boc_ft": 8.0, "crew": "JS", "print_raw": "23", "date": "2026-03-01", "bore_id": "B-9",
+    "station_readings": [
+        _reading("3+50", 5.0, 8.0, station_verbatim="STA 3+50", row_index=0),
+        _reading("4+08", 5.0, 8.0, station_verbatim="STA  4+08", row_index=1),
+    ],
+}
+
+
+def test_render_wp23_shape_series_endpoints_with_derived_fill(tmp_path):
+    """The exact WP23 persisted-row class (start/end/total + a 2-entry recorded series): [0(rec,5/8),
+    50(derived,no depth/boc), 58(rec,5/8)], stations 3+50/4+00/4+08, tagged with origin."""
+    plan = _ready_job(tmp_path, row_raw=_WP23_ROW)
+    _anchor(tmp_path, plan)
+    summary = _render(tmp_path)
+    assert summary["status"] == "SUCCEEDED"
+    manifest = _bundle_manifest(tmp_path, summary["bundle_id"])
+    log = manifest["logs"][0]
+    dots = log["station_dots"]
+    assert [d["footage_along"] for d in dots] == [0.0, 50.0, 58.0]
+    assert [d["station"] for d in dots] == ["3+50", "4+00", "4+08"]
+    assert [d["origin"] for d in dots] == ["SOURCE_RECORDED", "DERIVED_INTERVAL", "SOURCE_RECORDED"]
+    assert dots[0]["depth"] == "5.0" and dots[0]["boc"] == "8.0"
+    assert dots[2]["depth"] == "5.0" and dots[2]["boc"] == "8.0"
+    assert "depth" not in dots[1] and "boc" not in dots[1]
+    assert dots[0]["station_evidence"]["verbatim"] == "STA 3+50"
+    assert "station_evidence" not in dots[1]
+    assert log["station_marks_basis"] == "SERIES_ENDPOINTS_WITH_DERIVED_FILL"
+    assert log["station_marks_warnings"] == []
+    from truelinev2.contracts.redline_manifest_publisher import load_schema, validate_manifest
+    assert validate_manifest(manifest, load_schema()) == []
+
+
+_IRREGULAR_ROW = {
+    "start_station": "10+00", "end_station": "11+22", "footage_ft": 122.0,
+    "crew": "JS", "print_raw": "9",
+    "station_readings": [
+        _reading("10+00", 4.0, 6.0, row_index=0),
+        _reading("10+50", 4.5, 6.5, row_index=1),
+        _reading("10+95", 5.0, 7.0, row_index=2),
+        _reading("11+22", 4.5, 6.0, row_index=3),          # final interval 27 ft (< 50)
+    ],
+}
+
+
+def test_render_multi_reading_irregular_series_no_fill_exact_final_interval(tmp_path):
+    """>= 4 recorded readings with irregular gaps + a short final interval -> the EXACT recorded sequence,
+    never a 50-ft fill (owner clause 5)."""
+    plan = _ready_job(tmp_path, row_raw=_IRREGULAR_ROW)
+    _anchor(tmp_path, plan)
+    summary = _render(tmp_path)
+    manifest = _bundle_manifest(tmp_path, summary["bundle_id"])
+    log = manifest["logs"][0]
+    dots = log["station_dots"]
+    assert [d["footage_along"] for d in dots] == [0.0, 50.0, 95.0, 122.0]
+    assert [d["station"] for d in dots] == ["10+00", "10+50", "10+95", "11+22"]
+    assert all(d["origin"] == "SOURCE_RECORDED" for d in dots)
+    assert [d["depth"] for d in dots] == ["4.0", "4.5", "5.0", "4.5"]
+    assert log["station_marks_basis"] == "STATION_SERIES"
+    assert log["station_marks_warnings"] == []
+
+
+def test_render_footage_only_dot_positions_unchanged_by_addendum(tmp_path):
+    """POSITION-EQUALITY LOCK (Mission 8 addendum): a footage-only row (no station_readings) still lands
+    its dots at EXACTLY the positions the pre-addendum generic 50' ladder (``dot_marks``) would have used
+    -- the addendum changes TAGS/metadata, never where an untagged row's dots actually sit."""
+    from truelinev2.render.station_dots import _arclen_dots, dot_marks
+
+    plan = _ready_job(tmp_path, row_raw=_FOOTAGE_ROW)
+    _anchor(tmp_path, plan)
+    summary = _render(tmp_path)
+    manifest = _bundle_manifest(tmp_path, summary["bundle_id"])
+    dots = manifest["logs"][0]["station_dots"]
+
+    expected_marks = dot_marks(176.0)                              # the OLD/pre-addendum ladder, independently
+    assert [d["footage_along"] for d in dots] == expected_marks
+    expected_xy = [(round(x, 2), round(y, 2)) for _fa, _pt, (x, y) in _arclen_dots(TWO_PTS, 176.0, 50.0)]
+    actual_xy = [(d["xy_display"]["x"], d["xy_display"]["y"]) for d in dots]
+    assert actual_xy == expected_xy
 
 
 def test_two_point_anchor_renders_a_straight_stroke(tmp_path, monkeypatch):

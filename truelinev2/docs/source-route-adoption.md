@@ -318,7 +318,7 @@ to a successful adoption, regardless of what the echo says.
 | Consumer | Change | Why it needed none / what changed |
 |---|---|---|
 | `render/source_anchor_render.py` | **None.** | Reads `sa.get("control_points", [])` generically — no `record_format` check. A v2 record's server-derived N-point polyline flows through the EXISTING renderer unmodified. |
-| `render/station_dots.py` | **None.** | `compute_station_dots(control_points, ...)` already interpolates along whatever polyline it is given; an adopted N-point path rides the same interpolation. |
+| `render/station_dots.py` | **None at the time of this Phase-2 landing.** (Mission 8 ADDENDUM below adds an optional, additive `marks` parameter, `marks=None` byte-identical.) | `compute_station_dots(control_points, ...)` already interpolates along whatever polyline it is given; an adopted N-point path rides the same interpolation. |
 | `contracts/source_anchor.py::build_source_anchor_manifest` | **Additive.** | Emits `geometry_basis` / `confirmation_state` / `render_control_points` / `route_adoption` on a log entry ONLY when the underlying record carries `geometry_basis` (i.e. is v2); a manual record's log is byte-identical to before. |
 | `contracts/redline_manifest.schema.json` | **Additive.** | The four keys above added under `properties` (never `required`) so `additionalProperties:false` still accepts legacy manifests that omit them. |
 | `contracts/closeout_pdf.py` (Artifact Detail, §5) | **Additive.** | "Geometry: source-backed observer backbone — HUMAN_REVIEWED adoption" + source sheet/page + proposal hash + warnings, emitted ONLY when `log.get("geometry_basis")` is present; absent fields → the existing path/output is untouched. |
@@ -511,3 +511,78 @@ both flags off), manifest split-emission + schema validation, four publisher rec
 unaffected), ZIP README honesty (manual vs v1 byte-unchanged), station dots riding a manual 4-point polyline
 (exact `<= 1e-9` on-polyline distance + `xy_display == round(exact, 2)`, mirroring the adoption suite's own
 rigor), and tenant isolation.
+
+## Mission 8 ADDENDUM — evidence-bound station marks (owner's STATION-DOT CONTRACT)
+
+**Design authority**: `.foreman/scratch/m8/design-dots.md` (BINDING, supersedes `design.md`/`design-final.md`
+where they touch station dots). Owner's clarification: a source-anchor's station dots represent the BORE
+LOG'S OWN station sequence, bound to evidence — never a generic 50' geometric ladder invented over a log
+that recorded something else. Applies to EVERY source-anchor render, manual and adoption alike (one honest
+contract; the reader-survey row for `render/station_dots.py` above is superseded by this section).
+
+### New pure contract: `contracts/station_marks.py`
+
+`build_station_marks(row_effective, *, footage, start_station, end_station, interval_ft=50.0) ->
+(marks, basis, warnings)`. No I/O, no `render/`/engine/dialect/match imports — reuses only
+`truelinev2.stations`' parse/format helpers. Decides, per reviewed row, which dots to place:
+
+- **`STATION_SERIES`** (a usable recorded series of > 2 readings): marks are EXACTLY the recorded stations
+  (irregular intervals and a < 50' final interval included by construction), every one `SOURCE_RECORDED`,
+  each carrying that reading's own depth/BOC + `station_evidence` (verbatim/status/confidence). No derived
+  fill ever mixes into a genuinely recorded series.
+- **`SERIES_ENDPOINTS_WITH_DERIVED_FILL`** (a usable recorded series of exactly 2 readings — start/end/
+  total-only logs, e.g. the WP23 shape): the two recorded endpoints (`SOURCE_RECORDED`, with values +
+  evidence) plus interior every-50' fill dots tagged `DERIVED_INTERVAL` (arithmetic station label, no depth/
+  BOC/notes/evidence — derivation is honestly marked, never presented as recorded).
+- **`SPAN_ENDPOINTS`** (no recorded series at all — the ordinary generic TABLE_IMPORT row, or a recorded
+  series rejected as unusable): the row's own recorded start/end station text (`SOURCE_RECORDED`, no
+  per-station depth/BOC — the row's bore-level values are not station readings) plus the same tagged
+  interior fill.
+
+A recorded series is rejected (falls through to `SPAN_ENDPOINTS`, named in `warnings`) when it fails any of:
+every reading parses (else `STATION_SERIES_UNPARSEABLE`), strictly ascending (else
+`STATION_SERIES_NOT_ASCENDING`), first/last match the row's own effective start/end station (else
+`STATION_SERIES_ENDPOINT_MISMATCH`), and the recorded span matches the row's own effective footage (else
+`STATION_SERIES_FOOTAGE_MISMATCH`). The approved span always remains the truth — a violation never invents
+or partially-trusts a series, it falls through cleanly.
+
+### `render/station_dots.py` — additive-only
+
+`compute_station_dots`/`stroke_polyline_with_dots` gain an optional `marks` parameter (the render/ fence is
+lifted ONLY on these two functions, by explicit owner instruction). `marks=None` is the EXACT pre-addendum
+behavior (locked byte-identity test). With `marks`, positions use the SAME arclen/`_point_at` math + 2-
+decimal `xy_display` contract, but at the marks' own footage-along values; each dot gains `origin` (always)
+and `station_evidence` (when the mark carries one); `station`/`depth`/`boc`/`notes` come from the MARK
+(`depth`/`boc`/`notes` present ONLY when that mark actually carries them); bore-level `date`/`crew`/`print`/
+`bore_log_id` still attach to every dot from the row's `info`, as before.
+
+### `render/source_anchor_render.py` + manifest
+
+`_dots_for_anchor` resolves the row's effective start/end/footage (the SAME raw < normalized <
+review.corrected_values layering `resolve_bore_fields` already uses) and calls `build_station_marks`, for
+ALL source-anchor renders (manual and adoption). The manifest log entry gains additive `station_marks_basis`
+(one of the three enums above, or `null` when the anchor has no dots at all) and `station_marks_warnings`
+(named codes, `[]` when none) — both default-empty/absent-tolerant so a caller that never supplies them
+(incl. every pre-addendum manifest) stays valid.
+
+### Schema
+
+`redline_manifest.schema.json`: `station_dots[*].origin` is now REQUIRED (enum `SOURCE_RECORDED` |
+`DERIVED_INTERVAL`); `station_dots[*].station_evidence` is an optional closed object
+(`verbatim`/`status`/`confidence`); log-level `station_marks_basis` (nullable enum) and
+`station_marks_warnings` (string array) are additive, optional properties. Every object stays closed.
+
+### Tests
+
+`truelinev2/tests/test_station_marks.py` (new; pure unit coverage of all three bases + irregular intervals +
+a short final interval + varying per-entry depth/BOC + all four named unusable-series fallbacks + the
+corrected-values precedence path). `test_station_dots.py` gains the `marks=None` byte-identity locks for
+both functions plus marks-path placement/tagging tests. `test_source_anchor_render_contract.py` gains render-
+integration coverage for the WP23 shape, a >= 4-reading irregular series with an exact short final interval,
+and a footage-only position-equality lock (dot positions bit-for-bit unchanged from the pre-addendum
+`dot_marks` ladder) — plus a schema-admission update to `test_build_manifest_carries_station_dots_
+additively_and_validates` (origin now required) and a deliberate lock update to
+`test_render_places_station_dots_with_bore_info` (a footage-only row's dots no longer carry per-station
+depth/BOC/notes — see that test's docstring for the owner-contract citation).
+`test_source_route_adoption_api.py::test_adopted_record_station_dots_ride_the_n_point_path` gains an
+`origin`-tag assertion and now doubles as the adoption-lane position-equality lock.

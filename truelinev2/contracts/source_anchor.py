@@ -536,16 +536,20 @@ def build_source_anchor_manifest(anchor_entries, *, project_id, project_name, en
     ``bundle_origin = HUMAN_CONFIRMED_SOURCE_ANCHOR``. ``mock_example`` is false; artifact sha256/bytes are
     filled by the publisher. ``closure``/``coverage`` are null (no station footage is solved or invented).
     Each entry is {"source_anchor": <record>, "artifact_path": <manifest-relative png>, "sheet": <int>,
-    "construction_sheet": <int|None>, "station_dots": <list|None>}. ``sheet``/``page_number`` are the 1-based
-    PDF page index the stroke rendered on; ``construction_sheet`` is the CONSTRUCTION sheet number printed on
-    that page (e.g. PDF page 20 -> "7 OF 30" -> 7). The manifest's ``source_sheets`` + artifact ``sheet``
-    report the construction sheet (the unit the engine/recognized bundles use), falling back to the PDF page
-    number when the page has no plan-sheet label (so closeout never mislabels the sheet). ``station_dots`` is
+    "construction_sheet": <int|None>, "station_dots": <list|None>, "station_marks_basis": <str|None>,
+    "station_marks_warnings": <list|None>}. ``sheet``/``page_number`` are the 1-based PDF page index the
+    stroke rendered on; ``construction_sheet`` is the CONSTRUCTION sheet number printed on that page (e.g.
+    PDF page 20 -> "7 OF 30" -> 7). The manifest's ``source_sheets`` + artifact ``sheet`` report the
+    construction sheet (the unit the engine/recognized bundles use), falling back to the PDF page number
+    when the page has no plan-sheet label (so closeout never mislabels the sheet). ``station_dots`` is
     ADDITIVE (default [] when the caller supplies none, so old callers/manifests are unaffected): the
     interval/footage dots along the human redline, each clickable + carrying that bore's log info; it is
     emitted ONLY on this human-confirmed builder, so deterministic/recognized/uploaded manifests never carry
-    it and stay byte-identical. Counts derive from the logs, so the published manifest reconciles. Per-job +
-    per-bundle only — never summed into the deterministic 50/58 frontier."""
+    it and stay byte-identical. ``station_marks_basis``/``station_marks_warnings`` (Mission 8 addendum,
+    contracts/station_marks.py) are the SAME kind of additive log-level fields (default None / [] when the
+    caller supplies none): the evidence basis the anchor's dots were built on + any named reason a recorded
+    station series was rejected as unusable. Counts derive from the logs, so the published manifest
+    reconciles. Per-job + per-bundle only — never summed into the deterministic 50/58 frontier."""
     logs = []
     for entry in anchor_entries:
         sa = entry["source_anchor"]
@@ -579,6 +583,13 @@ def build_source_anchor_manifest(anchor_entries, *, project_id, project_name, en
                           "note": "human-confirmed control points marked on the uploaded plan page"}],
             "warnings": [],
             "station_dots": list(entry.get("station_dots") or []),   # additive: interval dots (default [])
+            # Station-dot contract addendum (Mission 8, ``.foreman/scratch/m8/design-dots.md``): the
+            # evidence-bound basis this anchor's dots were built on (STATION_SERIES /
+            # SERIES_ENDPOINTS_WITH_DERIVED_FILL / SPAN_ENDPOINTS) + why a recorded series (if any) was
+            # rejected as unusable. Additive: absent/None + [] when the caller supplies none (old callers/
+            # manifests -- incl. the committed deterministic example -- stay byte-identical).
+            "station_marks_basis": entry.get("station_marks_basis"),
+            "station_marks_warnings": list(entry.get("station_marks_warnings") or []),
         }
         # Phase-2 SOURCE-ROUTE ADOPTION (T31 Q5) + Mission 8 manual-route: ADDITIVE-ONLY, split by the
         # record's ACTUAL provenance block (never by a bare truthy ``geometry_basis`` check — Sol Q4/Q9: a

@@ -304,17 +304,33 @@
             "items": {
               "type": "object",
               "additionalProperties": false,
-              "required": ["index", "footage_along", "xy_display", "provenance"],
+              "required": ["index", "footage_along", "xy_display", "provenance", "origin"],
               "properties": {
                 "index": {"type": "integer", "minimum": 0, "description": "0-based dot order along the redline."},
                 "footage_along": {"type": "number", "minimum": 0, "description": "Feet from the redline start (self-calibrated from the reviewed row footage / drawn length)."},
-                "station": {"type": ["string", "null"], "description": "start_station + footage_along, only when the start station parses; else null (footage_along still present)."},
+                "station": {"type": ["string", "null"], "description": "The dot's station label: the bore log's OWN recorded station text for a SOURCE_RECORDED dot, or start_station + footage_along for a DERIVED_INTERVAL dot (only when the start station parses); else null (footage_along still present)."},
                 "xy_display": {
                   "type": "object",
                   "additionalProperties": false,
                   "required": ["x", "y"],
                   "properties": {"x": {"type": "number"}, "y": {"type": "number"}},
                   "description": "Dot position in the plan page's PDF display space (the renderer's stroke space)."
+                },
+                "origin": {
+                  "type": "string",
+                  "enum": ["SOURCE_RECORDED", "DERIVED_INTERVAL"],
+                  "description": "Station-dot contract (Mission 8 addendum): SOURCE_RECORDED == an actual reading/endpoint the bore log recorded; DERIVED_INTERVAL == an interior 50'-tick this module derived (permitted only when the log records just start/end/total footage), NEVER presented as recorded. REQUIRED on every dot."
+                },
+                "station_evidence": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["verbatim", "status", "confidence"],
+                  "properties": {
+                    "verbatim": {"type": ["string", "null"]},
+                    "status": {"type": ["string", "null"]},
+                    "confidence": {"type": ["string", "null"]}
+                  },
+                  "description": "Present ONLY on a SOURCE_RECORDED dot whose station came from a graded reading cell (station-readings series): the cell's raw verbatim text + read status + confidence. Absent on a DERIVED_INTERVAL dot (it carries no cell evidence to point to) and on a SOURCE_RECORDED span-endpoint dot with no per-station cell (a generic TABLE_IMPORT row's recorded start/end)."
                 },
                 "depth": {"type": ["string", "null"]},
                 "boc": {"type": ["string", "null"]},
@@ -326,6 +342,16 @@
                 "provenance": {"type": "string", "enum": ["HUMAN_CONFIRMED_CONTROL_POINTS"], "description": "Always human-confirmed; never AUTO."}
               }
             }
+          },
+          "station_marks_basis": {
+            "type": ["string", "null"],
+            "enum": ["STATION_SERIES", "SERIES_ENDPOINTS_WITH_DERIVED_FILL", "SPAN_ENDPOINTS", null],
+            "description": "Station-dot contract (Mission 8 addendum, contracts/station_marks.py): the evidence basis this anchor's station_dots were built on -- STATION_SERIES (>2 recorded readings, no fill), SERIES_ENDPOINTS_WITH_DERIVED_FILL (2 recorded readings + tagged interior fill), or SPAN_ENDPOINTS (no usable recorded series; the approved span's own endpoints + tagged fill). null when this anchor carries no dots at all (no footage/row). Present ONLY on bundle_origin HUMAN_CONFIRMED_SOURCE_ANCHOR manifests."
+          },
+          "station_marks_warnings": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "Station-dot contract (Mission 8 addendum): named codes (e.g. STATION_SERIES_ENDPOINT_MISMATCH) explaining why a recorded station series existed but was rejected as unusable and the dots fell through to SPAN_ENDPOINTS. Empty when no such rejection occurred (including when the row simply never had a series)."
           },
           "geometry_basis": {
             "type": "string",
