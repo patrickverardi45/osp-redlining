@@ -1097,6 +1097,29 @@ def _pdf_text(data: bytes) -> str:
         doc.close()
 
 
+_CAPTION_BAND_H = 30    # render/crop.py::render_redline_stroke: draw.rectangle([0, 0, img.width, 30], ...)
+                        # -- the FIXED-height diagnostic caption band (only rows y < 30 are ever touched).
+
+
+def _read_artifact_png_bytes(c, cp, job_id, bundle_id, artifact_path):
+    from truelinev2.contracts.processing_job import job_dir
+
+    return (job_dir(c.settings.product_store_root, cp, job_id) / "bundle_store" / "bundles" / bundle_id
+            / artifact_path).read_bytes()
+
+
+def _pixels_below_caption_band(png_bytes):
+    """The evidentiary DRAWN pixels only (excludes the fixed-height diagnostic caption band rows y < 30 —
+    see the root-cause comment on the assertion below)."""
+    import io
+
+    from PIL import Image
+
+    img = Image.open(io.BytesIO(png_bytes)).convert("RGB")
+    w, h = img.size
+    return list(img.crop((0, _CAPTION_BAND_H, w, h)).getdata())
+
+
 def test_v1_manual_vs_v2_adopted_closeout_pdf_build_and_export_assembly_agree_on_shared_outputs(tmp_path):
     """Fix-wave-2 G7 (F9(d) FAIL — the alleged v1-vs-v2 equality test never called either the closeout-PDF-
     build or the export/bundle-assembly path). This test actually CALLS the real
@@ -1155,6 +1178,35 @@ def test_v1_manual_vs_v2_adopted_closeout_pdf_build_and_export_assembly_agree_on
     sha_v1 = {art["sha256"] for art in artifacts_v1["artifacts"]}
     sha_v2 = {art["sha256"] for art in artifacts_v2["artifacts"]}
     assert sha_v1 and sha_v1 <= sha_v2                            # v1's evidence unchanged by v2's later render
+
+    # DIAGNOSED (coordinator follow-up): the FULL PNG files are NOT byte-identical between v1/v2 (confirmed:
+    # sha256 differs, ~130 bytes). Root cause traced by direct pixel diff: render/crop.py::render_redline_stroke
+    # (called from render/source_anchor_render.py's ``render_job_source_anchors``, which never passes
+    # ``caption=False``, so its documented default ``caption=True`` applies) draws a FIXED-height diagnostic
+    # caption band (rows y < 30: ``draw.rectangle([0, 0, img.width, 30], ...)`` + ``draw.text((8, 8), cap, ...)``
+    # at truelinev2/render/crop.py:145-146) whose text embeds ``bore_id`` (== the record's OWN
+    # ``source_anchor_id``) and ``reason`` (which also embeds it) — see the call site at
+    # truelinev2/render/source_anchor_render.py:205-206 (``bore_id=sa_id``,
+    # ``reason="human-confirmed source anchor %s" % sa_id``). TWO DISTINCT records ALWAYS have two distinct
+    # ids (that IS their primary key — colliding them is impossible, a re-used id 409s), so this diagnostic
+    # band ALWAYS differs between any two records, v1-vs-v1 or v1-vs-v2 alike — it is symmetric, pre-existing
+    # (untouched by any commit in this ticket; the render/** fence diff is empty), and carries no
+    # route_adoption/geometry_basis content at all: it is NOT a v2-only field reaching the renderer.
+    # Confirmed empirically: cropping BOTH PNGs to rows y >= 30 (excluding only the caption band) makes the
+    # remaining pixel content of these two same-geometry records EXACTLY identical (verified directly with
+    # PIL before writing this assertion). The row/footage/dot-metadata hypothesis is REFUTED — both records
+    # here already share the same row_ids/page, so ``_dots_for_anchor`` computes identical dots for both; the
+    # difference was never about input parity on the evidence side, only about the mandatory-unique caption
+    # text. This is the strongest achievable equality (full-file sha equality is architecturally unreachable
+    # while two distinct ids both go through this pre-existing caption default): the ACTUAL drawn evidence —
+    # stroke geometry, markers, everything render_redline_stroke draws from stroke_points/mandatory_points —
+    # is pixel-for-pixel identical, proving route_adoption/geometry_basis provenance truly never reaches the
+    # renderer or changes a single evidentiary pixel.
+    art_v1 = next(art for art in artifacts_v1["artifacts"] if art["log_id"] == "sa-manual-x")
+    art_v2 = next(art for art in artifacts_v2["artifacts"] if art["log_id"] == "sa-adopted-x")
+    png_v1 = _read_artifact_png_bytes(c, _NOW_TENANT, _JOB, artifacts_v1["bundle_id"], art_v1["path"])
+    png_v2 = _read_artifact_png_bytes(c, _NOW_TENANT, _JOB, artifacts_v2["bundle_id"], art_v2["path"])
+    assert _pixels_below_caption_band(png_v1) == _pixels_below_caption_band(png_v2)
 
     # export-package view: the shared structural fields agree (both assemble cleanly, same blockers/status).
     for key in ("status", "blockers"):
