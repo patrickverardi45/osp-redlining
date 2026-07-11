@@ -833,6 +833,39 @@ def test_adoption_nonexistent_plan_with_malformed_adoption_is_404_resource_first
     assert status == 404, (status, parsed)
 
 
+@pytest.mark.parametrize("confirmed", [True, False])
+def test_adoption_nonexistent_reviewed_bore_log_is_404_resource_first(tmp_path, confirmed):
+    """H1 (closing round — completes G3): a VALID job + VALID plan, but a NONEXISTENT
+    ``reviewed_bore_log_id``, with an otherwise well-shaped ``route_adoption`` body (both the
+    ``confirmed=true`` and ``confirmed=false`` variants) — must 404 via the EXISTING resource convention
+    (the SAME 404 a create request without ``route_adoption`` at all would get for the same nonexistent RBL),
+    never 400 ``ROUTE_ADOPTION_INVALID`` and never 409 ``ROUTE_ADOPTION_SCOPE_MISMATCH``. The RBL now joins
+    the resource-404 tier in the CALLER, resolved BEFORE ``_rederive_route_adoption`` runs any semantic step
+    (``product_pipeline_routes.py`` — the ``load_reviewed_bore_log`` call in the ``route_adoption`` branch of
+    ``create_source_anchor_route``, immediately after the plan-upload resource check and BEFORE
+    ``_rederive_route_adoption`` is invoked)."""
+    app = _app(tmp_path)
+    c, ctx = app.state.tl2, _ctx()
+    plan_upload_id, rbl_id, row_id, pkg_dir = _seed_ready_job(tmp_path, c, ctx)
+    a, b, _ = _real_geometry(pkg_dir)
+    body = {
+        "source_anchor_id": "sa-1", "plan_upload_id": plan_upload_id,
+        "reviewed_bore_log_id": "rbl-does-not-exist",
+        "page_number": 1, "control_points": [{"x": a[0], "y": a[1]}, {"x": b[0], "y": b[1]}],
+        "row_ids": [row_id],
+        "route_adoption": {
+            "proposal_hash": "sha256:" + "a" * 64, "confirmed": confirmed,
+            "plan_upload_id": plan_upload_id, "reviewed_bore_log_id": "rbl-does-not-exist", "row_id": row_id,
+            "page_number": 1, "control_points": [{"x": a[0], "y": a[1]}, {"x": b[0], "y": b[1]}],
+        },
+    }
+    status, _raw, parsed = _asgi_call(
+        app, "POST", "/v2/product/jobs/%s/source-anchors" % _JOB, json_body=body,
+        headers={"X-TL-Tenant": _NOW_TENANT, "X-TL-Session": "sess-1"})
+    assert status == 404, (status, parsed)
+    assert not str(parsed.get("detail", "")).startswith("ROUTE_ADOPTION_")   # never an adoption-specific code
+
+
 # --------------------------------------------------------------------------- #
 # Reader-survey flow-through (P5): a v2 adopted record flows through render -> station dots -> manifest ->
 # closeout unmodified, producing the SAME shapes as a v1 record (plus the additive provenance fields).
@@ -943,16 +976,26 @@ def test_adopted_record_station_dots_ride_the_n_point_path(tmp_path):
     so the adopted N-point render polyline naturally rides the same interpolation, with metadata/provenance
     identical in SHAPE to a manual record's dots.
 
-    Fix-wave-2 G6 (F9(c) FAIL — bounding-box-only 0.05pt check): every dot must lie on the adopted N-point
-    polyline within FLOAT-REPRESENTATION scale (<= 1e-9 display points), for 0 ft / every 50 ft / the endpoint,
-    with correct footages. This is checked against an INDEPENDENTLY-recomputed (unrounded) exact interpolated
-    point, not the STORED/display-rounded ``xy_display`` — real PDF word-center coordinates are not 2dp-clean
-    (e.g. ``71.23198699951172``), so ``xy_display`` (legitimately rounded to 2dp for display,
-    ``render/station_dots.py``) can differ from the true polyline point by up to ~0.007pt; asserting <= 1e-9
-    against the ROUNDED value would be mathematically impossible for real geometry, not a meaningful tightening.
-    The real dot's ``xy_display`` is then also asserted EXACTLY equal to the independently-recomputed point
-    rounded the SAME way — ties the real API output to the independent math (not merely reproducing the same
-    function call)."""
+    Fix-wave-2 G6 (F9(c) FAIL — bounding-box-only 0.05pt check), H2 CORRECTED FOREMAN RULING (the original
+    "<=1e-9 against the RETURNED dot" demand was miscalibrated against production's own pre-existing,
+    FENCED, correct 2-decimal ``xy_display`` contract — ``render/station_dots.py:131`` rounds every dot's
+    display coordinate to 2dp; that rounding is production's contract, not a test defect, and a literal 1e-9
+    tolerance against a 2dp-rounded value is mathematically impossible for real (non-2dp-clean) PDF geometry
+    like ``71.23198699951172``). The lock is now TWO exact assertions per dot (0 ft / every 50 ft / the
+    endpoint), never a fuzzy tolerance:
+
+    (i) the INDEPENDENTLY-recomputed EXACT (unrounded) interpolated point genuinely lies ON the adopted
+        polyline within <= 1e-9 display points (float-representation noise only) — proves the true geometric
+        on-polyline correctness, checked against the exact point, never the rounded one;
+    (ii) the RETURNED dot's ``xy_display`` equals ``round(exact_xy, 2)`` with EXACT dict equality — the
+         returned value is used AS-IS, never re-rounded by the test itself, so a dishonestly over-precise
+         return (e.g. ``123.4649`` where ``123.46`` is expected) would FAIL this assertion outright; honest
+         output always passes exactly because production's own 2-decimal contract means every real
+         ``xy_display`` IS already ``round(<its true point>, 2)``.
+
+    Footages themselves are asserted EXACTLY (not a fuzzy tolerance): ``dot_marks()`` produces clean values
+    for a whole-number footage/interval (150.0 ft, 50.0 ft interval), so the four expected marks
+    (0 / 50 / 100 / 150 ft) compare bit-for-bit."""
     c, ctx = _container(tmp_path), _ctx()
     plan_upload_id, rbl_id, row_id, pkg_dir = _seed_ready_job(tmp_path, c, ctx, key="bent_ready")
     a, b, _ = _real_geometry(pkg_dir)
@@ -976,13 +1019,10 @@ def test_adopted_record_station_dots_ride_the_n_point_path(tmp_path):
     for k in ("index", "footage_along", "xy_display", "provenance"):
         assert k in dots[0]
 
-    # footages present: 0 ft, every interior 50 ft tick, and the final endpoint footage (150 ft — the seeded
-    # row's own footage).
+    # footages present, asserted EXACTLY (H2: no fuzzy tolerance): 0 ft, every interior 50 ft tick, and the
+    # final endpoint footage (150 ft — the seeded row's own footage). Clean for a whole-number footage/interval.
     footages = sorted(d["footage_along"] for d in dots)
-    assert footages[0] == 0.0
-    assert footages[-1] == pytest.approx(150.0, abs=0.05)
-    for expected_tick in (50.0, 100.0):
-        assert any(abs(f - expected_tick) < 0.05 for f in footages), (expected_tick, footages)
+    assert footages == [0.0, 50.0, 100.0, 150.0]
 
     footage_total = 150.0
     pts = [(p["x"], p["y"]) for p in polyline]
@@ -1000,8 +1040,11 @@ def test_adopted_record_station_dots_ride_the_n_point_path(tmp_path):
             for i in range(len(pts) - 1))
         assert min_dist <= 1e-9, (d, min_dist, exact_xy)
 
-        # the REAL dot's displayed xy exactly equals the independently-recomputed point, rounded for display
-        # the SAME way (correct footages -> correct xy, tied to real API output, not a tautological self-call).
+        # H2: the RETURNED dot's xy_display (used AS-IS, never re-rounded here) must equal round(exact_xy, 2)
+        # EXACTLY. Production's own fenced contract (render/station_dots.py:131) is that xy_display is ALWAYS
+        # a 2-decimal value -- so an honest dot passes this exactly; a dishonestly over-precise return (e.g.
+        # 123.4649 where 123.46 is expected) fails it outright. This is NOT a tautological self-call: exact_xy
+        # comes from this test's OWN independent arc-length recomputation, never from calling render code.
         assert d["xy_display"] == {"x": round(exact_xy[0], 2), "y": round(exact_xy[1], 2)}, (d, exact_xy)
 
 

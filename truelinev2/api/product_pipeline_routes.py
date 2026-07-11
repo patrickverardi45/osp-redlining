@@ -1474,7 +1474,7 @@ def _route_adoption_enabled(c: Container) -> bool:
 
 
 def _rederive_route_adoption(store, cp: str, job_id: str, job: dict, req: SourceAnchorCreate,
-                             plan_upload: dict, ctx: RequestContext) -> tuple:
+                             plan_upload: dict, rbl: dict, ctx: RequestContext) -> tuple:
     """Re-run the SAME join + pure geometry derivation the proposal endpoint uses, over THIS create request's
     OWN top-level scope fields (plan_upload_id / reviewed_bore_log_id / row_ids[0] / page_number / the two
     submitted control_points — the create request's own fields are ALWAYS the source of truth for what gets
@@ -1487,6 +1487,13 @@ def _rederive_route_adoption(store, cp: str, job_id: str, job: dict, req: Source
     (2) echo control_points != the create request's control_points -> ``ROUTE_ADOPTION_CONTROL_MISMATCH`` 409;
     (3) current re-derivation itself refuses -> ``ROUTE_ADOPTION_NO_LONGER_DEFENSIBLE`` 409 (nested current
     refusal code); (4) re-derived hash != ``proposal_hash`` -> ``ROUTE_ADOPTION_STALE`` 409.
+
+    Fix-wave-2 H1: ``rbl`` (the create request's OWN ``reviewed_bore_log_id``, resolved via the EXISTING
+    resource-404 convention) is now loaded by the CALLER, BEFORE this function is even invoked — a nonexistent
+    ``reviewed_bore_log_id`` therefore 404s exactly like it does without ``route_adoption``, never
+    ``400 ROUTE_ADOPTION_INVALID`` / ``409 ROUTE_ADOPTION_SCOPE_MISMATCH``. This function no longer loads the
+    RBL itself; row IDENTITY (does the row exist ON this already-resolved RBL) and eligibility stay SEMANTIC,
+    checked here, unchanged.
 
     Fix-wave F6: this function (and ONLY this function / its caller's route_adoption branch) imports the
     readiness spine / hash / projection code AND the ``RouteAdoptionError`` exception classes — nothing here
@@ -1551,10 +1558,9 @@ def _rederive_route_adoption(store, cp: str, job_id: str, job: dict, req: Source
             "the create request's control_points differ from the route_adoption echo of the human clicks "
             "the proposal was bound to")
 
-    try:
-        rbl = load_reviewed_bore_log(store, cp, job_id, req.reviewed_bore_log_id)
-    except ReviewedBoreLogNotFoundError as exc:
-        raise RouteAdoptionScopeMismatchError("reviewed_bore_log %r no longer exists" % req.reviewed_bore_log_id) from exc
+    # H1: ``rbl`` is passed in ALREADY RESOLVED by the caller via the existing resource-404 convention (see
+    # the module docstring note above) — never re-loaded, and never re-mapped to an adoption-specific code
+    # here. Row IDENTITY (does the row exist on this RBL) stays semantic / SCOPE_MISMATCH.
     row = next((r for r in rbl.get("rows", []) if r.get("row_id") == row_id), None)
     if row is None:
         raise RouteAdoptionScopeMismatchError("no row %r in reviewed_bore_log %r"
@@ -1701,9 +1707,19 @@ def create_source_anchor_route(job_id: str, req: SourceAnchorCreate,
         if plan_upload is None:
             raise HTTPException(status_code=404,
                                 detail="no PLAN_PDF upload %r in this job" % (req.plan_upload_id,))
+        # H1 (fix-wave-2 closing round): the create request's OWN reviewed_bore_log_id joins the RESOURCE
+        # tier — resolved via the EXISTING 404 convention (_to_http already maps ReviewedBoreLogNotFoundError
+        # -> 404) BEFORE _rederive_route_adoption runs any adoption-specific semantic step. A nonexistent
+        # reviewed_bore_log_id therefore 404s exactly like it does without route_adoption at all — never
+        # 400 ROUTE_ADOPTION_INVALID, never 409 ROUTE_ADOPTION_SCOPE_MISMATCH. Row identity/eligibility (does
+        # the row exist ON this already-resolved RBL) stays semantic, inside re-derivation, unchanged.
+        try:
+            rbl = load_reviewed_bore_log(store, cp, job_id, req.reviewed_bore_log_id)
+        except _CONTRACT_ERRORS as exc:
+            raise _to_http(exc)
         try:
             route_adoption_block, render_points = _rederive_route_adoption(
-                store, cp, job_id, job, req, plan_upload, ctx)
+                store, cp, job_id, job, req, plan_upload, rbl, ctx)
         except _CONTRACT_ERRORS as exc:                        # e.g. invalid job/tenant state surfaced mid-derivation
             raise _to_http(exc)
         except Exception as exc:                                # RouteAdoptionError (duck-typed; Fix-wave F6 — see

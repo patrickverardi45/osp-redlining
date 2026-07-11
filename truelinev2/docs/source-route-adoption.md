@@ -114,23 +114,32 @@ three tiers, in this sequence, EVERY request:
 1. **Request-SHAPE validation (framework, before any route code runs).** FastAPI/Pydantic parses + validates
    the JSON body against `SourceAnchorCreate` (and, when `route_adoption` is present, against the NESTED
    `RouteAdoptionIn` model — every one of its seven fields, including the five identity/control-point ECHO
-   fields, is REQUIRED). A missing or mistyped field anywhere in the body — including a missing
-   `route_adoption.page_number` — never reaches product code at all: it is a **framework-standard HTTP 422**,
-   not a code-first 400. This is FastAPI's own behavior, unconditional, and applies identically whether or not
-   `route_adoption` is present.
+   fields, is REQUIRED). Precisely (fix-wave-2 H1 — this is NOT a blanket "any mistyped field → 422" claim):
+   a **missing** required field, or a field whose value Pydantic cannot COERCE to the declared type (e.g.
+   `page_number: "abc"`, a non-finite/non-numeric `control_points.x`), is a **framework-standard HTTP 422** —
+   never reaches product code at all. A value Pydantic's (lax-mode) coercion CAN convert (e.g.
+   `page_number: "5"` → `int` `5`, or `confirmed: "true"` → `bool` `True`) is silently coerced and proceeds
+   as if the caller had sent the coerced type — it does NOT 422. This is FastAPI/Pydantic's own behavior,
+   unconditional, and applies identically whether or not `route_adoption` is present.
 2. **Resource resolution (existing 404/403/409 conventions, BEFORE any adoption validation).** In this order:
    the `source_anchor_id` must not already exist (409 conflict); the `job_id` (+ tenant) must resolve (404, incl.
-   cross-tenant isolation); the `plan_upload_id` + `page_number` must resolve to real page bounds (404). This
-   happens for EVERY request — `route_adoption` present or not — and happens even when the submitted
-   `route_adoption` body is itself malformed or semantically invalid: a nonexistent `plan_upload_id` combined
-   with `confirmed: false` returns **404**, never `400 ROUTE_ADOPTION_INVALID`.
+   cross-tenant isolation); the `plan_upload_id` + `page_number` must resolve to real page bounds (404); when
+   `route_adoption` is present, the three-way flag gate (400 `ROUTE_ADOPTION_INVALID` if disabled), the
+   `plan_upload_id` must additionally name a real `PLAN_PDF` upload (404), and — **fix-wave-2 H1** — the
+   create request's OWN `reviewed_bore_log_id` must resolve to a real reviewed bore-log (404, the SAME
+   existing convention a request without `route_adoption` gets for the same nonexistent RBL). This happens
+   for EVERY request — `route_adoption` present or not — and happens even when the submitted `route_adoption`
+   body is itself malformed or semantically invalid: a nonexistent `plan_upload_id` OR a nonexistent
+   `reviewed_bore_log_id`, combined with `confirmed: false` or any other adoption-body defect, returns
+   **404**, never `400 ROUTE_ADOPTION_INVALID` / `409 ROUTE_ADOPTION_SCOPE_MISMATCH`.
 3. **Adoption-specific validation** (only once (1) and (2) have both passed, and only when `route_adoption` is
-   present): the flag-gate check (400 `ROUTE_ADOPTION_INVALID` if the three-way flag isn't enabled), then the
-   `route_adoption`-present `plan_upload_id` must name a real `PLAN_PDF` upload on the job (404), then
-   `_rederive_route_adoption` runs its OWN internal order (the table below) — step 0 of THAT table
-   (`ROUTE_ADOPTION_INVALID` for a well-typed-but-semantically-invalid adoption: `confirmed != true`, a
-   malformed `proposal_hash` string, or a control-point COUNT that mismatches, as opposed to a MISSING field,
-   which tier 1 already caught) is therefore always reached AFTER every resource in tier 2 has resolved.
+   present): `_rederive_route_adoption` runs its OWN internal order (the table below) over the ALREADY-RESOLVED
+   RBL — step 0 of THAT table (`ROUTE_ADOPTION_INVALID` for a well-typed-but-semantically-invalid adoption:
+   `confirmed != true`, a malformed `proposal_hash` string, or a control-point COUNT that mismatches, as
+   opposed to a MISSING field, which tier 1 already caught) is therefore always reached AFTER every resource
+   in tier 2 has resolved. Row IDENTITY (does the row exist ON the already-resolved RBL) and eligibility stay
+   SEMANTIC here (`ROUTE_ADOPTION_SCOPE_MISMATCH` / the nested `ROUTE_ADOPTION_NO_LONGER_DEFENSIBLE` refusal),
+   never a resource 404 — only the RBL's own EXISTENCE is a tier-2 resource concern.
 
 Create-time failures WITHIN tier 3 (repo `_to_http` convention: the code LEADS the `detail` string, e.g.
 `"ROUTE_ADOPTION_STALE: ..."`, never an object detail — asserted by exact `detail.split(":")[0] == code`
@@ -148,10 +157,12 @@ equality in the tests, never `startswith`), checked in this ORDER:
 `ROUTE_ADOPTION_CONTROL_MISMATCH` is reachable in this implementation (fix-wave F7 — see step 2 above); the
 prior landing's "reserved, not raised" limitation is resolved.
 
-Test-locked at the REAL ASGI request boundary (`test_source_route_adoption_api.py`, fix-wave-2 G3): a missing
+Test-locked at the REAL ASGI request boundary (`test_source_route_adoption_api.py`, fix-wave-2 G3/H1): a missing
 echo field → 422; `confirmed: false` with otherwise-valid resources → 400 with an EXACT `ROUTE_ADOPTION_INVALID`
 leading token; a nonexistent plan + a malformed `route_adoption` body → 404 (resource-first, never the 400 the
-malformed body would otherwise produce).
+malformed body would otherwise produce); a valid job + valid plan but a NONEXISTENT `reviewed_bore_log_id`
+(both the `confirmed=true` and `confirmed=false` variants of an otherwise well-shaped adoption body) → 404
+(never 400 `ROUTE_ADOPTION_INVALID`, never 409 `ROUTE_ADOPTION_SCOPE_MISMATCH`).
 
 On success the stored record is `record_format = "trueline-source-anchor-2"`; `control_points` holds the
 SERVER-DERIVED render polyline (so the EXISTING renderer / station-dot call path consumes it unmodified — see
