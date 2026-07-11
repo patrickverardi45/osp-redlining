@@ -140,3 +140,70 @@ def test_raw_readiness_no_spine_input_when_allowlist_empty(tmp_path):
     readiness, sheet_ctx = prb.run_job_route_readiness_raw([plan_up, bore_up], jroot, allowed_upload_ids=[])
     assert readiness is None
     assert sheet_ctx["refusal"] == "NO_SPINE_INPUT"
+
+
+# --------------------------------------------------------------------------------------------------------- #
+# Fix-wave F8 (blind-verification FAIL — filesystem-write disclosure/hardening): the ephemeral spine work
+# directory materializes real uploaded bytes under the OS temp root for the duration of one call; ``store_root``
+# (additive) proves it at creation time that this can never resolve inside the product store root.
+# --------------------------------------------------------------------------------------------------------- #
+def test_raw_readiness_store_root_default_none_is_byte_identical(tmp_path):
+    """``store_root`` omitted (default None) preserves EXACT prior behavior — no assertion, no new failure
+    mode, for every existing caller that doesn't pass it."""
+    store, plan_up, bore_up = _seed(tmp_path)
+    jroot = job_dir(store, _TENANT, _JOB)
+    r_omitted = prb.run_job_route_readiness_raw(
+        [plan_up, bore_up], jroot, allowed_upload_ids=[plan_up["upload_id"], bore_up["upload_id"]])
+    r_none = prb.run_job_route_readiness_raw(
+        [plan_up, bore_up], jroot, allowed_upload_ids=[plan_up["upload_id"], bore_up["upload_id"]],
+        store_root=None)
+    assert r_omitted[0].report.status == r_none[0].report.status == "READY_FOR_REVIEW_REDLINE"
+
+
+def test_raw_readiness_tempdir_used_is_outside_the_real_store_root(tmp_path):
+    """After a real proposal-shaped run (with ``store_root`` supplied), the store tree is byte-unchanged AND
+    the ephemeral tempdir the seam actually used resolved OUTSIDE the store root — the F8 hardening proof,
+    exercised end-to-end (not just the assertion helper in isolation)."""
+    store, plan_up, bore_up = _seed(tmp_path)
+    jroot = job_dir(store, _TENANT, _JOB)
+    before = sorted(store.rglob("*")) if store.exists() else []
+
+    seen_workdirs = []
+    real_mkdtemp = tempfile.mkdtemp
+
+    def _spy_mkdtemp(*a, **kw):
+        d = real_mkdtemp(*a, **kw)
+        seen_workdirs.append(d)
+        return d
+
+    prb.tempfile.mkdtemp = _spy_mkdtemp
+    try:
+        readiness, sheet_ctx = prb.run_job_route_readiness_raw(
+            [plan_up, bore_up], jroot, allowed_upload_ids=[plan_up["upload_id"], bore_up["upload_id"]],
+            store_root=store)
+    finally:
+        prb.tempfile.mkdtemp = real_mkdtemp
+
+    assert readiness is not None and readiness.report.status == "READY_FOR_REVIEW_REDLINE"
+    after = sorted(store.rglob("*")) if store.exists() else []
+    assert before == after                                        # store tree byte-unchanged
+    assert seen_workdirs, "expected the seam to have created exactly one ephemeral work dir"
+    for wd in seen_workdirs:
+        resolved = Path(wd).resolve()
+        assert store.resolve() not in resolved.parents and resolved != store.resolve()
+
+
+def test_assert_workdir_outside_store_refuses_when_inside(tmp_path):
+    """Direct unit proof of the F8 assertion helper: a work dir that DOES resolve under the store root raises
+    ``UnsafeTempWorkdirError`` rather than silently proceeding."""
+    store = tmp_path / "product_store"
+    store.mkdir()
+    unsafe = store / "some_ephemeral_dir"
+    unsafe.mkdir()
+    import pytest
+    with pytest.raises(prb.UnsafeTempWorkdirError):
+        prb._assert_workdir_outside_store(unsafe, store)
+    # a sibling directory (outside the store root) is fine — no raise.
+    safe = tmp_path / "elsewhere"
+    safe.mkdir()
+    prb._assert_workdir_outside_store(safe, store)                 # no exception

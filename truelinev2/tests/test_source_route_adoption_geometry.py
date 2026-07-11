@@ -51,6 +51,28 @@ def test_backbone_discontinuous_refuses():
     assert pts is None and refusal.code == sra.BACKBONE_DISCONTINUOUS
 
 
+def test_backbone_tiny_1e7_gap_refuses_discontinuous():
+    """Fix-wave F1/F9(e): the OLD ``_EPS = 1e-6`` proximity weld would have silently bridged a gap this small.
+    Contiguity is now EXACT (post ``-0.0`` normalization only) — a gap as small as 1e-7 is a DIFFERENT point,
+    full stop, and refuses ``BACKBONE_DISCONTINUOUS`` rather than being welded into one chain."""
+    segs = [_seg(0, 0, 50, 0), _seg(50.0000001, 0, 100, 0)]                     # gap: 1e-7
+    pts, refusal = sra.backbone_points_from_segments(segs)
+    assert pts is None and refusal.code == sra.BACKBONE_DISCONTINUOUS
+
+
+def test_backbone_distinct_backbones_never_hash_identically():
+    """Fix-wave F1 (blind-verification hash-collision scenario): two backbones that differ by an undrawn 1e-7
+    gap must NOT collapse to the same adopted geometry / hash — proven here at the ``backbone_points_from_segments``
+    level (the welded backbone would have produced the identical point chain ``[(0,0),(50,0),(100,0)]``; the
+    exact-contiguity fix makes the gapped one refuse instead of silently matching)."""
+    contiguous = [_seg(0, 0, 50, 0), _seg(50, 0, 100, 0)]
+    gapped = [_seg(0, 0, 50, 0), _seg(50.0000005, 0, 100, 0)]                   # 5e-7 gap
+    pts_ok, refusal_ok = sra.backbone_points_from_segments(contiguous)
+    pts_gap, refusal_gap = sra.backbone_points_from_segments(gapped)
+    assert refusal_ok is None and pts_ok == [(0.0, 0.0), (50.0, 0.0), (100.0, 0.0)]
+    assert pts_gap is None and refusal_gap.code == sra.BACKBONE_DISCONTINUOUS
+
+
 def test_backbone_contiguous_multi_segment_ok():
     segs = [_seg(0, 0, 50, 0), _seg(50, 0, 50, 50)]
     pts, refusal = sra.backbone_points_from_segments(segs)
@@ -60,15 +82,20 @@ def test_backbone_contiguous_multi_segment_ok():
 
 # --------------------------------------------------------------------------------------------------------- #
 # derive_route_geometry — end-to-end success + preserved bends + connector warning.
+#
+# Fix-wave F4 note: EVERY success-path test below now uses a backbone of >= 2 segments so the two controls
+# resolve to DIFFERENT segment indices — a genuinely single-segment backbone ALWAYS refuses
+# CONTROLS_ON_SAME_BACKBONE_SEGMENT now (see the dedicated same-segment tests further down), so it can no
+# longer stand in for "success-path geometry" the way it did before this fix wave.
 # --------------------------------------------------------------------------------------------------------- #
-def test_single_segment_exact_clicks_no_connector_warning():
-    segs = [_seg(0, 0, 100, 0)]
+def test_multi_segment_exact_clicks_no_connector_warning():
+    segs = [_seg(0, 0, 50, 0), _seg(50, 0, 100, 0)]                             # straight-through, 2 segments
     geom, refusal = sra.derive_route_geometry(
         backbone_segments=segs, gap_bridge_status="NO_ROUTE_GAPS", reach_tol=12.0,
         human_start=(0.0, 0.0), human_end=(100.0, 0.0))
-    assert refusal is None
-    assert geom["proposed_render_points"] == [(0.0, 0.0), (100.0, 0.0)]
-    assert geom["candidate_route_points"] == [(0.0, 0.0), (100.0, 0.0)]
+    assert refusal is None, refusal
+    assert geom["proposed_render_points"] == [(0.0, 0.0), (50.0, 0.0), (100.0, 0.0)]
+    assert geom["candidate_route_points"] == [(0.0, 0.0), (50.0, 0.0), (100.0, 0.0)]
     assert geom["warnings"] == ()
 
 
@@ -83,15 +110,32 @@ def test_bend_is_preserved_between_projections():
 
 
 def test_connector_warning_when_human_control_off_backbone():
-    segs = [_seg(0, 0, 100, 0)]
+    segs = [_seg(0, 0, 50, 0), _seg(50, 0, 100, 0)]                             # 2 segments -> distinct indices
     geom, refusal = sra.derive_route_geometry(
         backbone_segments=segs, gap_bridge_status="NO_ROUTE_GAPS", reach_tol=12.0,
         human_start=(2.0, 3.0), human_end=(100.0, 0.0))                         # start off by hypot(2,3)=3.6
-    assert refusal is None
+    assert refusal is None, refusal
     assert sra.CONNECTOR_WARNING in geom["warnings"]
     assert geom["proposed_render_points"][0] == (2.0, 3.0)                      # exact human click stays terminus
     assert geom["proposed_render_points"][-1] == (100.0, 0.0)
     assert geom["proposed_render_points"][1] == pytest.approx((2.0, 0.0))       # the start projection (foot of perp)
+
+
+def test_connector_warning_fires_only_for_the_nonzero_side_and_keeps_both_points():
+    """Fix-wave F9(f) connector-warning lock: ONE side exact (no connector needed), the OTHER side off the
+    backbone by a real nonzero delta -> the warning fires, and BOTH the human click and its projection are kept
+    as distinct stored points (never silently collapsed to just the projection)."""
+    segs = [_seg(0, 0, 50, 0), _seg(50, 0, 100, 0)]
+    geom, refusal = sra.derive_route_geometry(
+        backbone_segments=segs, gap_bridge_status="NO_ROUTE_GAPS", reach_tol=12.0,
+        human_start=(0.0, 0.0), human_end=(100.0, 5.0))                         # end off by 5.0 (within 12 tol)
+    assert refusal is None, refusal
+    assert geom["warnings"] == (sra.CONNECTOR_WARNING,)
+    pts = geom["proposed_render_points"]
+    assert pts[0] == (0.0, 0.0)                                                 # exact start click, no connector
+    assert pts[-1] == (100.0, 5.0)                                              # exact END human click retained
+    assert pts[-2] == (100.0, 0.0)                                              # its projection retained SEPARATELY
+    assert pts[-1] != pts[-2]                                                   # never silently snapped together
 
 
 # --------------------------------------------------------------------------------------------------------- #
@@ -115,16 +159,23 @@ def test_missing_or_non_finite_tolerance_refuses(bad_tol):
 
 
 def test_tolerance_boundary_exactly_reach_tol_succeeds_and_smallest_above_refuses():
-    segs = [_seg(0, 0, 100, 0)]
-    # distance to backbone from (0, 12.0) is exactly 12.0
+    """Fix-wave F2 (blind-verification FAIL): the boundary is EXACT — ``dist <= reach_tol``, no epsilon.
+    ``math.nextafter(reach_tol, +inf)`` (the smallest float strictly greater than 12.0) at that distance MUST
+    refuse; the old ``+_EPS`` slack would have wrongly accepted it. Uses a 2-segment backbone (F4: a genuinely
+    single-segment backbone now always refuses same-segment, so it can't carry this boundary test alone)."""
+    segs = [_seg(0, 0, 50, 0), _seg(50, 0, 100, 0)]
+    # distance to segment 0 from (0, 12.0) is exactly 12.0; end click sits on segment 1's endpoint (distinct
+    # segment index from the start, so classify_control_pair passes and the boundary is isolated to `start`).
     geom, refusal = sra.derive_route_geometry(
         backbone_segments=segs, gap_bridge_status="NO_ROUTE_GAPS", reach_tol=12.0,
         human_start=(0.0, 12.0), human_end=(100.0, 0.0))
     assert refusal is None, refusal
 
+    just_over = math.nextafter(12.0, math.inf)
+    assert just_over > 12.0                                                     # sanity: a real distinct float
     geom2, refusal2 = sra.derive_route_geometry(
         backbone_segments=segs, gap_bridge_status="NO_ROUTE_GAPS", reach_tol=12.0,
-        human_start=(0.0, 12.0 + 1e-3), human_end=(100.0, 0.0))
+        human_start=(0.0, just_over), human_end=(100.0, 0.0))
     assert geom2 is None and refusal2.code == sra.START_CONTROL_OUTSIDE_TOLERANCE
 
 
@@ -185,6 +236,29 @@ def test_controls_on_same_backbone_segment_refuses():
     geom, refusal = sra.derive_route_geometry(
         backbone_segments=segs, gap_bridge_status="NO_ROUTE_GAPS", reach_tol=12.0,
         human_start=(10.0, 0.0), human_end=(20.0, 0.0))
+    assert geom is None and refusal.code == sra.CONTROLS_ON_SAME_BACKBONE_SEGMENT
+
+
+def test_single_segment_backbone_with_two_mid_segment_controls_always_refuses_same_segment():
+    """Fix-wave F4 (blind-verification FAIL): the OLD code exempted a genuinely single-segment backbone from
+    this refusal ("both controls trivially land on segment 0"). That exemption is REMOVED — a straight
+    sub-segment of a single straight segment proposes NOTHING over the honest two-click manual straight line
+    (there is no source bend to preserve), so it refuses UNCONDITIONALLY, even here where the two controls sit
+    well inside a single 100-unit segment with room on both sides."""
+    segs = [_seg(0, 0, 100, 0)]                                                 # ONE segment, no bend at all
+    geom, refusal = sra.derive_route_geometry(
+        backbone_segments=segs, gap_bridge_status="NO_ROUTE_GAPS", reach_tol=12.0,
+        human_start=(30.0, 0.0), human_end=(70.0, 0.0))                         # both well inside the one segment
+    assert geom is None and refusal.code == sra.CONTROLS_ON_SAME_BACKBONE_SEGMENT
+
+
+def test_single_segment_backbone_at_its_own_endpoints_also_refuses_same_segment():
+    """The stricter corollary: even clicking EXACTLY on a single segment's own two endpoints (the maximal
+    possible span of a one-segment backbone) still refuses — there is no total-segment-count exemption left."""
+    segs = [_seg(0, 0, 100, 0)]
+    geom, refusal = sra.derive_route_geometry(
+        backbone_segments=segs, gap_bridge_status="NO_ROUTE_GAPS", reach_tol=12.0,
+        human_start=(0.0, 0.0), human_end=(100.0, 0.0))
     assert geom is None and refusal.code == sra.CONTROLS_ON_SAME_BACKBONE_SEGMENT
 
 
@@ -292,7 +366,9 @@ def test_sha256_hex_matches_stdlib():
 
 
 def _build_proposal(**overrides):
-    segs = [_seg(0, 0, 100, 0)]
+    # Fix-wave F4: 2 segments (not 1) so the two default controls (the overall endpoints) resolve to DISTINCT
+    # segment indices — a genuinely single-segment backbone now always refuses CONTROLS_ON_SAME_BACKBONE_SEGMENT.
+    segs = [_seg(0, 0, 50, 0), _seg(50, 0, 100, 0)]
     geom, refusal = sra.derive_route_geometry(
         backbone_segments=segs, gap_bridge_status="NO_ROUTE_GAPS", reach_tol=12.0,
         human_start=(0.0, 0.0), human_end=(100.0, 0.0))
