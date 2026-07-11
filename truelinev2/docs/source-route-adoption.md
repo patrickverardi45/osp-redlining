@@ -1,4 +1,9 @@
-# Source-route adoption (Phase 2, T31)
+# Source-route adoption (Phase 2, T31 + fix-wave W-B-FIX)
+
+> **Fix-wave note**: this doc was revised after a blind-verification pass (Sol T38) found nine gaps against the
+> pinned spec — epsilon-weakened geometry rules, an eager module import, a missing row-evidence hash, a
+> reachable-but-untested `CONTROL_MISMATCH` code, and undisclosed temp-directory writes. All nine are fixed and
+> test-locked; this revision reflects the SHIPPED (fixed) behavior, not the original T31 landing.
 
 A source-backed, server-owned alternative to the two-click manual redline: given a verified
 `READY_FOR_REVIEW_REDLINE` observer backbone (the SAME route the readiness spine already verifies for the
@@ -26,11 +31,18 @@ running any readiness/hash/projection code**.
 
 **OFF is byte-identical**: with the new flag OFF (or with the flag ON but `route_adoption` absent from the
 request), `SourceAnchorCreate` follows the EXISTING unchanged v1 path verbatim — same record bytes, same
-renderer inputs, same manifest/closeout/billing/export/photos/station-dots. The route-adoption derivation code
-(`contracts.source_route_adoption`'s `derive_route_geometry` / `build_proposal` / `check_*` /
-`row_effective_stations`, and `harness.product_readiness_bridge.run_job_route_readiness_raw`) is imported
-LAZILY, inside the `route_adoption` branch of `create_source_anchor_route` only — never at module import time,
-never on a plain manual create.
+renderer inputs, same manifest/closeout/billing/export/photos/station-dots (test-locked byte-for-byte, not just
+field-presence — see `test_flag_off_and_on_without_adoption_produce_byte_identical_records`). The ENTIRE
+`contracts.source_route_adoption` module (derivation functions AND its `RouteAdoptionError` exception classes)
+and `harness.product_readiness_bridge.run_job_route_readiness_raw` are imported LAZILY, inside the
+`route_adoption` branch of `create_source_anchor_route` only — **never at module import time, not even the
+exception classes** (fix-wave F6: the original landing eagerly imported the exception classes at module scope
+so `_to_http`'s isinstance dispatch could reference them; `product_pipeline_routes.py` now maps a
+`RouteAdoptionError` by reading its `.code` string attribute — duck typing — so it needs zero reference to the
+module at all with the flag off). Verified by
+`test_source_route_adoption_api.py::test_flag_off_never_imports_the_adoption_module`, a FRESH-subprocess
+`sys.modules` probe (in-process would be contaminated by other test modules' own module-scope imports of
+`contracts.source_route_adoption` at pytest collection time).
 
 ## API surface
 
@@ -67,21 +79,38 @@ Malformed request identity / non-finite controls / a control count != 2 is `HTTP
 
 ### `POST /v2/product/jobs/{job_id}/source-anchors` (existing endpoint, extended)
 
-`SourceAnchorCreate` gains one optional field: `route_adoption: {proposal_hash, confirmed}`. The client submits
-NO candidate/render vertices — `control_points` must contain exactly the two human clicks. The server
-**re-derives** the SAME join + projection from THIS request's own scope (never trusting the client's prior
-proposal call), and durably persists only after the re-derived hash matches.
+`SourceAnchorCreate` gains one optional field, `route_adoption`. Fix-wave **F7** extended it beyond the
+original `{proposal_hash, confirmed}` pair into a full ECHO of the proposal binding the client claims to
+adopt:
+
+```json
+{"proposal_hash": "sha256:...", "confirmed": true,
+ "plan_upload_id": "up-...", "reviewed_bore_log_id": "rbl-main", "row_id": "row-1", "page_number": 20,
+ "control_points": [{"x": 101.25, "y": 220.5}, {"x": 487.75, "y": 391.0}]}
+```
+
+The echo is a **client CLAIM used only to REFINE which refusal code a mismatch produces** — it is NEVER
+trusted to grant adoption. The create request's OWN top-level fields (`plan_upload_id` /
+`reviewed_bore_log_id` / `row_ids[0]` / `page_number` / `control_points`) are ALWAYS the source of truth for
+what gets re-derived and stored; the server **re-derives** the SAME join + projection from those OWN fields
+(never trusting the client's prior proposal call or its echo), and the full re-derived-hash comparison against
+`route_adoption.proposal_hash` remains the **SOLE grant gate** — nothing the echo claims can cause adoption
+without the hash matching.
 
 Create-time failures (repo `_to_http` convention: the code LEADS the `detail` string, e.g.
-`"ROUTE_ADOPTION_STALE: ..."`, never an object detail):
+`"ROUTE_ADOPTION_STALE: ..."`, never an object detail), checked in this ORDER:
 
-| Condition | HTTP | Code |
-|---|---|---|
-| `control_points` count != 2, `confirmed != true`, or a malformed `proposal_hash` string | 400 | `ROUTE_ADOPTION_INVALID` |
-| `row_ids` doesn't contain exactly one id, or `group_id` is set (route adoption is single-row-scoped) | 409 | `ROUTE_ADOPTION_SCOPE_MISMATCH` |
-| Current re-derivation itself refuses (any Q2/Q3 code) | 409 | `ROUTE_ADOPTION_NO_LONGER_DEFENSIBLE` (nested current refusal code + message in the detail) |
-| Current re-derived hash differs from the submitted `proposal_hash` | 409 | `ROUTE_ADOPTION_STALE` |
-| *(reserved, not raised by this implementation — see "Known limitation" below)* | 409 | `ROUTE_ADOPTION_CONTROL_MISMATCH` |
+| # | Condition | HTTP | Code |
+|---|---|---|---|
+| 0 | `control_points` count != 2 (create request OR echo), `confirmed != true`, or a malformed `proposal_hash` string | 400 | `ROUTE_ADOPTION_INVALID` |
+| — | `row_ids` doesn't contain exactly one id, or `group_id` is set (route adoption is single-row-scoped) | 409 | `ROUTE_ADOPTION_SCOPE_MISMATCH` |
+| 1 | Echo identity tuple (`plan_upload_id`/`reviewed_bore_log_id`/`row_id`/`page_number`) != the create request's OWN identity tuple | 409 | `ROUTE_ADOPTION_SCOPE_MISMATCH` |
+| 2 | Echo `control_points` != the create request's OWN `control_points` | 409 | `ROUTE_ADOPTION_CONTROL_MISMATCH` |
+| 3 | Current re-derivation itself refuses (any Q2/Q3 code) | 409 | `ROUTE_ADOPTION_NO_LONGER_DEFENSIBLE` (nested current refusal code + message in the detail) |
+| 4 | Current re-derived hash differs from the submitted `proposal_hash` | 409 | `ROUTE_ADOPTION_STALE` |
+
+`ROUTE_ADOPTION_CONTROL_MISMATCH` is reachable in this implementation (fix-wave F7 — see step 2 above); the
+prior landing's "reserved, not raised" limitation is resolved.
 
 On success the stored record is `record_format = "trueline-source-anchor-2"`; `control_points` holds the
 SERVER-DERIVED render polyline (so the EXISTING renderer / station-dot call path consumes it unmodified — see
@@ -94,29 +123,44 @@ No I/O, no fitz/PlanPdf import. Given the observer backbone (`RouteVerification.
 `{"a": (x,y), "b": (x,y)}` segments) and the inherited `reach_tol` (read from
 `RouteVerification.detail["isolation"]["detail"]["reach_tol"]` — **never hardcoded**):
 
+> **Fix-wave F1/F2/F3/F4**: every geometric proximity/contiguity/tolerance/dedup/connector/same-segment rule
+> below is EXACT — no epsilon anywhere. The only remaining tolerance in the module (`_TIE_EPS = 1e-9`) exists
+> solely to group multiple independently-computed candidate distances that are the SAME real number (float
+> `hypot` last-bit noise at a shared vertex) into one tie set — it never treats two different physical
+> locations as equal.
+
 1. **Backbone ordering/contiguity**: convert segments to an ordered point chain; every `segments[i].b` must
-   equal `segments[i+1].a` (after finite-float normalization) or refuse `BACKBONE_DISCONTINUOUS`.
+   equal `segments[i+1].a` **EXACTLY** (after `-0.0` → `0.0` normalization ONLY — no proximity epsilon) or
+   refuse `BACKBONE_DISCONTINUOUS`. A gap as small as `1e-7` is a DIFFERENT point, full stop; two backbones
+   differing only by an undrawn sub-`1e-6` gap can never hash identically (the old `1e-6` weld would have
+   silently collapsed them to the same point chain).
 2. **Gap-bridge gate**: `gap_bridge_status == "ROUTE_GAPS_BRIDGED"` refuses
    `BACKBONE_CONTAINS_HYPOTHETICAL_GAP_BRIDGE` (a bridge is a continuity HYPOTHESIS, never a drawn stroke).
 3. **Tolerance**: missing/non-finite/non-positive `reach_tol` refuses `SOURCE_TOLERANCE_UNAVAILABLE`.
 4. **Projection**: each human control projects (clamped `t ∈ [0,1]`) onto every backbone segment; the nearest
    wins. A distance TIE across segments with the SAME chainage (a shared vertex) is accepted deterministically
    (lowest segment index); a tie at DIFFERENT chainages refuses `AMBIGUOUS_START_PROJECTION` /
-   `AMBIGUOUS_END_PROJECTION`. Distance beyond `reach_tol` refuses `START_CONTROL_OUTSIDE_TOLERANCE` /
+   `AMBIGUOUS_END_PROJECTION`. Acceptance is **`distance <= reach_tol`, EXACT, no epsilon** —
+   `math.nextafter(reach_tol, +inf)` at that distance refuses `START_CONTROL_OUTSIDE_TOLERANCE` /
    `END_CONTROL_OUTSIDE_TOLERANCE`. An unclamped projection parameter before the first segment or past the last
    refuses `START_CONTROL_BEYOND_BACKBONE_EXTENT` / `END_CONTROL_BEYOND_BACKBONE_EXTENT`.
 5. **Control-pair classification** (`classify_control_pair`, directly unit-tested): both controls on the same
-   backbone segment (only meaningful when the backbone has more than one segment — a genuinely single-segment
-   backbone trivially puts both on segment 0 and must NOT refuse) → `CONTROLS_ON_SAME_BACKBONE_SEGMENT`; equal
-   chainage → `CONTROL_PROJECTIONS_COINCIDE`; start chainage > end chainage → `CONTROL_ORDER_REVERSED`.
-6. **Clip**: `[start_projection] + every original vertex with chainage STRICTLY between start/end +
+   backbone segment → `CONTROLS_ON_SAME_BACKBONE_SEGMENT`, **UNCONDITIONALLY — including a genuinely
+   single-segment backbone** (fix-wave F4: the prior "exempt when the backbone has only one segment" rule is
+   REMOVED; a straight sub-segment of a single straight segment proposes nothing over the honest manual
+   straight line, so a one-segment READY backbone can never produce a source-backed proposal — only a
+   multi-segment backbone with a real bend can). Checked BEFORE the coincide check. Equal chainage (exact) →
+   `CONTROL_PROJECTIONS_COINCIDE`; start chainage > end chainage → `CONTROL_ORDER_REVERSED`.
+6. **Clip**: `[start_projection] + every original vertex with chainage STRICTLY (exact) between start/end +
    [end_projection]` — no simplification, densification, or invented bend.
-7. **Render polyline**: `[human_start] + clip + [human_end]`, consecutive exact duplicates removed. A nonzero
-   connector (human click ≠ its projection) is recorded as the `HUMAN_CONTROL_TO_BACKBONE_CONNECTOR` warning —
-   the operator's exact click is NEVER silently snapped.
-8. Zero-length clip or render → `ZERO_LENGTH_PROPOSAL`.
+7. **Render polyline**: `[human_start] + clip + [human_end]`, consecutive EXACT duplicates removed (fix-wave
+   F3: no proximity dedup — a near-but-not-identical point is NEVER silently collapsed). A nonzero connector
+   (human click ≠ its projection, exact comparison) is recorded as the `HUMAN_CONTROL_TO_BACKBONE_CONNECTOR`
+   warning, and BOTH the human click and its projection are stored as distinct points — the operator's exact
+   click is NEVER silently snapped to its projection.
+8. Zero-length clip or render (exact `== 0.0`) → `ZERO_LENGTH_PROPOSAL`.
 
-## Hashing (Q4)
+## Hashing (Q4 + fix-wave F5)
 
 Two hashes, both `sha256:<64-hex>` over sorted-key, compact-separator, finite-numbers-only canonical JSON
 (`-0.0` normalizes to `0.0`; a non-finite number raises rather than hashing silently):
@@ -128,17 +172,41 @@ Two hashes, both `sha256:<64-hex>` over sorted-key, compact-separator, finite-nu
   exact two human controls, both projections, and the final render polyline. This is the hash the client
   round-trips through `route_adoption.proposal_hash`; a mismatch on re-derivation is `ROUTE_ADOPTION_STALE`.
 
+Both hashes fold in `span_source.row_evidence_hash` (fix-wave F5, `row_evidence_hash()`): a canonical hash of
+the selected row's **FULL effective merged values** — the SAME `raw < normalized < review.corrected_values`
+precedence `row_effective_stations` uses, but every field, not just stations. Correcting ANY reviewed value on
+the row (e.g. depth, with stations left untouched) between proposal generation and create therefore changes
+the hash and invalidates the proposal (`ROUTE_ADOPTION_STALE` on create), closing the gap where a station-only
+comparison would have silently adopted geometry bound to stale row evidence.
+
 `proposal_id = "rap-" + proposal_hash_hex[:24]`.
 
-## Known limitation — `ROUTE_ADOPTION_CONTROL_MISMATCH`
+## Temp-directory disclosure (fix-wave F8)
 
-The trust model is fully stateless (Q4: "not a new proposal store"): the client never round-trips its own
-prior proposal's bound control points, only the opaque `proposal_hash`. The server therefore cannot
-distinguish "the human clicked different points than the proposal was based on" from "the underlying evidence
-changed since the proposal" — both manifest identically as a hash mismatch on re-derivation. This
-implementation reports that single detectable condition as `ROUTE_ADOPTION_STALE`; the `RouteAdoptionControlMismatchError`
-class is defined (for the taxonomy and for a future protocol extension that transmits the bound controls
-separately) but is not raised by the current create-time code path. Flagged for the owner; not a hidden gap.
+`harness.product_readiness_bridge.run_job_route_readiness_raw` (the raw readiness seam both the proposal
+endpoint and create-time re-derivation call) materializes the selected upload BYTES (hardlinked or copied) into
+a real `tempfile.mkdtemp(prefix="tl2_route_adoption_")` directory under the OS temp root for the duration of
+one call, and deletes it in a `finally` block. This is a KNOWN, ACCEPTED trade-off of the stateless design (Q4:
+"avoids a new mutable record and stale cleanup, but repeats the readiness computation"), not a silently hidden
+one: a process kill between creation and cleanup can leave that directory behind on disk (crash residue) until
+OS temp-cleanup reclaims it.
+
+Both call sites now pass `store_root=<the product store root>` (additive keyword; `None` preserves prior
+behavior byte-identically for any other caller). With `store_root` supplied, the function **asserts at
+creation** that the resolved temp work directory is NOT under the store root, and raises
+`UnsafeTempWorkdirError` rather than proceeding if it is — proving the transient write can never be confused
+with, or become reachable through, the durable store tree (test-locked in
+`test_source_route_adoption_bridge.py`).
+
+## Known limitation — none remaining for `ROUTE_ADOPTION_CONTROL_MISMATCH`
+
+Resolved by fix-wave F7: the create request's `route_adoption` block now carries a full ECHO of the proposal
+binding (`plan_upload_id` / `reviewed_bore_log_id` / `row_id` / `page_number` / `control_points`), which lets
+the server distinguish "the echoed control_points disagree with what's actually being created" (409
+`ROUTE_ADOPTION_CONTROL_MISMATCH`) from "the underlying evidence changed since the proposal" (409
+`ROUTE_ADOPTION_STALE`, still the sole grant-gate signal) BEFORE re-derivation runs. The echo is a client CLAIM
+used only to select the refusal code — the full hash comparison against `proposal_hash` remains the only path
+to a successful adoption, regardless of what the echo says.
 
 ## Reader survey (P5) — every consumer of a source-anchor record
 
@@ -172,8 +240,18 @@ separately) but is not raised by the current create-time code path. Flagged for 
 ## Tests
 
 `truelinev2/tests/test_source_route_adoption_geometry.py` (pure module, every refusal code + hash stability/
-sensitivity), `test_source_route_adoption_bridge.py` (additive bridge params, byte-identity + filtering),
-`test_source_route_adoption_api.py` (end-to-end: mounting, flag OFF/ON identity, proposal happy-path + refusals
-against REAL source-backed geometry read off the fixture-free `complete_package_qa` spine, adoption round-trip,
-stale/invalid/scope-mismatch/no-longer-defensible, tenant isolation, manifest/closeout/station-dot flow-
-through).
+sensitivity + exact-tolerance/exact-contiguity/unconditional-same-segment locks), `test_source_route_adoption_bridge.py`
+(additive bridge params, byte-identity + filtering + the F8 temp-workdir-outside-store-root proof),
+`test_source_route_adoption_api.py` (end-to-end: mounting, flag OFF/ON FULL-record byte-identity, a fresh-
+subprocess `sys.modules` import-isolation proof, proposal happy-path + refusals against REAL source-backed
+geometry read off the fixture-free `complete_package_qa` spine — including a real single-segment backbone
+proving the F4 same-segment refusal end-to-end — adoption round-trip, stale/invalid/scope-mismatch/control-
+mismatch/no-longer-defensible (including the F5 row-evidence-hash staleness case), tenant isolation,
+manifest/closeout/on-polyline station-dot flow-through, and a v1-manual-vs-v2-adopted output-equality proof for
+identical geometry).
+
+A real single-segment READY backbone (the `complete_ready` QA fixture — a straight terminus-to-terminus run)
+now ALWAYS refuses `CONTROLS_ON_SAME_BACKBONE_SEGMENT` under fix-wave F4; the happy-path / reader-survey tests
+that need a genuinely successful multi-segment adoption wrap the readiness bridge's raw seam
+(`_patch_bent_geometry` in the test file) to split that SAME real backbone into two colinear segments at its
+own real midpoint — identical overall endpoints/length, one additional real interior vertex, nothing invented.
