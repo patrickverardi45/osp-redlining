@@ -137,11 +137,19 @@ def _readme(job_id, manifest, kmz, artifact_count, kmz_included, candidate_summa
         lines.append("  redline_export.kmz           valid KMZ (real geospatial geometry)")
     if candidate_summary and candidate_summary.get("candidate_count"):
         lines.append("  status/placement_candidates.json  REVIEW candidate states + confidence + warnings")
-    lines += [
-        "",
-        "Honesty notes:",
-        "  * Redline geometry is the engine's, rendered from the plan's own drawn vectors — never invented.",
-    ]
+    lines += ["", "Honesty notes:"]
+    # Mission 8: the unconditional "engine's ... never invented" sentence is FALSE for a manual-route source
+    # anchor (its geometry is the reviewer's OWN confirmed control points, never engine-solved) — branch it
+    # ONLY for a manifest that actually carries a manual_route block on at least one log. v1 (no source
+    # anchors / deterministic engine) and adoption-only bundles are UNCHANGED, so their exports stay
+    # byte-identical.
+    if any(lg.get("manual_route") for lg in manifest.get("logs", [])):
+        lines.append(
+            "  * Redline geometry for the manual/representative source-anchor route(s) in this bundle is the "
+            "reviewer's OWN confirmed control points (start/end plus any added bend points) — never "
+            "engine-solved or invented geometry.")
+    else:
+        lines.append("  * Redline geometry is the engine's, rendered from the plan's own drawn vectors — never invented.")
     if candidate_summary and candidate_summary.get("candidate_count"):
         lines.append("  * This package contains REVIEW PLACEMENT CANDIDATES generated from uploaded project "
                      "evidence (%d candidate(s), %d accepted). They are NOT deterministic AUTO/FINAL truth; "

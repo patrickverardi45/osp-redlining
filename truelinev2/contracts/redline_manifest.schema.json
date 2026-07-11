@@ -329,8 +329,8 @@
           },
           "geometry_basis": {
             "type": "string",
-            "enum": ["OBSERVER_BACKBONE_HUMAN_ADOPTED"],
-            "description": "Phase-2 source-route adoption (T31 Q5). Present ONLY on an adopted human-confirmed source-anchor log entry -- identifies that the log's control-point geometry originated from a server-verified, human-adopted observer backbone (never invented). ABSENT on every other log (including a plain HUMAN_CONFIRMED_SOURCE_ANCHOR log with manually clicked control points, whose semantic default is HUMAN_CLICKED_POLYLINE) -- so every prior manifest stays byte-identical."
+            "enum": ["OBSERVER_BACKBONE_HUMAN_ADOPTED", "HUMAN_CLICKED_POLYLINE"],
+            "description": "Phase-2 source-route adoption (T31 Q5) + Mission 8 manual-route. Present ONLY on an EXPLICITLY-CONFIRMED v2 source-anchor log entry: OBSERVER_BACKBONE_HUMAN_ADOPTED identifies a server-verified, human-adopted observer-backbone route (paired with a route_adoption block); HUMAN_CLICKED_POLYLINE identifies an operator-confirmed manual N-point polyline or representative straight segment (paired with a manual_route block). ABSENT on a plain (pre-Mission-8) HUMAN_CONFIRMED_SOURCE_ANCHOR v1 log -- so every prior manifest stays byte-identical."
           },
           "confirmation_state": {
             "type": "string",
@@ -377,7 +377,52 @@
               "candidate_route_hash": {"type": "string"},
               "proposal_hash": {"type": "string"}
             },
-            "description": "Present (non-null) ONLY alongside geometry_basis: the source-route adoption provenance block (source sheet/page, span/row identity, exact human clicks, connectivity rationale, warnings, both hashes) -- NEVER describes the interior observer-backbone vertices as human-clicked. ABSENT (not null) on every non-adopted log."
+            "description": "Present (non-null) ONLY alongside geometry_basis == OBSERVER_BACKBONE_HUMAN_ADOPTED: the source-route adoption provenance block (source sheet/page, span/row identity, exact human clicks, connectivity rationale, warnings, both hashes) -- NEVER describes the interior observer-backbone vertices as human-clicked. ABSENT (not null) on every non-adopted log, and NEVER co-present with manual_route on the same log (mutually exclusive provenance)."
+          },
+          "manual_route": {
+            "type": ["object", "null"],
+            "additionalProperties": false,
+            "properties": {
+              "representative_status": {
+                "type": "string",
+                "enum": ["MANUAL_POLYLINE_CONFIRMED", "REPRESENTATIVE_STRAIGHT_ACCEPTED"]
+              },
+              "human_control_points": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["start", "end", "intermediate"],
+                "properties": {
+                  "start": {
+                    "type": "object", "additionalProperties": false, "required": ["x", "y"],
+                    "properties": {"x": {"type": "number"}, "y": {"type": "number"}}
+                  },
+                  "end": {
+                    "type": "object", "additionalProperties": false, "required": ["x", "y"],
+                    "properties": {"x": {"type": "number"}, "y": {"type": "number"}}
+                  },
+                  "intermediate": {
+                    "type": "array",
+                    "items": {
+                      "type": "object", "additionalProperties": false, "required": ["x", "y"],
+                      "properties": {"x": {"type": "number"}, "y": {"type": "number"}}
+                    }
+                  }
+                }
+              },
+              "intermediate_point_count": {"type": "integer", "minimum": 0},
+              "reported_route_search": {
+                "type": ["object", "null"],
+                "additionalProperties": false,
+                "properties": {
+                  "code": {"type": "string"},
+                  "upstream_reason_code": {"type": ["string", "null"]}
+                },
+                "description": "Client-attested (NEVER server-re-verified) route-search refusal the operator's session received before confirming this manual/representative route -- honestly named 'reported_'."
+              },
+              "confirmed_by": {"type": "string"},
+              "confirmed_at": {"type": "string"}
+            },
+            "description": "Present (non-null) ONLY alongside geometry_basis == HUMAN_CLICKED_POLYLINE: the Mission-8 manual-route provenance block (representative status, the exact human control points split start/end/intermediate, the reported route-search refusal if any, confirming session + timestamp). ABSENT (not null) on every non-manual log, and NEVER co-present with route_adoption on the same log (mutually exclusive provenance)."
           }
         }
       }

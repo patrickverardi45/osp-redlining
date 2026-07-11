@@ -107,6 +107,10 @@ def validate_manifest(manifest, schema):
     return errors
 
 
+GEOMETRY_BASIS_ADOPTED = "OBSERVER_BACKBONE_HUMAN_ADOPTED"
+GEOMETRY_BASIS_MANUAL = "HUMAN_CLICKED_POLYLINE"
+
+
 def reconciliation_errors(manifest):
     """Return semantic accounting errors the schema cannot express ([] when consistent)."""
     errors = []
@@ -122,6 +126,25 @@ def reconciliation_errors(manifest):
         blocked += 1 if lg["blocked"] else 0
         if sum((bool(lg["drawn"]), bool(lg["covered"]), bool(lg["blocked"]))) != 1:
             errors.append("%s: exactly one of drawn/covered/blocked must be true" % lg["log_id"])
+        # Mission 8: a log's EXPLICIT-CONFIRMATION provenance block must agree with its own geometry_basis,
+        # and route_adoption/manual_route are MUTUALLY EXCLUSIVE on the same log -- the schema (additive
+        # optional keys, additionalProperties:false) cannot express either rule, so both are checked here.
+        has_adoption = lg.get("route_adoption") is not None
+        has_manual = lg.get("manual_route") is not None
+        basis = lg.get("geometry_basis")
+        if has_adoption and has_manual:
+            errors.append("%s: carries BOTH route_adoption and manual_route (mutually exclusive provenance)"
+                         % lg["log_id"])
+        if has_adoption and basis != GEOMETRY_BASIS_ADOPTED:
+            errors.append("%s: carries route_adoption but geometry_basis=%r (expected %r)"
+                         % (lg["log_id"], basis, GEOMETRY_BASIS_ADOPTED))
+        if has_manual and basis != GEOMETRY_BASIS_MANUAL:
+            errors.append("%s: carries manual_route but geometry_basis=%r (expected %r)"
+                         % (lg["log_id"], basis, GEOMETRY_BASIS_MANUAL))
+        if basis == GEOMETRY_BASIS_ADOPTED and not has_adoption:
+            errors.append("%s: geometry_basis=%s but no route_adoption block" % (lg["log_id"], basis))
+        if basis == GEOMETRY_BASIS_MANUAL and not has_manual:
+            errors.append("%s: geometry_basis=%s but no manual_route block" % (lg["log_id"], basis))
     # Compare per key with a 0 default so explicit zero-count buckets (e.g. a project with no
     # covered logs) are NOT falsely rejected; real mismatches (incl. extra declared keys) still fail.
     declared_status = manifest.get("status_counts") or {}
