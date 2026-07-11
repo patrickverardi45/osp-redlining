@@ -81,6 +81,7 @@ from truelinev2.contracts.reviewed_bore_log import (
     load_reviewed_bore_log,
     review_queue,
     review_row_in_log,
+    row_engine_eligible,
     set_grouping_status,
 )
 from truelinev2.contracts.handwritten_extraction import rbl_fanout_plan
@@ -186,8 +187,25 @@ from truelinev2.contracts.source_anchor import (
     SourceAnchorNotFoundError,
     SourceAnchorStateError,
     create_source_anchor,
+    create_source_anchor_v2,
     list_source_anchors,
     load_source_anchor,
+)
+# NOTE (P8 OFF-identity): the Phase-2 route-adoption DERIVATION (contracts.source_route_adoption's
+# derive_route_geometry / build_proposal / check_* / row_effective_stations / not_ready_refusal) and the
+# readiness spine (harness.product_readiness_bridge) are imported LAZILY, inside create_source_anchor_route's
+# route_adoption branch ONLY — never at module import time and never called — so a normal SourceAnchorCreate
+# (no route_adoption field, or the new flag OFF) never runs any readiness/hash/projection code. The exception
+# CLASSES below are zero-side-effect, dependency-free (no fitz/harness import) and are imported eagerly ONLY
+# so _to_http's dispatch table (a plain isinstance check) can reference them, exactly like every other
+# contract error class in this file.
+from truelinev2.contracts.source_route_adoption import (
+    RouteAdoptionControlMismatchError,
+    RouteAdoptionError,
+    RouteAdoptionInvalidError,
+    RouteAdoptionNoLongerDefensibleError,
+    RouteAdoptionScopeMismatchError,
+    RouteAdoptionStaleError,
 )
 from truelinev2.ingest.pdf import PlanPdf
 from truelinev2.ingest.sheet_label_index import build_sheet_index, SHEET_TYPE_OTHER
@@ -279,6 +297,15 @@ class ControlPoint(BaseModel):
     y: float
 
 
+class RouteAdoptionIn(BaseModel):
+    """Phase-2 (T31 Q4/Q5): present ONLY when the operator is adopting a source-route PROPOSAL — the exact
+    (opaque) ``proposal_hash`` returned by ``POST .../source-route-proposals`` + an explicit ``confirmed=true``.
+    Carries NO geometry (the client submits no candidate/render vertices); the server re-derives + re-hashes
+    from ``control_points`` (the two human clicks) + this request's own plan/rbl/row/page scope."""
+    proposal_hash: str
+    confirmed: bool
+
+
 class SourceAnchorCreate(BaseModel):
     source_anchor_id: str
     plan_upload_id: str
@@ -290,6 +317,7 @@ class SourceAnchorCreate(BaseModel):
     start_identity: Optional[SourceAnchorIdentity] = None
     end_identity: Optional[SourceAnchorIdentity] = None
     notes: Optional[str] = None
+    route_adoption: Optional[RouteAdoptionIn] = None
 
 
 # --- Phase 6 REVIEW acceptance request body (no identity — the tenant is the verified context) --------- #
@@ -343,11 +371,15 @@ def _to_http(exc: Exception) -> HTTPException:
         return HTTPException(status_code=404, detail=str(exc))
     if isinstance(exc, (IllegalTransitionError, UploadsClosedError, HandoffStateError,
                         CloseoutStateError, SourceAnchorStateError,
-                        ReviewAcceptanceStateError, ReReviewWouldDiscardCorrectionsError)):   # state conflicts
+                        ReviewAcceptanceStateError, ReReviewWouldDiscardCorrectionsError,
+                        RouteAdoptionControlMismatchError, RouteAdoptionStaleError,
+                        RouteAdoptionNoLongerDefensibleError, RouteAdoptionScopeMismatchError)):  # state conflicts
         return HTTPException(status_code=409, detail=str(exc))
     if isinstance(exc, (CrossProjectAccessError, IsolationError)):
         return HTTPException(status_code=403, detail=str(exc))
     return HTTPException(status_code=400, detail=str(exc))   # invalid id / bad target / missing reason / ...
+    # (RouteAdoptionInvalidError falls through to this default 400 — its code-first "ROUTE_ADOPTION_INVALID: "
+    # detail string already leads with the code, matching every other 400 here.)
 
 
 # Every contract-error base this router translates to HTTP via _to_http (which dispatches by the specific
@@ -355,7 +387,8 @@ def _to_http(exc: Exception) -> HTTPException:
 _CONTRACT_ERRORS = (CustomerProjectError, ProcessingJobError, UploadError, ExtractedRowError,
                     ReviewedBoreLogError, ManifestHandoffError, ConsumerError, CloseoutReviewError,
                     BillingSummaryError, JobPricingError, ExportPackageError, ExportBundleError,
-                    CloseoutPdfError, GisRouteError, SourceAnchorError, ReviewAcceptanceError, IsolationError)
+                    CloseoutPdfError, GisRouteError, SourceAnchorError, ReviewAcceptanceError, IsolationError,
+                    RouteAdoptionError)
 
 
 @router.post("/project")
@@ -1412,6 +1445,158 @@ def _resolve_plan_page_bounds(store, customer_project_id, job_id, plan_upload_id
         plan.close()
 
 
+_PROPOSAL_HASH_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
+
+
+def _route_adoption_enabled(c: Container) -> bool:
+    s = c.settings
+    return bool(s.product_pipeline_api_optin and s.product_readiness_api_optin
+               and s.source_route_adoption_api_optin)
+
+
+def _rederive_route_adoption(store, cp: str, job_id: str, job: dict, req: SourceAnchorCreate,
+                             plan_upload: dict, ctx: RequestContext) -> tuple:
+    """Re-run the SAME join + pure geometry derivation the proposal endpoint uses, over THIS create request's
+    own scope fields (plan_upload_id / reviewed_bore_log_id / row_ids[0] / page_number / the two submitted
+    control_points), and verify the re-derived proposal_hash matches ``req.route_adoption.proposal_hash``
+    EXACTLY. Returns ``(route_adoption_record_block, render_control_points)`` on success. Every failure raises
+    a specific ``RouteAdoptionError`` subclass (mapped by ``_to_http``); this function is the ONLY place that
+    imports the readiness spine / hash / projection code, and ONLY reached when route_adoption is present AND
+    the three-way flag gate is enabled."""
+    # Lazy imports (P8 OFF-identity): reached only inside this function, only when route_adoption + the flag
+    # are both present/enabled.
+    from truelinev2.contracts.source_route_adoption import (
+        build_proposal,
+        check_cross_page,
+        check_row_engine_eligible,
+        check_row_source_upload,
+        check_row_span_match,
+        check_single_ready_candidate,
+        derive_route_geometry,
+        not_ready_refusal,
+        row_effective_stations,
+    )
+    from truelinev2.harness.product_readiness_bridge import READY_STATUS, run_job_route_readiness_raw
+    from truelinev2.stations import parse_station
+
+    ra = req.route_adoption
+    if len(req.control_points) != 2:
+        raise RouteAdoptionInvalidError("control_points must contain exactly two controls when "
+                                        "route_adoption is present")
+    if ra.confirmed is not True:
+        raise RouteAdoptionInvalidError("route_adoption.confirmed must be true")
+    if not _PROPOSAL_HASH_RE.match(ra.proposal_hash or ""):
+        raise RouteAdoptionInvalidError("route_adoption.proposal_hash is not a well-formed sha256 hash")
+    row_ids = req.row_ids or []
+    if len(row_ids) != 1:
+        raise RouteAdoptionScopeMismatchError(
+            "route_adoption requires exactly one row_id (got %d)" % (len(row_ids),))
+    if req.group_id is not None:
+        raise RouteAdoptionScopeMismatchError("route_adoption is row-scoped and cannot carry a group_id")
+    row_id = row_ids[0]
+
+    try:
+        rbl = load_reviewed_bore_log(store, cp, job_id, req.reviewed_bore_log_id)
+    except ReviewedBoreLogNotFoundError as exc:
+        raise SourceAnchorError(str(exc)) from exc
+    row = next((r for r in rbl.get("rows", []) if r.get("row_id") == row_id), None)
+    if row is None:
+        raise RouteAdoptionScopeMismatchError("no row %r in reviewed_bore_log %r"
+                                              % (row_id, req.reviewed_bore_log_id))
+
+    def _refuse(refusal):
+        raise RouteAdoptionNoLongerDefensibleError(
+            "current re-derivation refuses: %s — %s" % (refusal.code, refusal.message))
+
+    join_refusal = check_row_engine_eligible(row_engine_eligible(rbl, row_id))
+    if join_refusal is not None:
+        _refuse(join_refusal)
+    join_refusal = check_row_source_upload(row.get("source_upload_id"), rbl.get("source_upload_id"))
+    if join_refusal is not None:
+        _refuse(join_refusal)
+
+    allowed_upload_ids = [req.plan_upload_id, rbl.get("source_upload_id")]
+    readiness, sheet_ctx = run_job_route_readiness_raw(
+        job.get("uploads") or [], job_dir(store, cp, job_id), allowed_upload_ids=allowed_upload_ids)
+    if readiness is None:
+        _refuse(not_ready_refusal(sheet_ctx.get("refusal") or "NO_SPINE_INPUT"))
+    if readiness.report.status != READY_STATUS:
+        _refuse(not_ready_refusal(readiness.report.status))
+
+    ready_verifications = [v for v in readiness.routes.verifications if v.route_ready]
+    join_refusal = check_single_ready_candidate(len(ready_verifications))
+    if join_refusal is not None:
+        _refuse(join_refusal)
+    if not ready_verifications:
+        _refuse(not_ready_refusal(readiness.report.status))
+    verification = ready_verifications[0]
+
+    span = next((s for s in readiness.extraction.spans if s.span_id == verification.span_id), None)
+    if span is None:
+        _refuse(not_ready_refusal(readiness.report.status))
+
+    row_start_txt, row_end_txt = row_effective_stations(row)
+    row_start_ft = parse_station(row_start_txt) if row_start_txt else None
+    row_end_ft = parse_station(row_end_txt) if row_end_txt else None
+    join_refusal = check_row_span_match(row_start_ft, row_end_ft,
+                                        parse_station(span.start_station), parse_station(span.end_station))
+    if join_refusal is not None:
+        _refuse(join_refusal)
+
+    join_refusal = check_cross_page(req.page_number, sheet_ctx.get("pdf_page"))
+    if join_refusal is not None:
+        _refuse(join_refusal)
+
+    reach_tol = (verification.detail or {}).get("isolation", {}).get("detail", {}).get("reach_tol")
+    human_start = (req.control_points[0].x, req.control_points[0].y)
+    human_end = (req.control_points[1].x, req.control_points[1].y)
+
+    geometry, geom_refusal = derive_route_geometry(
+        backbone_segments=verification.route_geometry, gap_bridge_status=verification.gap_bridge_status,
+        reach_tol=reach_tol, human_start=human_start, human_end=human_end)
+    if geom_refusal is not None:
+        _refuse(geom_refusal)
+
+    scope = {"tenant": cp, "job_id": job_id, "plan_upload_id": req.plan_upload_id,
+             "reviewed_bore_log_id": req.reviewed_bore_log_id, "row_id": row_id,
+             "page_number": req.page_number}
+    plan_source = {"plan_upload_id": req.plan_upload_id, "plan_sha256": plan_upload.get("sha256"),
+                   "engineering_sheet": sheet_ctx.get("engineering_sheet"), "pdf_page": sheet_ctx.get("pdf_page"),
+                   "sheet_offset": sheet_ctx.get("sheet_offset")}
+    span_source = {"span_id": span.span_id, "source_file": span.source_file, "source_page": span.source_page,
+                   "reviewed_bore_log_id": req.reviewed_bore_log_id, "row_id": row_id}
+    readiness_dict = {"readiness_status": readiness.report.status,
+                      "route_isolation_status": verification.route_isolation_status,
+                      "main_run_status": verification.main_run_status,
+                      "gap_bridge_status": verification.gap_bridge_status}
+
+    proposal = build_proposal(
+        scope=scope, plan_source=plan_source, span_source=span_source, readiness=readiness_dict,
+        reach_tol=float(reach_tol), human_start=human_start, human_end=human_end, geometry=geometry,
+        confirmed_by=ctx.session_id)
+
+    if proposal.proposal_hash != ra.proposal_hash:
+        raise RouteAdoptionStaleError(
+            "the re-derived proposal_hash no longer matches the submitted route_adoption.proposal_hash")
+
+    at = _now()
+    route_adoption_block = {
+        "algorithm_version": "route-adoption-1",
+        "geometry_source": proposal.source.get("geometry_source"),
+        "plan_source": plan_source,
+        "span_source": span_source,
+        "human_control_points": [dict(p) for p in proposal.human_control_points],
+        "candidate_route_points": [dict(p) for p in proposal.candidate_route_points],
+        "connectivity": dict(proposal.connectivity),
+        "warnings": list(proposal.warnings),
+        "confirmed_by": ctx.session_id,
+        "confirmed_at": at,
+        "candidate_route_hash": proposal.candidate_route_hash,
+        "proposal_hash": proposal.proposal_hash,
+    }
+    return route_adoption_block, [dict(p) for p in proposal.proposed_render_points]
+
+
 @router.post("/jobs/{job_id}/source-anchors")
 def create_source_anchor_route(job_id: str, req: SourceAnchorCreate,
                                ctx: RequestContext = Depends(get_context),
@@ -1420,7 +1605,14 @@ def create_source_anchor_route(job_id: str, req: SourceAnchorCreate,
     bore route on an uploaded PLAN_PDF page. Records the geometry and returns its renderability state +
     named blockers (VALIDATED or REJECTED) — it RENDERS NOTHING, runs no engine, and creates no
     artifacts/slots/bundles. 404 if the job is missing; 409 if the source_anchor id already exists; 400 on
-    an invalid id / malformed control point."""
+    an invalid id / malformed control point.
+
+    Phase-2 (T31 Q4): when ``req.route_adoption`` is present, the server RE-DERIVES the SAME projection from
+    this request's own scope (never trusting client-submitted geometry), requires the re-derived hash to
+    match ``route_adoption.proposal_hash`` EXACTLY, and stores a record_format v2 record whose
+    ``control_points`` is the SERVER-DERIVED render polyline (the existing renderer/station-dot path consumes
+    it unmodified). With the new flag OFF, or when route_adoption is absent, this is BYTE-IDENTICAL to the
+    existing v1 path — no readiness/hash/projection code is imported or run."""
     cp, store = ctx.tenant.value, _store_root(c)
     try:
         load_source_anchor(store, cp, job_id, req.source_anchor_id)
@@ -1435,6 +1627,38 @@ def create_source_anchor_route(job_id: str, req: SourceAnchorCreate,
     except _CONTRACT_ERRORS as exc:
         raise _to_http(exc)
     bounds = _resolve_plan_page_bounds(store, cp, job_id, req.plan_upload_id, req.page_number, job)
+
+    if req.route_adoption is not None:
+        if not _route_adoption_enabled(c):
+            raise HTTPException(status_code=400,
+                                detail="ROUTE_ADOPTION_INVALID: source-route adoption is not enabled")
+        plan_upload = next((u for u in job.get("uploads", [])
+                            if u.get("upload_id") == req.plan_upload_id and u.get("kind") == PLAN_PDF_KIND), None)
+        if plan_upload is None:
+            raise HTTPException(status_code=404,
+                                detail="no PLAN_PDF upload %r in this job" % (req.plan_upload_id,))
+        try:
+            route_adoption_block, render_points = _rederive_route_adoption(
+                store, cp, job_id, job, req, plan_upload, ctx)
+        except _CONTRACT_ERRORS as exc:
+            raise _to_http(exc)
+        try:
+            return create_source_anchor_v2(
+                store, cp, job_id,
+                source_anchor_id=req.source_anchor_id,
+                plan_upload_id=req.plan_upload_id,
+                reviewed_bore_log_id=req.reviewed_bore_log_id,
+                page_number=req.page_number,
+                render_control_points=render_points,
+                group_id=req.group_id,
+                row_ids=req.row_ids,
+                route_adoption=route_adoption_block,
+                start_identity=(req.start_identity.model_dump() if req.start_identity else None),
+                end_identity=(req.end_identity.model_dump() if req.end_identity else None),
+                notes=req.notes, page_bounds=bounds, at=_now(), by=ctx.session_id)
+        except _CONTRACT_ERRORS as exc:
+            raise _to_http(exc)
+
     try:
         return create_source_anchor(
             store, cp, job_id,
