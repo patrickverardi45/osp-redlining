@@ -388,15 +388,53 @@ def run_job_readiness(uploads: Sequence[Dict[str, Any]], job_files_root, *, plan
 # ``contracts.source_route_adoption`` derivation can read ``RouteVerification.route_geometry`` and its inherited
 # ``detail["isolation"]["detail"]["reach_tol"]`` directly — neither is exposed by the serialized bridge result.
 # ---------------------------------------------------------------------------------------------------------------- #
+class UnsafeTempWorkdirError(RuntimeError):
+    """Fix-wave F8 (blind-verification FAIL — filesystem-write disclosure/hardening): raised when the ephemeral
+    spine work directory this seam materializes into would resolve INSIDE the caller-supplied product store
+    root. This is a defensive invariant, not a business refusal — it can only fire if the OS temp directory
+    (``tempfile.gettempdir()`` / ``TMPDIR`` / ``TEMP``) has been configured to sit under the store root itself
+    (e.g. a misconfigured deployment, or a test harness that points both at the same ``tmp_path``), which would
+    let a crash-residue temp package become reachable through the store's own directory tree. Refuses rather
+    than materializing uploaded bytes into a location that could be confused with durable store content. Never
+    includes the resolved path in its message (no absolute-path leak)."""
+
+
+def _assert_workdir_outside_store(work_dir, store_root) -> None:
+    """The F8 hardening check: ``work_dir`` (an already-created ``tempfile.mkdtemp`` result) must NOT resolve
+    to a path under ``store_root``. A no-op when ``store_root`` is not supplied (additive; every existing
+    caller that does not pass ``store_root`` keeps EXACT prior behavior byte-identically)."""
+    if store_root is None:
+        return
+    wd = Path(work_dir).resolve()
+    root = Path(store_root).resolve()
+    if wd == root or root in wd.parents:
+        raise UnsafeTempWorkdirError(
+            "the ephemeral readiness work directory resolved inside the product store root — refusing to "
+            "materialize uploaded bytes there (this indicates a misconfigured temp directory, not a normal "
+            "request failure)")
+
+
 def run_job_route_readiness_raw(uploads: Sequence[Dict[str, Any]], job_files_root, *,
                                 plan_sheet: Optional[int] = None,
-                                allowed_upload_ids: Optional[Sequence[str]] = None
+                                allowed_upload_ids: Optional[Sequence[str]] = None,
+                                store_root: Optional[Any] = None
                                 ) -> Tuple[Optional[Any], Dict[str, Any]]:
     """Run the SAME unchanged readiness spine (sheet derivation + ``run_package_route_readiness``) as
     ``run_job_readiness``, but: (1) the ephemeral package view is FILTERED to ``allowed_upload_ids`` ONLY
     (never the job's full upload set — the source-route-adoption join requires evaluating exactly the
     caller-selected plan + BORE_LOG uploads, nothing else); (2) it draws NO REVIEW-candidate overlay, writes
     NO PNG, and persists NOTHING to any store (purely in-memory dataclasses, deleted ephemeral work dir).
+
+    Fix-wave F8 (accepted-with-hardening, not removal — the transient system-temp write is disclosed, not
+    eliminated): this function DOES write real uploaded bytes (hardlinked or copied) into a
+    ``tempfile.mkdtemp(prefix="tl2_route_adoption_")`` directory under the OS temp root for the duration of one
+    call, and deletes it in a ``finally`` block. A process kill between creation and cleanup leaves that
+    directory behind on disk (crash residue) — this is a KNOWN, ACCEPTED trade-off of the stateless design (Q4:
+    "avoids a new mutable record and stale cleanup, but repeats the readiness computation"), not a silent one.
+    When ``store_root`` is supplied (additive; ``None`` preserves EXACT prior behavior byte-identically), this
+    function ASSERTS at creation that the resolved work directory is NOT under ``store_root`` and refuses
+    (``UnsafeTempWorkdirError``) rather than proceeding if it is — proving the transient write can never be
+    confused with, or accidentally reachable through, the durable store tree.
 
     Returns ``(readiness, sheet_context)``: ``readiness`` is the raw ``PackageRouteReadiness`` (``None`` when
     the spine refused before reaching the classifier — no spine input, or an unresolved/multi sheet ref);
@@ -407,6 +445,7 @@ def run_job_route_readiness_raw(uploads: Sequence[Dict[str, Any]], job_files_roo
     from truelinev2.harness.route_verification import run_package_route_readiness
 
     work_dir = tempfile.mkdtemp(prefix="tl2_route_adoption_")
+    _assert_workdir_outside_store(work_dir, store_root)
     try:
         pkg = materialize_package_view(uploads, job_files_root, work_dir, allowed_upload_ids=allowed_upload_ids)
         if pkg is None:
