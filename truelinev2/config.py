@@ -128,6 +128,15 @@ class Settings:
     # HANDWRITTEN_VISION_PROVIDER_NOT_CONFIGURED. Env: TL2_HANDWRITTEN_BORELOG_PROVIDER. See
     # docs/handwritten-vision-provider.md for the full config matrix.
     handwritten_borelog_provider: Optional[str] = None
+    # Phase-2 SOURCE-ROUTE ADOPTION: the stateless, read-only-by-effect proposal endpoint
+    # (POST /v2/product/jobs/{job_id}/source-route-proposals) that projects two human control points onto a
+    # verified READY_FOR_REVIEW_REDLINE observer backbone + the SourceAnchorCreate.route_adoption extension.
+    # DEFAULT OFF -- OFF is byte-identical: the proposal router is not mounted, source_route_adoption/the new
+    # bridge helper are not imported at request time, and a normal SourceAnchorCreate (no route_adoption field)
+    # follows the EXISTING unchanged v1 record path. Mounted ONLY when this AND product_pipeline_api_optin AND
+    # product_readiness_api_optin are ALL True (api/app.py three-way gate). Env var:
+    # TL2_SOURCE_ROUTE_ADOPTION_API_OPTIN.
+    source_route_adoption_api_optin: bool = False
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -186,6 +195,9 @@ class Settings:
             ),
             handwritten_borelog_provider=(
                 os.getenv("TL2_HANDWRITTEN_BORELOG_PROVIDER", "").strip() or None
+            ),
+            source_route_adoption_api_optin=(
+                os.getenv("TL2_SOURCE_ROUTE_ADOPTION_API_OPTIN", "0") == "1"
             ),
         )
 
