@@ -14,6 +14,7 @@ import json
 from pathlib import Path
 
 from truelinev2.harness.complete_package_qa import (
+    ROUTE_BENT,
     ROUTE_CLEAN,
     ROUTE_FORKED,
     SCENARIOS,
@@ -40,8 +41,9 @@ def _by_key(key):
 # (1)+(2) the positive complete package is READY; every refusal case fails at the correct stage.
 # ----------------------------------------------------------------------------------------------------------- #
 def test_all_scenarios_match_expected(tmp_path):
+    # Fix-wave-2 G8 (additive): 7 pre-existing scenarios + the new "bent_ready" multi-bend scenario -> 8.
     results = run_all_scenarios(tmp_path)
-    assert len(results) == 7
+    assert len(results) == 8
     for sc, res, ok, mm in results:
         assert ok, "scenario %s mismatched: %s" % (sc.key, mm)
 
@@ -166,6 +168,71 @@ def test_qa_result_is_json_serializable(tmp_path):
     s = run_qa_scenario(tmp_path, _by_key("complete_ready")).ui_summary()
     text = json.dumps(s, sort_keys=True)
     assert '"span_rows"' in text and '"anchor_bindings"' in text and '"route_verifications"' in text
+
+
+# ----------------------------------------------------------------------------------------------------------- #
+# Fix-wave-2 G8/W-E (additive proof asset): the "bent_ready" scenario reaches READY_FOR_REVIEW_REDLINE through
+# the SAME UNMODIFIED spine, with a genuinely non-collinear >= 3-segment / >= 2-real-bend backbone -- the real
+# fixture source-route-adoption's success-path tests bind to (Item-10 ruling: no test-local geometry patch).
+# The 7 PRE-EXISTING scenarios (including "complete_ready", ROUTE_CLEAN's single-segment straight backbone)
+# stay byte-identical -- this is purely additive.
+# ----------------------------------------------------------------------------------------------------------- #
+def _seg_len(seg):
+    (ax, ay), (bx, by) = seg["a"], seg["b"]
+    return ((bx - ax) ** 2 + (by - ay) ** 2) ** 0.5
+
+
+def _is_collinear(p0, p1, p2, tol=1e-6):
+    """Cross-product test: True iff p0/p1/p2 lie on one straight line (within a tiny float tolerance)."""
+    (x0, y0), (x1, y1), (x2, y2) = p0, p1, p2
+    cross = (x1 - x0) * (y2 - y0) - (y1 - y0) * (x2 - x0)
+    return abs(cross) <= tol
+
+
+def test_bent_ready_scenario_reaches_ready_with_a_genuine_multi_bend_backbone(tmp_path):
+    res = run_qa_scenario(tmp_path, _by_key("bent_ready"))
+    r = res.readiness.report
+    assert r.status == "READY_FOR_REVIEW_REDLINE" and r.stage == "READY" and r.ready is True
+    assert res.readiness.routes.any_route_ready is True
+
+    v = next(v for v in res.readiness.routes.verifications if v.route_ready)
+    assert v.main_run_status == "MAIN_ROUTE_DISCRIMINATED"
+    geom = v.route_geometry
+    assert len(geom) >= 3, "expected >= 3 segments, got %d" % len(geom)          # >= 3 segments
+
+    # contiguous chain: seg[i].b == seg[i+1].a exactly (the SAME exact-contiguity the adoption module requires).
+    backbone_points = [geom[0]["a"]] + [seg["b"] for seg in geom]
+    for i in range(len(geom) - 1):
+        assert geom[i]["b"] == geom[i + 1]["a"], "backbone not exactly contiguous at segment %d/%d" % (i, i + 1)
+
+    # >= 2 REAL bends: at least two interior vertices where the incoming/outgoing direction genuinely changes
+    # (not collinear) -- proves this is NOT just a re-chunked straight line.
+    bends = sum(
+        0 if _is_collinear(backbone_points[i - 1], backbone_points[i], backbone_points[i + 1]) else 1
+        for i in range(1, len(backbone_points) - 1))
+    assert bends >= 2, "expected >= 2 real (non-collinear) interior bends, got %d" % bends
+    assert all(_seg_len(seg) > 0 for seg in geom)                                # no degenerate zero-length leg
+
+
+def test_bent_ready_scenario_is_additive_existing_scenarios_unchanged(tmp_path):
+    """The pre-existing 7 scenarios' readiness OUTPUTS (status/stage/ready +, for complete_ready, the exact
+    single-segment backbone geometry ROUTE_CLEAN has always produced) are unchanged by adding ROUTE_BENT /
+    "bent_ready" -- proving the new scenario is purely additive, never a behavior change to any prior one."""
+    for sc, res, ok, mm in run_all_scenarios(tmp_path):
+        if sc.key == "bent_ready":
+            continue
+        assert ok, "pre-existing scenario %s regressed: %s" % (sc.key, mm)
+
+    # complete_ready keeps its OWN single straight segment (ROUTE_CLEAN unaffected by ROUTE_BENT existing) --
+    # proven by re-running it twice under this same fix (fixture builder is deterministic; a real regression
+    # from the ROUTE_BENT addition would show up as a segment-count/shape change here, not just a hardcoded
+    # literal that would be brittle across font/PyMuPDF versions).
+    r1 = run_qa_scenario(tmp_path, _by_key("complete_ready"))
+    r2 = run_qa_scenario(tmp_path, _by_key("complete_ready"))
+    v1 = next(v for v in r1.readiness.routes.verifications if v.route_ready)
+    v2 = next(v for v in r2.readiness.routes.verifications if v.route_ready)
+    assert len(v1.route_geometry) == len(v2.route_geometry) == 1   # ROUTE_CLEAN's own single straight segment
+    assert v1.route_geometry == v2.route_geometry                  # byte-identical / deterministic
 
 
 def test_optional_kml_is_carried_but_inert(tmp_path):

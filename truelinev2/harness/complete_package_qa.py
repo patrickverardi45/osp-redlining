@@ -44,6 +44,13 @@ ROUTE_PASSING = "passing"      # a line that passes near but ENDS far from the l
 ROUTE_FORKED = "forked"        # a long lateral off a midpoint junction -> ambiguous run
 ROUTE_BROKEN = "broken"        # two colinear stubs with a wide central gap -> no single run
 ROUTE_NONE = "none"            # labels only, no route linework
+# Fix-wave-2 G8/W-E (additive; existing shapes above UNCHANGED): a genuinely NON-COLLINEAR, >= 3-segment,
+# >= 2-real-bend zigzag terminus-to-terminus (unlike ROUTE_CLEAN's single straight segment) -- still one
+# contiguous, unbranched, ungapped run between the two anchors, so it isolates/discriminates through the
+# SAME UNMODIFIED observer chain exactly like ROUTE_CLEAN, but its observer-exposed ``route_geometry`` carries
+# real interior bend vertices a source-route-adoption proposal can preserve (proving a genuine multi-segment
+# backbone reaches READY_FOR_REVIEW_REDLINE, never a test-local synthetic geometry patch).
+ROUTE_BENT = "bent"
 
 _PLAN_KIND = "PLAN_PDF"
 _BORELOG_KIND = "BORE_LOG"
@@ -99,6 +106,22 @@ def build_plan_pdf(plan_path, labels: List[Tuple[str, float, float]], *, route_s
                     stub = 40.0
                     page.draw_line(a, fitz.Point(ax + ux * stub, ay + uy * stub), color=(0, 0, 0), width=1)
                     page.draw_line(fitz.Point(bx - ux * stub, by - uy * stub), b, color=(0, 0, 0), width=1)
+                elif route_shape == ROUTE_BENT:
+                    # a genuine multi-bend run: THREE contiguous segments (no gap, no branch) -- one unique
+                    # isolatable/discriminable run, exactly like ROUTE_CLEAN, but with two real preserved
+                    # interior bends. The FIRST leg stays exactly COLLINEAR with the straight a-b line (same y
+                    # as the start label) so its own bounding box never satisfies the anchor resolver's
+                    # unrelated "drawn label-frame" floor (extract/leader_symbol_trace.py._BOX_MIN_H) the way
+                    # a segment leaving the label at an angle would -- an anchor-resolution quirk of a from-the-
+                    # label-outward angled first leg, NOT a route-isolation concern, and not a fence file this
+                    # ticket may touch. The two REAL bends live at the two interior vertices (j1 -> down-and-
+                    # across to j2 -> back up into b), non-collinear with the base line and with each other.
+                    j1x, j1y = ax + (bx - ax) / 3.0, ay
+                    j2x, j2y = ax + 2.0 * (bx - ax) / 3.0, ay + 30.0
+                    j1, j2 = fitz.Point(j1x, j1y), fitz.Point(j2x, j2y)
+                    page.draw_line(a, j1, color=(0, 0, 0), width=1)
+                    page.draw_line(j1, j2, color=(0, 0, 0), width=1)
+                    page.draw_line(j2, b, color=(0, 0, 0), width=1)
         doc.save(str(target))
         doc.close()
 
@@ -220,6 +243,18 @@ SCENARIOS: Tuple[QAScenario, ...] = (
         labels=_LABELS, route_shape=ROUTE_BROKEN, bore_csv=_CONFIRMED_SPAN_CSV,
         expected_status="ROUTE_BLOCKED", expected_stage="ROUTE", expected_ready=False,
         expected_span_confirmed=True, expected_any_bound=True, expected_any_route_ready=False),
+    # Fix-wave-2 G8/W-E (ADDITIVE — every scenario above is UNCHANGED): the SAME complete-ready shape as
+    # "complete_ready" (identical labels/span/footage), except the drawn route is a genuine non-collinear
+    # >= 3-segment zigzag (ROUTE_BENT) instead of one straight segment — proves a real multi-bend backbone
+    # reaches READY_FOR_REVIEW_REDLINE through the UNMODIFIED spine (source-route-adoption's success-path
+    # tests bind to THIS scenario, never a test-local synthetic geometry patch).
+    QAScenario(
+        key="bent_ready",
+        description="Complete package: one source-confirmed span, bound anchors, unique drawn route with a "
+                    "genuine multi-segment BEND (non-collinear backbone) between the two anchors.",
+        labels=_LABELS, route_shape=ROUTE_BENT, bore_csv=_CONFIRMED_SPAN_CSV,
+        expected_status="READY_FOR_REVIEW_REDLINE", expected_stage="READY", expected_ready=True,
+        expected_span_confirmed=True, expected_any_bound=True, expected_any_route_ready=True),
 )
 
 
