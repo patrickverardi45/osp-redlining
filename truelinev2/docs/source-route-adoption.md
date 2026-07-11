@@ -134,11 +134,20 @@ three tiers, in this sequence, EVERY request:
    (`truelinev2/contracts/source_route_adoption.py:438`); (c) the canonical-JSON hasher,
    `canonical_json_bytes` / `_normalize_number` (`truelinev2/contracts/source_route_adoption.py:186-191,206-210`,
    `allow_nan=False`), refuses to hash a non-finite number at all. At CREATE time specifically, a fourth,
-   incidental guarantee also applies: the echo-vs-create `control_points` EQUALITY comparison
-   (`truelinev2/api/product_pipeline_routes.py:1556`, `echo_points != create_points`) uses ordinary Python
-   float equality, and IEEE754 `NaN != NaN` is always `True` — so a `NaN` control point NEVER passes this
-   comparison even when the echo and create request nominally "match", landing on
-   `409 ROUTE_ADOPTION_CONTROL_MISMATCH` before re-derivation is ever attempted.
+   incidental guarantee also applies, stated precisely (micro-round correction — the prior "NEVER passes the
+   list equality" phrasing overclaimed): the echo-vs-create `control_points` EQUALITY comparison
+   (`truelinev2/api/product_pipeline_routes.py:1556`, `echo_points != create_points`) compares
+   freshly-materialized `(p.x, p.y)` float scalars. Over the real JSON API a `NaN` control point cannot match
+   here — each request-body parse materializes its OWN distinct float objects, and scalar `NaN != NaN`
+   (IEEE754) always holds, so the request lands on `409 ROUTE_ADOPTION_CONTROL_MISMATCH`. In the narrower
+   in-process corner where the IDENTICAL Python object instance is reused for the SAME `NaN` value in both
+   the echo and the create request (only reachable via direct Python construction, never a real JSON
+   request), Python's container equality short-circuits on object identity, so the comparison CAN pass
+   despite the `NaN`. The request is then still refused by re-derivation's finiteness/malformed-controls
+   check (`derive_route_geometry` → `_coerce_point`, `truelinev2/contracts/source_route_adoption.py:228-237`),
+   so non-finite geometry can never be adopted — the refusal CODE in that corner is the nested
+   `MALFORMED_CONTROL_POINTS` derivation refusal (via `409 ROUTE_ADOPTION_NO_LONGER_DEFENSIBLE`) rather than
+   `ROUTE_ADOPTION_CONTROL_MISMATCH`.
 2. **Resource resolution (existing 404/403/409 conventions, BEFORE any adoption-SEMANTIC validation).**
    Unconditionally, for EVERY request (`route_adoption` present or not): the `source_anchor_id` must not
    already exist (409 conflict); the `job_id` (+ tenant) must resolve (404, incl. cross-tenant isolation); the

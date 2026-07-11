@@ -1490,8 +1490,12 @@ def _rederive_route_adoption(store, cp: str, job_id: str, job: dict, req: Source
 
     Fix-wave-2 H1: ``rbl`` (the create request's OWN ``reviewed_bore_log_id``, resolved via the EXISTING
     resource-404 convention) is now loaded by the CALLER, BEFORE this function is even invoked — a nonexistent
-    ``reviewed_bore_log_id`` therefore 404s exactly like it does without ``route_adoption``, never
-    ``400 ROUTE_ADOPTION_INVALID`` / ``409 ROUTE_ADOPTION_SCOPE_MISMATCH``. This function no longer loads the
+    ``reviewed_bore_log_id`` on a ``route_adoption`` request therefore 404s (never
+    ``400 ROUTE_ADOPTION_INVALID`` / ``409 ROUTE_ADOPTION_SCOPE_MISMATCH``), because the adoption request
+    names the RBL as one of its own resources. This is an owner-approved DIVERGENCE from the legacy
+    no-``route_adoption`` create path, which keeps its original, unmodified evaluator design
+    (``contracts/source_anchor.py::_evaluate_renderability``): there, a missing RBL is a named renderability
+    blocker and the record is still stored as ``REJECTED``, never a 404. This function no longer loads the
     RBL itself; row IDENTITY (does the row exist ON this already-resolved RBL) and eligibility stay SEMANTIC,
     checked here, unchanged.
 
@@ -1708,11 +1712,15 @@ def create_source_anchor_route(job_id: str, req: SourceAnchorCreate,
             raise HTTPException(status_code=404,
                                 detail="no PLAN_PDF upload %r in this job" % (req.plan_upload_id,))
         # H1 (fix-wave-2 closing round): the create request's OWN reviewed_bore_log_id joins the RESOURCE
-        # tier — resolved via the EXISTING 404 convention (_to_http already maps ReviewedBoreLogNotFoundError
-        # -> 404) BEFORE _rederive_route_adoption runs any adoption-specific semantic step. A nonexistent
-        # reviewed_bore_log_id therefore 404s exactly like it does without route_adoption at all — never
-        # 400 ROUTE_ADOPTION_INVALID, never 409 ROUTE_ADOPTION_SCOPE_MISMATCH. Row identity/eligibility (does
-        # the row exist ON this already-resolved RBL) stays semantic, inside re-derivation, unchanged.
+        # tier for a route_adoption request — resolved via the EXISTING 404 convention (_to_http already maps
+        # ReviewedBoreLogNotFoundError -> 404) BEFORE _rederive_route_adoption runs any adoption-specific
+        # semantic step: a nonexistent reviewed_bore_log_id here 404s (never 400 ROUTE_ADOPTION_INVALID, never
+        # 409 ROUTE_ADOPTION_SCOPE_MISMATCH), because the adoption request names the RBL as one of its own
+        # resources. This is an owner-approved DIVERGENCE from the legacy no-route_adoption create path,
+        # which keeps its original, unmodified evaluator design (contracts/source_anchor.py::
+        # _evaluate_renderability) -- there, a missing RBL is a named renderability blocker and the record is
+        # still stored as REJECTED, never a 404. Row identity/eligibility (does the row exist ON this
+        # already-resolved RBL) stays semantic, inside re-derivation, unchanged.
         try:
             rbl = load_reviewed_bore_log(store, cp, job_id, req.reviewed_bore_log_id)
         except _CONTRACT_ERRORS as exc:
