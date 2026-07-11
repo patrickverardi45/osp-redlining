@@ -157,19 +157,29 @@ def _copy_payload(src: Path, dst: Path) -> None:
         shutil.copyfile(str(src), str(dst))
 
 
-def materialize_package_view(uploads: Sequence[Dict[str, Any]], job_files_root, work_dir) -> Optional[str]:
+def materialize_package_view(uploads: Sequence[Dict[str, Any]], job_files_root, work_dir, *,
+                             allowed_upload_ids: Optional[Sequence[str]] = None) -> Optional[str]:
     """Build an ephemeral spine-shaped package view under ``work_dir`` from a job's upload records + on-disk
     payloads. Returns the package folder path, or None when no spine-relevant upload (PLAN_PDF / BORE_LOG /
-    GIS_ROUTE) with an existing payload is present. Writes only into ``work_dir``; reads the payloads read-only."""
+    GIS_ROUTE) with an existing payload is present. Writes only into ``work_dir``; reads the payloads read-only.
+
+    ``allowed_upload_ids`` (additive; default ``None`` preserves EXACT prior behavior byte-identically):
+    when given, ONLY uploads whose ``upload_id`` is in this set are considered — every other upload (even a
+    spine-relevant kind) is excluded from the view, as if it were never on the job. This is the Phase-2
+    source-route-adoption seam's requirement that the readiness spine run ONLY over the caller-selected plan
+    upload + the caller-selected reviewed-bore-log's BORE_LOG source upload, never the job's full upload set."""
     job_files_root = Path(job_files_root)
     pkg = Path(work_dir) / "package_view"
     (pkg / _UPLOADS_SUBDIR).mkdir(parents=True, exist_ok=True)
+    allowed = set(allowed_upload_ids) if allowed_upload_ids is not None else None
 
     manifest_uploads: List[Dict[str, str]] = []
     used_names: set = set()
     for u in uploads or ():
         kind = u.get("kind")
         if kind not in _VIEW_KINDS:
+            continue
+        if allowed is not None and u.get("upload_id") not in allowed:
             continue
         stored_path = u.get("stored_path") or ""
         src = job_files_root / stored_path
@@ -295,7 +305,7 @@ def _result(readiness, review_status: str, generated: bool, refusal_reason: Opti
 
 
 def run_job_readiness(uploads: Sequence[Dict[str, Any]], job_files_root, *, plan_sheet: Optional[int] = None,
-                      artifact_dir=None) -> Dict[str, Any]:
+                      artifact_dir=None, allowed_upload_ids: Optional[Sequence[str]] = None) -> Dict[str, Any]:
     """Run the shipped read-only readiness / REVIEW-candidate spine on a job's uploaded files and return a
     product-safe result dict.
 
@@ -314,14 +324,17 @@ def run_job_readiness(uploads: Sequence[Dict[str, Any]], job_files_root, *, plan
     engineering sheet identity + resolved PDF page + source/refusal reason).
 
     ``artifact_dir`` (when given) is where the REVIEW candidate PNGs are written; the returned candidate's
-    ``artifact_before`` / ``artifact_after`` are basenames under that dir (the API maps them to served URLs)."""
+    ``artifact_before`` / ``artifact_after`` are basenames under that dir (the API maps them to served URLs).
+
+    ``allowed_upload_ids`` (additive; default ``None`` preserves EXACT prior behavior byte-identically): passed
+    straight through to ``materialize_package_view`` to restrict the ephemeral view to specific uploads only."""
     from truelinev2.harness.readiness_source import discover_package
     from truelinev2.harness.review_candidate import build_review_candidate
     from truelinev2.harness.route_verification import run_package_route_readiness
 
     work_dir = tempfile.mkdtemp(prefix="tl2_readiness_")
     try:
-        pkg = materialize_package_view(uploads, job_files_root, work_dir)
+        pkg = materialize_package_view(uploads, job_files_root, work_dir, allowed_upload_ids=allowed_upload_ids)
         if pkg is None:
             return _no_readiness_result(
                 "NO_SPINE_INPUT", "upload a plan PDF and a bore log / span table",
@@ -364,5 +377,99 @@ def run_job_readiness(uploads: Sequence[Dict[str, Any]], job_files_root, *, plan
             return _result(readiness, "REVIEW_CANDIDATE_REFUSED", False,
                            "the source package is READY, but the REVIEW candidate overlay could not be rendered "
                            "this run (try again)", None, [], render_error=True, sheet_context=sheet_ctx)
+    finally:
+        shutil.rmtree(work_dir, ignore_errors=True)
+
+
+# ---------------------------------------------------------------------------------------------------------------- #
+# Phase-2 SOURCE-ROUTE ADOPTION seam: a NEW, additive, artifact-free, upload-FILTERED variant. It is a separate
+# function (not a behavior change to run_job_readiness above) that returns the RAW ``PackageRouteReadiness``
+# dataclass (never a serialized API dict, never a PNG, never a store write) so the pure
+# ``contracts.source_route_adoption`` derivation can read ``RouteVerification.route_geometry`` and its inherited
+# ``detail["isolation"]["detail"]["reach_tol"]`` directly — neither is exposed by the serialized bridge result.
+# ---------------------------------------------------------------------------------------------------------------- #
+class UnsafeTempWorkdirError(RuntimeError):
+    """Fix-wave F8 (blind-verification FAIL — filesystem-write disclosure/hardening): raised when the ephemeral
+    spine work directory this seam materializes into would resolve INSIDE the caller-supplied product store
+    root. This is a defensive invariant, not a business refusal — it can only fire if the OS temp directory
+    (``tempfile.gettempdir()`` / ``TMPDIR`` / ``TEMP``) has been configured to sit under the store root itself
+    (e.g. a misconfigured deployment, or a test harness that points both at the same ``tmp_path``), which would
+    let a crash-residue temp package become reachable through the store's own directory tree. Refuses rather
+    than materializing uploaded bytes into a location that could be confused with durable store content. Never
+    includes the resolved path in its message (no absolute-path leak)."""
+
+
+def _assert_workdir_outside_store(work_dir, store_root) -> None:
+    """The F8 hardening check: ``work_dir`` (an already-created ``tempfile.mkdtemp`` result) must NOT resolve
+    to a path under ``store_root``. A no-op when ``store_root`` is not supplied (additive; every existing
+    caller that does not pass ``store_root`` keeps EXACT prior behavior byte-identically)."""
+    if store_root is None:
+        return
+    wd = Path(work_dir).resolve()
+    root = Path(store_root).resolve()
+    if wd == root or root in wd.parents:
+        raise UnsafeTempWorkdirError(
+            "the ephemeral readiness work directory resolved inside the product store root — refusing to "
+            "materialize uploaded bytes there (this indicates a misconfigured temp directory, not a normal "
+            "request failure)")
+
+
+def run_job_route_readiness_raw(uploads: Sequence[Dict[str, Any]], job_files_root, *,
+                                plan_sheet: Optional[int] = None,
+                                allowed_upload_ids: Optional[Sequence[str]] = None,
+                                store_root: Optional[Any] = None
+                                ) -> Tuple[Optional[Any], Dict[str, Any]]:
+    """Run the SAME unchanged readiness spine (sheet derivation + ``run_package_route_readiness``) as
+    ``run_job_readiness``, but: (1) the ephemeral package view is FILTERED to ``allowed_upload_ids`` ONLY
+    (never the job's full upload set — the source-route-adoption join requires evaluating exactly the
+    caller-selected plan + BORE_LOG uploads, nothing else); (2) it draws NO REVIEW-candidate overlay, writes
+    NO PNG, and persists NOTHING to any store (purely in-memory dataclasses, deleted ephemeral work dir).
+
+    Fix-wave F8 (accepted-with-hardening, not removal — the transient system-temp write is disclosed, not
+    eliminated): this function DOES write real uploaded bytes (hardlinked or copied) into a
+    ``tempfile.mkdtemp(prefix="tl2_route_adoption_")`` directory under the OS temp root for the duration of one
+    call, and deletes it in a ``finally`` block. A process kill between creation and cleanup leaves that
+    directory behind on disk (crash residue) — this is a KNOWN, ACCEPTED trade-off of the stateless design (Q4:
+    "avoids a new mutable record and stale cleanup, but repeats the readiness computation"), not a silent one.
+    When ``store_root`` is supplied (additive; ``None`` preserves EXACT prior behavior byte-identically), this
+    function ASSERTS at creation that the resolved work directory is NOT under ``store_root`` and refuses
+    (``UnsafeTempWorkdirError``) rather than proceeding if it is — proving the transient write can never be
+    confused with, or accidentally reachable through, the durable store tree.
+
+    Returns ``(readiness, sheet_context)``: ``readiness`` is the raw ``PackageRouteReadiness`` (``None`` when
+    the spine refused before reaching the classifier — no spine input, or an unresolved/multi sheet ref);
+    ``sheet_context`` always reports how far sheet derivation got (Slice 3 shape), including a refusal reason
+    when ``readiness`` is ``None``. Read-only wrt the product: no AUTO, no placement, no status promotion, no
+    output slot, no lifecycle transition, no artifact."""
+    from truelinev2.harness.readiness_source import discover_package
+    from truelinev2.harness.route_verification import run_package_route_readiness
+
+    work_dir = tempfile.mkdtemp(prefix="tl2_route_adoption_")
+    try:
+        # Fix-wave-2 G4 (blind-verification FAIL — cleanup-order bug): the F8 hardening assertion runs INSIDE
+        # the try/finally (never before it) so an unsafe-workdir refusal still reaches the `finally` below and
+        # removes the just-created directory. Asserting before `try` would leave that directory behind under
+        # the store on every refusal — exactly the crash-residue shape F8's own docstring says this seam must
+        # never produce for an ordinary (non-crash) refusal path.
+        _assert_workdir_outside_store(work_dir, store_root)
+        pkg = materialize_package_view(uploads, job_files_root, work_dir, allowed_upload_ids=allowed_upload_ids)
+        if pkg is None:
+            return None, _sheet_context(
+                None, None, None, [], [], "NO_SPINE_INPUT",
+                "no plan / bore-log upload with a stored payload to evaluate for this selection")
+
+        source = discover_package(pkg)
+        if plan_sheet is not None:
+            sheet_ctx = _sheet_context(int(plan_sheet), int(plan_sheet), SHEET_SOURCE_EXPLICIT, [], [], None,
+                                       "explicit plan_sheet=%d (raw page semantics, caller-chosen)"
+                                       % int(plan_sheet))
+        else:
+            sheet_ctx = _derive_sheet_context(pkg, source.plan_path)
+            if sheet_ctx["refusal"]:
+                return None, sheet_ctx
+
+        readiness = run_package_route_readiness(pkg, plan_sheet=int(sheet_ctx["engineering_sheet"]),
+                                                plan_sheet_offset=int(sheet_ctx["sheet_offset"] or 0))
+        return readiness, sheet_ctx
     finally:
         shutil.rmtree(work_dir, ignore_errors=True)

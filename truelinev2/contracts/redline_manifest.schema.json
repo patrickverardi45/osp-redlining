@@ -326,6 +326,58 @@
                 "provenance": {"type": "string", "enum": ["HUMAN_CONFIRMED_CONTROL_POINTS"], "description": "Always human-confirmed; never AUTO."}
               }
             }
+          },
+          "geometry_basis": {
+            "type": "string",
+            "enum": ["OBSERVER_BACKBONE_HUMAN_ADOPTED"],
+            "description": "Phase-2 source-route adoption (T31 Q5). Present ONLY on an adopted human-confirmed source-anchor log entry -- identifies that the log's control-point geometry originated from a server-verified, human-adopted observer backbone (never invented). ABSENT on every other log (including a plain HUMAN_CONFIRMED_SOURCE_ANCHOR log with manually clicked control points, whose semantic default is HUMAN_CLICKED_POLYLINE) -- so every prior manifest stays byte-identical."
+          },
+          "confirmation_state": {
+            "type": "string",
+            "enum": ["HUMAN_REVIEWED"],
+            "description": "Present ONLY alongside geometry_basis: the explicit human-confirmation state for an adopted route (distinct from, and never overriding, the log's own status/provenance enums above)."
+          },
+          "render_control_points": {
+            "type": "array",
+            "minItems": 2,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["x", "y"],
+              "properties": {"x": {"type": "number"}, "y": {"type": "number"}}
+            },
+            "description": "Present ONLY alongside geometry_basis: the server-derived N-point RENDER polyline actually drawn (human start + the clipped observer backbone + human end) -- the same points as the source_anchor record's control_points, carried here for a manifest-only consumer."
+          },
+          "route_adoption": {
+            "type": ["object", "null"],
+            "additionalProperties": false,
+            "properties": {
+              "geometry_source": {"type": "string"},
+              "source_anchor_ref": {"type": "string"},
+              "plan_upload_id": {"type": "string"},
+              "plan_sha256": {"type": ["string", "null"]},
+              "engineering_sheet": {"type": ["integer", "null"]},
+              "pdf_page": {"type": ["integer", "null"]},
+              "sheet_offset": {"type": ["integer", "null"]},
+              "span_id": {"type": "string"},
+              "reviewed_bore_log_id": {"type": "string"},
+              "row_id": {"type": "string"},
+              "human_control_points": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["x", "y"],
+                  "properties": {"x": {"type": "number"}, "y": {"type": "number"}}
+                }
+              },
+              "why_connected": {"type": "string"},
+              "warnings": {"type": "array", "items": {"type": "string"}},
+              "confirmed_by": {"type": "string"},
+              "candidate_route_hash": {"type": "string"},
+              "proposal_hash": {"type": "string"}
+            },
+            "description": "Present (non-null) ONLY alongside geometry_basis: the source-route adoption provenance block (source sheet/page, span/row identity, exact human clicks, connectivity rationale, warnings, both hashes) -- NEVER describes the interior observer-backbone vertices as human-clicked. ABSENT (not null) on every non-adopted log."
           }
         }
       }

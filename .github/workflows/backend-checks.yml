@@ -65,4 +65,10 @@ jobs:
             truelinev2/tests/test_handwritten_borelog_routes.py \
             truelinev2/tests/test_vision_providers.py \
             truelinev2/tests/test_handwritten_acceptance_harness.py \
+            truelinev2/tests/test_source_route_adoption_geometry.py \
+            truelinev2/tests/test_source_route_adoption_bridge.py \
+            truelinev2/tests/test_source_route_adoption_api.py \
+            truelinev2/tests/test_source_anchor_contract.py \
+            truelinev2/tests/test_source_anchor_render_contract.py \
+            truelinev2/tests/test_review_candidate.py \
             -q

@@ -81,6 +81,13 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         from truelinev2.api.product_readiness_routes import router as product_readiness_router
 
         app.include_router(product_readiness_router)
+        # Phase-2 SOURCE-ROUTE ADOPTION proposal endpoint: a THIRD, additionally-gated router (needs the
+        # product pipeline AND the readiness lane mounted AND its own opt-in) so it stays fully dormant until
+        # the owner explicitly enables it. Never imported at request time when any of the three is off.
+        if settings.product_pipeline_api_optin and settings.source_route_adoption_api_optin:
+            from truelinev2.api.source_route_proposal_routes import router as source_route_proposal_router
+
+            app.include_router(source_route_proposal_router)
     if settings.field_evidence_api_optin:
         from truelinev2.api.field_evidence_routes import router as field_evidence_router
 

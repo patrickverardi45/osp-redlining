@@ -36,6 +36,16 @@ from truelinev2.contracts.reviewed_bore_log import (
 )
 
 RECORD_FORMAT = "trueline-source-anchor-1"
+# Phase-2 SOURCE-ROUTE ADOPTION (T31 Q5): a source_anchor created with a confirmed, server-re-derived
+# ``route_adoption`` block is record_format v2. Manual (non-adopted) records are UNCHANGED v1 — this is a
+# pure ADDITION, never a migration; every existing v1 reader (render/source_anchor_render.py,
+# render/station_dots.py, the anchors GET routes) reads generically off ``control_points``/``status``/
+# ``renderable`` and carries no ``record_format`` equality assumption, so a v2 record flows through them
+# unmodified (see truelinev2/docs/source-route-adoption.md).
+RECORD_FORMAT_V2 = "trueline-source-anchor-2"
+GEOMETRY_BASIS_HUMAN_CLICKED = "HUMAN_CLICKED_POLYLINE"           # the honest default when unspecified (v1)
+GEOMETRY_BASIS_OBSERVER_ADOPTED = "OBSERVER_BACKBONE_HUMAN_ADOPTED"
+CONFIRMATION_STATE_HUMAN_REVIEWED = "HUMAN_REVIEWED"
 SOURCE_ANCHORS_SUBDIR = "source_anchors"
 SOURCE_ANCHOR_FILENAME = "_source_anchor.json"
 
@@ -281,6 +291,76 @@ def create_source_anchor(store_root, customer_project_id, job_id, *, source_anch
     return record
 
 
+def create_source_anchor_v2(store_root, customer_project_id, job_id, *, source_anchor_id, plan_upload_id,
+                            reviewed_bore_log_id, page_number, render_control_points, group_id, at, by,
+                            route_adoption, row_ids=None, start_identity=None, end_identity=None, notes=None,
+                            page_bounds=None) -> dict:
+    """Create + evaluate a SERVER-DERIVED, source-route-ADOPTED source-anchor record (T31 Q5): identical
+    renderability evaluation + persistence discipline as ``create_source_anchor``, but ``record_format`` is
+    ``trueline-source-anchor-2`` and ``control_points`` stores the caller-supplied SERVER-DERIVED render
+    polyline (the human clicks + the clipped observer backbone in between) so the EXISTING renderer / station-
+    dot call path (which reads ``control_points`` generically) consumes it unmodified.
+
+    This function performs NO re-derivation, NO readiness spine run, and NO hashing itself — the caller (the
+    API route) has ALREADY re-derived + hash-verified the adoption via ``contracts.source_route_adoption``
+    before calling this; ``route_adoption`` is the FULLY-BUILT Q5 record block (plan_source / span_source /
+    human_control_points / candidate_route_points / connectivity / warnings / confirmed_by / confirmed_at /
+    candidate_route_hash / proposal_hash) to store verbatim. Renders nothing, runs no engine, creates no
+    output slot; the job must exist and be in-scope (404 upstream); a duplicate id raises (no silent
+    overwrite)."""
+    validate_customer_project_id(customer_project_id)
+    validate_job_id(job_id)
+    validate_source_anchor_id(source_anchor_id)
+    job = load_job(store_root, customer_project_id, job_id)              # exists + isolation
+    path = _sa_path(store_root, customer_project_id, job_id, source_anchor_id)
+    if path.exists():
+        raise SourceAnchorError("source_anchor already exists: %s" % (source_anchor_id,))
+
+    points = _normalize_points(render_control_points)
+    row_ids = list(row_ids) if row_ids else []
+    blockers, checks = _evaluate_renderability(
+        store_root, customer_project_id, job_id, job, plan_upload_id=plan_upload_id,
+        reviewed_bore_log_id=reviewed_bore_log_id, page_number=page_number, control_points=points,
+        group_id=group_id, row_ids=row_ids, page_bounds=page_bounds)
+    renderable = not blockers
+    status = STATUS_VALIDATED if renderable else STATUS_REJECTED
+
+    record = {
+        "record_format": RECORD_FORMAT_V2,
+        "source_anchor_id": source_anchor_id,
+        "customer_project_id": customer_project_id,
+        "processing_job_id": job_id,
+        "plan_upload_id": plan_upload_id,
+        "reviewed_bore_log_id": reviewed_bore_log_id,
+        "group_id": group_id,
+        "row_ids": row_ids,
+        "page_number": page_number,
+        "coordinate_space": COORDINATE_SPACE,
+        "control_points": points,
+        "geometry_basis": GEOMETRY_BASIS_OBSERVER_ADOPTED,
+        "confirmation_state": CONFIRMATION_STATE_HUMAN_REVIEWED,
+        "route_adoption": dict(route_adoption),
+        "start_identity": _normalize_identity(start_identity),
+        "end_identity": _normalize_identity(end_identity),
+        "provenance": PROVENANCE,
+        "status": status,
+        "renderable": renderable,
+        "blockers": blockers,
+        "checks": checks,
+        "notes": notes,
+        "created_at": at,
+        "created_by": by,
+        "updated_at": at,
+        "audit": [
+            {"action": "source_anchor_created", "at": at, "by": by, "to": status, "reason": None},
+            {"action": "observer_backbone_adopted", "at": at, "by": by,
+             "proposal_hash": route_adoption.get("proposal_hash"), "reason": "explicit human confirmation"},
+        ],
+    }
+    write_json_atomic(path, record)       # atomic (temp + fsync + os.replace); creates parents
+    return record
+
+
 def load_source_anchor(store_root, customer_project_id, processing_job_id, source_anchor_id) -> dict:
     path = _sa_path(store_root, customer_project_id, processing_job_id, source_anchor_id)
     if not path.is_file():
@@ -342,7 +422,7 @@ def build_source_anchor_manifest(anchor_entries, *, project_id, project_name, en
         # index; fall back to the PDF page number when the page carries no construction-sheet label.
         construction_sheet = entry.get("construction_sheet")
         sheet_label = int(construction_sheet) if construction_sheet is not None else int(sa["page_number"])
-        logs.append({
+        log_entry = {
             "log_id": sa["source_anchor_id"],
             "parent_id": sa["reviewed_bore_log_id"],
             "entry_role": "standalone",
@@ -362,7 +442,38 @@ def build_source_anchor_manifest(anchor_entries, *, project_id, project_name, en
                           "note": "human-confirmed control points marked on the uploaded plan page"}],
             "warnings": [],
             "station_dots": list(entry.get("station_dots") or []),   # additive: interval dots (default [])
-        })
+        }
+        # Phase-2 SOURCE-ROUTE ADOPTION (T31 Q5): ADDITIVE-ONLY. Emitted ONLY when the underlying
+        # source_anchor record itself is an adopted v2 record (``geometry_basis`` present); a plain manual
+        # HUMAN_CONFIRMED_SOURCE_ANCHOR record never carries these keys, so every prior manifest (incl. the
+        # committed deterministic example + every non-adopted human-confirmed bundle) stays byte-identical.
+        if sa.get("geometry_basis"):
+            ra = sa.get("route_adoption") or {}
+            plan_src = ra.get("plan_source") or {}
+            span_src = ra.get("span_source") or {}
+            connectivity = ra.get("connectivity") or {}
+            log_entry["geometry_basis"] = sa["geometry_basis"]
+            log_entry["confirmation_state"] = sa.get("confirmation_state")
+            log_entry["render_control_points"] = list(sa.get("control_points") or [])
+            log_entry["route_adoption"] = {
+                "geometry_source": ra.get("geometry_source"),
+                "source_anchor_ref": "source_anchor/%s" % sa["source_anchor_id"],
+                "plan_upload_id": plan_src.get("plan_upload_id"),
+                "plan_sha256": plan_src.get("plan_sha256"),
+                "engineering_sheet": plan_src.get("engineering_sheet"),
+                "pdf_page": plan_src.get("pdf_page"),
+                "sheet_offset": plan_src.get("sheet_offset"),
+                "span_id": span_src.get("span_id"),
+                "reviewed_bore_log_id": span_src.get("reviewed_bore_log_id"),
+                "row_id": span_src.get("row_id"),
+                "human_control_points": list(ra.get("human_control_points") or []),
+                "why_connected": connectivity.get("why_connected"),
+                "warnings": list(ra.get("warnings") or []),
+                "confirmed_by": ra.get("confirmed_by"),
+                "candidate_route_hash": ra.get("candidate_route_hash"),
+                "proposal_hash": ra.get("proposal_hash"),
+            }
+        logs.append(log_entry)
     n = len(logs)
     status_counts = {k: 0 for k in _MANIFEST_STATUS_KEYS}
     status_counts[MANIFEST_DRAWN_STATUS] = n
