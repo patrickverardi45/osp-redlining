@@ -17,7 +17,7 @@ import json
 import logging
 import sys
 import types
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 import pytest
 
@@ -276,8 +276,58 @@ def _make_fake_anthropic_module(*, client_cls=None) -> types.ModuleType:
     mod.InternalServerError = InternalServerError
     mod.APIConnectionError = APIConnectionError
     mod.AuthenticationError = AuthenticationError
-    mod.Anthropic = client_cls or (lambda **kwargs: types.SimpleNamespace(messages=None))
+    mod.Anthropic = client_cls or (lambda **kwargs: _FakeClient(_FakeMessages([])))
     return mod
+
+
+class _FakeClient:
+    """Minimal stand-in for an ``anthropic.Anthropic`` client. Supports the SDK's own documented
+    per-request override -- ``client.with_options(timeout=...)`` -- which ``_call_with_retries`` calls on
+    EVERY attempt (including the first); returning ``self`` keeps the same underlying ``.messages`` object
+    across attempts so a test can count/script calls across the whole retry sequence."""
+    def __init__(self, messages: Any, **kwargs: Any) -> None:
+        self.messages = messages
+        self.received_timeouts: list = []
+
+    def with_options(self, *, timeout=None):
+        self.received_timeouts.append(timeout)
+        return self
+
+
+class _FakeMessages:
+    """A ``.messages.create(**kwargs)`` stand-in scripted by a list of ``(advance_seconds, outcome)``
+    steps against an injected fake clock -- ``outcome`` is either an ``Exception`` instance to raise or a
+    response object to return. Each call consumes one step and advances the shared clock by
+    ``advance_seconds`` FIRST (simulating how long that attempt took), so a test can deterministically
+    control elapsed time without any real sleeping."""
+    def __init__(self, steps, *, clock: Optional["_FakeClock"] = None) -> None:
+        self._clock = clock
+        self._steps = list(steps)
+        self.calls = 0
+
+    def create(self, **kwargs):
+        self.calls += 1
+        advance_seconds, outcome = self._steps[self.calls - 1]
+        if self._clock is not None:
+            self._clock.advance(advance_seconds)
+        if isinstance(outcome, BaseException):
+            raise outcome
+        return outcome
+
+
+class _FakeClock:
+    """An injectable monotonic-clock stand-in. ``__call__`` returns the current simulated time;
+    ``advance`` moves it forward -- used as BOTH ``clock`` (read) and ``sleep`` (advance-by-duration) when
+    injected into ``build_provider``, so backoff sleeps also advance simulated elapsed time exactly as a
+    real ``time.sleep`` would advance a real ``time.monotonic()`` clock, with zero real waiting."""
+    def __init__(self, start: float = 0.0) -> None:
+        self._now = start
+
+    def __call__(self) -> float:
+        return self._now
+
+    def advance(self, seconds: float) -> None:
+        self._now += seconds
 
 
 def _tool_use_block(tool_input: dict) -> types.SimpleNamespace:
@@ -320,11 +370,9 @@ def test_anthropic_adapter_happy_path_via_injected_client(monkeypatch):
             calls.append(kwargs)
             return _fake_response([_tool_use_block(_valid_tool_input())])
 
-    class _Client:
-        def __init__(self, timeout=None):
-            self.messages = _Messages()
-
-    fn = anthropic_messages.build_provider(ProviderConfig(timeout_seconds=5), client_factory=_Client)
+    client = _FakeClient(_Messages())
+    fn = anthropic_messages.build_provider(ProviderConfig(timeout_seconds=5),
+                                           client_factory=lambda timeout: client)
     context = {"upload_id": "up-1", "sha256": "a" * 64, "file_name": "photo.jpg",
               "page_index": 0, "page_count": 1}
     record = fn(b"\x89PNG-not-real-bytes", context)
@@ -338,10 +386,11 @@ def test_anthropic_adapter_happy_path_via_injected_client(monkeypatch):
     assert calls[0]["model"] == "test-model-id"       # model id came straight from env, never hardcoded
 
 
-def test_anthropic_adapter_client_factory_receives_derived_sdk_timeout(monkeypatch):
-    """The adapter's client_factory is called with ONE positional arg -- the SDK request timeout derived
-    from config.timeout_seconds (seam budget minus margin, floored) -- since that timeout, not the seam's
-    abandon-only thread-join, is what actually bounds a hung request."""
+def test_anthropic_adapter_client_factory_receives_initial_sdk_timeout(monkeypatch):
+    """The adapter's client_factory is called ONCE with ONE positional arg -- the INITIAL SDK request
+    timeout, evaluated at elapsed=0 (seam budget minus margin, floored) -- since that timeout, not the
+    seam's abandon-only thread-join, is what actually bounds a hung request. Per-attempt overrides after
+    that happen via client.with_options(timeout=...), asserted separately by the dynamic-retry tests."""
     monkeypatch.setitem(sys.modules, "anthropic", _make_fake_anthropic_module())
     monkeypatch.setenv("TL2_HANDWRITTEN_VISION_MODEL", "test-model-id")
 
@@ -349,99 +398,90 @@ def test_anthropic_adapter_client_factory_receives_derived_sdk_timeout(monkeypat
 
     def _client_factory(timeout):
         received.append(timeout)
-        messages = types.SimpleNamespace(create=lambda **kw: _fake_response([_tool_use_block(_valid_tool_input())]))
-        return types.SimpleNamespace(messages=messages)
+        return _FakeClient(_FakeMessages([(0.0, _fake_response([_tool_use_block(_valid_tool_input())]))]))
 
     fn = anthropic_messages.build_provider(ProviderConfig(timeout_seconds=90), client_factory=_client_factory)
     context = {"upload_id": "up-1", "sha256": "a" * 64, "file_name": "photo.jpg",
               "page_index": 0, "page_count": 1}
     fn(b"png-bytes", context)
 
-    assert received == [85.0]  # max(90 - margin(5), floor(5)) == 85
+    assert received == [85.0]  # max(min(120, 90 - margin(5)), floor(5)) == 85
 
 
-def test_derive_max_attempts_accounts_for_worst_case_backoff():
-    """_derive_max_attempts admits N attempts only when N*sdk_timeout + worst_case_backoff(N) fits inside
-    (seam_timeout - margin) -- NOT just N*sdk_timeout alone (that formula ignores backoff and, worse,
-    compares against the UNMARGINED seam timeout, silently overrunning the budget).
-
-    Worked example (the ticket's own): seam_timeout=10 -> sdk_timeout=max(10-5,5)=5.
-      available = seam_timeout - margin = 10 - 5 = 5
-      N=2 candidate: 2*5 + worst_case_backoff(2) = 10 + 0.1 = 10.1  >  available(5)  -> NOT admissible
-    So corrected max_attempts == 1 for a 10s budget (a single attempt already exceeds the post-margin
-    budget on its own -- there is no room left for a second attempt, let alone its backoff sleep).
-
-    This holds for ANY seam_timeout under the current _derive_sdk_timeout formula: sdk_timeout is defined
-    to consume (almost) the ENTIRE post-margin budget for one attempt by design (see its own docstring),
-    so N=2's worst case (2*sdk_timeout + backoff) always exceeds that same budget. Retries only become
-    reachable if a future change to _derive_sdk_timeout leaves headroom smaller than half the budget.
-    """
-    for seam_timeout in (5, 6, 10, 15, 20, 50, 90, 200, 1000):
-        sdk_timeout = anthropic_messages._derive_sdk_timeout(seam_timeout)
-        assert anthropic_messages._derive_max_attempts(seam_timeout, sdk_timeout) == 1
-
-    # The exact worked example, spelled out.
-    assert anthropic_messages._derive_sdk_timeout(10) == 5.0
-    assert anthropic_messages._worst_case_backoff_seconds(2) == pytest.approx(0.1)
-    assert anthropic_messages._derive_max_attempts(10, 5.0) == 1
-
-
-def test_call_with_retries_retries_429_then_succeeds():
-    """Unit-level proof that the retry LOOP mechanics themselves are correct (attempt counting, backoff,
-    eventual success) given an EXPLICIT max_attempts=2 -- exercised directly rather than through
-    build_provider's real derivation, which (correctly, per the corrected math above) never actually
-    grants more than 1 attempt for any seam timeout."""
+# --------------------------------------------------------------------------- #
+# DYNAMIC remaining-budget retries. seam_timeout_seconds=90 -> budget_seconds = 90 - margin(5) = 85 in
+# every test below. Backoff for attempt 1 is 0.05*1 + jitter(0..0.05) in [0.05, 0.10] -- the assertions
+# are written to hold for BOTH ends of that range (deterministic regardless of the random jitter draw).
+# --------------------------------------------------------------------------- #
+def test_dynamic_retry_fast_429_then_success_retries_within_budget(monkeypatch):
+    """A FAST failure (0.5s) leaves nearly the whole 85s budget, so a genuine retry happens and succeeds
+    -- exactly 2 attempts."""
     fake_mod = _make_fake_anthropic_module()
-
-    class _Messages:
-        def __init__(self):
-            self.calls = 0
-
-        def create(self, **kwargs):
-            self.calls += 1
-            if self.calls == 1:
-                raise fake_mod.RateLimitError("rate limited")
-            return _fake_response([_tool_use_block(_valid_tool_input())])
-
-    client = types.SimpleNamespace(messages=_Messages())
-    attempts_seen = []
-
-    response = anthropic_messages._call_with_retries(
-        client, fake_mod, {"model": "test-model-id"},
-        report_attempts=attempts_seen.append, max_attempts=2)
-
-    assert response is not None
-    assert client.messages.calls == 2
-    assert attempts_seen == [1, 2]
-
-
-def test_anthropic_adapter_single_attempt_no_retry_at_derived_budget(monkeypatch):
-    """End-to-end through build_provider's REAL derivation: at a 10s seam budget (or any budget, per the
-    corrected math), a retryable 429 is NOT retried -- only 1 attempt is admissible, so the RateLimitError
-    propagates immediately and the seam classifies it as HANDWRITTEN_PROVIDER_ERROR."""
-    fake_mod = _make_fake_anthropic_module()
-
-    class _Messages:
-        def __init__(self):
-            self.calls = 0
-
-        def create(self, **kwargs):
-            self.calls += 1
-            raise fake_mod.RateLimitError("rate limited")
-
-    class _Client:
-        def __init__(self, **kwargs):
-            self.messages = _Messages()
-
-    fake_mod.Anthropic = _Client
     monkeypatch.setitem(sys.modules, "anthropic", fake_mod)
     monkeypatch.setenv("TL2_HANDWRITTEN_VISION_MODEL", "test-model-id")
+    clock = _FakeClock()
+    messages = _FakeMessages([
+        (0.5, fake_mod.RateLimitError("rate limited")),                       # attempt 1: fails fast
+        (0.3, _fake_response([_tool_use_block(_valid_tool_input())])),        # attempt 2: succeeds
+    ], clock=clock)
+    client = _FakeClient(messages)
+    fn = anthropic_messages.build_provider(
+        ProviderConfig(timeout_seconds=90.0),
+        client_factory=lambda timeout: client, clock=clock, sleep=clock.advance)
 
-    out = extract_handwritten(_jpeg_bytes(), "photo.jpg", upload_id="up-1",
-                              provider_name=_ANTHROPIC_MODULE_PATH)
-    refusal = out["pages"][0]["refusal"]
-    assert refusal["code"] == HANDWRITTEN_PROVIDER_ERROR
-    assert "RateLimitError" in refusal["reason"]
+    context = {"upload_id": "up-1", "sha256": "a" * 64, "file_name": "photo.jpg",
+              "page_index": 0, "page_count": 1}
+    record = fn(b"png-bytes", context)
+
+    assert record["page_status"] == "EXTRACTED"
+    assert messages.calls == 2
+
+
+def test_dynamic_retry_first_attempt_burns_budget_no_retry(monkeypatch):
+    """A first attempt that itself consumes nearly the WHOLE 85s budget (84.9s) before failing leaves too
+    little for a meaningful second attempt -- exactly 1 attempt, error propagates unretried."""
+    fake_mod = _make_fake_anthropic_module()
+    monkeypatch.setitem(sys.modules, "anthropic", fake_mod)
+    monkeypatch.setenv("TL2_HANDWRITTEN_VISION_MODEL", "test-model-id")
+    clock = _FakeClock()
+    messages = _FakeMessages([
+        (84.9, fake_mod.RateLimitError("rate limited")),  # 84.9 + backoff[0.05..0.10] + floor(5) > 85
+    ], clock=clock)
+    client = _FakeClient(messages)
+    fn = anthropic_messages.build_provider(
+        ProviderConfig(timeout_seconds=90.0),
+        client_factory=lambda timeout: client, clock=clock, sleep=clock.advance)
+
+    context = {"upload_id": "up-1", "sha256": "a" * 64, "file_name": "photo.jpg",
+              "page_index": 0, "page_count": 1}
+    with pytest.raises(fake_mod.RateLimitError):
+        fn(b"png-bytes", context)
+
+    assert messages.calls == 1
+
+
+def test_dynamic_retry_backoff_pushes_past_budget_stops(monkeypatch):
+    """Elapsed alone (80s) plus the floor (5s) would land EXACTLY at the 85s budget -- but the backoff
+    sleep (>=0.05s, always added on top) tips it over, so the retry correctly does NOT happen. This is
+    the case the prior (buggy) formula got wrong: ignoring backoff would have allowed this retry."""
+    fake_mod = _make_fake_anthropic_module()
+    monkeypatch.setitem(sys.modules, "anthropic", fake_mod)
+    monkeypatch.setenv("TL2_HANDWRITTEN_VISION_MODEL", "test-model-id")
+    clock = _FakeClock()
+    messages = _FakeMessages([
+        (80.0, fake_mod.RateLimitError("rate limited")),  # 80 + floor(5) == 85 exactly; +backoff tips over
+    ], clock=clock)
+    client = _FakeClient(messages)
+    fn = anthropic_messages.build_provider(
+        ProviderConfig(timeout_seconds=90.0),
+        client_factory=lambda timeout: client, clock=clock, sleep=clock.advance)
+
+    context = {"upload_id": "up-1", "sha256": "a" * 64, "file_name": "photo.jpg",
+              "page_index": 0, "page_count": 1}
+    with pytest.raises(fake_mod.RateLimitError):
+        fn(b"png-bytes", context)
+
+    assert messages.calls == 1
 
 
 def test_anthropic_adapter_auth_4xx_no_retry_maps_to_provider_error_via_seam(monkeypatch):
@@ -455,11 +495,7 @@ def test_anthropic_adapter_auth_4xx_no_retry_maps_to_provider_error_via_seam(mon
             self.calls += 1
             raise fake_mod.AuthenticationError("invalid api key -- must never appear in the refusal reason")
 
-    class _Client:
-        def __init__(self, **kwargs):
-            self.messages = _Messages()
-
-    fake_mod.Anthropic = _Client
+    fake_mod.Anthropic = lambda **kwargs: _FakeClient(_Messages())
     monkeypatch.setitem(sys.modules, "anthropic", fake_mod)
     monkeypatch.setenv("TL2_HANDWRITTEN_VISION_MODEL", "test-model-id")
 
@@ -479,11 +515,7 @@ def test_anthropic_adapter_generic_raise_maps_to_provider_error_class_name_only(
         def create(self, **kwargs):
             raise RuntimeError("boom -- must never leak into the refusal reason")
 
-    class _Client:
-        def __init__(self, **kwargs):
-            self.messages = _Messages()
-
-    fake_mod.Anthropic = _Client
+    fake_mod.Anthropic = lambda **kwargs: _FakeClient(_Messages())
     monkeypatch.setitem(sys.modules, "anthropic", fake_mod)
     monkeypatch.setenv("TL2_HANDWRITTEN_VISION_MODEL", "test-model-id")
 
@@ -505,11 +537,9 @@ def test_anthropic_adapter_malformed_output_refuses_output_invalid(monkeypatch):
             # adapter must refuse honestly rather than guess).
             return _fake_response([types.SimpleNamespace(type="text", text="oops")])
 
-    class _Client:
-        def __init__(self, timeout=None):
-            self.messages = _Messages()
-
-    fn = anthropic_messages.build_provider(ProviderConfig(timeout_seconds=5), client_factory=_Client)
+    client = _FakeClient(_Messages())
+    fn = anthropic_messages.build_provider(ProviderConfig(timeout_seconds=5),
+                                           client_factory=lambda timeout: client)
     context = {"upload_id": "up-1", "sha256": "a" * 64, "file_name": "photo.jpg",
               "page_index": 0, "page_count": 1}
     with pytest.raises(ProviderOutputInvalid):
@@ -524,11 +554,9 @@ def test_anthropic_adapter_model_refusal_stop_reason_refuses_output_invalid(monk
         def create(self, **kwargs):
             return _fake_response([], stop_reason="refusal")
 
-    class _Client:
-        def __init__(self, timeout=None):
-            self.messages = _Messages()
-
-    fn = anthropic_messages.build_provider(ProviderConfig(timeout_seconds=5), client_factory=_Client)
+    client = _FakeClient(_Messages())
+    fn = anthropic_messages.build_provider(ProviderConfig(timeout_seconds=5),
+                                           client_factory=lambda timeout: client)
     context = {"upload_id": "up-1", "sha256": "a" * 64, "file_name": "photo.jpg",
               "page_index": 0, "page_count": 1}
     with pytest.raises(ProviderOutputInvalid):
@@ -548,11 +576,7 @@ def test_log_hygiene_no_secret_or_image_bytes_in_log_records(monkeypatch, caplog
         def create(self, **kwargs):
             return _fake_response([_tool_use_block(_valid_tool_input())])
 
-    class _Client:
-        def __init__(self, **kwargs):
-            self.messages = _Messages()
-
-    fake_mod.Anthropic = _Client
+    fake_mod.Anthropic = lambda **kwargs: _FakeClient(_Messages())
     monkeypatch.setitem(sys.modules, "anthropic", fake_mod)
 
     image_bytes = _jpeg_bytes()

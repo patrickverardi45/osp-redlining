@@ -57,34 +57,42 @@ identity in silently, no refusal. A provider that **claims** a `source` whose `s
 (`HANDWRITTEN_PROVIDER_OUTPUT_INVALID`, fixed reason `"provider output did not match the requested page"`)
 rather than being silently corrected — a disagreement must be visible, never quietly patched over.
 
-## Retry policy and timeout budgeting (Anthropic adapter only)
+## Retry policy and timeout budgeting (Anthropic adapter only) — DYNAMIC remaining-budget retries
 
 `anthropic_messages.py` retries a single page's Messages API call — only on 429 (rate limit), 5xx (server
-error), or a connection/timeout error — with a short jittered backoff between attempts. A 4xx auth/
-permission error, or any other non-retryable failure, is **never** retried; it propagates on the first
-attempt and the seam reduces it to `HANDWRITTEN_PROVIDER_ERROR` (class name only).
+error), or a connection/timeout error, up to a **hard cap of 3 total attempts** — with a short jittered
+backoff between attempts. A 4xx auth/permission error, or any other non-retryable failure, is **never**
+retried; it propagates on the first attempt and the seam reduces it to `HANDWRITTEN_PROVIDER_ERROR`
+(class name only).
 
 **The seam's own per-page timeout (`TL2_HANDWRITTEN_BORELOG_TIMEOUT_SECONDS`) is a `threading.Thread.
 join(timeout)` around the whole provider call — on timeout it merely ABANDONS the still-running daemon
 thread (Python has no safe way to forcibly kill a thread) and reports `HANDWRITTEN_EXTRACTION_TIMEOUT`;
-it does NOT stop the underlying network call.** To actually bound the real work, the adapter derives an
-explicit SDK-level request timeout from `config.timeout_seconds` — the seam timeout minus a small margin,
-floored at 5s — and passes it to the Anthropic client (`timeout=` kwarg) via its `client_factory`. That
-SDK-level timeout, not the seam's join(), is what actually terminates a hung request.
+it does NOT stop the underlying network call.** To actually bound the real work, the adapter tracks a
+monotonic start time and, **per attempt**, sets the SDK-level request timeout — via the SDK's own
+documented per-request override, `client.with_options(timeout=...)` — to `min(cap, remaining budget)`,
+where `remaining budget` shrinks as real elapsed time accumulates. That SDK-level timeout, not the seam's
+join(), is what actually terminates a hung request.
 
-**Retry attempts are recomputed DOWN from the desired ceiling** so that `N * sdk_timeout +
-worst_case_backoff(N)` (the true worst case — per-attempt timeout AND the inter-attempt backoff sleeps
-between them, not just `N * sdk_timeout` alone) still fits inside `seam_timeout - margin`. Because
-`sdk_timeout` is itself defined to consume (almost) the *entire* post-margin budget for a single attempt
-(see `_derive_sdk_timeout`), a second attempt's worst case always overruns that same budget — under the
-current formula this means **exactly 1 attempt is admissible for any configured
-`TL2_HANDWRITTEN_BORELOG_TIMEOUT_SECONDS`**, so a 429/5xx/connection error is classified and refused
-(`HANDWRITTEN_PROVIDER_ERROR`) rather than actually retried. The retry LOOP itself (`_call_with_retries`)
-still exists and is unit-tested directly (with an explicit `max_attempts`) — real retry headroom would
-require a future change to how `sdk_timeout` is derived (e.g. reserving less than half the budget for one
-attempt), not just a larger configured timeout. The adapter constructs its own
-`anthropic.Anthropic(max_retries=0, timeout=…)` client, so this adapter-level retry loop is the ONLY retry
-logic in play (no doubled retries from the SDK's own default client-level retry behavior).
+**Retries are decided DYNAMICALLY against the actual remaining budget, not a static pre-computed attempt
+count.** After a retryable failure, the adapter retries only if `elapsed + backoff + minimum_attempt_floor
+(5s) <= budget` (`budget` = `config.timeout_seconds` minus a small safety margin) — i.e. only if there
+would be at least a floor's worth of time left for the next attempt after sleeping the backoff. This means:
+
+- A **fast** failure (e.g. a 429 rejected in well under a second) leaves nearly the whole budget, so a
+  genuine retry happens and — inside the default 90s seam timeout (85s budget) — a fast-429-then-success
+  sequence completes in exactly 2 attempts.
+- An attempt that **itself burns most of the budget** before failing (e.g. it ran for 84.9s of an 85s
+  budget) correctly does **not** get a second attempt — there is no point granting a doomed attempt a
+  sliver of a timeout — even though the hard attempt cap (3) has not been reached.
+- The **backoff sleep itself is part of the check**, not just elapsed time: a case where elapsed time alone
+  would exactly reach the budget boundary still correctly refuses to retry once the backoff sleep is added
+  on top (this is precisely the case a naive `elapsed <= budget` check — ignoring backoff — gets wrong).
+
+The adapter constructs its own `anthropic.Anthropic(max_retries=0, timeout=…)` client (`client_factory`
+receives the *initial*, elapsed=0 timeout once; every attempt's timeout after that is applied via
+`with_options`), so this adapter-level retry loop is the ONLY retry logic in play (no doubled retries from
+the SDK's own default client-level retry behavior).
 
 ## Observability
 

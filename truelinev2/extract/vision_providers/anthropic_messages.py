@@ -18,10 +18,13 @@ Design points (mirrors ``truelinev2/api/observability.py``'s optional-dependency
     schema matches ``HandwrittenPageExtraction`` minus ``source``/``method``/``extractor``/``record_format``/
     ``audit`` (this adapter fills those four from ``context`` + fixed constants; the seam re-validates the
     full record via ``validate_page_extraction`` regardless of what this adapter returns).
-  * RETRIES: up to a FEW additional attempts ONLY on 429 / 5xx / connection-timeout, short jittered
-    backoff. A 4xx auth/permission error -- or any other non-retryable failure -- is never retried; it
-    propagates unchanged, and the seam reduces it to the new ``HANDWRITTEN_PROVIDER_ERROR`` refusal
-    (exception CLASS NAME only, never the message).
+  * RETRIES: DYNAMIC remaining-budget retries (up to a hard cap of 3 total attempts) ONLY on 429 / 5xx /
+    connection-timeout, short jittered backoff. A 4xx auth/permission error -- or any other non-retryable
+    failure -- is never retried; it propagates unchanged, and the seam reduces it to the new
+    ``HANDWRITTEN_PROVIDER_ERROR`` refusal (exception CLASS NAME only, never the message). A fast failure
+    (e.g. a 429 returned in well under a second) leaves nearly the whole budget for a genuine retry; an
+    attempt that itself burns most of the budget leaves too little for another and is NOT retried -- see
+    "TIMEOUT BUDGETING" below.
   * A refused/malformed/missing tool-use response raises ``ProviderOutputInvalid`` (seam maps this to the
     existing ``HANDWRITTEN_PROVIDER_OUTPUT_INVALID`` refusal) -- this adapter never guesses or invents a
     reading that was not visibly present in the model's structured output.
@@ -31,12 +34,14 @@ Design points (mirrors ``truelinev2/api/observability.py``'s optional-dependency
     ``HANDWRITTEN_EXTRACTION_TIMEOUT``; Python has no safe way to forcibly kill a thread, so that join()
     is a REPORTING deadline, not an enforcement mechanism, and a provider call with no timeout of its own
     could keep the network call running in the background indefinitely after the seam has already moved
-    on. This adapter therefore derives an explicit SDK-level request timeout from ``config.timeout_seconds``
-    (the seam's own per-page budget) and hands it to the client -- the SDK timeout, not the seam's join(),
-    is what actually terminates a hung request. Retry attempts are recomputed DOWN (never up, never below
-    1) so the worst case -- every attempt using the full per-attempt timeout, PLUS the worst-case
-    inter-attempt backoff sleep (not just ``N * sdk_timeout`` alone) -- still fits inside the seam's
-    overall budget -- see ``_derive_sdk_timeout``/``_worst_case_backoff_seconds``/``_derive_max_attempts``.
+    on. This adapter tracks a MONOTONIC start time and, per attempt, sets the SDK-level request timeout
+    (via ``client.with_options(timeout=...)`` -- the SDK's own documented per-request override) to
+    ``min(cap, remaining budget)`` -- that SDK timeout, not the seam's join(), is what actually terminates
+    a hung request. After a retryable failure it retries ONLY if ``elapsed + backoff + minimum_attempt_
+    floor <= budget`` (``budget`` == ``config.timeout_seconds`` minus a small safety margin) -- so a fast
+    failure genuinely retries within budget, while an attempt that already consumed most of the budget
+    correctly does NOT get another (there is no point handing a doomed attempt a sliver of a timeout).
+    See ``_call_with_retries``.
 
 No streaming. No network call happens anywhere at IMPORT time -- only inside the returned callable, and
 only when a caller actually invokes it (an unconfigured/absent provider never touches the network).
@@ -46,7 +51,7 @@ from __future__ import annotations
 import base64
 import random
 import time
-from typing import Any, Callable, Dict, Optional, Tuple
+from typing import Any, Callable, Dict, Optional
 
 from truelinev2.contracts.handwritten_extraction import PAGE_RECORD_FORMAT, VISION_OCR
 from truelinev2.extract.vision_providers import ProviderOutputInvalid, ProviderUnavailable
@@ -57,13 +62,12 @@ _MODEL_ENV = "TL2_HANDWRITTEN_VISION_MODEL"
 _EXTRACTOR_NAME = "anthropic_messages"
 _TOOL_NAME = "record_bore_log_page_extraction"
 
-# Timeout budgeting (see module docstring, "TIMEOUT BUDGETING"). The SDK-level request timeout -- not the
-# seam's thread-join, which only ABANDONS an overrun thread -- is what actually stops a hung request.
-# ``_DESIRED_MAX_ATTEMPTS`` is a CEILING; ``_derive_max_attempts`` recomputes DOWN (never up, never below
-# 1) so the worst case (every attempt using the full per-attempt timeout) still fits the seam's own budget.
-_TIMEOUT_MARGIN_SECONDS = 5.0
-_MIN_SDK_TIMEOUT_SECONDS = 5.0
-_DESIRED_MAX_ATTEMPTS = 3
+# Timeout budgeting (see module docstring, "TIMEOUT BUDGETING"). The SDK-level per-request timeout -- not
+# the seam's thread-join, which only ABANDONS an overrun thread -- is what actually stops a hung request.
+_TIMEOUT_MARGIN_SECONDS = 5.0     # reserved off the top of config.timeout_seconds for seam/teardown overhead
+_MIN_SDK_TIMEOUT_SECONDS = 5.0    # per-attempt floor -- also the "is another attempt even worth it" floor
+_MAX_SDK_TIMEOUT_SECONDS = 120.0  # sanity ceiling on any SINGLE attempt regardless of how large the budget is
+_HARD_CAP_ATTEMPTS = 3            # never more than this many attempts, however much budget remains
 _BACKOFF_BASE_SECONDS = 0.05
 
 # --------------------------------------------------------------------------- #
@@ -167,45 +171,12 @@ def _build_request_kwargs(model_id: str, image_b64: str) -> Dict[str, Any]:
     }
 
 
-def _derive_sdk_timeout(seam_timeout_seconds: float) -> float:
-    """The per-request SDK timeout this adapter gives the Anthropic client, derived from the SEAM's own
-    per-page timeout budget (``config.timeout_seconds`` == ``TL2_HANDWRITTEN_BORELOG_TIMEOUT_SECONDS``):
-    the seam timeout minus a small safety margin, floored so a tight configured budget never produces an
-    unusably small (or negative/zero) request timeout. See the module docstring's "TIMEOUT BUDGETING"
-    section for WHY: the seam's own ``threading.Thread.join(timeout)`` only ABANDONS an overrun thread --
-    it cannot forcibly terminate it -- so this SDK-level timeout is what actually stops a hung request."""
-    return max(seam_timeout_seconds - _TIMEOUT_MARGIN_SECONDS, _MIN_SDK_TIMEOUT_SECONDS)
-
-
-def _worst_case_backoff_seconds(n_attempts: int) -> float:
-    """Worst-case (max jitter) total SLEEP time across ``n_attempts`` calls to ``_call_with_retries``.
-    Backoff happens only BETWEEN attempts (after a failed, retryable attempt, before the next one) -- so
-    there are ``n_attempts - 1`` sleeps, not ``n_attempts``. Mirrors ``_call_with_retries``'s own formula
-    (``_BACKOFF_BASE_SECONDS * attempt + jitter``, jitter capped at ``_BACKOFF_BASE_SECONDS``) EXACTLY,
-    so this is a true worst-case bound, not an approximation."""
-    return sum(_BACKOFF_BASE_SECONDS * attempt + _BACKOFF_BASE_SECONDS
-              for attempt in range(1, n_attempts))
-
-
-def _derive_max_attempts(seam_timeout_seconds: float, sdk_timeout: float) -> int:
-    """How many attempts fit inside the seam's own overall per-page budget, accounting for BOTH the
-    per-attempt SDK timeout AND the worst-case inter-attempt backoff sleep -- not just
-    ``n * sdk_timeout``, which ignores backoff and can overrun the budget on its own. ``N`` attempts are
-    admissible only when ``N * sdk_timeout + worst_case_backoff(N) <= (seam_timeout_seconds -
-    margin)`` -- the same margin already reserved when deriving ``sdk_timeout`` itself, so this never
-    re-spends it. Capped at ``_DESIRED_MAX_ATTEMPTS``; NEVER below 1 (the seam's own thread-join still
-    provides an outer floor even if the arithmetic here is tight or negative for a very small budget)."""
-    if sdk_timeout <= 0:
-        return 1
-    available = max(seam_timeout_seconds - _TIMEOUT_MARGIN_SECONDS, 0.0)
-    attempts = 1
-    while attempts < _DESIRED_MAX_ATTEMPTS:
-        candidate = attempts + 1
-        worst_case = candidate * sdk_timeout + _worst_case_backoff_seconds(candidate)
-        if worst_case > available:
-            break
-        attempts = candidate
-    return attempts
+def _initial_sdk_timeout(budget_seconds: float) -> float:
+    """The timeout used to CONSTRUCT the client (via ``client_factory``), computed at t=0 (elapsed=0) --
+    i.e. the same ``min(cap, remaining)`` formula ``_call_with_retries`` uses per attempt, evaluated at
+    the very start. Per-attempt overrides after that happen via ``client.with_options(timeout=...)``, the
+    SDK's own documented per-request override -- the client itself is built once."""
+    return max(min(_MAX_SDK_TIMEOUT_SECONDS, budget_seconds), _MIN_SDK_TIMEOUT_SECONDS)
 
 
 def _is_retryable(anthropic_module: Any, exc: BaseException) -> bool:
@@ -220,22 +191,45 @@ def _is_retryable(anthropic_module: Any, exc: BaseException) -> bool:
 
 
 def _call_with_retries(client: Any, anthropic_module: Any, request_kwargs: Dict[str, Any], *,
-                       report_attempts: Callable[[int], None], max_attempts: int) -> Any:
-    """Up to ``max_attempts`` calls to ``client.messages.create(**request_kwargs)`` (``max_attempts`` is
-    ``_derive_max_attempts``'s BUDGET-BOUNDED value, not the module-level ceiling directly). Retries ONLY
-    on 429/5xx/connection-timeout (per ``_is_retryable``); any other exception -- including 4xx auth/
-    permission errors -- propagates on the FIRST attempt, unretried. ``report_attempts`` is called once
-    per attempt so the seam can log the real attempt count (observability only; never affects control flow)."""
+                       budget_seconds: float, report_attempts: Callable[[int], None],
+                       clock: Callable[[], float] = time.monotonic,
+                       sleep: Callable[[float], None] = time.sleep) -> Any:
+    """DYNAMIC remaining-budget retry loop, up to ``_HARD_CAP_ATTEMPTS`` total calls to
+    ``client.with_options(timeout=...).messages.create(**request_kwargs)``. ``clock``/``sleep`` are
+    injectable (default the real monotonic clock / real sleep) so tests can simulate elapsed time
+    deterministically without actually sleeping.
+
+    Per attempt: the SDK-level request timeout is ``min(_MAX_SDK_TIMEOUT_SECONDS, remaining budget)``,
+    floored at ``_MIN_SDK_TIMEOUT_SECONDS`` -- ``remaining`` shrinks as real time (or simulated time, in
+    tests) elapses, so a fast failure leaves nearly the whole budget for the next attempt while a slow one
+    leaves less.
+
+    Retries ONLY on 429/5xx/connection-timeout (per ``_is_retryable``); any other exception -- including
+    4xx auth/permission errors -- propagates on the FIRST attempt, unretried. After a retryable failure, a
+    retry is attempted ONLY if ``elapsed + backoff + _MIN_SDK_TIMEOUT_SECONDS <= budget_seconds`` -- i.e.
+    only if there would be at least a floor's worth of time left for the NEXT attempt after sleeping the
+    backoff. A first attempt that itself consumed (near) the whole budget therefore does NOT retry, even
+    though the hard attempt cap has not been reached -- there is no point granting a doomed attempt a
+    sliver of a timeout. ``report_attempts`` is called once per attempt (observability only; never affects
+    control flow)."""
+    start = clock()
     last_exc: Optional[BaseException] = None
-    for attempt in range(1, max_attempts + 1):
+    for attempt in range(1, _HARD_CAP_ATTEMPTS + 1):
+        elapsed = clock() - start
+        remaining = budget_seconds - elapsed
+        per_attempt_timeout = max(min(_MAX_SDK_TIMEOUT_SECONDS, remaining), _MIN_SDK_TIMEOUT_SECONDS)
         report_attempts(attempt)
         try:
-            return client.messages.create(**request_kwargs)
+            return client.with_options(timeout=per_attempt_timeout).messages.create(**request_kwargs)
         except Exception as exc:  # noqa: BLE001 - classified below; non-retryable/exhausted re-raises as-is
-            if attempt == max_attempts or not _is_retryable(anthropic_module, exc):
+            if not _is_retryable(anthropic_module, exc):
+                raise
+            elapsed_after = clock() - start
+            backoff = _BACKOFF_BASE_SECONDS * attempt + random.uniform(0.0, _BACKOFF_BASE_SECONDS)
+            if attempt >= _HARD_CAP_ATTEMPTS or elapsed_after + backoff + _MIN_SDK_TIMEOUT_SECONDS > budget_seconds:
                 raise
             last_exc = exc
-            time.sleep(_BACKOFF_BASE_SECONDS * attempt + random.uniform(0.0, _BACKOFF_BASE_SECONDS))
+            sleep(backoff)
     raise last_exc  # pragma: no cover - unreachable: the loop above always returns or raises
 
 
@@ -287,17 +281,22 @@ def _build_record(tool_input: Dict[str, Any], context: Dict[str, Any]) -> dict:
     }
 
 
-def build_provider(config: Any, *, client_factory: Optional[Callable[[float], Any]] = None
+def build_provider(config: Any, *, client_factory: Optional[Callable[[float], Any]] = None,
+                   clock: Optional[Callable[[], float]] = None,
+                   sleep: Optional[Callable[[float], None]] = None
                    ) -> Callable[[bytes, dict], dict]:
     """``config`` is the seam's small read-only view (``timeout_seconds`` + ``get_env``). The seam always
-    calls ``build_provider(config)`` with ONE positional argument; ``client_factory`` exists solely for
-    offline test injection (production never passes it) and is called with ONE positional argument --
-    the derived SDK request timeout (seconds, see ``_derive_sdk_timeout``) -- so a test can assert what
-    timeout the adapter computed. The default factory constructs ``anthropic.Anthropic(max_retries=0,
-    timeout=<that value>)`` with the SDK's own credential resolution -- ``max_retries=0`` so this
-    adapter's own retry loop, not a second SDK-internal retry loop, controls attempt count and timing,
-    and an explicit ``timeout`` so the SDK -- not the seam's abandon-only thread-join -- is what actually
-    bounds a hung request (see the module docstring's "TIMEOUT BUDGETING" section)."""
+    calls ``build_provider(config)`` with ONE positional argument; ``client_factory``/``clock``/``sleep``
+    exist solely for offline test injection (production never passes any of them -- the SDK is never
+    required for the test suite to pass). ``client_factory`` is called ONCE with ONE positional argument
+    -- the INITIAL SDK request timeout (seconds, see ``_initial_sdk_timeout``), evaluated at elapsed=0 --
+    so a test can assert what timeout the adapter computed; the default factory constructs
+    ``anthropic.Anthropic(max_retries=0, timeout=<that value>)`` with the SDK's own credential resolution
+    (``max_retries=0`` so this adapter's own retry loop, not a second SDK-internal retry loop, controls
+    attempt count and timing). Per-ATTEMPT timeout overrides after that use the SDK's own documented
+    ``client.with_options(timeout=...)`` -- see ``_call_with_retries`` for the dynamic remaining-budget
+    retry logic and the module docstring's "TIMEOUT BUDGETING" section for WHY an SDK-level timeout, not
+    the seam's abandon-only thread-join, is what actually bounds a hung request."""
     try:
         import anthropic  # lazy: this module stays importable, and the suite stays green, SDK-absent
     except ImportError as exc:
@@ -307,18 +306,21 @@ def build_provider(config: Any, *, client_factory: Optional[Callable[[float], An
     if not model_id:
         raise ProviderUnavailable("%s is not set" % _MODEL_ENV)
 
-    sdk_timeout = _derive_sdk_timeout(config.timeout_seconds)
-    max_attempts = _derive_max_attempts(config.timeout_seconds, sdk_timeout)
+    budget_seconds = max(config.timeout_seconds - _TIMEOUT_MARGIN_SECONDS, 0.0)
+    initial_timeout = _initial_sdk_timeout(budget_seconds)
     resolved_client_factory = client_factory or (
         lambda timeout: anthropic.Anthropic(max_retries=0, timeout=timeout))
+    resolved_clock = clock or time.monotonic
+    resolved_sleep = sleep or time.sleep
 
     def _call(page_png_bytes: bytes, context: Dict[str, Any]) -> dict:
-        client = resolved_client_factory(sdk_timeout)
+        client = resolved_client_factory(initial_timeout)
         image_b64 = base64.standard_b64encode(bytes(page_png_bytes)).decode("ascii")
         request_kwargs = _build_request_kwargs(model_id, image_b64)
         report_attempts = context.get("report_attempts") or (lambda attempt: None)
-        response = _call_with_retries(client, anthropic, request_kwargs,
-                                      report_attempts=report_attempts, max_attempts=max_attempts)
+        response = _call_with_retries(client, anthropic, request_kwargs, budget_seconds=budget_seconds,
+                                      report_attempts=report_attempts,
+                                      clock=resolved_clock, sleep=resolved_sleep)
         tool_input = _extract_tool_input(response)
         return _build_record(tool_input, context)
 
