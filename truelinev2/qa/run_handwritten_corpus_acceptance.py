@@ -227,6 +227,24 @@ def _safe_parse_station(value: Any) -> Optional[float]:
 
 
 # --------------------------------------------------------------------------- #
+# Report-content sanitization -- nothing echoed into report.json/report.md may carry a filesystem path.
+# --------------------------------------------------------------------------- #
+def _sanitize_provider_label(provider_name: Optional[str]) -> Optional[str]:
+    """Reduce a caller-supplied ``--provider`` value to its LAST path/dot segment only (mirrors the
+    extraction seam's own module-tail convention -- see ``handwritten_borelog.py::_module_tail``) before
+    it is ever echoed into the report. A provider value is meant to be an opaque dotted module path, but
+    nothing stops a caller from mis-supplying one that embeds a filesystem path (a drive letter, a
+    backslash, a leading slash); stripping to the tail on BOTH path and dot separators keeps any such
+    prefix out of report.json/report.md without changing what module is actually loaded -- ``run()`` still
+    passes the RAW ``provider_name`` to ``extract_handwritten``; only the echoed report label is
+    sanitized."""
+    if not provider_name:
+        return provider_name
+    tail = str(provider_name).replace("\\", "/").rsplit("/", 1)[-1]
+    return tail.rsplit(".", 1)[-1]
+
+
+# --------------------------------------------------------------------------- #
 # Stats.
 # --------------------------------------------------------------------------- #
 def _warning_bucket(warning: str) -> str:
@@ -428,7 +446,7 @@ def run(*, corpus_dir: Path, out_dir: Path, provider_name: Optional[str] = None,
     report = {
         "record_format": REPORT_RECORD_FORMAT,
         "corpus_file_count": len(file_records),
-        "provider": provider_name,
+        "provider": _sanitize_provider_label(provider_name),
         "timeout_s": timeout_s,
         "files": [_file_summary(fr) for fr in file_records],
         "stats": stats,

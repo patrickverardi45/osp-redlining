@@ -1,15 +1,18 @@
 """Offline tests for the handwritten-corpus acceptance harness
 (``truelinev2/qa/run_handwritten_corpus_acceptance.py``): a keyless run over a synthetic mini-corpus, a
-deterministic fake-provider run, and two ADVERSARIAL scenarios that prove the harness's own hard checks
+deterministic fake-provider run, ADVERSARIAL scenarios that prove the harness's own hard checks
 (no-fabrication scan, reconciliation) fire independently of the extraction seam's own validation -- by
 monkeypatching ``extract_handwritten`` to return a hand-built, already-poisoned/tampered result the real
-seam would never itself produce. No real corpus file, network call, or product-store write anywhere here.
+seam would never itself produce -- and report-content sanitization (no absolute path, drive letter, or
+un-truncated provider path ever reaches report.json/report.md). No real corpus file, network call, or
+product-store write anywhere here.
 """
 from __future__ import annotations
 
 import hashlib
 import io
 import json
+import re
 
 from truelinev2.contracts.handwritten_extraction import PAGE_RECORD_FORMAT
 from truelinev2.extract.handwritten_borelog import (
@@ -41,6 +44,51 @@ def _png_bytes() -> bytes:
 
 def _report(out_dir) -> dict:
     return json.loads((out_dir / "report.json").read_text(encoding="utf-8"))
+
+
+def _valid_proposal(**overrides) -> dict:
+    """A schema-shaped, internally-CONSISTENT ``SpanProposal`` (start/end 50ft apart,
+    footage_derivation/footage_ft/cell_evidence all agreeing) -- the poisoning tests below mutate exactly
+    ONE field of a copy of this to isolate the ONE fabrication-scan branch each test targets."""
+    proposal = {
+        "record_format": "trueline-handwritten-span-proposal-1",
+        "source": {"upload_id": "up-1", "sha256": "a" * 64, "file_name": "log.pdf",
+                  "page_index": 0, "page_count": 1},
+        "bore_id": None, "print_raw": "1", "sheet_refs": [1],
+        "start_station": "0+00", "end_station": "0+50", "footage_ft": 50.0,
+        "footage_derivation": "DERIVED_FROM_STATIONS",
+        "depth_ft": 3.5, "boc_ft": 5.0, "date": "6/1/2026", "crew": "JS",
+        "notes": "Job name: Test Loop", "station_readings": [],
+        "cell_evidence": {
+            field: {"status": "READ", "page_index": 0, "region": None, "verbatim": "x"}
+            for field in ("start_station", "end_station", "print_raw", "date", "crew", "job_name",
+                         "depth_ft", "boc_ft")
+        },
+        "confidence": "MEDIUM", "warnings": [],
+    }
+    proposal.update(overrides)
+    return proposal
+
+
+def _monkeypatch_extraction(monkeypatch, proposals, *, page=None):
+    """Monkeypatch ``extract_handwritten`` to return ONE normal, correctly-reconciled EXTRACTED page plus
+    the given (possibly poisoned) ``proposals`` list -- isolates a fabrication-scan test from the
+    reconciliation check (which is covered separately) firing at the same time."""
+    def _fn(data, file_name, *, upload_id, provider_name=None, timeout_s=90.0, providers=None):
+        source = {"upload_id": upload_id, "sha256": "a" * 64, "file_name": file_name,
+                 "page_index": 0, "page_count": 1}
+        page_record = page or {
+            "record_format": PAGE_RECORD_FORMAT, "source": source, "method": "TEXT_LAYER",
+            "extractor": "test-double",
+            "header": {"date": _blank_cell(), "crew": _blank_cell(), "job_name": _blank_cell(),
+                      "print_raw": _blank_cell()},
+            "readings": [], "page_status": "EXTRACTED", "refusal": None, "warnings": [], "audit": [],
+        }
+        page_ledger = [{"page_index": 0, "status": "EXTRACTED", "refusal": None, "warnings": [],
+                       "proposal_count": len(proposals), "runs_skipped": []}]
+        return {"pages": [page_record], "proposals": proposals, "page_ledger": page_ledger}
+
+    monkeypatch.setattr(harness_mod, "extract_handwritten", _fn)
 
 
 # --------------------------------------------------------------------------- #
@@ -191,6 +239,135 @@ def test_ledger_missing_a_page_triggers_reconciliation_failure(tmp_path, monkeyp
     failure = report["reconciliation_failures"][0]
     assert failure["expected_page_count"] == 2
     assert failure["ledger_page_indices"] == [0]
+
+
+# --------------------------------------------------------------------------- #
+# HARD CHECK -- HIGH confidence (a Cell AND a proposal) triggers fabrication failures naming both fields.
+# --------------------------------------------------------------------------- #
+def test_high_confidence_on_cell_and_proposal_triggers_fabrication_failure(tmp_path, monkeypatch):
+    corpus = tmp_path / "corpus"
+    corpus.mkdir()
+    (corpus / "log.pdf").write_bytes(_pdf_bytes([["irrelevant -- extraction is monkeypatched"]]))
+    out_dir = tmp_path / "out"
+
+    hot_cell = _cell(value="0+00", status="READ", verbatim="0+00", confidence="HIGH")
+    page = {
+        "record_format": PAGE_RECORD_FORMAT,
+        "source": {"upload_id": "up-1", "sha256": "a" * 64, "file_name": "log.pdf",
+                  "page_index": 0, "page_count": 1},
+        "method": "TEXT_LAYER", "extractor": "test-double",
+        "header": {"date": _blank_cell(), "crew": _blank_cell(), "job_name": _blank_cell(),
+                  "print_raw": _blank_cell()},
+        "readings": [{"station": hot_cell, "depth_ft": _blank_cell(), "boc_ft": _blank_cell(),
+                    "column_index": 0, "row_index": 0}],
+        "page_status": "EXTRACTED", "refusal": None, "warnings": [], "audit": [],
+    }
+    proposal = _valid_proposal(confidence="HIGH")
+    _monkeypatch_extraction(monkeypatch, [proposal], page=page)
+
+    exit_code = run(corpus_dir=corpus, out_dir=out_dir, provider_name=None, fixtures_dir=None)
+
+    assert exit_code == 2
+    report = _report(out_dir)
+    fields = [f["field"] for f in report["fabrication_failures"]]
+    assert any("readings[0].station" in f for f in fields)          # the HIGH-confidence CELL
+    assert any(f.endswith(".confidence") for f in fields)            # the HIGH-confidence PROPOSAL
+    assert all("HIGH" in f["detail"] for f in report["fabrication_failures"])
+
+
+# --------------------------------------------------------------------------- #
+# HARD CHECK -- footage_ft disagreeing with the recomputed station delta.
+# --------------------------------------------------------------------------- #
+def test_footage_ft_mismatch_triggers_fabrication_failure(tmp_path, monkeypatch):
+    corpus = tmp_path / "corpus"
+    corpus.mkdir()
+    (corpus / "log.pdf").write_bytes(_pdf_bytes([["irrelevant -- extraction is monkeypatched"]]))
+    out_dir = tmp_path / "out"
+
+    proposal = _valid_proposal(footage_ft=999.0)     # true 0+00 -> 0+50 delta is 50.0
+    _monkeypatch_extraction(monkeypatch, [proposal])
+
+    exit_code = run(corpus_dir=corpus, out_dir=out_dir, provider_name=None, fixtures_dir=None)
+
+    assert exit_code == 2
+    report = _report(out_dir)
+    matches = [f for f in report["fabrication_failures"] if f["field"].endswith(".footage_ft")]
+    assert matches, "expected a footage_ft fabrication failure"
+    assert "999" in matches[0]["detail"] and "50" in matches[0]["detail"]
+
+
+# --------------------------------------------------------------------------- #
+# HARD CHECK -- footage_derivation missing/wrong label.
+# --------------------------------------------------------------------------- #
+def test_missing_footage_derivation_triggers_fabrication_failure(tmp_path, monkeypatch):
+    corpus = tmp_path / "corpus"
+    corpus.mkdir()
+    (corpus / "log.pdf").write_bytes(_pdf_bytes([["irrelevant -- extraction is monkeypatched"]]))
+    out_dir = tmp_path / "out"
+
+    proposal = _valid_proposal(footage_derivation=None)
+    _monkeypatch_extraction(monkeypatch, [proposal])
+
+    exit_code = run(corpus_dir=corpus, out_dir=out_dir, provider_name=None, fixtures_dir=None)
+
+    assert exit_code == 2
+    report = _report(out_dir)
+    matches = [f for f in report["fabrication_failures"] if f["field"].endswith(".footage_derivation")]
+    assert matches, "expected a footage_derivation fabrication failure"
+    assert "DERIVED_FROM_STATIONS" in matches[0]["detail"]
+
+
+# --------------------------------------------------------------------------- #
+# HARD CHECK -- a proposal field carries a value with no corresponding cell_evidence entry.
+# --------------------------------------------------------------------------- #
+def test_missing_cell_evidence_entry_triggers_fabrication_failure(tmp_path, monkeypatch):
+    corpus = tmp_path / "corpus"
+    corpus.mkdir()
+    (corpus / "log.pdf").write_bytes(_pdf_bytes([["irrelevant -- extraction is monkeypatched"]]))
+    out_dir = tmp_path / "out"
+
+    proposal = _valid_proposal()
+    del proposal["cell_evidence"]["crew"]             # proposal["crew"] == "JS" (a value) survives
+    _monkeypatch_extraction(monkeypatch, [proposal])
+
+    exit_code = run(corpus_dir=corpus, out_dir=out_dir, provider_name=None, fixtures_dir=None)
+
+    assert exit_code == 2
+    report = _report(out_dir)
+    matches = [f for f in report["fabrication_failures"] if f["field"].endswith(".crew")]
+    assert matches, "expected a crew fabrication failure naming the missing cell_evidence entry"
+    assert "cell_evidence" in matches[0]["detail"]
+
+
+# --------------------------------------------------------------------------- #
+# Sanitization -- an absolute-path-looking corpus dir and provider value never reach the report.
+# --------------------------------------------------------------------------- #
+def test_report_never_leaks_absolute_paths_or_full_provider_path(tmp_path):
+    corpus = tmp_path / "corpus"
+    (corpus / "sub").mkdir(parents=True)
+    (corpus / "sub" / "log.pdf").write_bytes(
+        _pdf_bytes([HEADER_LINES + ["STA 0+00 3.5 5'", "STA 0+50 3.5 5'"]]))
+    out_dir = tmp_path / "out"
+
+    # A --provider value that LOOKS like an absolute filesystem path (never a legitimate dotted module
+    # path) -- this corpus is text-layer-only, so no page ever needs the provider; only report-content
+    # sanitization of the ECHOED value is under test here.
+    path_like_provider = r"C:\Users\Someone\secret\evil_module"
+
+    exit_code = run(corpus_dir=corpus, out_dir=out_dir, provider_name=path_like_provider, fixtures_dir=None)
+
+    assert exit_code == 0
+    report_text = (out_dir / "report.json").read_text(encoding="utf-8")
+    md_text = (out_dir / "report.md").read_text(encoding="utf-8")
+    for text in (report_text, md_text):
+        assert str(tmp_path) not in text
+        assert "Users" not in text and "Someone" not in text and "secret" not in text
+        assert not re.search(r"[A-Za-z]:[\\/]", text)      # no Windows drive-letter pattern anywhere
+        assert "\\" not in text                             # no backslash path separator anywhere
+
+    report = _report(out_dir)
+    assert report["provider"] == "evil_module"              # sanitized to the module tail only
+    assert report["files"][0]["file_name"] == "sub/log.pdf"  # relative posix path, never absolute
 
 
 # --------------------------------------------------------------------------- #
