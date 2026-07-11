@@ -220,3 +220,92 @@ def test_no_engine_dialect_match_imports():
     for forbidden in ("truelinev2.match", "truelinev2.extract", "run_match", "select_dialect",
                       "run_callout_route_assembly_sweep", "PlanPdf", "import fitz"):
         assert forbidden not in src, "station_dots must stay pure geometry: %r" % forbidden
+
+
+# --------------------------------------------------------------------------- #
+# ADDENDUM (Mission 8, owner's STATION-DOT CONTRACT, ``.foreman/scratch/m8/design-dots.md``, BINDING):
+# ``marks`` is an ADDITIVE optional parameter on ``compute_station_dots``/``stroke_polyline_with_dots``.
+# ``marks=None`` is LOCKED to be byte-identical to the pre-addendum contract -- this is the identity lock
+# the addendum's design doc requires.
+# --------------------------------------------------------------------------- #
+def test_compute_station_dots_marks_none_is_byte_identical_to_pre_addendum_contract():
+    """LOCKED: the exact payload shape/values production emitted before this addendum, reproduced with
+    ``marks`` defaulted (never passed) -- proves the default path is untouched."""
+    info = {"depth": "42", "boc": "48", "date": "2026-03-01", "crew": "A-1", "print": "17",
+           "notes": "vacant", "bore_log_id": "rbl-9"}
+    dots = SD.compute_station_dots(_LINE, footage=176.0, start_station="5+03", info=info)
+    assert dots == [
+        {"index": 0, "footage_along": 0.0, "station": "5+03",
+         "xy_display": {"x": 100.0, "y": 200.0}, "depth": "42", "boc": "48", "date": "2026-03-01",
+         "crew": "A-1", "print": "17", "notes": "vacant", "bore_log_id": "rbl-9",
+         "provenance": "HUMAN_CONFIRMED_CONTROL_POINTS"},
+        {"index": 1, "footage_along": 50.0, "station": "5+53",
+         "xy_display": {"x": round(100 + 300 * 50 / 176, 2), "y": 200.0}, "depth": "42", "boc": "48",
+         "date": "2026-03-01", "crew": "A-1", "print": "17", "notes": "vacant", "bore_log_id": "rbl-9",
+         "provenance": "HUMAN_CONFIRMED_CONTROL_POINTS"},
+        {"index": 2, "footage_along": 100.0, "station": "6+03",
+         "xy_display": {"x": round(100 + 300 * 100 / 176, 2), "y": 200.0}, "depth": "42", "boc": "48",
+         "date": "2026-03-01", "crew": "A-1", "print": "17", "notes": "vacant", "bore_log_id": "rbl-9",
+         "provenance": "HUMAN_CONFIRMED_CONTROL_POINTS"},
+        {"index": 3, "footage_along": 150.0, "station": "6+53",
+         "xy_display": {"x": round(100 + 300 * 150 / 176, 2), "y": 200.0}, "depth": "42", "boc": "48",
+         "date": "2026-03-01", "crew": "A-1", "print": "17", "notes": "vacant", "bore_log_id": "rbl-9",
+         "provenance": "HUMAN_CONFIRMED_CONTROL_POINTS"},
+        {"index": 4, "footage_along": 176.0, "station": "6+79",
+         "xy_display": {"x": 400.0, "y": 200.0}, "depth": "42", "boc": "48", "date": "2026-03-01",
+         "crew": "A-1", "print": "17", "notes": "vacant", "bore_log_id": "rbl-9",
+         "provenance": "HUMAN_CONFIRMED_CONTROL_POINTS"},
+    ]
+    assert "origin" not in dots[0] and "station_evidence" not in dots[0]     # additive keys ABSENT by default
+    # explicit marks=None (never omitted) must match the omitted-kwarg call bit-for-bit.
+    assert SD.compute_station_dots(_LINE, footage=176.0, start_station="5+03", info=info, marks=None) == dots
+
+
+def test_stroke_polyline_with_dots_marks_none_is_byte_identical():
+    assert (SD.stroke_polyline_with_dots(_LINE, footage=176.0)
+           == SD.stroke_polyline_with_dots(_LINE, footage=176.0, marks=None))
+
+
+_WP23_MARKS = [
+    {"footage_along": 0.0, "origin": "SOURCE_RECORDED", "station": "3+50", "depth": "5.0", "boc": "8.0",
+     "notes": None, "station_evidence": {"verbatim": "STA 3+50", "status": "READ", "confidence": "MEDIUM"}},
+    {"footage_along": 50.0, "origin": "DERIVED_INTERVAL", "station": "4+00", "depth": None, "boc": None,
+     "notes": None, "station_evidence": None},
+    {"footage_along": 58.0, "origin": "SOURCE_RECORDED", "station": "4+08", "depth": "5.0", "boc": "8.0",
+     "notes": None, "station_evidence": {"verbatim": "STA  4+08", "status": "READ", "confidence": "MEDIUM"}},
+]
+
+
+def test_compute_station_dots_marks_path_places_dots_at_mark_footages_and_carries_tags():
+    info = {"depth": None, "boc": None, "date": "2026-03-01", "crew": "JS", "print": "23", "notes": None,
+           "bore_log_id": "B-9"}
+    dots = SD.compute_station_dots(_LINE, footage=58.0, info=info, marks=_WP23_MARKS)
+    assert [d["footage_along"] for d in dots] == [0.0, 50.0, 58.0]
+    assert [d["origin"] for d in dots] == ["SOURCE_RECORDED", "DERIVED_INTERVAL", "SOURCE_RECORDED"]
+    assert [d["station"] for d in dots] == ["3+50", "4+00", "4+08"]
+    # bore-level facts attached to EVERY dot regardless of origin.
+    assert all(d["crew"] == "JS" and d["print"] == "23" and d["date"] == "2026-03-01" for d in dots)
+    assert all(d["bore_log_id"] == "B-9" for d in dots)
+    # depth/boc/station_evidence present ONLY on the marks that carry them.
+    assert dots[0]["depth"] == "5.0" and dots[0]["boc"] == "8.0"
+    assert dots[0]["station_evidence"]["verbatim"] == "STA 3+50"
+    assert "depth" not in dots[1] and "boc" not in dots[1] and "station_evidence" not in dots[1]
+    assert dots[2]["depth"] == "5.0" and dots[2]["boc"] == "8.0"
+    # positions: arc-length interpolation at the mark's OWN footage_along (self-calibrated), 2dp-rounded.
+    assert dots[0]["xy_display"] == {"x": 100.0, "y": 200.0}
+    assert dots[1]["xy_display"] == {"x": round(100 + 300 * 50 / 58, 2), "y": 200.0}
+    assert dots[2]["xy_display"] == {"x": 400.0, "y": 200.0}
+    assert all(d["provenance"] == "HUMAN_CONFIRMED_CONTROL_POINTS" for d in dots)
+
+
+def test_compute_station_dots_marks_path_degenerate_input_returns_empty_safely():
+    assert SD.compute_station_dots([{"x": 1, "y": 1}], footage=58.0, marks=_WP23_MARKS) == []
+    assert SD.compute_station_dots([], footage=58.0, marks=_WP23_MARKS) == []
+
+
+def test_stroke_polyline_with_dots_marks_path_vertices_align_with_mark_positions():
+    aug = SD.stroke_polyline_with_dots(_LINE, footage=58.0, marks=_WP23_MARKS)
+    xs = [p[0] for p in aug]
+    assert xs == sorted(xs)
+    assert aug[0] == (100.0, 200.0) and aug[-1] == (400.0, 200.0)
+    assert (round(100 + 300 * 50 / 58, 2), 200.0) in [(round(x, 2), y) for x, y in aug]
