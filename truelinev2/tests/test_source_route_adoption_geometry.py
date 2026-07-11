@@ -270,6 +270,28 @@ def test_control_order_reversed_refuses():
     assert geom is None and refusal.code == sra.CONTROL_ORDER_REVERSED
 
 
+def test_connector_warning_fires_for_adversarial_5e7_delta_and_keeps_both_points():
+    """Fix-wave-2 G1 (F3 note): the T39 re-verification flagged that the existing connector-warning lock
+    (``test_connector_warning_fires_only_for_the_nonzero_side_and_keeps_both_points``) used a coarse delta of
+    5.0 -- not the ADVERSARIAL scale (5e-7) that a reintroduced ``1e-6`` proximity dedupe/snap would silently
+    swallow. This closes that gap at the exact adversarial delta: a human end click 5e-7 off its projection
+    must still keep BOTH points as distinct stored values (never silently snapped together) and fire
+    ``HUMAN_CONTROL_TO_BACKBONE_CONNECTOR``. A reintroduced ``1e-6`` dedupe would collapse the two points and
+    fail this test."""
+    segs = [_seg(0, 0, 50, 0), _seg(50, 0, 100, 0)]
+    geom, refusal = sra.derive_route_geometry(
+        backbone_segments=segs, gap_bridge_status="NO_ROUTE_GAPS", reach_tol=12.0,
+        human_start=(0.0, 0.0), human_end=(100.0, 5e-7))              # end off by exactly 5e-7 (within 12 tol)
+    assert refusal is None, refusal
+    assert geom["warnings"] == (sra.CONNECTOR_WARNING,)
+    pts = geom["proposed_render_points"]
+    assert pts[0] == (0.0, 0.0)                                       # exact start click, no connector needed
+    assert pts[-1] == (100.0, 5e-7)                                   # exact END human click retained
+    assert pts[-2] == (100.0, 0.0)                                    # its projection retained SEPARATELY
+    assert pts[-1] != pts[-2]                                         # never silently snapped together
+    assert abs(pts[-1][1] - pts[-2][1]) == 5e-7                       # the adversarial delta itself, exact
+
+
 def test_zero_length_proposal_when_clip_collapses():
     # both controls resolve to the SAME chainage on DIFFERENT-looking but effectively zero-span geometry is
     # covered by CONTROL_PROJECTIONS_COINCIDE; a direct zero-length case is a single-point backbone segment
