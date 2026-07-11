@@ -54,11 +54,14 @@ from truelinev2.contracts.processing_job import (
     transition,
 )
 from truelinev2.contracts.upload_pipeline import (
+    PHOTO_CONTENT_TYPES,
     UploadError,
+    UploadFileNotFoundError,
     UploadsClosedError,
     accept_upload,
 )
 from truelinev2.contracts.extracted_row import (
+    CONFIRMED,
     ExtractedRowError,
     new_extracted_row,
 )
@@ -79,6 +82,8 @@ from truelinev2.contracts.reviewed_bore_log import (
     review_row_in_log,
     set_grouping_status,
 )
+from truelinev2.contracts.handwritten_extraction import rbl_fanout_plan
+from truelinev2.contracts.upload_pipeline import resolve_borelog_source_file
 from truelinev2.contracts.terminus_report import terminus_evidence_report
 from truelinev2.contracts.manifest_handoff import (
     ARTIFACT_BUNDLE_SLOT,
@@ -332,7 +337,8 @@ def _to_http(exc: Exception) -> HTTPException:
                         RowNotFoundError, GroupNotFoundError, HandoffNotFoundError,
                         BundleNotReadableError, ArtifactNotServableError, CloseoutNotFoundError,
                         BillingSummaryNotFoundError, ExportPackageNotFoundError,
-                        SourceAnchorNotFoundError, ReviewCandidateNotFoundError)):
+                        SourceAnchorNotFoundError, ReviewCandidateNotFoundError,
+                        UploadFileNotFoundError)):
         return HTTPException(status_code=404, detail=str(exc))
     if isinstance(exc, (IllegalTransitionError, UploadsClosedError, HandoffStateError,
                         CloseoutStateError, SourceAnchorStateError,
@@ -487,7 +493,9 @@ def register_upload(job_id: str, req: UploadRegister,
     """Register one product input file into the tenant's job. Bytes arrive base64-encoded (no
     python-multipart). The upload is stored and recorded UNTRUSTED — extraction_status is always
     "queued"; NO OCR/AI extraction runs here. 404 if the job is missing, 409 if intake is closed (job
-    past the upload phase), 400 on a bad kind/extension/size or invalid base64."""
+    past the upload phase), 400 on a bad kind/extension/size or invalid base64. A BORE_LOG image upload
+    (.jpg/.jpeg/.png) is accepted ONLY when handwritten_borelog_extraction_optin is set (DEFAULT False —
+    byte-identical rejection otherwise, unchanged from before this evolution)."""
     cp, store = ctx.tenant.value, _store_root(c)
     try:
         content = base64.b64decode(req.content_base64, validate=True)
@@ -495,7 +503,8 @@ def register_upload(job_id: str, req: UploadRegister,
         raise HTTPException(status_code=400, detail="content_base64 must be valid base64")
     try:
         return accept_upload(store, cp, job_id, kind=req.kind, filename=req.filename,
-                             content=content, stored_at=_now())
+                             content=content, stored_at=_now(),
+                             allow_image_borelog=c.settings.handwritten_borelog_extraction_optin)
     except _CONTRACT_ERRORS as exc:
         raise _to_http(exc)
 
@@ -555,16 +564,40 @@ def add_rows(job_id: str, reviewed_bore_log_id: str, req: RowsAdd,
         raise _to_http(exc)
 
 
+def _handwritten_extractor_closure(settings, upload_id: str):
+    """Build the ``(path) -> {"pages","proposals","page_ledger"}`` closure ``extract_rows_from_borelog``'s
+    third tier expects, from SETTINGS (never a client input) -- keeps extract/borelog_rows.py config-free.
+    Lazy-imports extract/handwritten_borelog.py so the flag-OFF path never even touches PyMuPDF/Pillow."""
+    def _fn(path):
+        from truelinev2.extract.handwritten_borelog import extract_handwritten
+
+        return extract_handwritten(
+            path.read_bytes(), path.name, upload_id=upload_id,
+            provider_name=settings.handwritten_borelog_provider,
+            timeout_s=settings.handwritten_borelog_timeout_seconds,
+        )
+    return _fn
+
+
 @router.post("/jobs/{job_id}/reviewed-bore-logs/{reviewed_bore_log_id}/extract")
 def extract_bore_log_rows_route(job_id: str, reviewed_bore_log_id: str,
                                 ctx: RequestContext = Depends(get_context),
                                 c: Container = Depends(get_container)) -> dict:
-    """Read-only deterministic bore-log TABLE extraction: parse the reviewed_bore_log's SOURCE upload into
-    UNTRUSTED extracted rows (extraction_method=TABLE_IMPORT, status UNREVIEWED) and append them so the
-    existing human review/grouping/eligibility gate is unchanged. This is the auto-extract path that replaces
-    manual row entry as the default — it places NO geometry, fabricates NO confidence (deterministic table
-    parse, not OCR), and confers NO engine eligibility. 404 if the log/job is missing; 400 if the source
-    upload is missing/not a BORE_LOG/unparseable."""
+    """Read-only bore-log extraction: parse the reviewed_bore_log's SOURCE upload into UNTRUSTED extracted
+    rows and append them so the existing human review/grouping/eligibility gate is unchanged. Two lanes:
+
+    * the strict engine reader / generic span extractor (extraction_method=TABLE_IMPORT) -- rows land on
+      THIS reviewed_bore_log, exactly as before (byte-identical when the Phase-1 handwritten flag is OFF).
+    * (ONLY when ``handwritten_borelog_extraction_optin`` is set AND both prior tiers refuse) the Phase-1
+      handwritten extractor -- since the current review machinery accepts exactly one eligible row per
+      reviewed_bore_log, each proposal FANS OUT into its OWN sibling reviewed_bore_log (created via
+      ``rbl_fanout_plan``'s deterministic ids); THIS reviewed_bore_log's own row list stays empty. The
+      response then carries ``created_reviewed_bore_logs`` (creation order) + the per-page ``page_ledger``
+      so the caller never needs to guess a fan-out id.
+
+    This places NO geometry, fabricates NO confidence, and confers NO engine eligibility. 404 if the
+    log/job is missing; 400 if the source upload is missing/not a BORE_LOG/unparseable (the handwritten
+    tier's 400 additionally carries "page_ledger" when it ran)."""
     cp, store, now = ctx.tenant.value, _store_root(c), _now()
     try:
         rbl = load_reviewed_bore_log(store, cp, job_id, reviewed_bore_log_id)
@@ -579,12 +612,47 @@ def extract_bore_log_rows_route(job_id: str, reviewed_bore_log_id: str,
     if not path.is_file():
         raise HTTPException(status_code=400, detail="the bore-log source file is not available")
     existing = {r.get("row_id") for r in rbl.get("rows", [])}
+    handwritten_extractor = (
+        _handwritten_extractor_closure(c.settings, source_upload_id)
+        if c.settings.handwritten_borelog_extraction_optin else None
+    )
     try:
         rows = extract_rows_from_borelog(path, source_upload_id, at=now, by=ctx.session_id,
-                                         existing_row_ids=existing)
-        record = add_extracted_rows(store, cp, job_id, reviewed_bore_log_id, rows, at=now, by=ctx.session_id)
+                                         existing_row_ids=existing,
+                                         handwritten_extractor=handwritten_extractor)
     except BoreLogExtractionError as exc:
+        ledger = getattr(exc, "page_ledger", None)
+        if ledger is not None:
+            raise HTTPException(status_code=400, detail={"message": str(exc), "page_ledger": ledger})
         raise HTTPException(status_code=400, detail=str(exc))
+    except _CONTRACT_ERRORS as exc:
+        raise _to_http(exc)
+
+    page_ledger = getattr(rows, "page_ledger", None)
+    if page_ledger is not None:
+        # Phase-1 handwritten fan-out: one sibling reviewed_bore_log per proposal (row). THIS
+        # reviewed_bore_log's own rows stay untouched/empty for this call.
+        proposals = [row["raw"] for row in rows]
+        try:
+            plan = rbl_fanout_plan(proposals)
+            created = []
+            for entry, row in zip(plan, rows):
+                rid = entry["reviewed_bore_log_id"]
+                try:
+                    load_reviewed_bore_log(store, cp, job_id, rid)
+                except ReviewedBoreLogNotFoundError:
+                    create_reviewed_bore_log(store, cp, job_id, source_upload_id, rid, at=now, by=ctx.session_id)
+                add_extracted_rows(store, cp, job_id, rid, [row], at=now, by=ctx.session_id)
+                created.append({
+                    "reviewed_bore_log_id": rid, "source_upload_id": source_upload_id,
+                    "row_id": row["row_id"], "page_index": entry["page_index"], "run_index": entry["run_number"],
+                })
+        except _CONTRACT_ERRORS as exc:
+            raise _to_http(exc)
+        return {"extracted_count": len(rows), "page_ledger": page_ledger, "created_reviewed_bore_logs": created}
+
+    try:
+        record = add_extracted_rows(store, cp, job_id, reviewed_bore_log_id, rows, at=now, by=ctx.session_id)
     except _CONTRACT_ERRORS as exc:
         raise _to_http(exc)
     return {"extracted_count": len(rows),
@@ -598,7 +666,13 @@ def review_row_route(job_id: str, reviewed_bore_log_id: str, row_id: str, req: R
                      c: Container = Depends(get_container)) -> dict:
     """Apply one audited human review decision to a row (CONFIRMED / CORRECTED / REJECTED /
     NEEDS_CLARIFICATION / UNREVIEWED). Trust rules live in the contract: CORRECTED needs corrected_values,
-    REJECTED / NEEDS_CLARIFICATION need a reason (400 otherwise). 404 if the row or log is missing."""
+    REJECTED / NEEDS_CLARIFICATION need a reason (400 otherwise). CONFIRMED additionally forbids
+    corrected_values here (a CONFIRMED review asserts the row is correct AS-IS; a caller with edits must
+    use CORRECTED instead) -- a NEW, additive 400 that no existing caller trips (CONFIRMED has never carried
+    corrected_values). 404 if the row or log is missing."""
+    if req.to_status == CONFIRMED and req.corrected_values:
+        raise HTTPException(status_code=400,
+                            detail="CONFIRMED must not carry corrected_values (use CORRECTED instead)")
     cp, store = ctx.tenant.value, _store_root(c)
     try:
         return review_row_in_log(store, cp, job_id, reviewed_bore_log_id, row_id, req.to_status,
@@ -1541,3 +1615,44 @@ def get_plan_page_raster(job_id: str, plan_upload_id: str, page_number: int,
     if png is None:
         raise HTTPException(status_code=404, detail="page %r not resolvable" % (page_number,))
     return Response(content=png, media_type="image/png")
+
+
+# --------------------------------------------------------------------------- #
+# Phase-1 handwritten extraction — SOURCE-PAGE byte serving (the review UI's "show the original page").
+# A SEPARATE router mounted ONLY when handwritten_borelog_extraction_optin is set (independent of
+# product_pipeline_api_optin's always-mounted `router` above) -- flag OFF means this path 404s like any
+# other unmounted route, never a half-wired 400/403.
+# --------------------------------------------------------------------------- #
+handwritten_router = APIRouter(prefix="/v2/product")
+
+
+@handwritten_router.get("/jobs/{job_id}/uploads/{upload_id}/borelog-source")
+def get_borelog_source_page_route(job_id: str, upload_id: str, page: int = 0,
+                                  ctx: RequestContext = Depends(get_context),
+                                  c: Container = Depends(get_container)) -> Response:
+    """Serve ONE 0-based page of a stored BORE_LOG upload as an image, for the Phase-1 handwritten-
+    extraction review UI to show the ORIGINAL page beside its parsed row (never a redrawn/overlaid page —
+    the source AS-IS). A PDF page is rasterized on demand (mirrors extract/handwritten_borelog.py::
+    rasterize_page — the SAME helper the extractor itself used); an image upload (.jpg/.jpeg/.png) is one
+    pseudo-page, servable only at page=0. 404 for a missing/cross-tenant job, a non-BORE_LOG or unsafe
+    upload, or an out-of-range page (uniform not-found — mirrors the PHOTO byte-route pattern in
+    api/field_evidence_routes.py + contracts/upload_pipeline.py::resolve_upload_file). Only mounted when
+    handwritten_borelog_extraction_optin is set — otherwise this path 404s because it is never mounted."""
+    cp, store = ctx.tenant.value, _store_root(c)
+    try:
+        resolved = resolve_borelog_source_file(store, cp, job_id, upload_id)
+    except _CONTRACT_ERRORS as exc:
+        raise _to_http(exc)
+    if page < 0:
+        raise HTTPException(status_code=404, detail="page not available")
+    ext = resolved["ext"]
+    if ext == ".pdf":
+        from truelinev2.extract.handwritten_borelog import rasterize_page
+
+        png = rasterize_page(resolved["path"].read_bytes(), page)
+        if png is None:
+            raise HTTPException(status_code=404, detail="page not available")
+        return Response(content=png, media_type="image/png")
+    if page != 0:
+        raise HTTPException(status_code=404, detail="page not available")
+    return FileResponse(str(resolved["path"]), media_type=PHOTO_CONTENT_TYPES.get(ext))

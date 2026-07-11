@@ -67,19 +67,37 @@ class UploadsClosedError(UploadError):
     """Job is past the upload phase; no more uploads accepted."""
 
 
+# Phase-1 handwritten/scanned bore-log extraction: additive image extensions accepted for BORE_LOG ONLY
+# when a caller explicitly opts in (route passes the settings flag). DEFAULT False everywhere -> the
+# accepted-extension set for BORE_LOG is byte-identical to before this evolution.
+IMAGE_BORELOG_EXTENSIONS = (".jpg", ".jpeg", ".png")
+
+
 def _ext(filename) -> str:
     return Path(str(filename)).suffix.lower()
 
 
-def validate_upload(kind, filename, size, *, max_bytes=DEFAULT_MAX_BYTES) -> None:
-    """Validate kind + extension + size. Raises a specific UploadError subclass on rejection."""
+def _allowed_extensions(kind, allow_image_borelog) -> tuple:
+    exts = ACCEPTED_KINDS[kind]
+    if kind == "BORE_LOG" and allow_image_borelog:
+        exts = exts + IMAGE_BORELOG_EXTENSIONS
+    return exts
+
+
+def validate_upload(kind, filename, size, *, max_bytes=DEFAULT_MAX_BYTES,
+                    allow_image_borelog=False) -> None:
+    """Validate kind + extension + size. Raises a specific UploadError subclass on rejection.
+    ``allow_image_borelog`` (DEFAULT False, byte-identical) additionally accepts .jpg/.jpeg/.png for the
+    BORE_LOG kind -- a scanned/photographed bore-log page, gated by the Phase-1 handwritten-extraction
+    flag (never on for any other kind)."""
     if kind not in ACCEPTED_KINDS:
         raise UnknownKindError(
             "unknown upload kind %r (expected one of %r)" % (kind, tuple(ACCEPTED_KINDS)))
-    if _ext(filename) not in ACCEPTED_KINDS[kind]:
+    allowed = _allowed_extensions(kind, allow_image_borelog)
+    if _ext(filename) not in allowed:
         raise RejectedExtensionError(
             "extension %r not allowed for kind %r (allowed: %r)"
-            % (_ext(filename), kind, ACCEPTED_KINDS[kind]))
+            % (_ext(filename), kind, allowed))
     if size <= 0:
         raise EmptyUploadError("refusing an empty upload")
     if size > max_bytes:
@@ -87,15 +105,16 @@ def validate_upload(kind, filename, size, *, max_bytes=DEFAULT_MAX_BYTES) -> Non
 
 
 def accept_upload(store_root, customer_project_id, job_id, *, kind, filename, content,
-                  stored_at, max_bytes=DEFAULT_MAX_BYTES) -> dict:
+                  stored_at, max_bytes=DEFAULT_MAX_BYTES, allow_image_borelog=False) -> dict:
     """Validate + store one upload into a job and append its durable metadata record. Idempotent by
     content (same bytes -> same upload_id -> the existing record is returned, no duplicate file/record).
-    Returns the upload record. Does NOT extract: extraction_status is always "queued"."""
+    Returns the upload record. Does NOT extract: extraction_status is always "queued".
+    ``allow_image_borelog`` (DEFAULT False, byte-identical) is forwarded to ``validate_upload``."""
     if not isinstance(content, (bytes, bytearray)):
         raise UploadError("content must be bytes")
     content = bytes(content)
     size = len(content)
-    validate_upload(kind, filename, size, max_bytes=max_bytes)
+    validate_upload(kind, filename, size, max_bytes=max_bytes, allow_image_borelog=allow_image_borelog)
 
     job = load_job(store_root, customer_project_id, job_id)
     assert_same_project(customer_project_id, job["customer_project_id"])
@@ -174,3 +193,32 @@ def resolve_upload_file(store_root, customer_project_id, job_id, upload_id, *,
     if not path.is_relative_to(root) or not path.is_file():
         raise UploadFileNotFoundError("upload %r payload is not available" % (upload_id,))
     return {"path": path, "content_type": content_type}
+
+
+# Extensions a BORE_LOG upload can serve a SOURCE PAGE image for (Phase-1 handwritten-extraction review UI:
+# show the original page beside the parsed row). .csv/.xlsx BORE_LOG uploads have no "page image" concept
+# and are deliberately excluded (not servable).
+BORE_LOG_SOURCE_EXTENSIONS = (".pdf",) + IMAGE_BORELOG_EXTENSIONS
+
+
+def resolve_borelog_source_file(store_root, customer_project_id, job_id, upload_id) -> dict:
+    """Resolve one stored BORE_LOG upload payload for READ-ONLY source-page byte-serving (mirrors
+    ``resolve_upload_file``'s PHOTO pattern exactly: tenant-safe via ``load_job``, path-safe via the same
+    containment assertion ``delete_job`` uses). Only an upload RECORDED as kind BORE_LOG with a servable
+    extension (a PDF -- rasterized page-by-page by the caller -- or a plain image, servable at page 0) is
+    servable. Pure read: no record, lifecycle, slot, or status change. Returns ``{"path": Path, "ext": str}``;
+    raises UploadFileNotFoundError otherwise (uniform not-found -- never confirms cross-tenant/wrong-kind
+    existence)."""
+    job = load_job(store_root, customer_project_id, job_id)          # exists + isolation first
+    record = next((u for u in job.get("uploads", [])
+                   if u.get("upload_id") == upload_id and u.get("kind") == "BORE_LOG"), None)
+    if record is None:
+        raise UploadFileNotFoundError("no BORE_LOG upload %r on job %r" % (upload_id, job_id))
+    ext = _ext(record.get("stored_path", ""))
+    if ext not in BORE_LOG_SOURCE_EXTENSIONS:
+        raise UploadFileNotFoundError("upload %r has no servable source-page format" % (upload_id,))
+    root = job_dir(store_root, customer_project_id, job_id).resolve()
+    path = (root / str(record.get("stored_path", ""))).resolve()
+    if not path.is_relative_to(root) or not path.is_file():
+        raise UploadFileNotFoundError("upload %r payload is not available" % (upload_id,))
+    return {"path": path, "ext": ext}

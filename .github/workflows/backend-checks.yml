@@ -61,4 +61,6 @@ jobs:
             truelinev2/tests/test_uploaded_corpus_engine_handoff.py \
             truelinev2/tests/test_observability.py \
             truelinev2/tests/test_rate_limit.py \
+            truelinev2/tests/test_handwritten_borelog_extract.py \
+            truelinev2/tests/test_handwritten_borelog_routes.py \
             -q

@@ -22,6 +22,11 @@ placement input:
      (``|end_ft - start_ft|``), flagged with an informational detail (never silently substituted without a
      trace). A footage field that IS present but zero, negative, or non-numeric DECLINES outright (fail-
      closed: the source's own numbers are inconsistent -- never silently replaced by the station delta).
+     EXCEPTION (OCR-only preflight): when the row's ``extraction.extraction_method`` is ``OCR`` and no
+     usable explicit footage exists, this DECLINES with ``OCR_ROW_REQUIRES_EXPLICIT_FOOTAGE`` instead of
+     ever deriving footage from the station delta -- an OCR row's start/end stations are themselves
+     untrusted reads, so silently multiplying two of them into a placement number is never acceptable.
+     Non-OCR methods are unaffected.
 
 Effective row values are resolved by the SAME precedence the reviewed-row rendering surface already uses
 (``render.station_dots.py::resolve_bore_fields`` -- corrected_values > normalized > raw, human CORRECTED
@@ -41,6 +46,7 @@ from __future__ import annotations
 import re
 from typing import Any, Dict, Optional, Tuple
 
+from truelinev2.contracts.extracted_row import OCR
 from truelinev2.contracts.reviewed_bore_log import engine_eligible_row_ids, is_engine_ready
 from truelinev2.schema.models import Bore
 from truelinev2.stations import parse_station
@@ -64,6 +70,15 @@ NONPOSITIVE_FOOTAGE = "NONPOSITIVE_FOOTAGE"
 # from the station delta rather than an explicit footage column -- so a caller can log/surface the honest
 # provenance of that one derived number without treating it as a failure.
 FOOTAGE_FROM_STATION_DELTA = "FOOTAGE_FROM_STATION_DELTA"
+
+# OCR-ONLY PREFLIGHT (Phase-1 handwritten extraction): an OCR-extracted row's footage is UNTRUSTED
+# arithmetic waiting to happen -- deriving it from the station delta would silently promote two
+# independently-fallible OCR reads (start + end station) into a placement number with no human having
+# ever confirmed the footage itself. So for extraction_method == OCR ONLY, a row with no usable explicit
+# footage DECLINES with this named code instead of falling back to the station delta. Non-OCR methods
+# (TABLE_IMPORT / MANUAL_ENTRY / TEXT_PARSE) are completely unaffected -- their station-delta fallback
+# behavior below is unchanged.
+OCR_ROW_REQUIRES_EXPLICIT_FOOTAGE = "OCR_ROW_REQUIRES_EXPLICIT_FOOTAGE"
 
 # Case-insensitive field aliases for pulling canonical bore fields off a free-form reviewed row (mirrors the
 # alias-tolerance PRINCIPLE in render.station_dots.resolve_bore_fields, reimplemented locally so this module
@@ -180,6 +195,8 @@ def bore_from_reviewed_rows(rbl: dict, *, source_filename: str) -> Tuple[Optiona
     if start_ft is None or end_ft is None:
         return None, STATION_UNPARSEABLE
 
+    extraction_method = (row.get("extraction") or {}).get("extraction_method")
+
     detail = None
     footage_raw = _pick(merged, _FIELD_ALIASES["footage"])
     if footage_raw is not None:
@@ -189,8 +206,14 @@ def bore_from_reviewed_rows(rbl: dict, *, source_filename: str) -> Tuple[Optiona
         if footage is None:
             return None, FOOTAGE_NOT_NUMERIC
         if footage <= 0:
+            if extraction_method == OCR:
+                return None, OCR_ROW_REQUIRES_EXPLICIT_FOOTAGE
             return None, NONPOSITIVE_FOOTAGE
     else:
+        # Footage field is truly ABSENT. Non-OCR methods keep the existing station-delta fallback; an
+        # OCR row DECLINES here instead (see OCR_ROW_REQUIRES_EXPLICIT_FOOTAGE above).
+        if extraction_method == OCR:
+            return None, OCR_ROW_REQUIRES_EXPLICIT_FOOTAGE
         delta = abs(end_ft - start_ft)
         if delta <= 0:
             return None, NO_POSITIVE_FOOTAGE

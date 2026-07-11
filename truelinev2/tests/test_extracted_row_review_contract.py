@@ -3,6 +3,8 @@ Generic ids/values only — no customer/person/project/location strings.
 """
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from truelinev2.contracts import extracted_row as er
@@ -112,3 +114,40 @@ def test_no_row_level_engine_eligibility_symbol():
     # NOT expose any row-level engine-eligibility predicate.
     for forbidden in ("row_is_engine_eligible", "engine_eligible", "row_engine_eligible"):
         assert not hasattr(er, forbidden)
+
+
+# --------------------------------------------------------------------------- #
+# Additive: optional per-cell evidence (Phase-1 handwritten extraction, see
+# contracts/handwritten_extraction.py). Absent by default -- byte-identical extraction dict for every
+# existing call site; present ONLY when a caller actually supplies it.
+# --------------------------------------------------------------------------- #
+def test_extraction_dict_unchanged_when_evidence_omitted():
+    row = _row()
+    assert set(row["extraction"].keys()) == {"extraction_method", "extractor_name", "confidence", "warnings"}
+    assert "source_evidence" not in row["extraction"] and "cell_evidence" not in row["extraction"]
+
+
+def test_source_and_cell_evidence_round_trip_when_supplied():
+    source_evidence = {"sha256": "a" * 64, "file": "page.jpg", "page_index": 0, "region": [0.1, 0.1, 0.9, 0.9]}
+    cell_evidence = {
+        "start_station": {"status": "READ", "page_index": 0, "region": [0.0, 0.0, 0.5, 0.5], "verbatim": "48+52"},
+        "depth_ft": {"status": "UNREADABLE", "page_index": 0, "region": None, "verbatim": None},
+    }
+    row = new_extracted_row("row-1", "up-abc123", raw={"start_station": "48+52"}, normalized={},
+                            extraction_method=OCR, confidence="LOW",
+                            source_evidence=source_evidence, cell_evidence=cell_evidence, at=AT, by=BY)
+    assert row["extraction"]["source_evidence"] == source_evidence
+    assert row["extraction"]["cell_evidence"] == cell_evidence
+    # JSON round-trip (rows persist as plain JSON inside reviewed_bore_log.py) preserves both additions.
+    reloaded = json.loads(json.dumps(row))
+    assert reloaded["extraction"]["source_evidence"] == source_evidence
+    assert reloaded["extraction"]["cell_evidence"] == cell_evidence
+
+
+def test_old_shape_row_without_evidence_keys_still_reviewable():
+    # Simulates a record persisted BEFORE this additive evolution: no source_evidence/cell_evidence keys
+    # at all. review_row / row_review_passes must work unchanged (no KeyError, no migration needed).
+    row = _row()
+    assert "source_evidence" not in row["extraction"] and "cell_evidence" not in row["extraction"]
+    row = review_row(row, CONFIRMED, at=AT, by=BY)
+    assert row_review_passes(row) is True

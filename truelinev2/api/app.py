@@ -69,6 +69,14 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         from truelinev2.api.product_pipeline_routes import router as product_pipeline_router
 
         app.include_router(product_pipeline_router)
+        # Phase-1 handwritten-extraction source-page byte serving: a SEPARATE, additionally-gated router
+        # (needs BOTH the product pipeline mounted AND its own opt-in) so the route stays fully dormant
+        # (never mounted, never a half-wired 400/403) until the owner explicitly enables handwritten
+        # extraction.
+        if settings.handwritten_borelog_extraction_optin:
+            from truelinev2.api.product_pipeline_routes import handwritten_router
+
+            app.include_router(handwritten_router)
     if settings.product_readiness_api_optin:
         from truelinev2.api.product_readiness_routes import router as product_readiness_router
 

@@ -37,10 +37,13 @@ _FIELD_ALIASES: Dict[str, Tuple[str, ...]] = {
     "footage": ("footage", "footage_ft", "ft", "feet", "length", "bore_footage"),
     "start_station": ("start_station", "start", "start_sta", "from_station", "sta_start", "s"),
     # depth_min_ft/boc_min_ft are the generic-extractor + strict-reader keys (borelog_rows.py) for the
-    # SAME depth/BOC values manual rows spell "depth"/"boc" — alias both so a source-backed reading from
-    # either lane resolves identically on this dot's info payload (never invented when absent).
-    "depth": ("depth", "bore_depth", "depth_min_ft"),
-    "boc": ("boc", "bottom_of_conduit", "boc_min_ft"),
+    # SAME depth/BOC values manual rows spell "depth"/"boc"; depth_ft/boc_ft are the Phase-1 handwritten-
+    # extraction tier's SpanProposal keys (contracts/handwritten_extraction.py) for the identical concept —
+    # alias all of them so a source-backed reading from ANY lane resolves identically on this dot's info
+    # payload (never invented when absent). Appended LAST (existing keys take precedence on a row that
+    # somehow carries more than one spelling — never a behavior change for any row already resolving today).
+    "depth": ("depth", "bore_depth", "depth_min_ft", "depth_ft"),
+    "boc": ("boc", "bottom_of_conduit", "boc_min_ft", "boc_ft"),
     "date": ("date", "bore_date", "install_date"),
     "crew": ("crew", "crew_name"),
     "print": ("print", "print_raw", "print_no", "print_number", "print_num", "sheet_print"),
