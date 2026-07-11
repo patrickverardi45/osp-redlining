@@ -360,10 +360,38 @@ def test_anthropic_adapter_client_factory_receives_derived_sdk_timeout(monkeypat
     assert received == [85.0]  # max(90 - margin(5), floor(5)) == 85
 
 
-def test_anthropic_adapter_retries_429_then_succeeds(monkeypatch):
+def test_derive_max_attempts_accounts_for_worst_case_backoff():
+    """_derive_max_attempts admits N attempts only when N*sdk_timeout + worst_case_backoff(N) fits inside
+    (seam_timeout - margin) -- NOT just N*sdk_timeout alone (that formula ignores backoff and, worse,
+    compares against the UNMARGINED seam timeout, silently overrunning the budget).
+
+    Worked example (the ticket's own): seam_timeout=10 -> sdk_timeout=max(10-5,5)=5.
+      available = seam_timeout - margin = 10 - 5 = 5
+      N=2 candidate: 2*5 + worst_case_backoff(2) = 10 + 0.1 = 10.1  >  available(5)  -> NOT admissible
+    So corrected max_attempts == 1 for a 10s budget (a single attempt already exceeds the post-margin
+    budget on its own -- there is no room left for a second attempt, let alone its backoff sleep).
+
+    This holds for ANY seam_timeout under the current _derive_sdk_timeout formula: sdk_timeout is defined
+    to consume (almost) the ENTIRE post-margin budget for one attempt by design (see its own docstring),
+    so N=2's worst case (2*sdk_timeout + backoff) always exceeds that same budget. Retries only become
+    reachable if a future change to _derive_sdk_timeout leaves headroom smaller than half the budget.
+    """
+    for seam_timeout in (5, 6, 10, 15, 20, 50, 90, 200, 1000):
+        sdk_timeout = anthropic_messages._derive_sdk_timeout(seam_timeout)
+        assert anthropic_messages._derive_max_attempts(seam_timeout, sdk_timeout) == 1
+
+    # The exact worked example, spelled out.
+    assert anthropic_messages._derive_sdk_timeout(10) == 5.0
+    assert anthropic_messages._worst_case_backoff_seconds(2) == pytest.approx(0.1)
+    assert anthropic_messages._derive_max_attempts(10, 5.0) == 1
+
+
+def test_call_with_retries_retries_429_then_succeeds():
+    """Unit-level proof that the retry LOOP mechanics themselves are correct (attempt counting, backoff,
+    eventual success) given an EXPLICIT max_attempts=2 -- exercised directly rather than through
+    build_provider's real derivation, which (correctly, per the corrected math above) never actually
+    grants more than 1 attempt for any seam timeout."""
     fake_mod = _make_fake_anthropic_module()
-    monkeypatch.setitem(sys.modules, "anthropic", fake_mod)
-    monkeypatch.setenv("TL2_HANDWRITTEN_VISION_MODEL", "test-model-id")
 
     class _Messages:
         def __init__(self):
@@ -375,24 +403,45 @@ def test_anthropic_adapter_retries_429_then_succeeds(monkeypatch):
                 raise fake_mod.RateLimitError("rate limited")
             return _fake_response([_tool_use_block(_valid_tool_input())])
 
-    class _Client:
-        def __init__(self):
-            self.messages = _Messages()
-
-    client = _Client()
-    # timeout_seconds=10 -> sdk_timeout=max(10-5,5)=5 -> max_attempts=max(1,min(3,10//5))=2: exactly
-    # enough budget-bounded attempts to prove a retry-then-succeed, per _derive_max_attempts.
-    fn = anthropic_messages.build_provider(ProviderConfig(timeout_seconds=10),
-                                           client_factory=lambda timeout: client)
+    client = types.SimpleNamespace(messages=_Messages())
     attempts_seen = []
-    context = {"upload_id": "up-1", "sha256": "a" * 64, "file_name": "photo.jpg",
-              "page_index": 0, "page_count": 1, "report_attempts": attempts_seen.append}
 
-    record = fn(b"png-bytes", context)
+    response = anthropic_messages._call_with_retries(
+        client, fake_mod, {"model": "test-model-id"},
+        report_attempts=attempts_seen.append, max_attempts=2)
 
-    assert record["page_status"] == "EXTRACTED"
+    assert response is not None
     assert client.messages.calls == 2
     assert attempts_seen == [1, 2]
+
+
+def test_anthropic_adapter_single_attempt_no_retry_at_derived_budget(monkeypatch):
+    """End-to-end through build_provider's REAL derivation: at a 10s seam budget (or any budget, per the
+    corrected math), a retryable 429 is NOT retried -- only 1 attempt is admissible, so the RateLimitError
+    propagates immediately and the seam classifies it as HANDWRITTEN_PROVIDER_ERROR."""
+    fake_mod = _make_fake_anthropic_module()
+
+    class _Messages:
+        def __init__(self):
+            self.calls = 0
+
+        def create(self, **kwargs):
+            self.calls += 1
+            raise fake_mod.RateLimitError("rate limited")
+
+    class _Client:
+        def __init__(self, **kwargs):
+            self.messages = _Messages()
+
+    fake_mod.Anthropic = _Client
+    monkeypatch.setitem(sys.modules, "anthropic", fake_mod)
+    monkeypatch.setenv("TL2_HANDWRITTEN_VISION_MODEL", "test-model-id")
+
+    out = extract_handwritten(_jpeg_bytes(), "photo.jpg", upload_id="up-1",
+                              provider_name=_ANTHROPIC_MODULE_PATH)
+    refusal = out["pages"][0]["refusal"]
+    assert refusal["code"] == HANDWRITTEN_PROVIDER_ERROR
+    assert "RateLimitError" in refusal["reason"]
 
 
 def test_anthropic_adapter_auth_4xx_no_retry_maps_to_provider_error_via_seam(monkeypatch):

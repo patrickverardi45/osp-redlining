@@ -70,14 +70,21 @@ thread (Python has no safe way to forcibly kill a thread) and reports `HANDWRITT
 it does NOT stop the underlying network call.** To actually bound the real work, the adapter derives an
 explicit SDK-level request timeout from `config.timeout_seconds` — the seam timeout minus a small margin,
 floored at 5s — and passes it to the Anthropic client (`timeout=` kwarg) via its `client_factory`. That
-SDK-level timeout, not the seam's join(), is what actually terminates a hung request. Because a single
-attempt can already take up to that derived timeout, the number of retry attempts is **recomputed DOWN**
-(never above the desired ceiling, never below 1) so the worst case — every attempt using the full
-per-attempt timeout — still fits inside the seam's own overall budget; at the default 90s seam timeout
-this leaves room for only **1** attempt (retries need a larger `TL2_HANDWRITTEN_BORELOG_TIMEOUT_SECONDS`
-to have headroom). The adapter constructs its own `anthropic.Anthropic(max_retries=0, timeout=…)` client,
-so this adapter-level retry loop is the ONLY retry logic in play (no doubled retries from the SDK's own
-default client-level retry behavior).
+SDK-level timeout, not the seam's join(), is what actually terminates a hung request.
+
+**Retry attempts are recomputed DOWN from the desired ceiling** so that `N * sdk_timeout +
+worst_case_backoff(N)` (the true worst case — per-attempt timeout AND the inter-attempt backoff sleeps
+between them, not just `N * sdk_timeout` alone) still fits inside `seam_timeout - margin`. Because
+`sdk_timeout` is itself defined to consume (almost) the *entire* post-margin budget for a single attempt
+(see `_derive_sdk_timeout`), a second attempt's worst case always overruns that same budget — under the
+current formula this means **exactly 1 attempt is admissible for any configured
+`TL2_HANDWRITTEN_BORELOG_TIMEOUT_SECONDS`**, so a 429/5xx/connection error is classified and refused
+(`HANDWRITTEN_PROVIDER_ERROR`) rather than actually retried. The retry LOOP itself (`_call_with_retries`)
+still exists and is unit-tested directly (with an explicit `max_attempts`) — real retry headroom would
+require a future change to how `sdk_timeout` is derived (e.g. reserving less than half the budget for one
+attempt), not just a larger configured timeout. The adapter constructs its own
+`anthropic.Anthropic(max_retries=0, timeout=…)` client, so this adapter-level retry loop is the ONLY retry
+logic in play (no doubled retries from the SDK's own default client-level retry behavior).
 
 ## Observability
 

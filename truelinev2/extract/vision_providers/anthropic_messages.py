@@ -34,8 +34,9 @@ Design points (mirrors ``truelinev2/api/observability.py``'s optional-dependency
     on. This adapter therefore derives an explicit SDK-level request timeout from ``config.timeout_seconds``
     (the seam's own per-page budget) and hands it to the client -- the SDK timeout, not the seam's join(),
     is what actually terminates a hung request. Retry attempts are recomputed DOWN (never up, never below
-    1) so the worst case (every attempt using the full per-attempt timeout) still fits inside the seam's
-    overall budget -- see ``_derive_sdk_timeout``/``_derive_max_attempts``.
+    1) so the worst case -- every attempt using the full per-attempt timeout, PLUS the worst-case
+    inter-attempt backoff sleep (not just ``N * sdk_timeout`` alone) -- still fits inside the seam's
+    overall budget -- see ``_derive_sdk_timeout``/``_worst_case_backoff_seconds``/``_derive_max_attempts``.
 
 No streaming. No network call happens anywhere at IMPORT time -- only inside the returned callable, and
 only when a caller actually invokes it (an unconfigured/absent provider never touches the network).
@@ -176,16 +177,35 @@ def _derive_sdk_timeout(seam_timeout_seconds: float) -> float:
     return max(seam_timeout_seconds - _TIMEOUT_MARGIN_SECONDS, _MIN_SDK_TIMEOUT_SECONDS)
 
 
+def _worst_case_backoff_seconds(n_attempts: int) -> float:
+    """Worst-case (max jitter) total SLEEP time across ``n_attempts`` calls to ``_call_with_retries``.
+    Backoff happens only BETWEEN attempts (after a failed, retryable attempt, before the next one) -- so
+    there are ``n_attempts - 1`` sleeps, not ``n_attempts``. Mirrors ``_call_with_retries``'s own formula
+    (``_BACKOFF_BASE_SECONDS * attempt + jitter``, jitter capped at ``_BACKOFF_BASE_SECONDS``) EXACTLY,
+    so this is a true worst-case bound, not an approximation."""
+    return sum(_BACKOFF_BASE_SECONDS * attempt + _BACKOFF_BASE_SECONDS
+              for attempt in range(1, n_attempts))
+
+
 def _derive_max_attempts(seam_timeout_seconds: float, sdk_timeout: float) -> int:
-    """How many attempts (each up to ``sdk_timeout`` long, worst case) fit inside the seam's own overall
-    per-page budget -- capped at ``_DESIRED_MAX_ATTEMPTS``, never below 1. Recomputed DOWN from the
-    desired retry count when the derived per-attempt timeout leaves little or no room for a retry (e.g.
-    at the default 90s seam timeout, ``sdk_timeout`` already consumes nearly the whole budget, so a
-    single attempt is all that reliably fits) -- a deployment that wants retry headroom configures a
-    larger ``TL2_HANDWRITTEN_BORELOG_TIMEOUT_SECONDS``."""
+    """How many attempts fit inside the seam's own overall per-page budget, accounting for BOTH the
+    per-attempt SDK timeout AND the worst-case inter-attempt backoff sleep -- not just
+    ``n * sdk_timeout``, which ignores backoff and can overrun the budget on its own. ``N`` attempts are
+    admissible only when ``N * sdk_timeout + worst_case_backoff(N) <= (seam_timeout_seconds -
+    margin)`` -- the same margin already reserved when deriving ``sdk_timeout`` itself, so this never
+    re-spends it. Capped at ``_DESIRED_MAX_ATTEMPTS``; NEVER below 1 (the seam's own thread-join still
+    provides an outer floor even if the arithmetic here is tight or negative for a very small budget)."""
     if sdk_timeout <= 0:
         return 1
-    return max(1, min(_DESIRED_MAX_ATTEMPTS, int(seam_timeout_seconds // sdk_timeout)))
+    available = max(seam_timeout_seconds - _TIMEOUT_MARGIN_SECONDS, 0.0)
+    attempts = 1
+    while attempts < _DESIRED_MAX_ATTEMPTS:
+        candidate = attempts + 1
+        worst_case = candidate * sdk_timeout + _worst_case_backoff_seconds(candidate)
+        if worst_case > available:
+            break
+        attempts = candidate
+    return attempts
 
 
 def _is_retryable(anthropic_module: Any, exc: BaseException) -> bool:
