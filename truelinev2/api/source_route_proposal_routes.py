@@ -57,6 +57,7 @@ from truelinev2.contracts.source_route_adoption import (
     derive_route_geometry,
     not_ready_refusal,
     row_effective_stations,
+    row_evidence_hash,
 )
 from truelinev2.harness.product_readiness_bridge import READY_STATUS, run_job_route_readiness_raw
 from truelinev2.stations import parse_station
@@ -152,7 +153,8 @@ def create_source_route_proposal(job_id: str, req: SourceRouteProposalRequest,
     # job's full upload set) — artifact-free, no store write, no PNG.
     allowed_upload_ids = [req.plan_upload_id, rbl.get("source_upload_id")]
     readiness, sheet_ctx = run_job_route_readiness_raw(
-        job.get("uploads") or [], job_dir(store, cp, job_id), allowed_upload_ids=allowed_upload_ids)
+        job.get("uploads") or [], job_dir(store, cp, job_id), allowed_upload_ids=allowed_upload_ids,
+        store_root=store)
     if readiness is None:
         return _refusal(not_ready_refusal(sheet_ctx.get("refusal") or "NO_SPINE_INPUT"))
     if readiness.report.status != READY_STATUS:
@@ -201,7 +203,10 @@ def create_source_route_proposal(job_id: str, req: SourceRouteProposalRequest,
                    "engineering_sheet": sheet_ctx.get("engineering_sheet"), "pdf_page": sheet_ctx.get("pdf_page"),
                    "sheet_offset": sheet_ctx.get("sheet_offset")}
     span_source = {"span_id": span.span_id, "source_file": span.source_file, "source_page": span.source_page,
-                   "reviewed_bore_log_id": req.reviewed_bore_log_id, "row_id": req.row_id}
+                   "reviewed_bore_log_id": req.reviewed_bore_log_id, "row_id": req.row_id,
+                   # Fix-wave F5: the row's FULL effective-value hash (raw < normalized < corrected precedence)
+                   # -- any reviewed/corrected value change (not just stations) invalidates this proposal.
+                   "row_evidence_hash": row_evidence_hash(row)}
     readiness_dict = {"readiness_status": readiness.report.status,
                       "route_isolation_status": verification.route_isolation_status,
                       "main_run_status": verification.main_run_status,

@@ -191,22 +191,15 @@ from truelinev2.contracts.source_anchor import (
     list_source_anchors,
     load_source_anchor,
 )
-# NOTE (P8 OFF-identity): the Phase-2 route-adoption DERIVATION (contracts.source_route_adoption's
-# derive_route_geometry / build_proposal / check_* / row_effective_stations / not_ready_refusal) and the
-# readiness spine (harness.product_readiness_bridge) are imported LAZILY, inside create_source_anchor_route's
-# route_adoption branch ONLY — never at module import time and never called — so a normal SourceAnchorCreate
-# (no route_adoption field, or the new flag OFF) never runs any readiness/hash/projection code. The exception
-# CLASSES below are zero-side-effect, dependency-free (no fitz/harness import) and are imported eagerly ONLY
-# so _to_http's dispatch table (a plain isinstance check) can reference them, exactly like every other
-# contract error class in this file.
-from truelinev2.contracts.source_route_adoption import (
-    RouteAdoptionControlMismatchError,
-    RouteAdoptionError,
-    RouteAdoptionInvalidError,
-    RouteAdoptionNoLongerDefensibleError,
-    RouteAdoptionScopeMismatchError,
-    RouteAdoptionStaleError,
-)
+# Fix-wave F6 (blind-verification FAIL — flag/import isolation): the Phase-2 route-adoption module
+# (contracts.source_route_adoption — derivation functions AND its RouteAdoptionError exception classes) and
+# the readiness spine (harness.product_readiness_bridge) are imported LAZILY, inside
+# create_source_anchor_route's route_adoption branch ONLY — NEVER at module import time, not even the
+# exception classes. `_route_adoption_to_http` below maps a raised RouteAdoptionError to an HTTPException by
+# reading its `.code` attribute as a plain string (duck typing) so this module needs ZERO reference to the
+# source_route_adoption module itself to do the mapping. A normal SourceAnchorCreate (no route_adoption
+# field, or the new flag OFF) therefore imports NOTHING from contracts.source_route_adoption, ever —
+# verified by test_source_route_adoption_api.py::test_flag_off_no_adoption_module_imported (sys.modules probe).
 from truelinev2.ingest.pdf import PlanPdf
 from truelinev2.ingest.sheet_label_index import build_sheet_index, SHEET_TYPE_OTHER
 from truelinev2.render.source_anchor_render import render_job_source_anchors
@@ -298,12 +291,22 @@ class ControlPoint(BaseModel):
 
 
 class RouteAdoptionIn(BaseModel):
-    """Phase-2 (T31 Q4/Q5): present ONLY when the operator is adopting a source-route PROPOSAL — the exact
-    (opaque) ``proposal_hash`` returned by ``POST .../source-route-proposals`` + an explicit ``confirmed=true``.
-    Carries NO geometry (the client submits no candidate/render vertices); the server re-derives + re-hashes
-    from ``control_points`` (the two human clicks) + this request's own plan/rbl/row/page scope."""
+    """Phase-2 (T31 Q4/Q5 + Fix-wave F7): present ONLY when the operator is adopting a source-route PROPOSAL —
+    the exact (opaque) ``proposal_hash`` returned by ``POST .../source-route-proposals`` + an explicit
+    ``confirmed=true``, PLUS an ECHO of the identity/control-points the proposal call was bound to
+    (``plan_upload_id`` / ``reviewed_bore_log_id`` / ``row_id`` / ``page_number`` / ``control_points``). The
+    echo is a CLIENT CLAIM used only to REFINE which refusal code a mismatch produces
+    (``ROUTE_ADOPTION_SCOPE_MISMATCH`` / ``ROUTE_ADOPTION_CONTROL_MISMATCH``) — it is NEVER trusted to grant
+    adoption; the create request's OWN top-level fields are always the source of truth for what gets
+    re-derived and stored, and the full re-derived-hash comparison against ``proposal_hash`` remains the SOLE
+    grant gate regardless of what the echo claims."""
     proposal_hash: str
     confirmed: bool
+    plan_upload_id: str
+    reviewed_bore_log_id: str
+    row_id: str
+    page_number: int
+    control_points: list[ControlPoint]
 
 
 class SourceAnchorCreate(BaseModel):
@@ -371,24 +374,40 @@ def _to_http(exc: Exception) -> HTTPException:
         return HTTPException(status_code=404, detail=str(exc))
     if isinstance(exc, (IllegalTransitionError, UploadsClosedError, HandoffStateError,
                         CloseoutStateError, SourceAnchorStateError,
-                        ReviewAcceptanceStateError, ReReviewWouldDiscardCorrectionsError,
-                        RouteAdoptionControlMismatchError, RouteAdoptionStaleError,
-                        RouteAdoptionNoLongerDefensibleError, RouteAdoptionScopeMismatchError)):  # state conflicts
+                        ReviewAcceptanceStateError, ReReviewWouldDiscardCorrectionsError)):   # state conflicts
         return HTTPException(status_code=409, detail=str(exc))
     if isinstance(exc, (CrossProjectAccessError, IsolationError)):
         return HTTPException(status_code=403, detail=str(exc))
     return HTTPException(status_code=400, detail=str(exc))   # invalid id / bad target / missing reason / ...
-    # (RouteAdoptionInvalidError falls through to this default 400 — its code-first "ROUTE_ADOPTION_INVALID: "
-    # detail string already leads with the code, matching every other 400 here.)
 
 
 # Every contract-error base this router translates to HTTP via _to_http (which dispatches by the specific
 # subclass). A non-contract error is left to propagate (a real 500 — never masked as a 400).
+#
+# Fix-wave F6: RouteAdoptionError is DELIBERATELY NOT here (and never imported at module level — see the note
+# above the (removed) eager import). It is mapped by `_route_adoption_to_http` (duck-typed on `.code`), called
+# ONLY from the route_adoption branch of create_source_anchor_route.
 _CONTRACT_ERRORS = (CustomerProjectError, ProcessingJobError, UploadError, ExtractedRowError,
                     ReviewedBoreLogError, ManifestHandoffError, ConsumerError, CloseoutReviewError,
                     BillingSummaryError, JobPricingError, ExportPackageError, ExportBundleError,
-                    CloseoutPdfError, GisRouteError, SourceAnchorError, ReviewAcceptanceError, IsolationError,
-                    RouteAdoptionError)
+                    CloseoutPdfError, GisRouteError, SourceAnchorError, ReviewAcceptanceError, IsolationError)
+
+
+_ROUTE_ADOPTION_409_CODES = frozenset({
+    "ROUTE_ADOPTION_CONTROL_MISMATCH", "ROUTE_ADOPTION_STALE",
+    "ROUTE_ADOPTION_NO_LONGER_DEFENSIBLE", "ROUTE_ADOPTION_SCOPE_MISMATCH",
+})
+
+
+def _route_adoption_to_http(exc: Exception) -> HTTPException:
+    """Map a RouteAdoptionError to HTTPException WITHOUT importing contracts.source_route_adoption (Fix-wave
+    F6): every RouteAdoptionError subclass sets a class-level ``code`` string attribute and formats
+    ``str(exc)`` as ``"<code>: <message>"`` (code-first, the repo's detail-string convention) — this reads
+    that attribute directly (duck typing) rather than isinstance-checking an imported class. ``code`` not in
+    the 409 set (i.e. ``ROUTE_ADOPTION_INVALID`` or an unrecognized code) falls through to 400."""
+    code = getattr(exc, "code", None)
+    status = 409 if code in _ROUTE_ADOPTION_409_CODES else 400
+    return HTTPException(status_code=status, detail=str(exc))
 
 
 @router.post("/project")
@@ -1457,15 +1476,30 @@ def _route_adoption_enabled(c: Container) -> bool:
 def _rederive_route_adoption(store, cp: str, job_id: str, job: dict, req: SourceAnchorCreate,
                              plan_upload: dict, ctx: RequestContext) -> tuple:
     """Re-run the SAME join + pure geometry derivation the proposal endpoint uses, over THIS create request's
-    own scope fields (plan_upload_id / reviewed_bore_log_id / row_ids[0] / page_number / the two submitted
-    control_points), and verify the re-derived proposal_hash matches ``req.route_adoption.proposal_hash``
-    EXACTLY. Returns ``(route_adoption_record_block, render_control_points)`` on success. Every failure raises
-    a specific ``RouteAdoptionError`` subclass (mapped by ``_to_http``); this function is the ONLY place that
-    imports the readiness spine / hash / projection code, and ONLY reached when route_adoption is present AND
-    the three-way flag gate is enabled."""
-    # Lazy imports (P8 OFF-identity): reached only inside this function, only when route_adoption + the flag
-    # are both present/enabled.
+    OWN top-level scope fields (plan_upload_id / reviewed_bore_log_id / row_ids[0] / page_number / the two
+    submitted control_points — the create request's own fields are ALWAYS the source of truth for what gets
+    re-derived and stored; the ``route_adoption`` echo is a client CLAIM used only to classify a mismatch's
+    refusal code), and verifies the re-derived proposal_hash matches ``req.route_adoption.proposal_hash``
+    EXACTLY (the sole grant gate). Returns ``(route_adoption_record_block, render_control_points)`` on success.
+
+    Fix-wave F7 refusal ORDER: (0) malformed shape -> ``ROUTE_ADOPTION_INVALID`` 400; (1) echo identity tuple
+    (plan/rbl/row/page) != the create request's own identity tuple -> ``ROUTE_ADOPTION_SCOPE_MISMATCH`` 409;
+    (2) echo control_points != the create request's control_points -> ``ROUTE_ADOPTION_CONTROL_MISMATCH`` 409;
+    (3) current re-derivation itself refuses -> ``ROUTE_ADOPTION_NO_LONGER_DEFENSIBLE`` 409 (nested current
+    refusal code); (4) re-derived hash != ``proposal_hash`` -> ``ROUTE_ADOPTION_STALE`` 409.
+
+    Fix-wave F6: this function (and ONLY this function / its caller's route_adoption branch) imports the
+    readiness spine / hash / projection code AND the ``RouteAdoptionError`` exception classes — nothing here
+    is imported at module level. ONLY reached when route_adoption is present AND the three-way flag gate is
+    enabled."""
+    # Lazy imports (Fix-wave F6 OFF-identity): reached only inside this function, only when route_adoption +
+    # the flag are both present/enabled. The exception classes are lazy too (unlike the pre-fix-wave version).
     from truelinev2.contracts.source_route_adoption import (
+        RouteAdoptionControlMismatchError,
+        RouteAdoptionInvalidError,
+        RouteAdoptionNoLongerDefensibleError,
+        RouteAdoptionScopeMismatchError,
+        RouteAdoptionStaleError,
         build_proposal,
         check_cross_page,
         check_row_engine_eligible,
@@ -1475,35 +1509,58 @@ def _rederive_route_adoption(store, cp: str, job_id: str, job: dict, req: Source
         derive_route_geometry,
         not_ready_refusal,
         row_effective_stations,
+        row_evidence_hash,
     )
     from truelinev2.harness.product_readiness_bridge import READY_STATUS, run_job_route_readiness_raw
     from truelinev2.stations import parse_station
 
     ra = req.route_adoption
+
+    # (0) malformed shape -> 400 ROUTE_ADOPTION_INVALID.
     if len(req.control_points) != 2:
         raise RouteAdoptionInvalidError("control_points must contain exactly two controls when "
                                         "route_adoption is present")
+    if len(ra.control_points) != 2:
+        raise RouteAdoptionInvalidError("route_adoption.control_points (the echoed proposal binding) must "
+                                        "contain exactly two controls")
     if ra.confirmed is not True:
         raise RouteAdoptionInvalidError("route_adoption.confirmed must be true")
     if not _PROPOSAL_HASH_RE.match(ra.proposal_hash or ""):
         raise RouteAdoptionInvalidError("route_adoption.proposal_hash is not a well-formed sha256 hash")
-    row_ids = req.row_ids or []
-    if len(row_ids) != 1:
+
+    create_row_ids = req.row_ids or []
+    if len(create_row_ids) != 1 or req.group_id is not None:
         raise RouteAdoptionScopeMismatchError(
-            "route_adoption requires exactly one row_id (got %d)" % (len(row_ids),))
-    if req.group_id is not None:
-        raise RouteAdoptionScopeMismatchError("route_adoption is row-scoped and cannot carry a group_id")
-    row_id = row_ids[0]
+            "route_adoption requires the create request to carry exactly one row_id and no group_id")
+    row_id = create_row_ids[0]
+
+    # (1) echo identity tuple vs the create request's OWN identity tuple -> 409 SCOPE_MISMATCH. The echo is a
+    # client CLAIM (never trusted for derivation) — it must agree with what is ACTUALLY being created.
+    create_identity = (req.plan_upload_id, req.reviewed_bore_log_id, row_id, req.page_number)
+    echo_identity = (ra.plan_upload_id, ra.reviewed_bore_log_id, ra.row_id, ra.page_number)
+    if create_identity != echo_identity:
+        raise RouteAdoptionScopeMismatchError(
+            "the create request's plan_upload_id/reviewed_bore_log_id/row_id/page_number differs from the "
+            "route_adoption echo of the proposal it claims to adopt")
+
+    # (2) echo control_points vs the create request's OWN control_points -> 409 CONTROL_MISMATCH.
+    echo_points = [(p.x, p.y) for p in ra.control_points]
+    create_points = [(p.x, p.y) for p in req.control_points]
+    if echo_points != create_points:
+        raise RouteAdoptionControlMismatchError(
+            "the create request's control_points differ from the route_adoption echo of the human clicks "
+            "the proposal was bound to")
 
     try:
         rbl = load_reviewed_bore_log(store, cp, job_id, req.reviewed_bore_log_id)
     except ReviewedBoreLogNotFoundError as exc:
-        raise SourceAnchorError(str(exc)) from exc
+        raise RouteAdoptionScopeMismatchError("reviewed_bore_log %r no longer exists" % req.reviewed_bore_log_id) from exc
     row = next((r for r in rbl.get("rows", []) if r.get("row_id") == row_id), None)
     if row is None:
         raise RouteAdoptionScopeMismatchError("no row %r in reviewed_bore_log %r"
                                               % (row_id, req.reviewed_bore_log_id))
 
+    # (3) current re-derivation itself refuses -> 409 NO_LONGER_DEFENSIBLE (nested current refusal code).
     def _refuse(refusal):
         raise RouteAdoptionNoLongerDefensibleError(
             "current re-derivation refuses: %s — %s" % (refusal.code, refusal.message))
@@ -1517,7 +1574,8 @@ def _rederive_route_adoption(store, cp: str, job_id: str, job: dict, req: Source
 
     allowed_upload_ids = [req.plan_upload_id, rbl.get("source_upload_id")]
     readiness, sheet_ctx = run_job_route_readiness_raw(
-        job.get("uploads") or [], job_dir(store, cp, job_id), allowed_upload_ids=allowed_upload_ids)
+        job.get("uploads") or [], job_dir(store, cp, job_id), allowed_upload_ids=allowed_upload_ids,
+        store_root=store)
     if readiness is None:
         _refuse(not_ready_refusal(sheet_ctx.get("refusal") or "NO_SPINE_INPUT"))
     if readiness.report.status != READY_STATUS:
@@ -1564,7 +1622,10 @@ def _rederive_route_adoption(store, cp: str, job_id: str, job: dict, req: Source
                    "engineering_sheet": sheet_ctx.get("engineering_sheet"), "pdf_page": sheet_ctx.get("pdf_page"),
                    "sheet_offset": sheet_ctx.get("sheet_offset")}
     span_source = {"span_id": span.span_id, "source_file": span.source_file, "source_page": span.source_page,
-                   "reviewed_bore_log_id": req.reviewed_bore_log_id, "row_id": row_id}
+                   "reviewed_bore_log_id": req.reviewed_bore_log_id, "row_id": row_id,
+                   # Fix-wave F5: the row's FULL effective-value hash -- ANY reviewed/corrected value change
+                   # (not just stations) between proposal and create invalidates this proposal.
+                   "row_evidence_hash": row_evidence_hash(row)}
     readiness_dict = {"readiness_status": readiness.report.status,
                       "route_isolation_status": verification.route_isolation_status,
                       "main_run_status": verification.main_run_status,
@@ -1575,6 +1636,9 @@ def _rederive_route_adoption(store, cp: str, job_id: str, job: dict, req: Source
         reach_tol=float(reach_tol), human_start=human_start, human_end=human_end, geometry=geometry,
         confirmed_by=ctx.session_id)
 
+    # (4) re-derived hash != submitted proposal_hash -> 409 STALE. This remains the SOLE grant gate: even
+    # though (1)/(2) above already required the echo to agree with the create request, nothing about the echo
+    # itself can cause an adoption — only a matching hash can.
     if proposal.proposal_hash != ra.proposal_hash:
         raise RouteAdoptionStaleError(
             "the re-derived proposal_hash no longer matches the submitted route_adoption.proposal_hash")
@@ -1640,8 +1704,12 @@ def create_source_anchor_route(job_id: str, req: SourceAnchorCreate,
         try:
             route_adoption_block, render_points = _rederive_route_adoption(
                 store, cp, job_id, job, req, plan_upload, ctx)
-        except _CONTRACT_ERRORS as exc:
+        except _CONTRACT_ERRORS as exc:                        # e.g. invalid job/tenant state surfaced mid-derivation
             raise _to_http(exc)
+        except Exception as exc:                                # RouteAdoptionError (duck-typed; Fix-wave F6 — see
+            if getattr(exc, "code", "").startswith("ROUTE_ADOPTION_"):    # note above the removed eager import)
+                raise _route_adoption_to_http(exc)
+            raise
         try:
             return create_source_anchor_v2(
                 store, cp, job_id,
