@@ -43,8 +43,15 @@ CONNECTOR_WARNING = "HUMAN_CONTROL_TO_BACKBONE_CONNECTOR"
 
 _PROPOSAL_ID_PREFIX = "rap-"
 _HASH_PREFIX = "sha256:"
-_EPS = 1e-6            # coincidence / dedup epsilon (post JSON round-trip float noise)
-_CHAINAGE_EPS = 1e-6   # "same chainage" tie/coincide epsilon
+# Fix-wave F1/F2/F3/F4 (blind-verification FAIL): every GEOMETRIC proximity/contiguity/tolerance/dedup/
+# connector rule is EXACT — no epsilon. `_TIE_EPS` is the ONLY remaining tolerance in this module and it
+# exists SOLELY to group multiple independently-computed candidate distances that are the SAME real number
+# (two segments meeting at a shared vertex necessarily produce point-identical projections whose floating
+# `math.hypot` results can differ in the last bit) into one tie set for `_resolve_projection`'s tie-vs-
+# ambiguous decision — it is never used to treat two DIFFERENT physical locations as equal, never used for
+# backbone contiguity, never used for the reach_tol boundary, never used for dedup, and never used to decide
+# whether a human click coincides with its projection.
+_TIE_EPS = 1e-9
 
 # --- Q3 geometry / connectivity refusal codes -------------------------------------------------------------- #
 BACKBONE_EMPTY = "BACKBONE_EMPTY"
@@ -240,8 +247,15 @@ def _dist(a: Tuple[float, float], b: Tuple[float, float]) -> float:
     return math.hypot(a[0] - b[0], a[1] - b[1])
 
 
-def _coincident(a: Tuple[float, float], b: Tuple[float, float], eps: float = _EPS) -> bool:
-    return _dist(a, b) <= eps
+def _norm0(v: float) -> float:
+    return 0.0 if v == 0.0 else v          # -0.0 -> 0.0, otherwise identity
+
+
+def _exact_point_eq(a: Tuple[float, float], b: Tuple[float, float]) -> bool:
+    """EXACT point equality (Fix-wave F1/F3): after ``-0.0`` normalization, bit-for-bit float equality — NO
+    proximity epsilon. This is the ONLY notion of "same point" backbone contiguity, render-polyline dedup, and
+    connector-warning detection use. A 5e-7 gap is a DIFFERENT point, full stop."""
+    return (_norm0(a[0]), _norm0(a[1])) == (_norm0(b[0]), _norm0(b[1]))
 
 
 # ============================================================================================================ #
@@ -250,8 +264,10 @@ def _coincident(a: Tuple[float, float], b: Tuple[float, float], eps: float = _EP
 def backbone_points_from_segments(segments: Sequence[Dict[str, Any]]
                                   ) -> Tuple[Optional[List[Tuple[float, float]]], Optional[RouteAdoptionRefusal]]:
     """Convert ordered ``{"a":(x,y), "b":(x,y)}`` segments into an ordered point chain
-    ``[seg0.a, seg0.b, seg1.b, ...]``, requiring every ``segments[i].b == segments[i+1].a`` (contiguous, after
-    finite-float normalization). Returns ``(points, None)`` on success or ``(None, refusal)``."""
+    ``[seg0.a, seg0.b, seg1.b, ...]``, requiring every ``segments[i].b == segments[i+1].a`` EXACTLY (after
+    finite-float ``-0.0`` normalization ONLY — Fix-wave F1: no proximity epsilon; a gap as small as 5e-7 is
+    ``BACKBONE_DISCONTINUOUS``, never silently welded). Returns ``(points, None)`` on success or
+    ``(None, refusal)``."""
     segs = list(segments or [])
     if not segs:
         return None, RouteAdoptionRefusal(BACKBONE_EMPTY, "no backbone geometry was verified to adopt a route "
@@ -264,7 +280,7 @@ def backbone_points_from_segments(segments: Sequence[Dict[str, Any]]
             b = _coerce_point(seg["b"])
             if i == 0:
                 pts.append(a)
-            elif not _coincident(prev_b, a):
+            elif not _exact_point_eq(prev_b, a):
                 return None, RouteAdoptionRefusal(
                     BACKBONE_DISCONTINUOUS,
                     "the verified backbone is not one contiguous chain (a break between segment %d and %d) — "
@@ -308,8 +324,9 @@ def _project_onto_segment(p: Tuple[float, float], a: Tuple[float, float], b: Tup
 
 def _project_onto_backbone(p: Tuple[float, float], points: Sequence[Tuple[float, float]],
                            chainages: Sequence[float]) -> List[Projection]:
-    """Every candidate projection (one per segment) with minimum distance; ties within ``_EPS`` are ALL
-    returned (the caller decides shared-vertex-tie-acceptable vs distinct-chainage-ambiguous)."""
+    """Every candidate projection (one per segment) with minimum distance; ties within ``_TIE_EPS`` (float-repr
+    noise ONLY — see the module-level comment) are ALL returned (the caller decides shared-vertex-tie-
+    acceptable vs distinct-chainage-ambiguous)."""
     n = len(points) - 1
     candidates: List[Projection] = []
     for i in range(n):
@@ -318,7 +335,7 @@ def _project_onto_backbone(p: Tuple[float, float], points: Sequence[Tuple[float,
         seg_chainage = chainages[i] + t * (chainages[i + 1] - chainages[i])
         candidates.append(Projection(i, t, t_un, proj, _dist(p, proj), seg_chainage))
     min_dist = min(c.distance for c in candidates)
-    return [c for c in candidates if abs(c.distance - min_dist) <= _EPS]
+    return [c for c in candidates if abs(c.distance - min_dist) <= _TIE_EPS]
 
 
 def _resolve_projection(label: str, p: Tuple[float, float], points: Sequence[Tuple[float, float]],
@@ -340,38 +357,44 @@ def _resolve_projection(label: str, p: Tuple[float, float], points: Sequence[Tup
     proj = best[0]
 
     n = len(points) - 1
-    if (proj.segment_index == 0 and proj.t_unclamped < -_EPS) or \
-       (proj.segment_index == n - 1 and proj.t_unclamped > 1.0 + _EPS):
+    if (proj.segment_index == 0 and proj.t_unclamped < 0.0) or \
+       (proj.segment_index == n - 1 and proj.t_unclamped > 1.0):
         return None, RouteAdoptionRefusal(
             extent_code, "the marked %s falls beyond the verified backbone's drawn extent — refusing rather "
             "than extrapolating source geometry that was never drawn." % label)
 
-    if proj.distance > reach_tol + _EPS:
+    # Fix-wave F2: EXACT reach_tol boundary — dist <= reach_tol, NO epsilon. A control at exactly reach_tol
+    # succeeds; math.nextafter(reach_tol, +inf) at distance refuses. No slack is granted for float noise here
+    # because reach_tol is itself an observer-reported value, not independently re-derived on both sides.
+    if proj.distance > reach_tol:
         return None, RouteAdoptionRefusal(
             outside_code, "the marked %s is farther from the verified observer backbone than the source "
             "observer's endpoint tolerance." % label)
     return proj, None
 
 
-def classify_control_pair(start_proj, end_proj, *, n_segments: int = 2) -> Optional[RouteAdoptionRefusal]:
+def classify_control_pair(start_proj, end_proj) -> Optional[RouteAdoptionRefusal]:
     """Pure comparison of two already-resolved projections (each exposing ``.segment_index`` / ``.chainage`` —
     accepts a real ``Projection`` or any duck-typed stand-in, so this comparison is directly unit-testable
     without needing to construct geometry that organically produces every case): same-segment, coincident-
-    chainage, then reversed-order. Checked in this order because SAME_BACKBONE_SEGMENT and
-    CONTROL_PROJECTIONS_COINCIDE are both degenerate "no route between them" cases (same-segment is the more
-    specific/common one under a monotonic-chainage single-chain projection — see module test notes), and
-    CONTROL_ORDER_REVERSED only applies once the two projections are confirmed distinct.
+    chainage, then reversed-order.
 
-    ``n_segments`` is the TOTAL segment count of the verified backbone: the same-segment refusal only makes
-    sense when there is more than one segment to choose from (a legitimate single-segment straight backbone
-    trivially puts both controls on "the same segment" — segment 0 — and must NOT refuse; the smell this code
-    catches is a multi-segment backbone whose marked controls collapse onto one short sub-stretch of it,
-    ignoring the rest of the verified route)."""
-    if start_proj.segment_index == end_proj.segment_index and n_segments > 1:
+    Fix-wave F4 (blind-verification FAIL): the same-segment refusal applies UNCONDITIONALLY, including a
+    backbone with only one segment total. A straight sub-segment of a single straight segment proposes NOTHING
+    a human couldn't already draw with the existing honest two-click manual straight line — there is no source
+    bend to preserve, so adoption offers no value and must refuse rather than manufacture a redundant
+    "source-backed" straight stroke. Checked BEFORE the coincide check (both are degenerate "no route between
+    them" cases; same-segment is the more specific/common one and takes precedence). ``CONTROL_ORDER_REVERSED``
+    only applies once the two projections are confirmed on distinct segments at distinct chainages.
+
+    Both the same-segment and coincide comparisons are EXACT (Fix-wave F1-F4: no epsilon) — ``segment_index``
+    equality is already exact int comparison, and ``chainage`` equality below is bit-for-bit float equality."""
+    if start_proj.segment_index == end_proj.segment_index:
         return RouteAdoptionRefusal(
-            CONTROLS_ON_SAME_BACKBONE_SEGMENT, "both marked controls project onto the same short stretch of "
-            "verified backbone — there is no source-backed route between them to propose.")
-    if abs(start_proj.chainage - end_proj.chainage) <= _CHAINAGE_EPS:
+            CONTROLS_ON_SAME_BACKBONE_SEGMENT, "both marked controls project onto the same backbone segment — "
+            "a straight sub-segment proposes nothing over the honest manual straight line; there is no "
+            "source-backed route between them to propose.")
+    if start_proj.chainage == end_proj.chainage:
         return RouteAdoptionRefusal(
             CONTROL_PROJECTIONS_COINCIDE, "both marked controls project to the same point on the verified "
             "backbone — there is no source-backed route between them to propose.")
@@ -386,9 +409,11 @@ def classify_control_pair(start_proj, end_proj, *, n_segments: int = 2) -> Optio
 # End-to-end pure derivation.
 # ============================================================================================================ #
 def _dedup_consecutive(points: Sequence[Tuple[float, float]]) -> List[Tuple[float, float]]:
+    """Remove CONSECUTIVE EXACT duplicates only (Fix-wave F3: ``_exact_point_eq``, no epsilon) — a point that
+    merely lies near its neighbor is never collapsed; only a bit-for-bit identical successor is dropped."""
     out: List[Tuple[float, float]] = []
     for p in points:
-        if not out or not _coincident(out[-1], p):
+        if not out or not _exact_point_eq(out[-1], p):
             out.append(p)
     return out
 
@@ -438,26 +463,32 @@ def derive_route_geometry(*, backbone_segments: Sequence[Dict[str, Any]], gap_br
     if refusal is not None:
         return None, refusal
 
-    refusal = classify_control_pair(start_proj, end_proj, n_segments=len(points) - 1)
+    refusal = classify_control_pair(start_proj, end_proj)
     if refusal is not None:
         return None, refusal
 
+    # Fix-wave F3: chainage strictly-between selection is EXACT (no epsilon buffer) — a vertex whose chainage
+    # is bit-for-bit equal to a projection's chainage is the projection point itself (not "interior"); anything
+    # strictly between, however close, is a real preserved backbone vertex and is NEVER dropped.
     interior = [points[i] for i in range(len(points))
-               if start_proj.chainage + _CHAINAGE_EPS < chainages[i] < end_proj.chainage - _CHAINAGE_EPS]
+               if start_proj.chainage < chainages[i] < end_proj.chainage]
     clip = [start_proj.point] + interior + [end_proj.point]
-    if _polyline_length(clip) <= _EPS:
+    if _polyline_length(clip) == 0.0:
         return None, RouteAdoptionRefusal(
             ZERO_LENGTH_PROPOSAL, "the source-backed clip between the two projections has zero length — "
             "nothing to propose.")
 
+    # Fix-wave F3 (no silent terminus snap): dedup on EXACT equality only. A nonzero human-click-to-projection
+    # delta ALWAYS keeps both points AND emits HUMAN_CONTROL_TO_BACKBONE_CONNECTOR below — the stored terminus
+    # is ALWAYS the exact human click, never silently replaced by its projection.
     render_raw = [human_start_pt] + clip + [human_end_pt]
     render = _dedup_consecutive(render_raw)
-    if _polyline_length(render) <= _EPS:
+    if _polyline_length(render) == 0.0:
         return None, RouteAdoptionRefusal(
             ZERO_LENGTH_PROPOSAL, "the proposed render polyline has zero length — nothing to propose.")
 
     warnings: List[str] = []
-    if not _coincident(human_start_pt, start_proj.point) or not _coincident(human_end_pt, end_proj.point):
+    if not _exact_point_eq(human_start_pt, start_proj.point) or not _exact_point_eq(human_end_pt, end_proj.point):
         warnings.append(CONNECTOR_WARNING)
 
     return {
@@ -486,15 +517,24 @@ def _row_norm_key(k: Any) -> str:
     return re.sub(r"[^a-z0-9]+", "_", str(k).strip().lower()).strip("_")
 
 
-def row_effective_stations(row: Dict[str, Any]) -> Tuple[Optional[str], Optional[str]]:
-    """Effective (start, end) station TEXT for one reviewed extracted_row, by precedence
-    raw < normalized < review.corrected_values (human CORRECTED wins last). Either may be ``None`` when the
-    row carries no recognizable station column under any of the standard synonyms."""
+def _row_effective_merge(row: Dict[str, Any]) -> Dict[str, Any]:
+    """The full merged EFFECTIVE row dict by precedence raw < normalized < review.corrected_values (human
+    CORRECTED wins last) — every field, not just stations. Keys folded via ``_row_norm_key`` for alias
+    matching, mirroring the SAME precedence ``row_effective_stations`` and ``contracts.closeout_pdf`` /
+    ``render.station_dots`` already use."""
     merged: Dict[str, Any] = {}
     for layer in (row.get("raw"), row.get("normalized"), (row.get("review") or {}).get("corrected_values")):
         if isinstance(layer, dict):
             for k, v in layer.items():
                 merged[_row_norm_key(k)] = v
+    return merged
+
+
+def row_effective_stations(row: Dict[str, Any]) -> Tuple[Optional[str], Optional[str]]:
+    """Effective (start, end) station TEXT for one reviewed extracted_row, by precedence
+    raw < normalized < review.corrected_values (human CORRECTED wins last). Either may be ``None`` when the
+    row carries no recognizable station column under any of the standard synonyms."""
+    merged = _row_effective_merge(row)
 
     def _pick(aliases: Tuple[str, ...]) -> Optional[str]:
         for a in aliases:
@@ -503,6 +543,17 @@ def row_effective_stations(row: Dict[str, Any]) -> Tuple[Optional[str], Optional
         return None
 
     return _pick(_ROW_STATION_ALIASES["start_station"]), _pick(_ROW_STATION_ALIASES["end_station"])
+
+
+def row_evidence_hash(row: Dict[str, Any]) -> str:
+    """Fix-wave F5 (blind-verification FAIL — trust boundary): a canonical SHA-256 hex digest of the row's
+    FULL effective merged values (the SAME raw < normalized < review.corrected_values precedence
+    ``row_effective_stations`` uses, but every field — not just stations). Folded into ``span_source`` and
+    therefore into BOTH the proposal hash and the candidate-route hash, so changing ANY reviewed/corrected
+    value on the row (e.g. a corrected depth, with stations unchanged) between proposal generation and create
+    invalidates the proposal — the create-time re-derivation produces a DIFFERENT hash and refuses
+    ``ROUTE_ADOPTION_STALE`` rather than silently adopting geometry bound to stale row evidence."""
+    return sha256_hex(_row_effective_merge(row))
 
 
 # ============================================================================================================ #
