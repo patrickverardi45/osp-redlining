@@ -476,6 +476,75 @@ def test_reported_code_route_evidence_not_ready_bad_upstream_shape_is_400(tmp_pa
     _assert_detail_code(exc, "MANUAL_ROUTE_INVALID")
 
 
+def test_reported_code_upstream_reason_code_trailing_newline_is_400_f2_b2(tmp_path):
+    """Fix-wave B2 (Sol xhigh verification): Python's ``$`` anchor matches immediately before a trailing
+    ``\\n``, so a naive ``.match()`` against ``^[A-Z][A-Z0-9_]{0,63}$`` would let
+    ``"NO_SOURCE_CONFIRMED_SPAN\\n"`` through. The validator now uses ``.fullmatch()`` -- must 400."""
+    c, ctx = _container(tmp_path), _ctx()
+    plan_upload_id, rbl_id, row_id = _seed_job(tmp_path, c, ctx)
+    with pytest.raises(HTTPException) as exc:
+        ppr.create_source_anchor_route(_JOB, ppr.SourceAnchorCreate(
+            source_anchor_id="sa-1", plan_upload_id=plan_upload_id, reviewed_bore_log_id=rbl_id,
+            page_number=1, control_points=_STRAIGHT_2PT, row_ids=[row_id],
+            manual_route=_manual(
+                representative_status="REPRESENTATIVE_STRAIGHT_ACCEPTED",
+                reported_route_search=_reported("ROUTE_EVIDENCE_NOT_READY",
+                                                "NO_SOURCE_CONFIRMED_SPAN\n"))),
+            ctx=ctx, c=c)
+    assert exc.value.status_code == 400
+    _assert_detail_code(exc, "MANUAL_ROUTE_INVALID")
+
+
+def test_reported_code_upstream_reason_code_embedded_newline_is_400_f2_b2(tmp_path):
+    """Fix-wave B2: an embedded newline must not let ``^...$`` re-anchor on a false "whole line" -- 400."""
+    c, ctx = _container(tmp_path), _ctx()
+    plan_upload_id, rbl_id, row_id = _seed_job(tmp_path, c, ctx)
+    with pytest.raises(HTTPException) as exc:
+        ppr.create_source_anchor_route(_JOB, ppr.SourceAnchorCreate(
+            source_anchor_id="sa-1", plan_upload_id=plan_upload_id, reviewed_bore_log_id=rbl_id,
+            page_number=1, control_points=_STRAIGHT_2PT, row_ids=[row_id],
+            manual_route=_manual(
+                representative_status="REPRESENTATIVE_STRAIGHT_ACCEPTED",
+                reported_route_search=_reported("ROUTE_EVIDENCE_NOT_READY",
+                                                "NO_SOURCE\nCONFIRMED_SPAN"))),
+            ctx=ctx, c=c)
+    assert exc.value.status_code == 400
+    _assert_detail_code(exc, "MANUAL_ROUTE_INVALID")
+
+
+def test_reported_code_upstream_reason_code_exactly_64_chars_accepted_f2_b2(tmp_path):
+    """Fix-wave B2: the boundary itself -- ``^[A-Z][A-Z0-9_]{0,63}$`` allows 1 + 63 = 64 chars total."""
+    c, ctx = _container(tmp_path), _ctx()
+    plan_upload_id, rbl_id, row_id = _seed_job(tmp_path, c, ctx)
+    code64 = "A" + "B" * 63
+    assert len(code64) == 64
+    rec = ppr.create_source_anchor_route(_JOB, ppr.SourceAnchorCreate(
+        source_anchor_id="sa-1", plan_upload_id=plan_upload_id, reviewed_bore_log_id=rbl_id,
+        page_number=1, control_points=_STRAIGHT_2PT, row_ids=[row_id],
+        manual_route=_manual(representative_status="REPRESENTATIVE_STRAIGHT_ACCEPTED",
+                             reported_route_search=_reported("ROUTE_EVIDENCE_NOT_READY", code64))),
+        ctx=ctx, c=c)
+    assert rec["manual_route"]["reported_route_search"] == {
+        "code": "ROUTE_EVIDENCE_NOT_READY", "upstream_reason_code": code64}
+
+
+def test_reported_code_upstream_reason_code_65_chars_is_400_f2_b2(tmp_path):
+    """Fix-wave B2: one char past the boundary -- 65 chars total -- must 400."""
+    c, ctx = _container(tmp_path), _ctx()
+    plan_upload_id, rbl_id, row_id = _seed_job(tmp_path, c, ctx)
+    code65 = "A" + "B" * 64
+    assert len(code65) == 65
+    with pytest.raises(HTTPException) as exc:
+        ppr.create_source_anchor_route(_JOB, ppr.SourceAnchorCreate(
+            source_anchor_id="sa-1", plan_upload_id=plan_upload_id, reviewed_bore_log_id=rbl_id,
+            page_number=1, control_points=_STRAIGHT_2PT, row_ids=[row_id],
+            manual_route=_manual(representative_status="REPRESENTATIVE_STRAIGHT_ACCEPTED",
+                                 reported_route_search=_reported("ROUTE_EVIDENCE_NOT_READY", code65))),
+            ctx=ctx, c=c)
+    assert exc.value.status_code == 400
+    _assert_detail_code(exc, "MANUAL_ROUTE_INVALID")
+
+
 def test_reported_code_non_not_ready_with_upstream_reason_code_is_400(tmp_path):
     """Cross-field rule, other direction: ANY code other than ROUTE_EVIDENCE_NOT_READY must carry a null/
     absent upstream_reason_code."""

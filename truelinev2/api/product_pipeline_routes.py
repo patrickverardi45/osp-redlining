@@ -1508,6 +1508,11 @@ def _manual_route_enabled(c: Container) -> bool:
 
 
 _UPSTREAM_REASON_CODE_RE = re.compile(r"^[A-Z][A-Z0-9_]{0,63}$")
+# NOTE (fix-wave B2, Sol xhigh verification): matched via ``.fullmatch()`` below, never ``.match()`` --
+# Python's ``$`` anchor matches immediately before a trailing ``\n`` too, so ``.match()`` against this
+# same pattern would let a value like ``"NO_SOURCE_CONFIRMED_SPAN\n"`` through. ``.fullmatch()`` requires
+# the ENTIRE string to match the pattern (no trailing newline, no embedded newline splitting it into two
+# "lines" one of which happens to satisfy ``^...$``), which is what "whole-string" was always meant to mean.
 
 
 def _validate_reported_route_search(reported: ReportedRouteSearchIn) -> dict:
@@ -1531,7 +1536,8 @@ def _validate_reported_route_search(reported: ReportedRouteSearchIn) -> dict:
             "reported_route_search.code %r is not one of the route-search refusal codes the proposal "
             "endpoint can report" % (reported.code,))
     if reported.code == ROUTE_EVIDENCE_NOT_READY:
-        if not reported.upstream_reason_code or not _UPSTREAM_REASON_CODE_RE.match(reported.upstream_reason_code):
+        if not reported.upstream_reason_code \
+                or not _UPSTREAM_REASON_CODE_RE.fullmatch(reported.upstream_reason_code):
             raise ManualRouteError(
                 "reported_route_search.upstream_reason_code is required (shape ^[A-Z][A-Z0-9_]{0,63}$) when "
                 "code is ROUTE_EVIDENCE_NOT_READY")
