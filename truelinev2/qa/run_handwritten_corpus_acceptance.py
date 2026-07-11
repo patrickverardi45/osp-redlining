@@ -254,8 +254,18 @@ def _compute_stats(file_records: List[dict]) -> dict:
             for warning in entry.get("warnings") or []:
                 warnings_histogram[_warning_bucket(warning)] += 1
 
-        page_method_by_index = {page["source"]["page_index"]: page["method"] for page in fr["pages"]}
+        # proposals_by_method is derived FORWARD, from each page's own ledger entry (page.method + that
+        # SAME page_index's page_ledger.proposal_count) -- never backward by re-deriving a page_index from
+        # a proposal and hoping it round-trips through a separately built lookup. A SpanProposal carries
+        # no "method" field of its own (only its owning page does); page_ledger.proposal_count is already
+        # the authoritative, independently-reconciled count of that exact page's proposals (see
+        # ``build_page_ledger``), so summing it by ``page["method"]`` is correct by construction and never
+        # depends on a proposal's ``source.page_index`` matching anything.
+        ledger_by_index = {entry["page_index"]: entry for entry in fr["page_ledger"]}
         for page in fr["pages"]:
+            ledger_entry = ledger_by_index.get(page["source"]["page_index"])
+            if ledger_entry is not None:
+                proposals_by_method[page["method"]] += ledger_entry["proposal_count"]
             for field in ("date", "crew", "job_name", "print_raw"):
                 cell = page["header"][field]
                 field_status["header.%s" % field][cell["status"]] += 1
@@ -269,8 +279,6 @@ def _compute_stats(file_records: List[dict]) -> dict:
                         confidence_distribution[cell["confidence"]] += 1
 
         for proposal in fr["proposals"]:
-            method = page_method_by_index.get(proposal["source"]["page_index"], "UNKNOWN")
-            proposals_by_method[method] += 1
             if proposal.get("confidence") is not None:
                 confidence_distribution[proposal["confidence"]] += 1
 

@@ -78,11 +78,15 @@ def test_keyless_run_over_mini_corpus_refuses_image_page_and_exits_clean(tmp_pat
 
 
 # --------------------------------------------------------------------------- #
-# (b) deterministic fake-provider run -- VISION_OCR proposals counted.
+# (b) deterministic fake-provider run -- VISION_OCR proposals counted, alongside TEXT_LAYER proposals in
+# the SAME corpus/report, so the "proposals_by_method" histogram is proven to carry BOTH entries at once
+# (not just a VISION_OCR-only corpus, which could hide a bucket that silently drops one method).
 # --------------------------------------------------------------------------- #
 def test_fake_provider_run_produces_counted_vision_ocr_proposal(tmp_path):
     corpus = tmp_path / "corpus"
     corpus.mkdir()
+    (corpus / "log.pdf").write_bytes(
+        _pdf_bytes([HEADER_LINES + ["STA 0+00 3.5 5'", "STA 0+50 3.5 5'", "STA 1+00 3.5 5'"]]))
     png_bytes = _png_bytes()
     (corpus / "photo.png").write_bytes(png_bytes)
     fixtures_dir = tmp_path / "fixtures"
@@ -104,9 +108,15 @@ def test_fake_provider_run_produces_counted_vision_ocr_proposal(tmp_path):
     assert exit_code == 0
     report = _report(out_dir)
     assert report["verdict"] == "CLEAN"
-    assert report["stats"]["pages_by_outcome"].get("EXTRACTED") == 1
+    assert report["stats"]["pages_by_outcome"].get("EXTRACTED") == 2
+    # Total proposal count across the mixed corpus (1 TEXT_LAYER PDF proposal + 1 VISION_OCR PNG
+    # proposal) must equal the sum of the by-method histogram exactly -- this is the exact real-run
+    # symptom (a VISION_OCR proposal present in the proposals list but absent from the histogram).
+    total_proposals = sum(f["proposal_count"] for f in report["files"])
+    assert total_proposals == 2
+    assert sum(report["stats"]["proposals_by_method"].values()) == total_proposals
+    assert report["stats"]["proposals_by_method"].get("TEXT_LAYER") == 1
     assert report["stats"]["proposals_by_method"].get("VISION_OCR") == 1
-    assert report["files"][0]["proposal_count"] == 1
 
 
 # --------------------------------------------------------------------------- #
