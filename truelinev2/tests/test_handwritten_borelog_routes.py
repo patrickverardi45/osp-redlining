@@ -283,6 +283,23 @@ def test_row_review_corrected_requires_and_accepts_corrections(tmp_path):
     assert row["review"]["status"] == CORRECTED and row["review"]["corrected_values"] == {"s": "0+10"}
 
 
+def test_row_review_confirmed_re_review_wiping_corrections_is_409(tmp_path):
+    c, ctx = _container(tmp_path, handwritten=True), _ctx("cp-aaa")
+    _job(c, ctx)
+    _rbl_with_one_row(c, ctx)
+    ppr.review_row_route("job-1", "rbl-1", "row-1",
+                         ppr.RowReview(to_status=CORRECTED, corrected_values={"s": "0+10"}),
+                         ctx=ctx, c=c)
+    with pytest.raises(HTTPException) as exc:
+        ppr.review_row_route("job-1", "rbl-1", "row-1", ppr.RowReview(to_status=CONFIRMED), ctx=ctx, c=c)
+    assert exc.value.status_code == 409
+    assert "RE_REVIEW_WOULD_DISCARD_CORRECTIONS" in exc.value.detail
+    # Corrections survive the refused attempt.
+    record = ppr.get_reviewed_bore_log_record("job-1", "rbl-1", ctx=ctx, c=c)
+    row = next(r for r in record["rows"] if r["row_id"] == "row-1")
+    assert row["review"]["status"] == CORRECTED and row["review"]["corrected_values"] == {"s": "0+10"}
+
+
 def test_row_review_confirmed_forbids_corrections_400(tmp_path):
     c, ctx = _container(tmp_path, handwritten=True), _ctx("cp-aaa")
     _job(c, ctx)

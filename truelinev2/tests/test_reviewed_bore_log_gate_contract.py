@@ -10,7 +10,15 @@ import pytest
 from truelinev2.contracts.customer_project import create_customer_project
 from truelinev2.contracts.processing_job import create_job
 from truelinev2.contracts.upload_pipeline import accept_upload
-from truelinev2.contracts.extracted_row import CONFIRMED, OCR, REJECTED, new_extracted_row
+from truelinev2.contracts.extracted_row import (
+    CONFIRMED,
+    CORRECTED,
+    OCR,
+    REJECTED,
+    RE_REVIEW_WOULD_DISCARD_CORRECTIONS,
+    ReReviewWouldDiscardCorrectionsError,
+    new_extracted_row,
+)
 from truelinev2.contracts.reviewed_bore_log import (
     AMBIGUOUS,
     GROUPING_CONFIRMED,
@@ -103,6 +111,54 @@ def test_confirmed_in_confirmed_group_is_eligible_and_ready(tmp_path):
     rbl = load_reviewed_bore_log(tmp_path, CP, JOB, RBL)
     assert engine_eligible_row_ids(rbl) == ["row-1"]
     assert row_engine_eligible(rbl, "row-1") is True and is_engine_ready(rbl) is True
+
+
+# --------------------------------------------------------------------------- #
+# Doctrine guard, PERSISTED: a re-review to CONFIRMED that would wipe existing corrected_values is refused
+# 409 (RE_REVIEW_WOULD_DISCARD_CORRECTIONS), leaves the row's banked review state untouched on disk, but
+# the REFUSAL ATTEMPT ITSELF is recorded in the reviewed_bore_log's audit trail and persisted.
+# --------------------------------------------------------------------------- #
+def test_review_row_in_log_refuses_wipe_and_persists_refusal_audit(tmp_path):
+    up = _mk_rbl(tmp_path)
+    add_extracted_rows(tmp_path, CP, JOB, RBL, [_row("row-1", up)], at=AT, by=BY)
+    review_row_in_log(tmp_path, CP, JOB, RBL, "row-1", CORRECTED, at=AT, by=BY,
+                      corrected_values={"station": "0+10"})
+
+    with pytest.raises(ReReviewWouldDiscardCorrectionsError):
+        review_row_in_log(tmp_path, CP, JOB, RBL, "row-1", CONFIRMED, at=AT, by=BY)
+
+    # Corrections survive on disk (a fresh load, not an in-memory artifact).
+    rbl = load_reviewed_bore_log(tmp_path, CP, JOB, RBL)
+    row = next(r for r in rbl["rows"] if r["row_id"] == "row-1")
+    assert row["review"]["status"] == CORRECTED
+    assert row["review"]["corrected_values"] == {"station": "0+10"}
+    # The refusal ATTEMPT is recorded (and persisted) in the reviewed_bore_log's own audit trail.
+    refusals = [a for a in rbl["audit"] if a.get("action") == "row_review_refused"]
+    assert len(refusals) == 1
+    assert refusals[0]["row_id"] == "row-1" and refusals[0]["attempted_to"] == CONFIRMED
+    assert refusals[0]["code"] == RE_REVIEW_WOULD_DISCARD_CORRECTIONS
+
+
+def test_review_row_in_log_idempotent_cases_still_succeed(tmp_path):
+    up = _mk_rbl(tmp_path)
+    add_extracted_rows(tmp_path, CP, JOB, RBL, [_row("row-1", up), _row("row-2", up)], at=AT, by=BY)
+
+    # CONFIRMED -> CONFIRMED (no corrections ever) stays OK.
+    review_row_in_log(tmp_path, CP, JOB, RBL, "row-1", CONFIRMED, at=AT, by=BY)
+    review_row_in_log(tmp_path, CP, JOB, RBL, "row-1", CONFIRMED, at=AT, by=BY)
+    rbl = load_reviewed_bore_log(tmp_path, CP, JOB, RBL)
+    row1 = next(r for r in rbl["rows"] if r["row_id"] == "row-1")
+    assert row1["review"]["status"] == CONFIRMED
+
+    # CORRECTED -> CORRECTED with the SAME values resent stays OK.
+    review_row_in_log(tmp_path, CP, JOB, RBL, "row-2", CORRECTED, at=AT, by=BY,
+                      corrected_values={"station": "0+20"})
+    review_row_in_log(tmp_path, CP, JOB, RBL, "row-2", CORRECTED, at=AT, by=BY,
+                      corrected_values={"station": "0+20"})
+    rbl = load_reviewed_bore_log(tmp_path, CP, JOB, RBL)
+    row2 = next(r for r in rbl["rows"] if r["row_id"] == "row-2")
+    assert row2["review"]["status"] == CORRECTED
+    assert row2["review"]["corrected_values"] == {"station": "0+20"}
 
 
 def test_same_run_segments_eligible(tmp_path):

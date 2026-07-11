@@ -57,6 +57,17 @@ class ReviewInputError(ExtractedRowError):
     """A review action is missing a required input (corrected_values / reason)."""
 
 
+class ReReviewWouldDiscardCorrectionsError(ExtractedRowError):
+    """A re-review to CONFIRMED with NO corrected_values on a row that currently HAS non-empty
+    corrected_values -- refused (state conflict, 409 via the API) rather than silently wiping banked human
+    corrections. Doctrine: banked human review is never overridden. The caller must either resend the SAME
+    corrections, or use CORRECTED with the corrections it actually intends."""
+
+
+# Named reason code carried on ReReviewWouldDiscardCorrectionsError's message (also the API's 409 detail).
+RE_REVIEW_WOULD_DISCARD_CORRECTIONS = "RE_REVIEW_WOULD_DISCARD_CORRECTIONS"
+
+
 def _require_nonempty_str(value, label) -> str:
     if not isinstance(value, str) or not value:
         raise ExtractedRowError("%s must be a non-empty string (got %r)" % (label, value))
@@ -115,8 +126,13 @@ def new_extracted_row(row_id, source_upload_id, *, raw, normalized, extraction_m
 
 def review_row(row, to_status, *, at, by, reason=None, corrected_values=None) -> dict:
     """Apply one audited human review decision to a row. CORRECTED requires corrected_values;
-    REJECTED / NEEDS_CLARIFICATION require a reason. Re-review is allowed (every decision is audited).
-    Mutates + returns the row. Does NOT confer engine eligibility (grouping is required — see
+    REJECTED / NEEDS_CLARIFICATION require a reason. Re-review is allowed (every decision is audited) --
+    EXCEPT a re-review to CONFIRMED with no corrected_values on a row that currently HAS non-empty
+    corrected_values, which would silently DISCARD banked human corrections (doctrine: banked human review
+    is never overridden); that ONE transition raises ``ReReviewWouldDiscardCorrectionsError`` instead and
+    mutates NOTHING. Every other CONFIRMED re-review (a fresh row, or one with no corrections to lose) and
+    every CORRECTED re-review (always resupplies its own corrected_values) stays idempotent-OK, unchanged.
+    Mutates + returns the row on success. Does NOT confer engine eligibility (grouping is required — see
     reviewed_bore_log.py)."""
     if to_status not in REVIEW_STATUSES:
         raise InvalidReviewStatusError(
@@ -125,6 +141,11 @@ def review_row(row, to_status, *, at, by, reason=None, corrected_values=None) ->
         raise ReviewInputError("CORRECTED requires non-empty corrected_values")
     if to_status in (REJECTED, NEEDS_CLARIFICATION) and not reason:
         raise ReviewInputError("%s requires a reason" % to_status)
+    if to_status == CONFIRMED and not corrected_values and row["review"].get("corrected_values"):
+        raise ReReviewWouldDiscardCorrectionsError(
+            "re-review to CONFIRMED with no corrected_values would discard this row's existing "
+            "corrections (%s); resend the SAME corrections, or use CORRECTED with the corrections you "
+            "actually intend" % RE_REVIEW_WOULD_DISCARD_CORRECTIONS)
     frm = row["review"]["status"]
     prior_values = row["review"].get("corrected_values")
     corrected = dict(corrected_values) if corrected_values else None
