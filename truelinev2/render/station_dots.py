@@ -16,6 +16,13 @@ It is deliberately geometry-only and schema-agnostic:
     match / sweep. Degenerate input (< 2 points, zero-length polyline, non-positive footage) -> no dots.
 
 Provenance on every dot is HUMAN_CONFIRMED_CONTROL_POINTS (never AUTO, never the deterministic frontier).
+
+ADDENDUM (Mission 8, owner's STATION-DOT CONTRACT, ``.foreman/scratch/m8/design-dots.md``, BINDING): by
+EXPLICIT owner instruction, the render/ fence is lifted -- ADDITIVELY ONLY -- on exactly two functions
+below, ``compute_station_dots`` and ``stroke_polyline_with_dots``, to accept an optional ``marks``
+parameter (a list of evidence-bound dot definitions built by ``contracts/station_marks.py``). ``marks``
+defaults to ``None``, in which case both functions reproduce their PRE-ADDENDUM behavior byte-for-byte
+(covered by a locked identity test) -- every other function in this module is untouched.
 """
 from __future__ import annotations
 
@@ -120,38 +127,104 @@ def _arclen_dots(control_points, footage: float, interval_ft: float
     return out
 
 
+def _arclen_at(control_points, footage: float, footages: Sequence[float]
+               ) -> List[Tuple[float, float, Tuple[float, float]]]:
+    """(footage_along, arc_length_pt, xy) at each GIVEN footage-along value -- the ``marks``-path
+    counterpart of ``_arclen_dots`` (which derives its own footage list via ``dot_marks``). SAME
+    self-calibrated footage/total-length scale + SAME degenerate guards; [] if degenerate. Addendum-only
+    helper (see module docstring); does not change ``_arclen_dots``/``dot_marks``/``_point_at``."""
+    try:
+        pts = [_xy(p) for p in (control_points or [])]
+    except (KeyError, TypeError, ValueError):
+        return []
+    if len(pts) < 2 or footage is None or footage <= 0:
+        return []
+    cum = _cumulative(pts)
+    total = cum[-1]
+    if total <= 0:
+        return []
+    out = []
+    for fa in footages:
+        target_pt = (fa / float(footage)) * total
+        out.append((fa, target_pt, _point_at(pts, cum, target_pt)))
+    return out
+
+
 def compute_station_dots(control_points, *, footage, start_station: Optional[str] = None,
-                         interval_ft: float = DEFAULT_INTERVAL_FT, info: Optional[Dict[str, Any]] = None
+                         interval_ft: float = DEFAULT_INTERVAL_FT, info: Optional[Dict[str, Any]] = None,
+                         marks: Optional[List[Dict[str, Any]]] = None
                          ) -> List[Dict[str, Any]]:
     """Clickable dot payloads along the human polyline. Returns [] safely on degenerate input (< 2 points,
-    zero-length polyline, non-positive footage). ``station`` is derived only when ``start_station`` parses."""
+    zero-length polyline, non-positive footage). ``station`` is derived only when ``start_station`` parses.
+
+    ADDENDUM: when ``marks`` is ``None`` this is the EXACT pre-addendum behavior (locked byte-identity).
+    When ``marks`` is provided (a list built by ``contracts/station_marks.py``), each dot's position comes
+    from the SAME arclen/``_point_at`` math + 2-decimal ``xy_display`` contract, but at the MARK's own
+    ``footage_along`` (never the generic 50' ladder), and its ``station``/``depth``/``boc``/``notes``/
+    ``station_evidence`` come from the MARK (not from ``info``) -- ``depth``/``boc``/``notes`` are
+    included ONLY when that mark actually carries them (a SOURCE_RECORDED mark with recorded values;
+    DERIVED_INTERVAL fill never invents them). Bore-level ``date``/``crew``/``print``/``bore_log_id``
+    (from ``info``) and ``provenance`` are still attached to EVERY dot either way."""
     info = info or {}
-    start_ft = parse_station(start_station) if start_station else None
+    if marks is None:
+        start_ft = parse_station(start_station) if start_station else None
+        dots = []
+        for i, (fa, _pt, (x, y)) in enumerate(_arclen_dots(control_points, footage, interval_ft)):
+            station = feet_to_station(start_ft + fa) if start_ft is not None else None
+            dots.append({
+                "index": i,
+                "footage_along": round(fa, 2),
+                "station": station,
+                "xy_display": {"x": round(float(x), 2), "y": round(float(y), 2)},
+                "depth": info.get("depth"),
+                "boc": info.get("boc"),
+                "date": info.get("date"),
+                "crew": info.get("crew"),
+                "print": info.get("print"),
+                "notes": info.get("notes"),
+                "bore_log_id": info.get("bore_log_id"),
+                "provenance": PROVENANCE_HUMAN,
+            })
+        return dots
+
+    footages = [float(m.get("footage_along", 0.0)) for m in marks]
     dots = []
-    for i, (fa, _pt, (x, y)) in enumerate(_arclen_dots(control_points, footage, interval_ft)):
-        station = feet_to_station(start_ft + fa) if start_ft is not None else None
-        dots.append({
+    for i, (mark, (fa, _pt, (x, y))) in enumerate(zip(marks, _arclen_at(control_points, footage, footages))):
+        dot = {
             "index": i,
             "footage_along": round(fa, 2),
-            "station": station,
+            "station": mark.get("station"),
             "xy_display": {"x": round(float(x), 2), "y": round(float(y), 2)},
-            "depth": info.get("depth"),
-            "boc": info.get("boc"),
+            "origin": mark.get("origin"),
             "date": info.get("date"),
             "crew": info.get("crew"),
             "print": info.get("print"),
-            "notes": info.get("notes"),
             "bore_log_id": info.get("bore_log_id"),
             "provenance": PROVENANCE_HUMAN,
-        })
+        }
+        if mark.get("depth") is not None:
+            dot["depth"] = mark["depth"]
+        if mark.get("boc") is not None:
+            dot["boc"] = mark["boc"]
+        if mark.get("notes") is not None:
+            dot["notes"] = mark["notes"]
+        if mark.get("station_evidence") is not None:
+            dot["station_evidence"] = mark["station_evidence"]
+        dots.append(dot)
     return dots
 
 
-def stroke_polyline_with_dots(control_points, *, footage, interval_ft: float = DEFAULT_INTERVAL_FT
+def stroke_polyline_with_dots(control_points, *, footage, interval_ft: float = DEFAULT_INTERVAL_FT,
+                              marks: Optional[List[Dict[str, Any]]] = None
                               ) -> List[Tuple[float, float]]:
     """The human polyline with the dot positions merged in (arc-length ordered, coincident points deduped) —
     the exact same visual path, now carrying the footage marks as vertices so the renderer's marker rings land
-    on them. Falls back to the bare control points when there are no dots."""
+    on them. Falls back to the bare control points when there are no dots.
+
+    ADDENDUM: ``marks=None`` is the EXACT pre-addendum behavior (locked byte-identity). When ``marks`` is
+    provided, the merged-in vertices sit at the MARKS' own footage-along positions (the SAME positions
+    ``compute_station_dots(marks=...)`` placed its dots at) instead of the generic 50' ladder -- so the
+    drawn stroke's extra vertices always align with wherever the dots actually are."""
     try:
         pts = [_xy(p) for p in (control_points or [])]
     except (KeyError, TypeError, ValueError):
@@ -162,8 +235,13 @@ def stroke_polyline_with_dots(control_points, *, footage, interval_ft: float = D
     if cum[-1] <= 0 or footage is None or footage <= 0:
         return pts
     marked: List[Tuple[float, Tuple[float, float]]] = [(cum[i], pts[i]) for i in range(len(pts))]
-    for fa, target_pt, xy in _arclen_dots(control_points, footage, interval_ft):
-        marked.append((target_pt, xy))
+    if marks is None:
+        for fa, target_pt, xy in _arclen_dots(control_points, footage, interval_ft):
+            marked.append((target_pt, xy))
+    else:
+        footages = [float(m.get("footage_along", 0.0)) for m in marks]
+        for fa, target_pt, xy in _arclen_at(control_points, footage, footages):
+            marked.append((target_pt, xy))
     marked.sort(key=lambda t: t[0])
     out: List[Tuple[float, float]] = []
     for _c, (x, y) in marked:

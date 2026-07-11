@@ -49,6 +49,34 @@ CONFIRMATION_STATE_HUMAN_REVIEWED = "HUMAN_REVIEWED"
 SOURCE_ANCHORS_SUBDIR = "source_anchors"
 SOURCE_ANCHOR_FILENAME = "_source_anchor.json"
 
+# Mission 8 (honest representative fallback + manual N-point polyline): the SECOND explicit-confirmation
+# provenance mode for a v2 record, mutually exclusive with ``route_adoption``. Reuses the ALREADY-EXISTING
+# ``GEOMETRY_BASIS_HUMAN_CLICKED`` constant above (it was defined at v2's own introduction as "the honest
+# default when unspecified" but was never actually STORED anywhere until now -- a v1 record simply omits
+# ``geometry_basis`` entirely) and the ALREADY-EXISTING ``CONFIRMATION_STATE_HUMAN_REVIEWED`` constant.
+# ``representative_status`` vocabulary (Sol Q2, count<->status COUNT-DERIVED, never client-declared free
+# text): exactly 2 control points -> REPRESENTATIVE_STRAIGHT_ACCEPTED (the honest label for the two-point
+# fallback chord the owner's screenshot defect showed rendering unlabeled); >=3 -> MANUAL_POLYLINE_CONFIRMED
+# (the operator added/moved/removed bend points before confirming). A mismatch between the submitted count
+# and the submitted status is refused by the API layer (``MANUAL_ROUTE_STATUS_MISMATCH``) BEFORE this module
+# is ever reached -- validation of the wire request lives in ``api/product_pipeline_routes.py`` (mirroring
+# where ``route_adoption``'s own request-shape validation lives), never here.
+REPRESENTATIVE_STRAIGHT_ACCEPTED = "REPRESENTATIVE_STRAIGHT_ACCEPTED"
+MANUAL_POLYLINE_CONFIRMED = "MANUAL_POLYLINE_CONFIRMED"
+
+# Mission 8 create-time refusal codes (code-first detail string convention, matching ``RouteAdoptionError``).
+# Unlike ``RouteAdoptionError`` (deliberately NOT a contract-error / NOT imported at module scope in the API
+# router, so the flag-off path can prove zero import of ``contracts.source_route_adoption`` in a fresh
+# subprocess), these subclass ``SourceAnchorError`` -- they carry NO dependency on
+# ``contracts.source_route_adoption`` themselves (that module is touched ONLY, and lazily, by the API route's
+# own ``reported_route_search`` taxonomy check), so eager import here creates no isolation risk, and doing so
+# lets every one of these fall through the EXISTING ``_to_http`` / ``_CONTRACT_ERRORS`` machinery unchanged
+# (a bare ``SourceAnchorError`` already maps to a code-first 400 -- no new dispatch branch needed).
+MANUAL_ROUTE_NOT_ENABLED = "MANUAL_ROUTE_NOT_ENABLED"
+MANUAL_ROUTE_INVALID = "MANUAL_ROUTE_INVALID"
+MANUAL_ROUTE_STATUS_MISMATCH = "MANUAL_ROUTE_STATUS_MISMATCH"
+MANUAL_ROUTE_PROVENANCE_CONFLICT = "MANUAL_ROUTE_PROVENANCE_CONFLICT"
+
 PLAN_PDF_KIND = "PLAN_PDF"
 PROVENANCE = "HUMAN_CONFIRMED_CONTROL_POINTS"
 COORDINATE_SPACE = "pdf_display_space"
@@ -101,6 +129,38 @@ class SourceAnchorNotFoundError(SourceAnchorError):
 class SourceAnchorStateError(SourceAnchorError):
     """source_anchor is not in a state that permits the requested action (e.g. not VALIDATED/renderable,
     or its reviewed_bore_log is no longer engine-ready)."""
+
+
+class ManualRouteError(SourceAnchorError):
+    """Base for a Mission-8 manual-route create-time refusal. ``code`` LEADS ``str(exc)`` (the repo's
+    code-first detail-string convention, matching ``RouteAdoptionError``) so ``detail.split(":", 1)[0] ==
+    code``. A bare ``ManualRouteError`` (this class, uninstantiated by a subclass) carries
+    ``MANUAL_ROUTE_INVALID`` -- the catch-all for a well-typed-but-semantically-invalid manual_route block
+    (``confirmed`` literally false, a zero-length polyline, or an unrecognized/malformed
+    ``reported_route_search``)."""
+    code = MANUAL_ROUTE_INVALID
+
+    def __init__(self, message: str):
+        super().__init__("%s: %s" % (self.code, message))
+        self.message = message
+
+
+class ManualRouteNotEnabledError(ManualRouteError):
+    """400 -- ``manual_route`` present on the request but ``TL2_SOURCE_ANCHOR_MANUAL_ROUTE_OPTIN`` is OFF."""
+    code = MANUAL_ROUTE_NOT_ENABLED
+
+
+class ManualRouteStatusMismatchError(ManualRouteError):
+    """400 -- the submitted control_points COUNT does not match the submitted
+    ``manual_route.representative_status`` (2 <-> REPRESENTATIVE_STRAIGHT_ACCEPTED, >=3 <->
+    MANUAL_POLYLINE_CONFIRMED)."""
+    code = MANUAL_ROUTE_STATUS_MISMATCH
+
+
+class ManualRouteProvenanceConflictError(ManualRouteError):
+    """400 -- both ``manual_route`` and ``route_adoption`` present on the same create request (mutually
+    exclusive provenance); validated BEFORE either provenance branch runs."""
+    code = MANUAL_ROUTE_PROVENANCE_CONFLICT
 
 
 def validate_source_anchor_id(source_anchor_id) -> str:
@@ -293,21 +353,41 @@ def create_source_anchor(store_root, customer_project_id, job_id, *, source_anch
 
 def create_source_anchor_v2(store_root, customer_project_id, job_id, *, source_anchor_id, plan_upload_id,
                             reviewed_bore_log_id, page_number, render_control_points, group_id, at, by,
-                            route_adoption, row_ids=None, start_identity=None, end_identity=None, notes=None,
-                            page_bounds=None) -> dict:
-    """Create + evaluate a SERVER-DERIVED, source-route-ADOPTED source-anchor record (T31 Q5): identical
-    renderability evaluation + persistence discipline as ``create_source_anchor``, but ``record_format`` is
-    ``trueline-source-anchor-2`` and ``control_points`` stores the caller-supplied SERVER-DERIVED render
-    polyline (the human clicks + the clipped observer backbone in between) so the EXISTING renderer / station-
-    dot call path (which reads ``control_points`` generically) consumes it unmodified.
+                            route_adoption=None, manual_route=None, row_ids=None, start_identity=None,
+                            end_identity=None, notes=None, page_bounds=None) -> dict:
+    """Create + evaluate a v2 (``trueline-source-anchor-2``) source-anchor record: identical renderability
+    evaluation + persistence discipline as ``create_source_anchor``, but requires EXACTLY ONE of two
+    MUTUALLY EXCLUSIVE explicit-confirmation provenance modes (Mission 8):
 
-    This function performs NO re-derivation, NO readiness spine run, and NO hashing itself — the caller (the
-    API route) has ALREADY re-derived + hash-verified the adoption via ``contracts.source_route_adoption``
-    before calling this; ``route_adoption`` is the FULLY-BUILT Q5 record block (plan_source / span_source /
-    human_control_points / candidate_route_points / connectivity / warnings / confirmed_by / confirmed_at /
-    candidate_route_hash / proposal_hash) to store verbatim. Renders nothing, runs no engine, creates no
-    output slot; the job must exist and be in-scope (404 upstream); a duplicate id raises (no silent
-    overwrite)."""
+    - ``route_adoption`` (T31 Q5, UNCHANGED): a SERVER-DERIVED, source-route-ADOPTED record.
+      ``render_control_points`` is the human clicks + the clipped observer backbone in between;
+      ``geometry_basis`` is forced to ``OBSERVER_BACKBONE_HUMAN_ADOPTED``. This function performs NO
+      re-derivation, NO readiness spine run, and NO hashing itself — the caller (the API route) has ALREADY
+      re-derived + hash-verified the adoption via ``contracts.source_route_adoption`` before calling this;
+      ``route_adoption`` is the FULLY-BUILT Q5 record block (plan_source / span_source /
+      human_control_points / candidate_route_points / connectivity / warnings / confirmed_by / confirmed_at /
+      candidate_route_hash / proposal_hash) to store VERBATIM (byte-for-byte unchanged from the original
+      single-mode landing — every key/value/order below is IDENTICAL to before this function grew a second
+      mode).
+    - ``manual_route`` (Mission 8, NEW): a HUMAN-CLICKED N-point polyline the operator explicitly confirmed
+      (either the honest two-point "representative straight segment" fallback, or a >=3-point manual bend
+      polyline). ``render_control_points`` is the operator's OWN clicks verbatim (start/intermediate/end, NO
+      welding/simplification/snap); ``geometry_basis`` is forced to ``GEOMETRY_BASIS_HUMAN_CLICKED``. The
+      caller has ALREADY validated the wire request (``confirmed``, ``representative_status`` vs count,
+      zero-length, ``reported_route_search`` taxonomy — ``api/product_pipeline_routes.py``); ``manual_route``
+      here is the PARTIALLY-BUILT record block (``representative_status`` / ``reported_route_search`` /
+      ``confirmed_by`` / ``confirmed_at``) — this function derives ``human_control_points``
+      {start,end,intermediate[]} + ``intermediate_point_count`` itself, FROM THE SAME NORMALIZED point list
+      it stores in ``control_points`` (never from a separate raw echo), so "exact" means numerically
+      unchanged after this module's own float normalization, never raw JSON bytes.
+
+    In both modes, in every OTHER respect this is identical to ``create_source_anchor``: renders nothing,
+    runs no engine, creates no output slot; the job must exist and be in-scope (404 upstream); a duplicate id
+    raises (no silent overwrite)."""
+    if (route_adoption is None) == (manual_route is None):
+        raise SourceAnchorError(
+            "create_source_anchor_v2 requires EXACTLY ONE of route_adoption/manual_route (got %s)"
+            % ("neither" if route_adoption is None else "both"))
     validate_customer_project_id(customer_project_id)
     validate_job_id(job_id)
     validate_source_anchor_id(source_anchor_id)
@@ -317,6 +397,12 @@ def create_source_anchor_v2(store_root, customer_project_id, job_id, *, source_a
         raise SourceAnchorError("source_anchor already exists: %s" % (source_anchor_id,))
 
     points = _normalize_points(render_control_points)
+    if manual_route is not None and len(points) < MIN_CONTROL_POINTS:
+        # Defensive precondition, not reachable via the API route (which 400s a count/status mismatch before
+        # ever calling this): a manual_route confirmation always names a valid representative_status derived
+        # from a count of >= MIN_CONTROL_POINTS, so this only guards a direct/malformed caller.
+        raise SourceAnchorError(
+            "manual_route requires >= %d control points (got %d)" % (MIN_CONTROL_POINTS, len(points)))
     row_ids = list(row_ids) if row_ids else []
     blockers, checks = _evaluate_renderability(
         store_root, customer_project_id, job_id, job, plan_upload_id=plan_upload_id,
@@ -325,38 +411,89 @@ def create_source_anchor_v2(store_root, customer_project_id, job_id, *, source_a
     renderable = not blockers
     status = STATUS_VALIDATED if renderable else STATUS_REJECTED
 
-    record = {
-        "record_format": RECORD_FORMAT_V2,
-        "source_anchor_id": source_anchor_id,
-        "customer_project_id": customer_project_id,
-        "processing_job_id": job_id,
-        "plan_upload_id": plan_upload_id,
-        "reviewed_bore_log_id": reviewed_bore_log_id,
-        "group_id": group_id,
-        "row_ids": row_ids,
-        "page_number": page_number,
-        "coordinate_space": COORDINATE_SPACE,
-        "control_points": points,
-        "geometry_basis": GEOMETRY_BASIS_OBSERVER_ADOPTED,
-        "confirmation_state": CONFIRMATION_STATE_HUMAN_REVIEWED,
-        "route_adoption": dict(route_adoption),
-        "start_identity": _normalize_identity(start_identity),
-        "end_identity": _normalize_identity(end_identity),
-        "provenance": PROVENANCE,
-        "status": status,
-        "renderable": renderable,
-        "blockers": blockers,
-        "checks": checks,
-        "notes": notes,
-        "created_at": at,
-        "created_by": by,
-        "updated_at": at,
-        "audit": [
-            {"action": "source_anchor_created", "at": at, "by": by, "to": status, "reason": None},
-            {"action": "observer_backbone_adopted", "at": at, "by": by,
-             "proposal_hash": route_adoption.get("proposal_hash"), "reason": "explicit human confirmation"},
-        ],
-    }
+    if route_adoption is not None:
+        record = {
+            "record_format": RECORD_FORMAT_V2,
+            "source_anchor_id": source_anchor_id,
+            "customer_project_id": customer_project_id,
+            "processing_job_id": job_id,
+            "plan_upload_id": plan_upload_id,
+            "reviewed_bore_log_id": reviewed_bore_log_id,
+            "group_id": group_id,
+            "row_ids": row_ids,
+            "page_number": page_number,
+            "coordinate_space": COORDINATE_SPACE,
+            "control_points": points,
+            "geometry_basis": GEOMETRY_BASIS_OBSERVER_ADOPTED,
+            "confirmation_state": CONFIRMATION_STATE_HUMAN_REVIEWED,
+            "route_adoption": dict(route_adoption),
+            "start_identity": _normalize_identity(start_identity),
+            "end_identity": _normalize_identity(end_identity),
+            "provenance": PROVENANCE,
+            "status": status,
+            "renderable": renderable,
+            "blockers": blockers,
+            "checks": checks,
+            "notes": notes,
+            "created_at": at,
+            "created_by": by,
+            "updated_at": at,
+            "audit": [
+                {"action": "source_anchor_created", "at": at, "by": by, "to": status, "reason": None},
+                {"action": "observer_backbone_adopted", "at": at, "by": by,
+                 "proposal_hash": route_adoption.get("proposal_hash"), "reason": "explicit human confirmation"},
+            ],
+        }
+    else:
+        # Mission 8: derive human_control_points {start, end, intermediate[]} + intermediate_point_count from
+        # `points` — the SAME normalized list stored in `control_points` — never from a separate raw echo, so
+        # "exact" means numerically unchanged after `_normalize_points`' float conversion, matching the
+        # design's do-not-widen coordinate discipline.
+        start, end = points[0], points[-1]
+        intermediate = points[1:-1]
+        manual_route_block = {
+            "representative_status": manual_route["representative_status"],
+            "human_control_points": {
+                "start": dict(start), "end": dict(end), "intermediate": [dict(p) for p in intermediate],
+            },
+            "intermediate_point_count": len(intermediate),
+            "reported_route_search": manual_route.get("reported_route_search"),
+            "confirmed_by": manual_route["confirmed_by"],
+            "confirmed_at": manual_route["confirmed_at"],
+        }
+        record = {
+            "record_format": RECORD_FORMAT_V2,
+            "source_anchor_id": source_anchor_id,
+            "customer_project_id": customer_project_id,
+            "processing_job_id": job_id,
+            "plan_upload_id": plan_upload_id,
+            "reviewed_bore_log_id": reviewed_bore_log_id,
+            "group_id": group_id,
+            "row_ids": row_ids,
+            "page_number": page_number,
+            "coordinate_space": COORDINATE_SPACE,
+            "control_points": points,
+            "geometry_basis": GEOMETRY_BASIS_HUMAN_CLICKED,
+            "confirmation_state": CONFIRMATION_STATE_HUMAN_REVIEWED,
+            "manual_route": manual_route_block,
+            "start_identity": _normalize_identity(start_identity),
+            "end_identity": _normalize_identity(end_identity),
+            "provenance": PROVENANCE,
+            "status": status,
+            "renderable": renderable,
+            "blockers": blockers,
+            "checks": checks,
+            "notes": notes,
+            "created_at": at,
+            "created_by": by,
+            "updated_at": at,
+            "audit": [
+                {"action": "source_anchor_created", "at": at, "by": by, "to": status, "reason": None},
+                {"action": "manual_route_confirmed", "at": at, "by": by,
+                 "representative_status": manual_route_block["representative_status"],
+                 "reason": "explicit human confirmation"},
+            ],
+        }
     write_json_atomic(path, record)       # atomic (temp + fsync + os.replace); creates parents
     return record
 
@@ -399,16 +536,20 @@ def build_source_anchor_manifest(anchor_entries, *, project_id, project_name, en
     ``bundle_origin = HUMAN_CONFIRMED_SOURCE_ANCHOR``. ``mock_example`` is false; artifact sha256/bytes are
     filled by the publisher. ``closure``/``coverage`` are null (no station footage is solved or invented).
     Each entry is {"source_anchor": <record>, "artifact_path": <manifest-relative png>, "sheet": <int>,
-    "construction_sheet": <int|None>, "station_dots": <list|None>}. ``sheet``/``page_number`` are the 1-based
-    PDF page index the stroke rendered on; ``construction_sheet`` is the CONSTRUCTION sheet number printed on
-    that page (e.g. PDF page 20 -> "7 OF 30" -> 7). The manifest's ``source_sheets`` + artifact ``sheet``
-    report the construction sheet (the unit the engine/recognized bundles use), falling back to the PDF page
-    number when the page has no plan-sheet label (so closeout never mislabels the sheet). ``station_dots`` is
+    "construction_sheet": <int|None>, "station_dots": <list|None>, "station_marks_basis": <str|None>,
+    "station_marks_warnings": <list|None>}. ``sheet``/``page_number`` are the 1-based PDF page index the
+    stroke rendered on; ``construction_sheet`` is the CONSTRUCTION sheet number printed on that page (e.g.
+    PDF page 20 -> "7 OF 30" -> 7). The manifest's ``source_sheets`` + artifact ``sheet`` report the
+    construction sheet (the unit the engine/recognized bundles use), falling back to the PDF page number
+    when the page has no plan-sheet label (so closeout never mislabels the sheet). ``station_dots`` is
     ADDITIVE (default [] when the caller supplies none, so old callers/manifests are unaffected): the
     interval/footage dots along the human redline, each clickable + carrying that bore's log info; it is
     emitted ONLY on this human-confirmed builder, so deterministic/recognized/uploaded manifests never carry
-    it and stay byte-identical. Counts derive from the logs, so the published manifest reconciles. Per-job +
-    per-bundle only — never summed into the deterministic 50/58 frontier."""
+    it and stay byte-identical. ``station_marks_basis``/``station_marks_warnings`` (Mission 8 addendum,
+    contracts/station_marks.py) are the SAME kind of additive log-level fields (default None / [] when the
+    caller supplies none): the evidence basis the anchor's dots were built on + any named reason a recorded
+    station series was rejected as unusable. Counts derive from the logs, so the published manifest
+    reconciles. Per-job + per-bundle only — never summed into the deterministic 50/58 frontier."""
     logs = []
     for entry in anchor_entries:
         sa = entry["source_anchor"]
@@ -442,37 +583,57 @@ def build_source_anchor_manifest(anchor_entries, *, project_id, project_name, en
                           "note": "human-confirmed control points marked on the uploaded plan page"}],
             "warnings": [],
             "station_dots": list(entry.get("station_dots") or []),   # additive: interval dots (default [])
+            # Station-dot contract addendum (Mission 8, ``.foreman/scratch/m8/design-dots.md``): the
+            # evidence-bound basis this anchor's dots were built on (STATION_SERIES /
+            # SERIES_ENDPOINTS_WITH_DERIVED_FILL / SPAN_ENDPOINTS) + why a recorded series (if any) was
+            # rejected as unusable. Additive: absent/None + [] when the caller supplies none (old callers/
+            # manifests -- incl. the committed deterministic example -- stay byte-identical).
+            "station_marks_basis": entry.get("station_marks_basis"),
+            "station_marks_warnings": list(entry.get("station_marks_warnings") or []),
         }
-        # Phase-2 SOURCE-ROUTE ADOPTION (T31 Q5): ADDITIVE-ONLY. Emitted ONLY when the underlying
-        # source_anchor record itself is an adopted v2 record (``geometry_basis`` present); a plain manual
-        # HUMAN_CONFIRMED_SOURCE_ANCHOR record never carries these keys, so every prior manifest (incl. the
-        # committed deterministic example + every non-adopted human-confirmed bundle) stays byte-identical.
+        # Phase-2 SOURCE-ROUTE ADOPTION (T31 Q5) + Mission 8 manual-route: ADDITIVE-ONLY, split by the
+        # record's ACTUAL provenance block (never by a bare truthy ``geometry_basis`` check — Sol Q4/Q9: a
+        # manual v2 record ALSO carries ``geometry_basis`` now, and must never synthesize a null-filled
+        # ``route_adoption`` object). A plain v1 record (no ``geometry_basis`` at all) carries NEITHER block,
+        # so every prior manifest (incl. the committed deterministic example + every pre-Mission-8
+        # human-confirmed bundle) stays byte-identical.
         if sa.get("geometry_basis"):
-            ra = sa.get("route_adoption") or {}
-            plan_src = ra.get("plan_source") or {}
-            span_src = ra.get("span_source") or {}
-            connectivity = ra.get("connectivity") or {}
             log_entry["geometry_basis"] = sa["geometry_basis"]
             log_entry["confirmation_state"] = sa.get("confirmation_state")
             log_entry["render_control_points"] = list(sa.get("control_points") or [])
-            log_entry["route_adoption"] = {
-                "geometry_source": ra.get("geometry_source"),
-                "source_anchor_ref": "source_anchor/%s" % sa["source_anchor_id"],
-                "plan_upload_id": plan_src.get("plan_upload_id"),
-                "plan_sha256": plan_src.get("plan_sha256"),
-                "engineering_sheet": plan_src.get("engineering_sheet"),
-                "pdf_page": plan_src.get("pdf_page"),
-                "sheet_offset": plan_src.get("sheet_offset"),
-                "span_id": span_src.get("span_id"),
-                "reviewed_bore_log_id": span_src.get("reviewed_bore_log_id"),
-                "row_id": span_src.get("row_id"),
-                "human_control_points": list(ra.get("human_control_points") or []),
-                "why_connected": connectivity.get("why_connected"),
-                "warnings": list(ra.get("warnings") or []),
-                "confirmed_by": ra.get("confirmed_by"),
-                "candidate_route_hash": ra.get("candidate_route_hash"),
-                "proposal_hash": ra.get("proposal_hash"),
-            }
+            if sa.get("route_adoption") is not None:
+                ra = sa["route_adoption"]
+                plan_src = ra.get("plan_source") or {}
+                span_src = ra.get("span_source") or {}
+                connectivity = ra.get("connectivity") or {}
+                log_entry["route_adoption"] = {
+                    "geometry_source": ra.get("geometry_source"),
+                    "source_anchor_ref": "source_anchor/%s" % sa["source_anchor_id"],
+                    "plan_upload_id": plan_src.get("plan_upload_id"),
+                    "plan_sha256": plan_src.get("plan_sha256"),
+                    "engineering_sheet": plan_src.get("engineering_sheet"),
+                    "pdf_page": plan_src.get("pdf_page"),
+                    "sheet_offset": plan_src.get("sheet_offset"),
+                    "span_id": span_src.get("span_id"),
+                    "reviewed_bore_log_id": span_src.get("reviewed_bore_log_id"),
+                    "row_id": span_src.get("row_id"),
+                    "human_control_points": list(ra.get("human_control_points") or []),
+                    "why_connected": connectivity.get("why_connected"),
+                    "warnings": list(ra.get("warnings") or []),
+                    "confirmed_by": ra.get("confirmed_by"),
+                    "candidate_route_hash": ra.get("candidate_route_hash"),
+                    "proposal_hash": ra.get("proposal_hash"),
+                }
+            elif sa.get("manual_route") is not None:
+                mr = sa["manual_route"]
+                log_entry["manual_route"] = {
+                    "representative_status": mr.get("representative_status"),
+                    "human_control_points": dict(mr.get("human_control_points") or {}),
+                    "intermediate_point_count": mr.get("intermediate_point_count"),
+                    "reported_route_search": mr.get("reported_route_search"),
+                    "confirmed_by": mr.get("confirmed_by"),
+                    "confirmed_at": mr.get("confirmed_at"),
+                }
         logs.append(log_entry)
     n = len(logs)
     status_counts = {k: 0 for k in _MANIFEST_STATUS_KEYS}

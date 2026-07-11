@@ -1024,6 +1024,14 @@ def test_adopted_record_station_dots_ride_the_n_point_path(tmp_path):
     footages = sorted(d["footage_along"] for d in dots)
     assert footages == [0.0, 50.0, 100.0, 150.0]
 
+    # LOCK UPDATE (Mission 8 addendum, owner's STATION-DOT CONTRACT, ``.foreman/scratch/m8/design-dots.md``):
+    # this seeded row carries no station_readings series (start/end/footage only), so every dot is now
+    # tagged SPAN_ENDPOINTS provenance via ``origin`` -- an ADDITIVE key, never affecting the footages/
+    # positions asserted above or below (this test doubles as the adoption-lane POSITION-EQUALITY LOCK: the
+    # addendum changes tags/metadata, never where a footage-only row's dots actually sit).
+    assert [d["origin"] for d in dots] == ["SOURCE_RECORDED", "DERIVED_INTERVAL", "DERIVED_INTERVAL",
+                                           "SOURCE_RECORDED"]
+
     footage_total = 150.0
     pts = [(p["x"], p["y"]) for p in polyline]
     cum = _local_cumulative_arclen(pts)

@@ -137,6 +137,17 @@ class Settings:
     # product_readiness_api_optin are ALL True (api/app.py three-way gate). Env var:
     # TL2_SOURCE_ROUTE_ADOPTION_API_OPTIN.
     source_route_adoption_api_optin: bool = False
+    # Mission 8: manual N-point polyline provenance on the EXISTING SourceAnchorCreate (the honest fallback
+    # when source-route adoption refuses -- a "Representative straight segment" the operator can turn into a
+    # human-adjusted bend polyline before explicitly confirming). DEFAULT OFF -- OFF is byte-identical: a
+    # request that carries the optional `manual_route` block is refused 400 MANUAL_ROUTE_NOT_ENABLED before
+    # any manual-route validation/derivation runs, and a blockless request (the overwhelming common case)
+    # follows the EXISTING unchanged v1/v2 create path verbatim regardless of this flag's value. Independent
+    # of `source_route_adoption_api_optin` (manual confirmation needs no readiness spine / observer backbone
+    # at all) -- both may be enabled together; a single create request may never carry both `route_adoption`
+    # and `manual_route` (mutually exclusive provenance, refused regardless of either flag). Env var:
+    # TL2_SOURCE_ANCHOR_MANUAL_ROUTE_OPTIN.
+    source_anchor_manual_route_optin: bool = False
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -198,6 +209,9 @@ class Settings:
             ),
             source_route_adoption_api_optin=(
                 os.getenv("TL2_SOURCE_ROUTE_ADOPTION_API_OPTIN", "0") == "1"
+            ),
+            source_anchor_manual_route_optin=(
+                os.getenv("TL2_SOURCE_ANCHOR_MANUAL_ROUTE_OPTIN", "0") == "1"
             ),
         )
 

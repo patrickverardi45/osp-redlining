@@ -400,11 +400,12 @@ def build_closeout_pdf(store_root, customer_project_id, job_id) -> tuple:
                 ("sheet %s" % sheet) if sheet is not None else "(no sheet)",
                 (art.get("sha256") or "")[:24] + "…")
             d.bullet(line, color=_GRAY)
-        # Phase-2 SOURCE-ROUTE ADOPTION (T31 Q5): ADOPTED-ONLY wording. Present ONLY when the manifest log
-        # itself carries ``geometry_basis`` (a server-verified, human-adopted observer-backbone route); every
-        # other log (manual human-clicked, deterministic, recognized, uploaded-engine) has no such field and
-        # this block executes NOTHING for it — output stays byte-identical.
-        if log.get("geometry_basis"):
+        # Phase-2 SOURCE-ROUTE ADOPTION (T31 Q5) + Mission 8 manual-route: wording discriminated by the log's
+        # ACTUAL provenance block (Sol Q4/Q9 -- NEVER a bare truthy ``geometry_basis`` check, since a manual
+        # v2 record ALSO carries geometry_basis now). Every other log (deterministic, recognized, uploaded-
+        # engine, and a plain pre-Mission-8 manual v1 record) carries NEITHER block and this executes NOTHING
+        # for it — output stays byte-identical.
+        if log.get("route_adoption") is not None:
             ra = log.get("route_adoption") or {}
             d.bullet("Geometry: source-backed observer backbone — %s adoption"
                      % (log.get("confirmation_state") or "HUMAN_REVIEWED"), color=_BLACK)
@@ -419,6 +420,23 @@ def build_closeout_pdf(store_root, customer_project_id, job_id) -> tuple:
                 d.bullet("Proposal hash: %s" % ra["proposal_hash"], color=_GRAY)
             for w in (ra.get("warnings") or []):
                 d.bullet("caution: %s" % w, color=_RED)
+        elif log.get("manual_route") is not None:
+            mr = log.get("manual_route") or {}
+            rep_status = mr.get("representative_status")
+            if rep_status == "MANUAL_POLYLINE_CONFIRMED":
+                wording = "Geometry: manual polyline confirmed by reviewer"
+            else:
+                wording = "Geometry: representative straight segment accepted by reviewer"
+            confirmer = mr.get("confirmed_by")
+            if confirmer:
+                wording += " (%s)" % confirmer
+            d.bullet(wording, color=_BLACK)
+            reported = mr.get("reported_route_search") or {}
+            if reported.get("code"):
+                line = "reported route-search refusal: %s" % reported["code"]
+                if reported.get("upstream_reason_code"):
+                    line += " (upstream %s)" % reported["upstream_reason_code"]
+                d.bullet(line, color=_GRAY)
 
     # 6. Reviewed bore-log summary
     d.heading("6. Reviewed Bore-Log Summary")

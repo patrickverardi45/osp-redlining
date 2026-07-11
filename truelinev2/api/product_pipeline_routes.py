@@ -182,7 +182,13 @@ from truelinev2.contracts.product_workflow import (
     run_product_redline,
 )
 from truelinev2.contracts.source_anchor import (
+    MANUAL_POLYLINE_CONFIRMED,
     PLAN_PDF_KIND,
+    REPRESENTATIVE_STRAIGHT_ACCEPTED,
+    ManualRouteError,
+    ManualRouteNotEnabledError,
+    ManualRouteProvenanceConflictError,
+    ManualRouteStatusMismatchError,
     SourceAnchorError,
     SourceAnchorNotFoundError,
     SourceAnchorStateError,
@@ -309,6 +315,27 @@ class RouteAdoptionIn(BaseModel):
     control_points: list[ControlPoint]
 
 
+class ReportedRouteSearchIn(BaseModel):
+    """Mission 8: the CLIENT-ATTESTED route-search refusal the operator's own session received before
+    confirming a manual/representative route (never re-derived or server-verified — honestly named
+    ``reported_``, per the wire contract). ``code`` is validated at create time against the exact 21-code
+    refusal vocabulary the proposal endpoint can actually report; ``upstream_reason_code`` is REQUIRED
+    (shape ``^[A-Z][A-Z0-9_]{0,63}$``) iff ``code == ROUTE_EVIDENCE_NOT_READY``, else must be null/absent."""
+    code: str
+    upstream_reason_code: Optional[str] = None
+
+
+class ManualRouteIn(BaseModel):
+    """Mission 8 (honest representative fallback + manual N-point polyline): present ONLY when the operator
+    is explicitly confirming a HUMAN-CLICKED route (the honest two-point "representative straight segment"
+    the owner's screenshot defect showed rendering unlabeled, or a >=3-point manual bend polyline) rather
+    than adopting a source-backed observer-backbone proposal. Mutually exclusive with ``route_adoption`` on
+    the same create request (validated BEFORE either provenance branch runs)."""
+    confirmed: bool
+    representative_status: str
+    reported_route_search: Optional[ReportedRouteSearchIn] = None
+
+
 class SourceAnchorCreate(BaseModel):
     source_anchor_id: str
     plan_upload_id: str
@@ -321,6 +348,7 @@ class SourceAnchorCreate(BaseModel):
     end_identity: Optional[SourceAnchorIdentity] = None
     notes: Optional[str] = None
     route_adoption: Optional[RouteAdoptionIn] = None
+    manual_route: Optional[ManualRouteIn] = None
 
 
 # --- Phase 6 REVIEW acceptance request body (no identity — the tenant is the verified context) --------- #
@@ -1473,6 +1501,98 @@ def _route_adoption_enabled(c: Container) -> bool:
                and s.source_route_adoption_api_optin)
 
 
+def _manual_route_enabled(c: Container) -> bool:
+    """Mission 8: independent of the three-way route-adoption gate — manual confirmation needs no readiness
+    spine / observer backbone at all, so it is gated by its OWN flag only."""
+    return bool(c.settings.source_anchor_manual_route_optin)
+
+
+_UPSTREAM_REASON_CODE_RE = re.compile(r"^[A-Z][A-Z0-9_]{0,63}$")
+# NOTE (fix-wave B2, Sol xhigh verification): matched via ``.fullmatch()`` below, never ``.match()`` --
+# Python's ``$`` anchor matches immediately before a trailing ``\n`` too, so ``.match()`` against this
+# same pattern would let a value like ``"NO_SOURCE_CONFIRMED_SPAN\n"`` through. ``.fullmatch()`` requires
+# the ENTIRE string to match the pattern (no trailing newline, no embedded newline splitting it into two
+# "lines" one of which happens to satisfy ``^...$``), which is what "whole-string" was always meant to mean.
+
+
+def _validate_reported_route_search(reported: ReportedRouteSearchIn) -> dict:
+    """Validate the client-attested ``reported_route_search`` block against the EXACT 21-code refusal
+    vocabulary the HTTP-200 proposal endpoint can actually report (Sol Q1 VOCABULARY), via a LAZY import of
+    ``contracts.source_route_adoption`` — reached ONLY from here, itself reached ONLY when the manual-route
+    flag is ON, ``manual_route`` is present, AND it carries a ``reported_route_search`` block, so a request
+    that omits ``reported_route_search`` entirely (or the flag is OFF) never imports this module at all."""
+    from truelinev2.contracts.source_route_adoption import (
+        ALL_REFUSAL_CODES,
+        MALFORMED_CONTROL_POINTS,
+        ROUTE_EVIDENCE_NOT_READY,
+    )
+    # `ALL_REFUSAL_CODES` never contains the five create-time `ROUTE_ADOPTION_*` codes to begin with (they
+    # are a SEPARATE, create-time-only exception vocabulary — see that module's own docstring) — so
+    # subtracting only `MALFORMED_CONTROL_POINTS` already yields exactly the 21-code set the proposal
+    # endpoint can report over HTTP 200.
+    accepted = ALL_REFUSAL_CODES - {MALFORMED_CONTROL_POINTS}
+    if reported.code not in accepted:
+        raise ManualRouteError(
+            "reported_route_search.code %r is not one of the route-search refusal codes the proposal "
+            "endpoint can report" % (reported.code,))
+    if reported.code == ROUTE_EVIDENCE_NOT_READY:
+        if not reported.upstream_reason_code \
+                or not _UPSTREAM_REASON_CODE_RE.fullmatch(reported.upstream_reason_code):
+            raise ManualRouteError(
+                "reported_route_search.upstream_reason_code is required (shape ^[A-Z][A-Z0-9_]{0,63}$) when "
+                "code is ROUTE_EVIDENCE_NOT_READY")
+    elif reported.upstream_reason_code is not None:
+        raise ManualRouteError(
+            "reported_route_search.upstream_reason_code must be omitted/null unless code is "
+            "ROUTE_EVIDENCE_NOT_READY")
+    return {"code": reported.code, "upstream_reason_code": reported.upstream_reason_code}
+
+
+def _validate_manual_route(req: SourceAnchorCreate, ctx: RequestContext, at: str) -> dict:
+    """Validate the client-submitted ``manual_route`` block and build the PARTIAL server-authored input
+    passed to ``create_source_anchor_v2`` (which derives ``human_control_points``/``intermediate_point_count``
+    itself, from the SAME normalized point list it stores in ``control_points`` — never from this function's
+    raw echo). Reached ONLY when ``req.manual_route`` is present AND the manual-route flag is enabled (the
+    caller checks both before invoking this). Validation order: ``confirmed`` literal check, count<->status
+    consistency, zero-total-length rejection, then (only if present) the ``reported_route_search`` taxonomy
+    check — the ONLY step that imports ``contracts.source_route_adoption``."""
+    mr = req.manual_route
+    if mr.confirmed is not True:
+        raise ManualRouteError("manual_route.confirmed must be true")
+
+    n = len(req.control_points)
+    if n == 2:
+        expected_status = REPRESENTATIVE_STRAIGHT_ACCEPTED
+    elif n >= 3:
+        expected_status = MANUAL_POLYLINE_CONFIRMED
+    else:
+        expected_status = None                    # < 2 points: no valid representative_status exists
+    if expected_status is None or mr.representative_status != expected_status:
+        raise ManualRouteStatusMismatchError(
+            "control_points count %d does not match manual_route.representative_status %r "
+            "(2 points => %s, >=3 points => %s)"
+            % (n, mr.representative_status, REPRESENTATIVE_STRAIGHT_ACCEPTED, MANUAL_POLYLINE_CONFIRMED))
+
+    if n >= 2:
+        total_len = sum(
+            math.hypot(req.control_points[i + 1].x - req.control_points[i].x,
+                      req.control_points[i + 1].y - req.control_points[i].y)
+            for i in range(n - 1))
+        if total_len == 0.0:
+            raise ManualRouteError("manual_route control_points form a zero-length polyline")
+
+    reported = None
+    if mr.reported_route_search is not None:
+        reported = _validate_reported_route_search(mr.reported_route_search)
+
+    return {
+        "representative_status": mr.representative_status,
+        "reported_route_search": reported,
+        "confirmed_by": ctx.session_id,
+        "confirmed_at": at,
+    }
+
+
 def _rederive_route_adoption(store, cp: str, job_id: str, job: dict, req: SourceAnchorCreate,
                              plan_upload: dict, rbl: dict, ctx: RequestContext) -> tuple:
     """Re-run the SAME join + pure geometry derivation the proposal endpoint uses, over THIS create request's
@@ -1686,7 +1806,16 @@ def create_source_anchor_route(job_id: str, req: SourceAnchorCreate,
     match ``route_adoption.proposal_hash`` EXACTLY, and stores a record_format v2 record whose
     ``control_points`` is the SERVER-DERIVED render polyline (the existing renderer/station-dot path consumes
     it unmodified). With the new flag OFF, or when route_adoption is absent, this is BYTE-IDENTICAL to the
-    existing v1 path — no readiness/hash/projection code is imported or run."""
+    existing v1 path — no readiness/hash/projection code is imported or run.
+
+    Mission 8: when ``req.manual_route`` is present instead, the operator is explicitly confirming a
+    HUMAN-CLICKED route (never re-derived, never checked against any observer backbone) — either the honest
+    two-point "representative straight segment" fallback or a >=3-point manual bend polyline. Mutually
+    exclusive with ``route_adoption`` on the same request (400 ``MANUAL_ROUTE_PROVENANCE_CONFLICT``,
+    validated BEFORE either provenance branch runs, regardless of either flag's state). With the manual-route
+    flag OFF, or when ``manual_route`` is absent, this is BYTE-IDENTICAL to the existing v1/v2 path — no
+    manual-route validation code runs, and ``contracts.source_route_adoption`` is imported only if a request
+    that clears every other gate also carries a ``reported_route_search`` block."""
     cp, store = ctx.tenant.value, _store_root(c)
     try:
         load_source_anchor(store, cp, job_id, req.source_anchor_id)
@@ -1701,6 +1830,38 @@ def create_source_anchor_route(job_id: str, req: SourceAnchorCreate,
     except _CONTRACT_ERRORS as exc:
         raise _to_http(exc)
     bounds = _resolve_plan_page_bounds(store, cp, job_id, req.plan_upload_id, req.page_number, job)
+
+    # Mission 8: mutual-exclusion + flag-gate checks run BEFORE either provenance branch (duplicate-anchor/
+    # job/page resolution above already ran first, per the documented ordering — the flag checks never move
+    # ahead of resource resolution).
+    if req.manual_route is not None and req.route_adoption is not None:
+        raise _to_http(ManualRouteProvenanceConflictError(
+            "manual_route and route_adoption are mutually exclusive on the same create request"))
+
+    if req.manual_route is not None:
+        if not _manual_route_enabled(c):
+            raise _to_http(ManualRouteNotEnabledError("source-anchor manual-route provenance is not enabled"))
+        at = _now()
+        try:
+            manual_route_input = _validate_manual_route(req, ctx, at)
+        except _CONTRACT_ERRORS as exc:
+            raise _to_http(exc)
+        try:
+            return create_source_anchor_v2(
+                store, cp, job_id,
+                source_anchor_id=req.source_anchor_id,
+                plan_upload_id=req.plan_upload_id,
+                reviewed_bore_log_id=req.reviewed_bore_log_id,
+                page_number=req.page_number,
+                render_control_points=[{"x": p.x, "y": p.y} for p in req.control_points],
+                group_id=req.group_id,
+                row_ids=req.row_ids,
+                manual_route=manual_route_input,
+                start_identity=(req.start_identity.model_dump() if req.start_identity else None),
+                end_identity=(req.end_identity.model_dump() if req.end_identity else None),
+                notes=req.notes, page_bounds=bounds, at=at, by=ctx.session_id)
+        except _CONTRACT_ERRORS as exc:
+            raise _to_http(exc)
 
     if req.route_adoption is not None:
         if not _route_adoption_enabled(c):

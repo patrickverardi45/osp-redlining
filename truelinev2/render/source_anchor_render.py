@@ -16,7 +16,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from pathlib import Path
+from typing import Any, Dict, Optional
 
 from truelinev2.ingest.pdf import PlanPdf
 from truelinev2.ingest.sheet_label_index import build_sheet_index, construction_sheet_for_page
@@ -27,6 +29,7 @@ from truelinev2.render.station_dots import (
     resolve_bore_fields,
     stroke_polyline_with_dots,
 )
+from truelinev2.contracts.station_marks import build_station_marks
 from truelinev2.contracts.processing_job import job_dir, load_job
 from truelinev2.contracts.reviewed_bore_log import (
     ReviewedBoreLogNotFoundError,
@@ -65,28 +68,64 @@ def _stroke_points(sa) -> list:
     return [(float(p["x"]), float(p["y"])) for p in sa.get("control_points", [])]
 
 
+# Station-dot contract addendum (Mission 8, ``.foreman/scratch/m8/design-dots.md``): the effective
+# end-station is needed to validate a recorded series against the row's OWN endpoints
+# (contracts/station_marks.py::build_station_marks). ``render.station_dots.resolve_bore_fields`` has no
+# end_station alias table (it never needed one for the pre-addendum dot math), so this mirrors its SAME
+# raw < normalized < review.corrected_values precedence locally (the identical fold is already
+# reimplemented this way, for the same reason, in contracts/source_route_adoption.py::row_effective_stations
+# and contracts/closeout_pdf.py -- a small, well-precedented local fold beats a new cross-module import).
+_END_STATION_ALIASES = ("end_station", "end_sta", "to_station", "sta_end", "end")
+
+
+def _norm_key(k: Any) -> str:
+    return re.sub(r"[^a-z0-9]+", "_", str(k).strip().lower()).strip("_")
+
+
+def _effective_end_station(row: Optional[Dict[str, Any]]) -> Optional[str]:
+    merged: Dict[str, Any] = {}
+    row = row or {}
+    for layer in (row.get("raw"), row.get("normalized"), (row.get("review") or {}).get("corrected_values")):
+        if isinstance(layer, dict):
+            for k, v in layer.items():
+                merged[_norm_key(k)] = v
+    for alias in _END_STATION_ALIASES:
+        v = merged.get(alias)
+        if v not in (None, ""):
+            return str(v)
+    return None
+
+
 def _dots_for_anchor(store_root, customer_project_id, job_id, sa) -> tuple:
-    """Interval/footage dots for one anchor + the reviewed-row footage used to self-calibrate them. Best-effort
-    and NON-FATAL: any missing row/footage -> ([], None) so the render still draws the bare human redline. Reads
-    the reviewed_bore_log (already validated at anchor creation) for the row's footage/start-station/log info;
-    infers NO geometry (dots are interpolated only along the human control-point polyline)."""
+    """Interval/footage dots for one anchor + the reviewed-row footage used to self-calibrate them, the
+    evidence-bound ``marks`` list that produced them, and the station-dot-contract ``basis``/``warnings``
+    (Mission 8 addendum). Best-effort and NON-FATAL: any missing row/footage -> ``([], None, None, None,
+    [])`` so the render still draws the bare human redline. Reads the reviewed_bore_log (already validated
+    at anchor creation) for the row's footage/start-station/log info; infers NO geometry (dots are
+    interpolated only along the human control-point polyline). Marks are built by
+    ``contracts/station_marks.py`` from the row's EFFECTIVE values (the SAME raw < normalized <
+    review.corrected_values layering ``resolve_bore_fields`` uses) -- APPLIES TO ALL source-anchor renders
+    (manual AND adoption alike; the owner's station-dot contract is universal, not adoption-specific)."""
     try:
         rbl = load_reviewed_bore_log(store_root, customer_project_id, job_id, sa["reviewed_bore_log_id"])
     except ReviewedBoreLogNotFoundError:
-        return [], None
+        return [], None, None, None, []
     rows = rbl.get("rows", [])
     row_ids = sa.get("row_ids") or []
     row = next((r for r in rows if r.get("row_id") in row_ids), None) if row_ids else (rows[0] if rows else None)
     fields = resolve_bore_fields(row)
     footage = fields["footage"]
     if not footage or footage <= 0:
-        return [], None
+        return [], None, None, None, []
     info = dict(fields["info"])
     if not info.get("bore_log_id"):                    # fall back to the reviewed-bore-log id when the row
         info["bore_log_id"] = sa.get("reviewed_bore_log_id")   # carries no explicit bore id
+    end_station = _effective_end_station(row)
+    marks, basis, warnings = build_station_marks(
+        row or {}, footage=footage, start_station=fields["start_station"], end_station=end_station)
     dots = compute_station_dots(sa.get("control_points", []), footage=footage,
-                                start_station=fields["start_station"], info=info)
-    return dots, footage
+                                start_station=fields["start_station"], info=info, marks=marks)
+    return dots, footage, marks, basis, warnings
 
 
 def _plan_path_for(store_root, customer_project_id, job_id, job, plan_upload_id):
@@ -193,9 +232,10 @@ def render_job_source_anchors(store_root, customer_project_id, job_id, source_an
             raise SourceAnchorStateError("PLAN_PDF for source_anchor %r is not available" % sa_id)
         page = int(sa["page_number"])                       # 1-based PDF page index the stroke renders on
         # Additive: interval/footage dots along THIS human redline (best-effort; [] never blocks the render).
-        dots, footage = _dots_for_anchor(store_root, customer_project_id, job_id, sa)
+        dots, footage, marks, marks_basis, marks_warnings = _dots_for_anchor(
+            store_root, customer_project_id, job_id, sa)
         if dots and footage:                            # augment the drawn polyline so the dot marks get rings
-            stroke_pts = stroke_polyline_with_dots(sa.get("control_points", []), footage=footage)
+            stroke_pts = stroke_polyline_with_dots(sa.get("control_points", []), footage=footage, marks=marks)
             mandatory = tuple(dot_xys(dots)) + ((stroke_pts[0], stroke_pts[-1]) if stroke_pts else ())
         else:
             stroke_pts, mandatory = _stroke_points(sa), ()
@@ -219,7 +259,8 @@ def render_job_source_anchors(store_root, customer_project_id, job_id, source_an
         manifest_path = "artifacts/%s/%s" % (sa_id, Path(png).name)
         artifact_map[manifest_path] = png
         entries.append({"source_anchor": sa, "artifact_path": manifest_path, "sheet": page,
-                        "construction_sheet": construction_sheet, "station_dots": dots})
+                        "construction_sheet": construction_sheet, "station_dots": dots,
+                        "station_marks_basis": marks_basis, "station_marks_warnings": marks_warnings})
 
     manifest_input = build_source_anchor_manifest(
         entries, project_id=customer_project_id, project_name=customer_project_id,

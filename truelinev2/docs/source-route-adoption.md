@@ -318,7 +318,7 @@ to a successful adoption, regardless of what the echo says.
 | Consumer | Change | Why it needed none / what changed |
 |---|---|---|
 | `render/source_anchor_render.py` | **None.** | Reads `sa.get("control_points", [])` generically — no `record_format` check. A v2 record's server-derived N-point polyline flows through the EXISTING renderer unmodified. |
-| `render/station_dots.py` | **None.** | `compute_station_dots(control_points, ...)` already interpolates along whatever polyline it is given; an adopted N-point path rides the same interpolation. |
+| `render/station_dots.py` | **None at the time of this Phase-2 landing.** (Mission 8 ADDENDUM below adds an optional, additive `marks` parameter, `marks=None` byte-identical.) | `compute_station_dots(control_points, ...)` already interpolates along whatever polyline it is given; an adopted N-point path rides the same interpolation. |
 | `contracts/source_anchor.py::build_source_anchor_manifest` | **Additive.** | Emits `geometry_basis` / `confirmation_state` / `render_control_points` / `route_adoption` on a log entry ONLY when the underlying record carries `geometry_basis` (i.e. is v2); a manual record's log is byte-identical to before. |
 | `contracts/redline_manifest.schema.json` | **Additive.** | The four keys above added under `properties` (never `required`) so `additionalProperties:false` still accepts legacy manifests that omit them. |
 | `contracts/closeout_pdf.py` (Artifact Detail, §5) | **Additive.** | "Geometry: source-backed observer backbone — HUMAN_REVIEWED adoption" + source sheet/page + proposal hash + warnings, emitted ONLY when `log.get("geometry_basis")` is present; absent fields → the existing path/output is untouched. |
@@ -372,3 +372,257 @@ segments after the fact) is DELETED: it manufactured exactly the segment boundar
 fixture's refusal into a success, so it could not prove adoption against the unmodified spine. All 7
 pre-existing `complete_package_qa` scenarios (including `complete_ready` itself) are unchanged — `bent_ready` is
 purely additive.
+
+---
+
+## Mission 8 — manual N-point polyline / honest representative fallback (`manual_route`)
+
+**Design authority**: `.foreman/scratch/m8/design.md` (mission + scout facts + base design) +
+`.foreman/scratch/m8/design-final.md` (Sol adversarial-review amendments — SUPERSEDES `design.md` wherever
+they differ; binds the exact 21-code vocabulary, the 4 error codes, and the schema/publisher/closeout/README
+amendments this section documents as SHIPPED).
+
+**Motivation**: source-route adoption (above) is stateless and can honestly refuse (`ROUTE_EVIDENCE_NOT_READY`
+and the rest of the 21-code taxonomy). Before this mission, a refused search left the customer with an
+UNLABELED 2-point straight fallback chord that rendered across houses/aerial imagery looking like a finished
+engineered route — the exact customer-visible defect the owner flagged from a real production package.
+`manual_route` closes it: the
+operator either explicitly accepts an honestly-labeled "representative straight segment", or adds/moves/
+removes bend points into a manual polyline, and must EXPLICITLY confirm before anything is stored.
+
+### Flag — `TL2_SOURCE_ANCHOR_MANUAL_ROUTE_OPTIN`
+
+Default OFF. `Settings.source_anchor_manual_route_optin: bool = False`. **Independent** of the three-way
+`source_route_adoption_api_optin` gate above — manual confirmation needs no readiness spine / observer
+backbone at all, so it is checked on its own. Both may be enabled together; a single create request may
+never carry both `route_adoption` and `manual_route` regardless of either flag's state (see "Mutual
+exclusion" below).
+
+**OFF is byte-identical**: with the flag OFF, a request that carries the optional `manual_route` block is
+refused `400 MANUAL_ROUTE_NOT_ENABLED` before any manual-route validation/derivation runs; a BLOCKLESS
+request (the overwhelming common case) follows the EXISTING unchanged v1/v2 create path verbatim regardless
+of this flag's value — same record bytes, same response bytes (test-locked byte-for-byte:
+`test_blockless_create_is_byte_identical_flag_off_vs_on`). `contracts.source_route_adoption` is imported
+ONLY, and lazily, for the `reported_route_search` taxonomy check (see below) — a request that clears every
+earlier gate but omits `reported_route_search`, or one refused before reaching that check, never imports it
+(subprocess-isolated: `test_flag_off_never_imports_the_route_adoption_module`).
+
+### Wire contract (snake_case, additive on the EXISTING `SourceAnchorCreate` body)
+
+```json
+{"manual_route": {
+  "confirmed": true,
+  "representative_status": "MANUAL_POLYLINE_CONFIRMED" | "REPRESENTATIVE_STRAIGHT_ACCEPTED",
+  "reported_route_search": {"code": "<one of 21>", "upstream_reason_code": "<^[A-Z][A-Z0-9_]{0,63}$>" | null}
+}}
+```
+
+`reported_route_search` is OPTIONAL and, when present, is **client-attested session metadata, NEVER
+server-verified** — it echoes the route-search refusal the operator's OWN session received before deciding
+to confirm a manual/representative route. It has ZERO effect on geometry, render, billing, tier, or
+acceptance; it exists purely so the closeout record can honestly say "the operator's session reported
+refusal X" (never "the server verified refusal X"). This is the SAME trust posture as a free-text notes
+field, made vocabulary-bound rather than free text.
+
+### Validation (order, code-first 400 details unless noted)
+
+1. **Mutual exclusion** — `manual_route` AND `route_adoption` both present → `400
+   MANUAL_ROUTE_PROVENANCE_CONFLICT`. Validated BEFORE either provenance branch runs, and fires regardless of
+   either flag's state (a request this malformed is refused on shape, not on feature availability).
+2. **Flag gate** — `manual_route` present + flag OFF → `400 MANUAL_ROUTE_NOT_ENABLED`.
+3. **`confirmed` literal** — `confirmed != true` (well-typed `false`) → `400 MANUAL_ROUTE_INVALID`. A
+   **missing** `confirmed` (or any other required field) is FastAPI's own framework-standard `422` — never
+   reaches product code (same 400-vs-422 convention as `route_adoption`, proven at the real ASGI boundary:
+   `test_confirmed_missing_is_422_via_real_endpoint`).
+4. **Count↔status consistency** — exactly 2 `control_points` requires `REPRESENTATIVE_STRAIGHT_ACCEPTED`;
+   `>= 3` requires `MANUAL_POLYLINE_CONFIRMED`; a mismatch (in EITHER direction, including a count `< 2`, for
+   which no status is ever valid) → `400 MANUAL_ROUTE_STATUS_MISMATCH`. No non-collinearity test, no count
+   ceiling — matches `route_adoption`'s own "no maximum, only a floor" discipline
+   (`contracts/source_anchor.py::MIN_CONTROL_POINTS`).
+5. **Zero-total-length rejection** — a manual polyline whose control points sum to zero total arc length
+   (e.g. two or more identical points) → `400 MANUAL_ROUTE_INVALID`, even when the count↔status rule would
+   otherwise "match" (an all-identical 2-point submission is really a single point, not a representative
+   segment).
+6. **`reported_route_search` taxonomy** (only when present) — `code` must be one of the EXACT 21 codes the
+   `POST .../source-route-proposals` endpoint can actually return over HTTP 200: `ALL_REFUSAL_CODES -
+   {MALFORMED_CONTROL_POINTS}` (the five create-time `ROUTE_ADOPTION_*` exception codes are never members of
+   `ALL_REFUSAL_CODES` to begin with — a SEPARATE vocabulary — so no further subtraction is needed).
+   `MALFORMED_CONTROL_POINTS` itself is a REAL code the derivation module defines, but the proposal endpoint
+   400s before it can ever be RETURNED as a refusal payload, so it is rejected here too. An unrecognized code
+   → `400 MANUAL_ROUTE_INVALID`. Cross-field invariant: `code == ROUTE_EVIDENCE_NOT_READY` REQUIRES a non-null
+   `upstream_reason_code` matching `^[A-Z][A-Z0-9_]{0,63}$` (open vocabulary upstream, shape-bound only); ANY
+   OTHER code REQUIRES `upstream_reason_code` to be null/absent. Either direction violated → `400
+   MANUAL_ROUTE_INVALID`. This is the ONLY validation step that imports `contracts.source_route_adoption`
+   (lazily, `api/product_pipeline_routes.py::_validate_reported_route_search`).
+
+### Refusal-order note (TRUTHFUL, mirrors the route_adoption ordering above)
+
+Duplicate-anchor / job / page-bounds resolution (the SAME preamble every create request runs — 409 on a
+pre-existing id, 404 on a missing job) happens BEFORE the mutual-exclusion or flag checks — never after. This
+is stated plainly because it would be easy to assume "flag check first": it is not; resource resolution is
+first, exactly like the pre-existing `route_adoption` ordering
+(`product_pipeline_routes.py:1690` vs the mutual-exclusion/flag checks that follow it).
+
+### Server-authored record block (`create_source_anchor_v2`, `manual_route` mode)
+
+```json
+{"record_format": "trueline-source-anchor-2", "geometry_basis": "HUMAN_CLICKED_POLYLINE",
+ "confirmation_state": "HUMAN_REVIEWED",
+ "manual_route": {
+   "representative_status": "...", "intermediate_point_count": 2,
+   "human_control_points": {"start": {"x":..,"y":..}, "end": {"x":..,"y":..}, "intermediate": [...]},
+   "reported_route_search": {"code": "...", "upstream_reason_code": null} ,
+   "confirmed_by": "<ctx.session_id>", "confirmed_at": "<UTC iso>"
+ }}
+```
+
+`human_control_points` is derived from the SAME normalized point list stored in `control_points`
+(`_normalize_points`'s own float conversion) — never from a separate raw echo, so "exact" means numerically
+unchanged after that normalization, never raw JSON bytes. Audit gains one entry, `"manual_route_confirmed"`.
+`create_source_anchor_v2` now accepts two MUTUALLY EXCLUSIVE optional modes, `route_adoption` / `manual_route`
+— exactly one required; the `route_adoption` branch's record construction is BYTE-FOR-BYTE UNCHANGED (values
+AND key order) from before this mission.
+
+### Readers (Q4/Q9 — split by ACTUAL provenance block, never a bare truthy `geometry_basis`)
+
+A manual v2 record ALSO carries `geometry_basis` now (`HUMAN_CLICKED_POLYLINE`), so every reader that used to
+treat truthy `geometry_basis` as "this is an adopted record" was corrected to branch on the record's ACTUAL
+block instead:
+
+| Consumer | Behavior |
+|---|---|
+| `contracts/source_anchor.py::build_source_anchor_manifest` | Emits `geometry_basis`/`confirmation_state`/`render_control_points` whenever present, THEN emits `route_adoption` only if the record's OWN `route_adoption` is non-null, `manual_route` only if the record's OWN `manual_route` is non-null — never synthesizes a null-filled `route_adoption` for a manual record. |
+| `contracts/redline_manifest.schema.json` | `geometry_basis` enum gains `HUMAN_CLICKED_POLYLINE`; a new whitelisted `manual_route` object (schema stays CLOSED — `additionalProperties:false`). |
+| `contracts/redline_manifest_publisher.py::reconciliation_errors` | Gains four semantic checks per log: both `route_adoption` AND `manual_route` present → error; `route_adoption` present but `geometry_basis != OBSERVER_BACKBONE_HUMAN_ADOPTED` → error; `manual_route` present but `geometry_basis != HUMAN_CLICKED_POLYLINE` → error; `geometry_basis` present but its matching block is absent → error. |
+| `contracts/closeout_pdf.py` (Artifact Detail, §5) | Branches on `log.get("route_adoption") is not None` (adoption wording, BYTE-UNCHANGED) vs `log.get("manual_route") is not None` (new: representative-status wording + confirming session + `"reported route-search refusal: <CODE>"` (+ upstream) when present) — NEVER on `geometry_basis` truthiness. |
+| `contracts/export_bundle.py` README | The unconditional "the engine's ... never invented" sentence is FALSE for a manual record; branched to an honest "reviewer's OWN confirmed control points" sentence ONLY when the manifest carries ANY `manual_route` block. v1 + adoption-only exports stay byte-identical. |
+
+### Tests
+
+`truelinev2/tests/test_source_anchor_manual_route.py` (new; added to the CI targeted list): settings default/
+env, blockless byte-identity flag OFF vs ON (stored-file + response bytes), flag-off 400, happy paths (2-point
+representative + 4-point manual polyline, exact server-authored block shape + audit action), `row_ids` 0..many
+(unlike adoption's exactly-one rule), `confirmed` false/missing (400 vs 422), count↔status mismatch both
+directions, zero-length rejection (2-point and N-point), the full `reported_route_search` taxonomy (accepted
+code, `ROUTE_EVIDENCE_NOT_READY` cross-field both directions, unknown code, `MALFORMED_CONTROL_POINTS`,
+a `ROUTE_ADOPTION_*` code), the flag-off subprocess import-isolation proof, mutual-exclusion (including with
+both flags off), manifest split-emission + schema validation, four publisher reconciliation-error unit tests
++ one clean-pass unit test, closeout wording (manual polyline / representative straight / v1+adoption
+unaffected), ZIP README honesty (manual vs v1 byte-unchanged), station dots riding a manual 4-point polyline
+(exact `<= 1e-9` on-polyline distance + `xy_display == round(exact, 2)`, mirroring the adoption suite's own
+rigor), and tenant isolation.
+
+## Mission 8 ADDENDUM — evidence-bound station marks (owner's STATION-DOT CONTRACT)
+
+**Design authority**: `.foreman/scratch/m8/design-dots.md` (BINDING, supersedes `design.md`/`design-final.md`
+where they touch station dots). Owner's clarification: a source-anchor's station dots represent the BORE
+LOG'S OWN station sequence, bound to evidence — never a generic 50' geometric ladder invented over a log
+that recorded something else. Applies to EVERY source-anchor render, manual and adoption alike (one honest
+contract; the reader-survey row for `render/station_dots.py` above is superseded by this section).
+
+### New pure contract: `contracts/station_marks.py`
+
+`build_station_marks(row_effective, *, footage, start_station, end_station, interval_ft=50.0) ->
+(marks, basis, warnings)`. No I/O, no `render/`/engine/dialect/match imports — reuses only
+`truelinev2.stations`' parse/format helpers. Decides, per reviewed row, which dots to place:
+
+- **`STATION_SERIES`** (a usable recorded series of > 2 readings): marks are EXACTLY the recorded stations
+  (irregular intervals and a < 50' final interval included by construction), every one `SOURCE_RECORDED`,
+  each carrying that reading's own depth/BOC/notes (fix-wave B3: read from THAT entry's own cell, honestly
+  absent when the entry carries none — never a row-level value leaking onto a mark that lacks its own) +
+  `station_evidence` (verbatim/status/confidence). No derived fill ever mixes into a genuinely recorded
+  series.
+- **`SERIES_ENDPOINTS_WITH_DERIVED_FILL`** (a usable recorded series of exactly 2 readings — start/end/
+  total-only logs, e.g. the WP23 shape): the two recorded endpoints (`SOURCE_RECORDED`, with per-entry
+  values + evidence, including notes when that entry carries one) plus interior every-50' fill dots tagged
+  `DERIVED_INTERVAL` (arithmetic station label, no depth/BOC/notes/evidence — derivation is honestly
+  marked, never presented as recorded).
+- **`SPAN_ENDPOINTS`** (no recorded series at all — the ordinary generic TABLE_IMPORT row, or a recorded
+  series rejected as unusable): the row's own recorded start/end station text (`SOURCE_RECORDED`, no
+  per-station depth/BOC — the row's bore-level values are not station readings) plus the same tagged
+  interior fill.
+
+A recorded series is rejected (falls through to `SPAN_ENDPOINTS`, named in `warnings`) when it fails any of:
+every reading parses (else `STATION_SERIES_UNPARSEABLE`), strictly ascending (else
+`STATION_SERIES_NOT_ASCENDING`), the row's own effective start/end station text itself parses (else
+`STATION_SERIES_ROW_ENDPOINTS_UNPARSEABLE` — fix-wave F2: distinct from a proven mismatch, since no
+comparison was actually made), first/last match the row's own effective start/end station (else
+`STATION_SERIES_ENDPOINT_MISMATCH`), and the recorded span matches the row's own effective footage (else
+`STATION_SERIES_FOOTAGE_MISMATCH`). The approved span always remains the truth — a violation never invents
+or partially-trusts a series, it falls through cleanly.
+
+### `render/station_dots.py` — additive-only
+
+`compute_station_dots`/`stroke_polyline_with_dots` gain an optional `marks` parameter (the render/ fence is
+lifted ONLY on these two functions, by explicit owner instruction). `marks=None` is the EXACT pre-addendum
+behavior (locked byte-identity test). With `marks`, positions use the SAME arclen/`_point_at` math + 2-
+decimal `xy_display` contract, but at the marks' own footage-along values; each dot gains `origin` (always)
+and `station_evidence` (when the mark carries one); `station`/`depth`/`boc`/`notes` come from the MARK
+(`depth`/`boc`/`notes` present ONLY when that mark actually carries them); bore-level `date`/`crew`/`print`/
+`bore_log_id` still attach to every dot from the row's `info`, as before.
+
+### `render/source_anchor_render.py` + manifest
+
+`_dots_for_anchor` resolves the row's effective start/end/footage (the SAME raw < normalized <
+review.corrected_values layering `resolve_bore_fields` already uses) and calls `build_station_marks`, for
+ALL source-anchor renders (manual and adoption). The manifest log entry gains additive `station_marks_basis`
+(one of the three enums above, or `null` when the anchor has no dots at all) and `station_marks_warnings`
+(named codes, `[]` when none) — both default-empty/absent-tolerant so a caller that never supplies them
+(incl. every pre-addendum manifest) stays valid.
+
+### Schema
+
+`redline_manifest.schema.json`: `station_dots[*].origin` (enum `SOURCE_RECORDED` | `DERIVED_INTERVAL`) and
+`station_dots[*].station_evidence` (an optional closed object, `verbatim`/`status`/`confidence`) are
+ADDITIVE, OPTIONAL properties — NOT schema-required; log-level `station_marks_basis` (nullable enum) and
+`station_marks_warnings` (string array) are likewise additive and optional. Every object stays closed.
+
+**Fix-wave F1 (read-compat regression, caught by the foreman's live re-proof)**: the original landing made
+`origin` schema-REQUIRED, which broke the additive-evolution law — every HUMAN_CONFIRMED_SOURCE_ANCHOR
+bundle published BEFORE this addendum (no `origin` on its dots) instantly failed
+`published_bundle_consumer`'s read-contract revalidation (`BundleNotReadableError: ... fails the website
+read contract`) the moment the schema shipped, live evidence:
+`POST /v2/product/jobs/mission-8-route-correction-proof/source-anchors/sa-hh8f46/render` → `404`. Fixed by
+making `origin` optional again; the "always emitted" guarantee moved to the BUILDER
+(`contracts/source_anchor.py::build_source_anchor_manifest`, fed by the real render path), never the
+schema — locked by `test_pre_addendum_manifest_shape_still_publishes_and_reads_f1`
+(`test_published_bundle_consumer_contract.py`): a manifest in the EXACT pre-addendum shape (no `origin`, no
+log-level `station_marks_basis`/`station_marks_warnings`) still admits to the store (`store_bundle`) and
+reads back through `StaticBundleConsumer`, forever.
+
+### Tests
+
+`truelinev2/tests/test_station_marks.py` (new; pure unit coverage of all three bases + irregular intervals +
+a short final interval + varying per-entry depth/BOC + every named unusable-series fallback, including the
+fix-wave F2 `STATION_SERIES_ROW_ENDPOINTS_UNPARSEABLE` precision code + the corrected-values precedence
+path). `test_station_dots.py` gains the `marks=None` byte-identity locks for both functions plus marks-path
+placement/tagging tests. `test_source_anchor_render_contract.py` gains render-integration coverage for the
+WP23 shape, a >= 4-reading irregular series with an exact short final interval, and a footage-only
+position-equality lock (dot positions bit-for-bit unchanged from the pre-addendum `dot_marks` ladder) —
+plus a builder-emission update to `test_build_manifest_carries_station_dots_additively_and_validates`
+(asserts the builder always carries `origin`/`station_marks_basis`/`station_marks_warnings` through when
+given them, rather than asserting schema-requiredness) and a deliberate lock update to
+`test_render_places_station_dots_with_bore_info` (a footage-only row's dots no longer carry per-station
+depth/BOC/notes — see that test's docstring for the owner-contract citation).
+`test_source_route_adoption_api.py::test_adopted_record_station_dots_ride_the_n_point_path` gains an
+`origin`-tag assertion and now doubles as the adoption-lane position-equality lock.
+
+**Fix-wave B1/B2/B3 (Sol xhigh final verification)**:
+- **B1** (`contracts/station_marks.py::_validate_series`): `station_readings` is UNTRUSTED reviewed-row
+  data -- a malformed entry (`None`, a bare string/number, anything not a cell-bearing dict) now fails
+  closed to `WARN_UNPARSEABLE` + the `SPAN_ENDPOINTS` fallback instead of raising on `entry.get(...)`.
+  Locked by `test_all_null_station_readings_falls_back_without_raising_b1`,
+  `test_mixed_valid_and_malformed_station_readings_falls_back_without_raising_b1`,
+  `test_non_list_station_readings_value_falls_back_without_raising_b1`.
+- **B2** (`api/product_pipeline_routes.py::_validate_reported_route_search`): `upstream_reason_code`'s
+  shape check now uses `.fullmatch()` instead of `.match()` -- Python's `$` anchor matches immediately
+  before a trailing `\n`, so `.match()` against `^[A-Z][A-Z0-9_]{0,63}$` let a value like
+  `"NO_SOURCE_CONFIRMED_SPAN\n"` through. Locked by 4 new tests in
+  `test_source_anchor_manual_route.py`: trailing newline / embedded newline (both 400), exactly 64 chars
+  (accepted, the true boundary), 65 chars (400).
+- **B3** (`contracts/station_marks.py::_series_marks`/`_endpoint_mark`): a recorded reading's OWN `notes`
+  cell (same cell-value pattern as `depth_ft`/`boc_ft`) is now attached to its mark when present, instead
+  of being hard-coded `None`; the row-level `notes` value never leaks onto a mark that lacks its own, and
+  derived-fill marks still never carry notes. Locked by
+  `test_series_gt2_carries_per_entry_notes_only_where_present_b3` and
+  `test_series_eq2_endpoint_notes_present_only_on_the_entry_that_carries_one_b3`.

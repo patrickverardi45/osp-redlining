@@ -308,13 +308,29 @@
               "properties": {
                 "index": {"type": "integer", "minimum": 0, "description": "0-based dot order along the redline."},
                 "footage_along": {"type": "number", "minimum": 0, "description": "Feet from the redline start (self-calibrated from the reviewed row footage / drawn length)."},
-                "station": {"type": ["string", "null"], "description": "start_station + footage_along, only when the start station parses; else null (footage_along still present)."},
+                "station": {"type": ["string", "null"], "description": "The dot's station label: the bore log's OWN recorded station text for a SOURCE_RECORDED dot, or start_station + footage_along for a DERIVED_INTERVAL dot (only when the start station parses); else null (footage_along still present)."},
                 "xy_display": {
                   "type": "object",
                   "additionalProperties": false,
                   "required": ["x", "y"],
                   "properties": {"x": {"type": "number"}, "y": {"type": "number"}},
                   "description": "Dot position in the plan page's PDF display space (the renderer's stroke space)."
+                },
+                "origin": {
+                  "type": "string",
+                  "enum": ["SOURCE_RECORDED", "DERIVED_INTERVAL"],
+                  "description": "Station-dot contract (Mission 8 addendum): SOURCE_RECORDED == an actual reading/endpoint the bore log recorded; DERIVED_INTERVAL == an interior 50'-tick this module derived (permitted only when the log records just start/end/total footage), NEVER presented as recorded. ADDITIVE + OPTIONAL at the schema level (fix-wave F1: NOT in `required` -- a pre-addendum bundle/manifest with dots carrying no `origin` at all must stay READABLE forever; additive-evolution law, never a breaking read-compat regression). The current builder (`contracts/source_anchor.py::build_source_anchor_manifest`, fed by `render/station_dots.py::compute_station_dots`) ALWAYS emits it on every dot it produces -- that guarantee is enforced at the builder/test level, not the schema."
+                },
+                "station_evidence": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["verbatim", "status", "confidence"],
+                  "properties": {
+                    "verbatim": {"type": ["string", "null"]},
+                    "status": {"type": ["string", "null"]},
+                    "confidence": {"type": ["string", "null"]}
+                  },
+                  "description": "Present ONLY on a SOURCE_RECORDED dot whose station came from a graded reading cell (station-readings series): the cell's raw verbatim text + read status + confidence. Absent on a DERIVED_INTERVAL dot (it carries no cell evidence to point to) and on a SOURCE_RECORDED span-endpoint dot with no per-station cell (a generic TABLE_IMPORT row's recorded start/end)."
                 },
                 "depth": {"type": ["string", "null"]},
                 "boc": {"type": ["string", "null"]},
@@ -327,10 +343,20 @@
               }
             }
           },
+          "station_marks_basis": {
+            "type": ["string", "null"],
+            "enum": ["STATION_SERIES", "SERIES_ENDPOINTS_WITH_DERIVED_FILL", "SPAN_ENDPOINTS", null],
+            "description": "Station-dot contract (Mission 8 addendum, contracts/station_marks.py): the evidence basis this anchor's station_dots were built on -- STATION_SERIES (>2 recorded readings, no fill), SERIES_ENDPOINTS_WITH_DERIVED_FILL (2 recorded readings + tagged interior fill), or SPAN_ENDPOINTS (no usable recorded series; the approved span's own endpoints + tagged fill). null when this anchor carries no dots at all (no footage/row). Present ONLY on bundle_origin HUMAN_CONFIRMED_SOURCE_ANCHOR manifests."
+          },
+          "station_marks_warnings": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "Station-dot contract (Mission 8 addendum): named codes (e.g. STATION_SERIES_ENDPOINT_MISMATCH) explaining why a recorded station series existed but was rejected as unusable and the dots fell through to SPAN_ENDPOINTS. Empty when no such rejection occurred (including when the row simply never had a series)."
+          },
           "geometry_basis": {
             "type": "string",
-            "enum": ["OBSERVER_BACKBONE_HUMAN_ADOPTED"],
-            "description": "Phase-2 source-route adoption (T31 Q5). Present ONLY on an adopted human-confirmed source-anchor log entry -- identifies that the log's control-point geometry originated from a server-verified, human-adopted observer backbone (never invented). ABSENT on every other log (including a plain HUMAN_CONFIRMED_SOURCE_ANCHOR log with manually clicked control points, whose semantic default is HUMAN_CLICKED_POLYLINE) -- so every prior manifest stays byte-identical."
+            "enum": ["OBSERVER_BACKBONE_HUMAN_ADOPTED", "HUMAN_CLICKED_POLYLINE"],
+            "description": "Phase-2 source-route adoption (T31 Q5) + Mission 8 manual-route. Present ONLY on an EXPLICITLY-CONFIRMED v2 source-anchor log entry: OBSERVER_BACKBONE_HUMAN_ADOPTED identifies a server-verified, human-adopted observer-backbone route (paired with a route_adoption block); HUMAN_CLICKED_POLYLINE identifies an operator-confirmed manual N-point polyline or representative straight segment (paired with a manual_route block). ABSENT on a plain (pre-Mission-8) HUMAN_CONFIRMED_SOURCE_ANCHOR v1 log -- so every prior manifest stays byte-identical."
           },
           "confirmation_state": {
             "type": "string",
@@ -377,7 +403,52 @@
               "candidate_route_hash": {"type": "string"},
               "proposal_hash": {"type": "string"}
             },
-            "description": "Present (non-null) ONLY alongside geometry_basis: the source-route adoption provenance block (source sheet/page, span/row identity, exact human clicks, connectivity rationale, warnings, both hashes) -- NEVER describes the interior observer-backbone vertices as human-clicked. ABSENT (not null) on every non-adopted log."
+            "description": "Present (non-null) ONLY alongside geometry_basis == OBSERVER_BACKBONE_HUMAN_ADOPTED: the source-route adoption provenance block (source sheet/page, span/row identity, exact human clicks, connectivity rationale, warnings, both hashes) -- NEVER describes the interior observer-backbone vertices as human-clicked. ABSENT (not null) on every non-adopted log, and NEVER co-present with manual_route on the same log (mutually exclusive provenance)."
+          },
+          "manual_route": {
+            "type": ["object", "null"],
+            "additionalProperties": false,
+            "properties": {
+              "representative_status": {
+                "type": "string",
+                "enum": ["MANUAL_POLYLINE_CONFIRMED", "REPRESENTATIVE_STRAIGHT_ACCEPTED"]
+              },
+              "human_control_points": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["start", "end", "intermediate"],
+                "properties": {
+                  "start": {
+                    "type": "object", "additionalProperties": false, "required": ["x", "y"],
+                    "properties": {"x": {"type": "number"}, "y": {"type": "number"}}
+                  },
+                  "end": {
+                    "type": "object", "additionalProperties": false, "required": ["x", "y"],
+                    "properties": {"x": {"type": "number"}, "y": {"type": "number"}}
+                  },
+                  "intermediate": {
+                    "type": "array",
+                    "items": {
+                      "type": "object", "additionalProperties": false, "required": ["x", "y"],
+                      "properties": {"x": {"type": "number"}, "y": {"type": "number"}}
+                    }
+                  }
+                }
+              },
+              "intermediate_point_count": {"type": "integer", "minimum": 0},
+              "reported_route_search": {
+                "type": ["object", "null"],
+                "additionalProperties": false,
+                "properties": {
+                  "code": {"type": "string"},
+                  "upstream_reason_code": {"type": ["string", "null"]}
+                },
+                "description": "Client-attested (NEVER server-re-verified) route-search refusal the operator's session received before confirming this manual/representative route -- honestly named 'reported_'."
+              },
+              "confirmed_by": {"type": "string"},
+              "confirmed_at": {"type": "string"}
+            },
+            "description": "Present (non-null) ONLY alongside geometry_basis == HUMAN_CLICKED_POLYLINE: the Mission-8 manual-route provenance block (representative status, the exact human control points split start/end/intermediate, the reported route-search refusal if any, confirming session + timestamp). ABSENT (not null) on every non-manual log, and NEVER co-present with route_adoption on the same log (mutually exclusive provenance)."
           }
         }
       }
