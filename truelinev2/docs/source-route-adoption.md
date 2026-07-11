@@ -136,7 +136,7 @@ three tiers, in this sequence, EVERY request:
    `allow_nan=False`), refuses to hash a non-finite number at all. At CREATE time specifically, a fourth,
    incidental guarantee also applies, stated precisely (micro-round correction — the prior "NEVER passes the
    list equality" phrasing overclaimed): the echo-vs-create `control_points` EQUALITY comparison
-   (`truelinev2/api/product_pipeline_routes.py:1556`, `echo_points != create_points`) compares
+   (`truelinev2/api/product_pipeline_routes.py:1560`, `echo_points != create_points`) compares
    freshly-materialized `(p.x, p.y)` float scalars. Over the real JSON API a `NaN` control point cannot match
    here — each request-body parse materializes its OWN distinct float objects, and scalar `NaN != NaN`
    (IEEE754) always holds, so the request lands on `409 ROUTE_ADOPTION_CONTROL_MISMATCH`. In the narrower
