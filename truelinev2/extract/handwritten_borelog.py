@@ -263,11 +263,38 @@ def _value_words_below(words: List[dict], label_words: List[dict], exclude: set)
     return same_line
 
 
+# Own-label-prefix stripper (see ``_strip_label_prefix``): matches the field's OWN label spelling at the
+# start of a captured VALUE string, requiring a boundary (colon/whitespace/end -- never mid-word, e.g.
+# "DATEX ..." must NOT strip to "X ...") after it so an unrelated value that happens to start with the same
+# letters is left untouched.
+_LABEL_PREFIX_RE = {
+    "date": re.compile(r"(?i)^\s*DATE(?=$|[\s:])\s*:?\s*"),
+    "crew": re.compile(r"(?i)^\s*CREW(?=$|[\s:])\s*:?\s*"),
+    "job_name": re.compile(r"(?i)^\s*JOB\s+NAME(?=$|[\s:])\s*:?\s*"),
+    "print_raw": re.compile(r"(?i)^\s*PRINT(?=$|[\s:#])\s*#?\s*:?\s*"),
+}
+
+
+def _strip_label_prefix(field: str, text: str) -> Optional[str]:
+    """If a captured header VALUE begins with its OWN field's label token (label+value merged into one
+    captured run -- e.g. a same-run "DATE: 2/11/2026" whose value search picked up "DATE:" along with the
+    date -- rather than a genuinely separate label/value pair), strip that prefix from the NORMALIZED
+    value. ``verbatim`` (built separately by the caller from the full captured run) is UNTOUCHED -- it stays
+    the complete evidence regardless. A value that legitimately starts with unrelated text (not this
+    field's own label, word-boundary-checked) is left unchanged. Returns None when nothing remains after
+    stripping -- an empty value is NOT_PRESENT, never an empty string."""
+    pattern = _LABEL_PREFIX_RE.get(field)
+    stripped = pattern.sub("", text, count=1) if pattern is not None else text
+    stripped = stripped.strip(" :#-\t")
+    return stripped or None
+
+
 def _parse_header_positional(words: List[dict]) -> dict:
     """Locate each of the 4 header labels by TEXT (not position) then its value by POSITION: nearest word
     run to the label's right (same printed line), else the nearest line below, within bounded distances.
     A label not found, or found with no value within bounds, stays NOT_PRESENT -- fail-closed, never a
-    fuzzy guess beyond this positional rule."""
+    fuzzy guess beyond this positional rule. A captured value that itself begins with the SAME field's own
+    label (a merged label+value run) has that prefix stripped -- see ``_strip_label_prefix``."""
     header = _blank_header()
     if not words:
         return header
@@ -285,6 +312,9 @@ def _parse_header_positional(words: List[dict]) -> dict:
         if not value_words:
             continue
         text = " ".join(w["text"] for w in value_words).strip(" :#-\t")
+        if not text:
+            continue
+        text = _strip_label_prefix(field, text)
         if not text:
             continue
         verbatim = (" ".join(w["text"] for w in label_words) + " "

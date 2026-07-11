@@ -31,6 +31,7 @@ from truelinev2.extract.handwritten_borelog import (
     HANDWRITTEN_PROVIDER_OUTPUT_INVALID,
     HANDWRITTEN_VISION_PROVIDER_NOT_CONFIGURED,
     TOO_FEW_USABLE_STATIONS,
+    _strip_label_prefix,
     build_page_ledger,
     extract_handwritten,
     rasterize_page,
@@ -227,6 +228,36 @@ def test_page_without_header_still_extracts_ladder_with_fields_not_present():
     proposal = out["proposals"][0]
     assert proposal["start_station"] == "0+00" and proposal["end_station"] == "1+00"
     assert proposal["date"] is None and proposal["crew"] is None and proposal["notes"] is None
+
+
+def test_positional_header_same_run_label_value_strips_prefix_keeps_verbatim():
+    # "DATE: 2/11/2026" printed as ONE text run (label + value together) -- the value search may pick up
+    # the label token along with the date; the normalized value must NOT carry the label, but verbatim
+    # (the full captured run) stays intact as evidence.
+    lines = ["DATE: 2/11/2026", "STA 0+00 3.5 5'", "STA 0+50 3.5 5'"]
+    out = extract_handwritten(_pdf_bytes([lines]), "log.pdf", upload_id="up-1")
+    date_cell = out["pages"][0]["header"]["date"]
+    assert date_cell["value"] == "2/11/2026"
+    assert date_cell["status"] == READ
+    assert "DATE" in date_cell["verbatim"] and "2/11/2026" in date_cell["verbatim"]
+
+
+def test_strip_label_prefix_matching_label_is_removed():
+    assert _strip_label_prefix("date", "DATE: 2/11/2026") == "2/11/2026"
+    assert _strip_label_prefix("crew", "crew JS") == "JS"
+    assert _strip_label_prefix("job_name", "Job Name: Test Loop") == "Test Loop"
+    assert _strip_label_prefix("print_raw", "PRINT#: 29,30,31") == "29,30,31"
+
+
+def test_strip_label_prefix_unrelated_leading_text_unchanged():
+    # "DATEX ..." does not spell the DATE label at a word boundary -- must NOT be treated as a prefix match.
+    assert _strip_label_prefix("date", "DATEX 5/1/2026") == "DATEX 5/1/2026"
+    assert _strip_label_prefix("crew", "Crewman Joe") == "Crewman Joe"
+
+
+def test_strip_label_prefix_empty_after_strip_is_none():
+    assert _strip_label_prefix("date", "DATE:") is None
+    assert _strip_label_prefix("date", "  DATE  ") is None
 
 
 def test_text_layer_descending_only_page_yields_zero_proposals_and_ledger_flags_it():
