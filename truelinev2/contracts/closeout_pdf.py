@@ -400,6 +400,25 @@ def build_closeout_pdf(store_root, customer_project_id, job_id) -> tuple:
                 ("sheet %s" % sheet) if sheet is not None else "(no sheet)",
                 (art.get("sha256") or "")[:24] + "…")
             d.bullet(line, color=_GRAY)
+        # Phase-2 SOURCE-ROUTE ADOPTION (T31 Q5): ADOPTED-ONLY wording. Present ONLY when the manifest log
+        # itself carries ``geometry_basis`` (a server-verified, human-adopted observer-backbone route); every
+        # other log (manual human-clicked, deterministic, recognized, uploaded-engine) has no such field and
+        # this block executes NOTHING for it — output stays byte-identical.
+        if log.get("geometry_basis"):
+            ra = log.get("route_adoption") or {}
+            d.bullet("Geometry: source-backed observer backbone — %s adoption"
+                     % (log.get("confirmation_state") or "HUMAN_REVIEWED"), color=_BLACK)
+            sheet_bits = []
+            if ra.get("engineering_sheet") is not None:
+                sheet_bits.append("engineering sheet %s" % ra["engineering_sheet"])
+            if ra.get("pdf_page") is not None:
+                sheet_bits.append("PDF page %s" % ra["pdf_page"])
+            if sheet_bits:
+                d.bullet("Source sheet: %s" % ", ".join(sheet_bits), color=_GRAY)
+            if ra.get("proposal_hash"):
+                d.bullet("Proposal hash: %s" % ra["proposal_hash"], color=_GRAY)
+            for w in (ra.get("warnings") or []):
+                d.bullet("caution: %s" % w, color=_RED)
 
     # 6. Reviewed bore-log summary
     d.heading("6. Reviewed Bore-Log Summary")
