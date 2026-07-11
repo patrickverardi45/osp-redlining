@@ -385,7 +385,8 @@ amendments this section documents as SHIPPED).
 **Motivation**: source-route adoption (above) is stateless and can honestly refuse (`ROUTE_EVIDENCE_NOT_READY`
 and the rest of the 21-code taxonomy). Before this mission, a refused search left the customer with an
 UNLABELED 2-point straight fallback chord that rendered across houses/aerial imagery looking like a finished
-engineered route — the exact defect the owner's Brenham screenshot showed. `manual_route` closes it: the
+engineered route — the exact customer-visible defect the owner flagged from a real production package.
+`manual_route` closes it: the
 operator either explicitly accepts an honestly-labeled "representative straight segment", or adds/moves/
 removes bend points into a manual polyline, and must EXPLICITLY confirm before anything is stored.
 
