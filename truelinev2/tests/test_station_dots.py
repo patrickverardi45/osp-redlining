@@ -179,6 +179,28 @@ def test_resolve_bore_fields_depth_boc_min_ft_aliases():
     assert f["info"]["depth"] == "42.0" and f["info"]["boc"] == "48.0"
 
 
+def test_resolve_bore_fields_depth_boc_ft_aliases():
+    """The Phase-1 handwritten-extraction tier's SpanProposal-derived rows write depth_ft/boc_ft
+    (contracts/handwritten_extraction.py) for the SAME depth/BOC concept — these must resolve onto the dot
+    info payload identically to every other lane (station-dot info card parity: Footage/Station/Date/Print/
+    BoreLog already worked; Depth/BOC must too)."""
+    row = {"raw": {"start_station": "3+50", "end_station": "4+08", "footage_ft": 58.0,
+                   "depth_ft": 5.0, "boc_ft": 8.0, "crew": "JS", "notes": "Job name: Test Loop"}}
+    f = SD.resolve_bore_fields(row)
+    assert f["info"]["depth"] == "5.0" and f["info"]["boc"] == "8.0"
+    # crew/notes are plain-key aliases already (unchanged by this fix) -- confirmed still resolving
+    # alongside the newly-aliased depth/boc on the SAME handwritten-lane row shape.
+    assert f["info"]["crew"] == "JS" and f["info"]["notes"] == "Job name: Test Loop"
+
+
+def test_resolve_bore_fields_depth_boc_ft_alias_yields_to_existing_keys():
+    """Existing keys take precedence over the newly-added depth_ft/boc_ft aliases on a row that somehow
+    carries both spellings (never a behavior change for any row already resolving today)."""
+    row = {"raw": {"depth_min_ft": 42.0, "depth_ft": 5.0, "boc": 48.0, "boc_ft": 8.0}}
+    f = SD.resolve_bore_fields(row)
+    assert f["info"]["depth"] == "42.0" and f["info"]["boc"] == "48.0"
+
+
 def test_resolve_bore_fields_depth_boc_absent_stays_none():
     """No depth/boc column at all -> both info keys stay honestly None (never a fabricated zero)."""
     row = {"raw": {"start_station": "5+03", "end_station": "6+79", "footage_ft": 176.0}}
