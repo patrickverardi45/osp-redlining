@@ -978,7 +978,7 @@ def test_adopted_record_station_dots_ride_the_n_point_path(tmp_path):
 
     Fix-wave-2 G6 (F9(c) FAIL — bounding-box-only 0.05pt check), H2 CORRECTED FOREMAN RULING (the original
     "<=1e-9 against the RETURNED dot" demand was miscalibrated against production's own pre-existing,
-    FENCED, correct 2-decimal ``xy_display`` contract — ``render/station_dots.py:131`` rounds every dot's
+    FENCED, correct 2-decimal ``xy_display`` contract — ``render/station_dots.py:137`` rounds every dot's
     display coordinate to 2dp; that rounding is production's contract, not a test defect, and a literal 1e-9
     tolerance against a 2dp-rounded value is mathematically impossible for real (non-2dp-clean) PDF geometry
     like ``71.23198699951172``). The lock is now TWO exact assertions per dot (0 ft / every 50 ft / the
@@ -1041,7 +1041,7 @@ def test_adopted_record_station_dots_ride_the_n_point_path(tmp_path):
         assert min_dist <= 1e-9, (d, min_dist, exact_xy)
 
         # H2: the RETURNED dot's xy_display (used AS-IS, never re-rounded here) must equal round(exact_xy, 2)
-        # EXACTLY. Production's own fenced contract (render/station_dots.py:131) is that xy_display is ALWAYS
+        # EXACTLY. Production's own fenced contract (render/station_dots.py:137) is that xy_display is ALWAYS
         # a 2-decimal value -- so an honest dot passes this exactly; a dishonestly over-precise return (e.g.
         # 123.4649 where 123.46 is expected) fails it outright. This is NOT a tautological self-call: exact_xy
         # comes from this test's OWN independent arc-length recomputation, never from calling render code.

@@ -115,31 +115,68 @@ three tiers, in this sequence, EVERY request:
    the JSON body against `SourceAnchorCreate` (and, when `route_adoption` is present, against the NESTED
    `RouteAdoptionIn` model — every one of its seven fields, including the five identity/control-point ECHO
    fields, is REQUIRED). Precisely (fix-wave-2 H1 — this is NOT a blanket "any mistyped field → 422" claim):
-   a **missing** required field, or a field whose value Pydantic cannot COERCE to the declared type (e.g.
-   `page_number: "abc"`, a non-finite/non-numeric `control_points.x`), is a **framework-standard HTTP 422** —
-   never reaches product code at all. A value Pydantic's (lax-mode) coercion CAN convert (e.g.
-   `page_number: "5"` → `int` `5`, or `confirmed: "true"` → `bool` `True`) is silently coerced and proceeds
-   as if the caller had sent the coerced type — it does NOT 422. This is FastAPI/Pydantic's own behavior,
-   unconditional, and applies identically whether or not `route_adoption` is present.
-2. **Resource resolution (existing 404/403/409 conventions, BEFORE any adoption validation).** In this order:
-   the `source_anchor_id` must not already exist (409 conflict); the `job_id` (+ tenant) must resolve (404, incl.
-   cross-tenant isolation); the `plan_upload_id` + `page_number` must resolve to real page bounds (404); when
-   `route_adoption` is present, the three-way flag gate (400 `ROUTE_ADOPTION_INVALID` if disabled), the
-   `plan_upload_id` must additionally name a real `PLAN_PDF` upload (404), and — **fix-wave-2 H1** — the
-   create request's OWN `reviewed_bore_log_id` must resolve to a real reviewed bore-log (404, the SAME
-   existing convention a request without `route_adoption` gets for the same nonexistent RBL). This happens
-   for EVERY request — `route_adoption` present or not — and happens even when the submitted `route_adoption`
-   body is itself malformed or semantically invalid: a nonexistent `plan_upload_id` OR a nonexistent
-   `reviewed_bore_log_id`, combined with `confirmed: false` or any other adoption-body defect, returns
-   **404**, never `400 ROUTE_ADOPTION_INVALID` / `409 ROUTE_ADOPTION_SCOPE_MISMATCH`.
-3. **Adoption-specific validation** (only once (1) and (2) have both passed, and only when `route_adoption` is
-   present): `_rederive_route_adoption` runs its OWN internal order (the table below) over the ALREADY-RESOLVED
-   RBL — step 0 of THAT table (`ROUTE_ADOPTION_INVALID` for a well-typed-but-semantically-invalid adoption:
-   `confirmed != true`, a malformed `proposal_hash` string, or a control-point COUNT that mismatches, as
-   opposed to a MISSING field, which tier 1 already caught) is therefore always reached AFTER every resource
-   in tier 2 has resolved. Row IDENTITY (does the row exist ON the already-resolved RBL) and eligibility stay
-   SEMANTIC here (`ROUTE_ADOPTION_SCOPE_MISMATCH` / the nested `ROUTE_ADOPTION_NO_LONGER_DEFENSIBLE` refusal),
-   never a resource 404 — only the RBL's own EXISTENCE is a tier-2 resource concern.
+   a **missing** required field, or a field whose value Pydantic cannot COERCE to the declared type at all
+   (e.g. `page_number: "abc"`), is a **framework-standard HTTP 422** — never reaches product code at all. A
+   value Pydantic's (lax-mode) coercion CAN convert (e.g. `page_number: "5"` → `int` `5`, or
+   `confirmed: "true"` → `bool` `True`) is silently coerced and proceeds as if the caller had sent the coerced
+   type — it does NOT 422. This is FastAPI/Pydantic's own behavior, unconditional, and applies identically
+   whether or not `route_adoption` is present.
+
+   **Non-finite `control_points` (micro-round correction — the prior "non-finite → 422" example was FALSE):**
+   Pydantic's `float` fields coerce the strings `"NaN"` / `"Infinity"` (and `math.nan` / `math.inf` themselves)
+   WITHOUT raising — there is no 422 here. Non-finite control points are instead refused DOWNSTREAM, by three
+   separate, real guarantees, each living in a different place for a different reason: (a) the PROPOSAL
+   endpoint's own finiteness check, `_require_finite_control_points`
+   (`truelinev2/api/source_route_proposal_routes.py:102-109`), returns `400` before any join/geometry code
+   runs; (b) the pure geometry module's own point coercion, `_coerce_point`
+   (`truelinev2/contracts/source_route_adoption.py:228-237`), raises on a non-finite value, which
+   `derive_route_geometry` maps to the named `MALFORMED_CONTROL_POINTS` refusal
+   (`truelinev2/contracts/source_route_adoption.py:438`); (c) the canonical-JSON hasher,
+   `canonical_json_bytes` / `_normalize_number` (`truelinev2/contracts/source_route_adoption.py:186-191,206-210`,
+   `allow_nan=False`), refuses to hash a non-finite number at all. At CREATE time specifically, a fourth,
+   incidental guarantee also applies: the echo-vs-create `control_points` EQUALITY comparison
+   (`truelinev2/api/product_pipeline_routes.py:1556`, `echo_points != create_points`) uses ordinary Python
+   float equality, and IEEE754 `NaN != NaN` is always `True` — so a `NaN` control point NEVER passes this
+   comparison even when the echo and create request nominally "match", landing on
+   `409 ROUTE_ADOPTION_CONTROL_MISMATCH` before re-derivation is ever attempted.
+2. **Resource resolution (existing 404/403/409 conventions, BEFORE any adoption-SEMANTIC validation).**
+   Unconditionally, for EVERY request (`route_adoption` present or not): the `source_anchor_id` must not
+   already exist (409 conflict); the `job_id` (+ tenant) must resolve (404, incl. cross-tenant isolation); the
+   `plan_upload_id` + `page_number` must resolve to real page bounds (404).
+
+   **When `route_adoption` is present**, two MORE things happen, in this order, inside that branch — stated
+   plainly (micro-round correction; no code was moved to write this):
+   - **First, a plain FEATURE-GATE check** — `400 ROUTE_ADOPTION_INVALID` if the three-way adoption flag
+     isn't enabled. This is NOT a resource check (it reads server configuration, not a store record) and it
+     runs BEFORE the two adoption-specific resource checks below — it always fires first if the feature is
+     off, even for a request that also has a missing plan/RBL.
+   - **Then, two more resource checks**: the `plan_upload_id` must additionally name a real `PLAN_PDF` upload
+     on the job (404); and — fix-wave-2 H1 — the create request's OWN `reviewed_bore_log_id` must resolve to
+     a real reviewed bore-log (404, via the SAME existing `_to_http` contract-error mapping every other
+     resource check in this list uses).
+
+   **Owner-approved divergence (deliberate, not a bug — read before assuming symmetry with the legacy path):**
+   a `route_adoption` request explicitly NAMES the reviewed bore log as one of the RESOURCES the adoption is
+   scoped to (alongside the plan and the job) — so a missing one is an honest 404, resolved BEFORE any
+   adoption semantics run, exactly like a missing plan upload. The LEGACY no-adoption create path
+   (`route_adoption` absent) does **NOT** 404 on a missing `reviewed_bore_log_id` — it keeps its ORIGINAL,
+   unmodified evaluator design: `contracts/source_anchor.py::_evaluate_renderability` (lines 178-190) treats
+   an absent RBL as a NAMED RENDERABILITY BLOCKER (`REVIEWED_BORE_LOG_NOT_FOUND`), and `create_source_anchor`
+   still STORES the record — with `status = STATUS_REJECTED` rather than raising anything. Both are honest:
+   the adoption path is REFERENCING a resource it needs to re-derive geometry against (no record can be
+   created without it — a 404 IS the truth); the legacy path is RECORDING a review-context observation about
+   a submitted redline that may reference a not-yet-existing or since-removed RBL (a stored REJECTED record,
+   naming why, IS the truth there). This range does not change either behavior — see the closing round's
+   scope note.
+3. **Adoption-specific SEMANTIC validation** (only once (1) and (2) have both passed, and only when
+   `route_adoption` is present): `_rederive_route_adoption` runs its OWN internal order (the table below) over
+   the ALREADY-RESOLVED RBL — step 0 of THAT table (`ROUTE_ADOPTION_INVALID` for a well-typed-but-semantically-
+   invalid adoption: `confirmed != true`, a malformed `proposal_hash` string, or a control-point COUNT that
+   mismatches, as opposed to a MISSING field, which tier 1 already caught) is therefore always reached AFTER
+   every resource in tier 2 has resolved. Row IDENTITY (does the row exist ON the already-resolved RBL) and
+   eligibility stay SEMANTIC here (`ROUTE_ADOPTION_SCOPE_MISMATCH` / the nested
+   `ROUTE_ADOPTION_NO_LONGER_DEFENSIBLE` refusal), never a resource 404 — only the RBL's own EXISTENCE is a
+   tier-2 resource concern.
 
 Create-time failures WITHIN tier 3 (repo `_to_http` convention: the code LEADS the `detail` string, e.g.
 `"ROUTE_ADOPTION_STALE: ..."`, never an object detail — asserted by exact `detail.split(":")[0] == code`
