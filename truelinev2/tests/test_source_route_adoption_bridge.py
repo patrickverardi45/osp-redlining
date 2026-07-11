@@ -193,6 +193,33 @@ def test_raw_readiness_tempdir_used_is_outside_the_real_store_root(tmp_path):
         assert store.resolve() not in resolved.parents and resolved != store.resolve()
 
 
+def test_raw_readiness_process_temp_dir_rooted_inside_store_refuses_with_no_residue(tmp_path, monkeypatch):
+    """Fix-wave-2 G4 (F8 FAIL — cleanup-order bug): when the PROCESS temp directory itself is rooted INSIDE
+    the store root (a misconfigured TMPDIR/TEMP -- not a caller bug), ``tempfile.mkdtemp`` naturally creates
+    the ephemeral seam work dir UNDER the store BEFORE the F8 hardening check ever runs. The named refusal
+    (``UnsafeTempWorkdirError``) must still fire AND the just-created directory must be gone afterwards -- the
+    assertion is now INSIDE the try/finally (see the code fix), so an unsafe-workdir refusal still cleans up
+    rather than leaving crash-shaped residue durably reachable under the store."""
+    import pytest
+
+    store, plan_up, bore_up = _seed(tmp_path)
+    jroot = job_dir(store, _TENANT, _JOB)
+    temp_root_inside_store = store / "os_temp_root"
+    temp_root_inside_store.mkdir()
+    monkeypatch.setattr(tempfile, "tempdir", str(temp_root_inside_store))
+
+    before = sorted(store.rglob("*"))
+    with pytest.raises(prb.UnsafeTempWorkdirError):
+        prb.run_job_route_readiness_raw(
+            [plan_up, bore_up], jroot, allowed_upload_ids=[plan_up["upload_id"], bore_up["upload_id"]],
+            store_root=store)
+    after = sorted(store.rglob("*"))
+
+    assert not any("tl2_route_adoption_" in str(p) for p in after), \
+        "ephemeral work dir left behind under the store after an unsafe-workdir refusal"
+    assert after == before                                        # ZERO residue: store tree byte-unchanged
+
+
 def test_assert_workdir_outside_store_refuses_when_inside(tmp_path):
     """Direct unit proof of the F8 assertion helper: a work dir that DOES resolve under the store root raises
     ``UnsafeTempWorkdirError`` rather than silently proceeding."""

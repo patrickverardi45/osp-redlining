@@ -445,8 +445,13 @@ def run_job_route_readiness_raw(uploads: Sequence[Dict[str, Any]], job_files_roo
     from truelinev2.harness.route_verification import run_package_route_readiness
 
     work_dir = tempfile.mkdtemp(prefix="tl2_route_adoption_")
-    _assert_workdir_outside_store(work_dir, store_root)
     try:
+        # Fix-wave-2 G4 (blind-verification FAIL — cleanup-order bug): the F8 hardening assertion runs INSIDE
+        # the try/finally (never before it) so an unsafe-workdir refusal still reaches the `finally` below and
+        # removes the just-created directory. Asserting before `try` would leave that directory behind under
+        # the store on every refusal — exactly the crash-residue shape F8's own docstring says this seam must
+        # never produce for an ordinary (non-crash) refusal path.
+        _assert_workdir_outside_store(work_dir, store_root)
         pkg = materialize_package_view(uploads, job_files_root, work_dir, allowed_upload_ids=allowed_upload_ids)
         if pkg is None:
             return None, _sheet_context(
