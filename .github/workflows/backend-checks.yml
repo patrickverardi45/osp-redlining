@@ -64,4 +64,5 @@ jobs:
             truelinev2/tests/test_handwritten_borelog_extract.py \
             truelinev2/tests/test_handwritten_borelog_routes.py \
             truelinev2/tests/test_vision_providers.py \
+            truelinev2/tests/test_handwritten_acceptance_harness.py \
             -q
