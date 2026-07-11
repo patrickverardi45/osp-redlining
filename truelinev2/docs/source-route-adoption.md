@@ -4,6 +4,15 @@
 > pinned spec — epsilon-weakened geometry rules, an eager module import, a missing row-evidence hash, a
 > reachable-but-untested `CONTROL_MISMATCH` code, and undisclosed temp-directory writes. All nine are fixed and
 > test-locked; this revision reflects the SHIPPED (fixed) behavior, not the original T31 landing.
+>
+> **Fix-wave-2 note (T39 re-verification)**: a second pass found test-fidelity gaps (a coarse `5e-7` connector
+> lock, a real-fixture same-segment test that only clicked segment endpoints, canonicalized-dict byte-identity,
+> a `0.05`pt station-dot tolerance, a v1-vs-v2 equality test that never called closeout/export) and two real
+> behaviors — the temp-workdir hardening check ran before its own cleanup `try`, and the endpoint-ordering
+> table above needed to document resource-first + framework 422 as the TRUE (already-correct) shipped order,
+> not merely as claimed. All are fixed/documented and test-locked (see the "Tests" section's fix-wave-2 G1–G9
+> pointers); the `_patch_bent_geometry` test-local synthetic-geometry helper is DELETED in favor of a real,
+> additive, non-collinear multi-bend QA scenario (G8/G9 below).
 
 A source-backed, server-owned alternative to the two-click manual redline: given a verified
 `READY_FOR_REVIEW_REDLINE` observer backbone (the SAME route the readiness spine already verifies for the
@@ -97,8 +106,35 @@ what gets re-derived and stored; the server **re-derives** the SAME join + proje
 `route_adoption.proposal_hash` remains the **SOLE grant gate** — nothing the echo claims can cause adoption
 without the hash matching.
 
-Create-time failures (repo `_to_http` convention: the code LEADS the `detail` string, e.g.
-`"ROUTE_ADOPTION_STALE: ..."`, never an object detail), checked in this ORDER:
+### Refusal ORDER at the endpoint boundary (fix-wave-2 G3 — FOREMAN RULING, amended)
+
+The ORDER a real HTTP request to `POST /v2/product/jobs/{job_id}/source-anchors` is actually evaluated in —
+three tiers, in this sequence, EVERY request:
+
+1. **Request-SHAPE validation (framework, before any route code runs).** FastAPI/Pydantic parses + validates
+   the JSON body against `SourceAnchorCreate` (and, when `route_adoption` is present, against the NESTED
+   `RouteAdoptionIn` model — every one of its seven fields, including the five identity/control-point ECHO
+   fields, is REQUIRED). A missing or mistyped field anywhere in the body — including a missing
+   `route_adoption.page_number` — never reaches product code at all: it is a **framework-standard HTTP 422**,
+   not a code-first 400. This is FastAPI's own behavior, unconditional, and applies identically whether or not
+   `route_adoption` is present.
+2. **Resource resolution (existing 404/403/409 conventions, BEFORE any adoption validation).** In this order:
+   the `source_anchor_id` must not already exist (409 conflict); the `job_id` (+ tenant) must resolve (404, incl.
+   cross-tenant isolation); the `plan_upload_id` + `page_number` must resolve to real page bounds (404). This
+   happens for EVERY request — `route_adoption` present or not — and happens even when the submitted
+   `route_adoption` body is itself malformed or semantically invalid: a nonexistent `plan_upload_id` combined
+   with `confirmed: false` returns **404**, never `400 ROUTE_ADOPTION_INVALID`.
+3. **Adoption-specific validation** (only once (1) and (2) have both passed, and only when `route_adoption` is
+   present): the flag-gate check (400 `ROUTE_ADOPTION_INVALID` if the three-way flag isn't enabled), then the
+   `route_adoption`-present `plan_upload_id` must name a real `PLAN_PDF` upload on the job (404), then
+   `_rederive_route_adoption` runs its OWN internal order (the table below) — step 0 of THAT table
+   (`ROUTE_ADOPTION_INVALID` for a well-typed-but-semantically-invalid adoption: `confirmed != true`, a
+   malformed `proposal_hash` string, or a control-point COUNT that mismatches, as opposed to a MISSING field,
+   which tier 1 already caught) is therefore always reached AFTER every resource in tier 2 has resolved.
+
+Create-time failures WITHIN tier 3 (repo `_to_http` convention: the code LEADS the `detail` string, e.g.
+`"ROUTE_ADOPTION_STALE: ..."`, never an object detail — asserted by exact `detail.split(":")[0] == code`
+equality in the tests, never `startswith`), checked in this ORDER:
 
 | # | Condition | HTTP | Code |
 |---|---|---|---|
@@ -111,6 +147,11 @@ Create-time failures (repo `_to_http` convention: the code LEADS the `detail` st
 
 `ROUTE_ADOPTION_CONTROL_MISMATCH` is reachable in this implementation (fix-wave F7 — see step 2 above); the
 prior landing's "reserved, not raised" limitation is resolved.
+
+Test-locked at the REAL ASGI request boundary (`test_source_route_adoption_api.py`, fix-wave-2 G3): a missing
+echo field → 422; `confirmed: false` with otherwise-valid resources → 400 with an EXACT `ROUTE_ADOPTION_INVALID`
+leading token; a nonexistent plan + a malformed `route_adoption` body → 404 (resource-first, never the 400 the
+malformed body would otherwise produce).
 
 On success the stored record is `record_format = "trueline-source-anchor-2"`; `control_points` holds the
 SERVER-DERIVED render polyline (so the EXISTING renderer / station-dot call path consumes it unmodified — see
@@ -198,6 +239,13 @@ creation** that the resolved temp work directory is NOT under the store root, an
 with, or become reachable through, the durable store tree (test-locked in
 `test_source_route_adoption_bridge.py`).
 
+> **Fix-wave-2 G4**: the assertion runs INSIDE the `try`/`finally` (immediately after `mkdtemp`, before any
+> other work), never before it — so an unsafe-workdir refusal still reaches the `finally` cleanup and removes
+> the just-created directory. A process temp root that is itself misconfigured to sit under the store root
+> (not a crash — an ordinary refusal path) therefore still leaves **zero residue**, test-locked by rooting the
+> process temp dir inside the store (`monkeypatch.setattr(tempfile, "tempdir", ...)`) and asserting both the
+> named refusal and an unchanged store tree afterward.
+
 ## Known limitation — none remaining for `ROUTE_ADOPTION_CONTROL_MISMATCH`
 
 Resolved by fix-wave F7: the create request's `route_adoption` block now carries a full ECHO of the proposal
@@ -240,18 +288,30 @@ to a successful adoption, regardless of what the echo says.
 ## Tests
 
 `truelinev2/tests/test_source_route_adoption_geometry.py` (pure module, every refusal code + hash stability/
-sensitivity + exact-tolerance/exact-contiguity/unconditional-same-segment locks), `test_source_route_adoption_bridge.py`
-(additive bridge params, byte-identity + filtering + the F8 temp-workdir-outside-store-root proof),
-`test_source_route_adoption_api.py` (end-to-end: mounting, flag OFF/ON FULL-record byte-identity, a fresh-
-subprocess `sys.modules` import-isolation proof, proposal happy-path + refusals against REAL source-backed
-geometry read off the fixture-free `complete_package_qa` spine — including a real single-segment backbone
-proving the F4 same-segment refusal end-to-end — adoption round-trip, stale/invalid/scope-mismatch/control-
-mismatch/no-longer-defensible (including the F5 row-evidence-hash staleness case), tenant isolation,
-manifest/closeout/on-polyline station-dot flow-through, and a v1-manual-vs-v2-adopted output-equality proof for
-identical geometry).
+sensitivity + exact-tolerance/exact-contiguity/unconditional-same-segment locks, incl. the fix-wave-2 G1
+adversarial `5e-7` connector lock), `test_source_route_adoption_bridge.py` (additive bridge params,
+byte-identity + filtering + the F8 temp-workdir-outside-store-root proof, incl. the fix-wave-2 G4
+process-temp-dir-inside-store no-residue proof), `test_source_route_adoption_api.py` (end-to-end: mounting,
+flag OFF/ON RAW STORED-FILE-BYTES + RAW HTTP-RESPONSE-BYTES identity (fix-wave-2 G5), a fresh-subprocess
+`sys.modules` import-isolation proof, proposal happy-path + refusals against REAL source-backed geometry read
+off the fixture-free `complete_package_qa` spine — including a real single-segment backbone proving the F4
+same-segment refusal end-to-end with BOTH the segment's own endpoints AND two MID-SEGMENT interior controls
+(fix-wave-2 G2) — adoption round-trip, stale/invalid/scope-mismatch/control-mismatch/no-longer-defensible
+(including the F5 row-evidence-hash staleness case), the fix-wave-2 G3 amended endpoint-ordering proofs at the
+REAL ASGI request boundary (422 for a missing echo field, exact-split-token 400/409 codes, resource-first 404),
+tenant isolation, manifest/closeout/on-polyline station-dot flow-through (fix-wave-2 G6: `<= 1e-9` true
+on-polyline distance against an independently-recomputed exact point), and a v1-manual-vs-v2-adopted
+output-equality proof for identical geometry that ALSO calls the real closeout-PDF-build and
+export/bundle-assembly paths for both records (fix-wave-2 G7)).
 
-A real single-segment READY backbone (the `complete_ready` QA fixture — a straight terminus-to-terminus run)
-now ALWAYS refuses `CONTROLS_ON_SAME_BACKBONE_SEGMENT` under fix-wave F4; the happy-path / reader-survey tests
-that need a genuinely successful multi-segment adoption wrap the readiness bridge's raw seam
-(`_patch_bent_geometry` in the test file) to split that SAME real backbone into two colinear segments at its
-own real midpoint — identical overall endpoints/length, one additional real interior vertex, nothing invented.
+**Fix-wave-2 G8/G9 (Item-10 ruling)**: a real single-segment READY backbone (the `complete_ready` QA fixture —
+a straight terminus-to-terminus run) ALWAYS refuses `CONTROLS_ON_SAME_BACKBONE_SEGMENT` under fix-wave F4; the
+happy-path / reader-survey tests that need a genuinely successful multi-segment adoption now bind to a NEW,
+ADDITIVE `harness.complete_package_qa` scenario, `"bent_ready"` (`ROUTE_BENT` route shape) — a genuinely
+non-collinear, real, UNPATCHED 3-segment / 2-bend observer backbone reaching `READY_FOR_REVIEW_REDLINE` through
+the UNMODIFIED spine, exactly like `complete_ready` but with real preserved bends. The prior test-local
+`_patch_bent_geometry` helper (which split the real single-segment backbone into two SYNTHETIC collinear
+segments after the fact) is DELETED: it manufactured exactly the segment boundary needed to flip the real
+fixture's refusal into a success, so it could not prove adoption against the unmodified spine. All 7
+pre-existing `complete_package_qa` scenarios (including `complete_ready` itself) are unchanged — `bent_ready` is
+purely additive.
