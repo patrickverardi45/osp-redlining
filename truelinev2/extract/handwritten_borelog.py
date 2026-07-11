@@ -14,14 +14,24 @@ Owns, purely from ``(upload_bytes, filename)`` -- no store I/O, no engine/render
      normalized away into ``Cell.value``, the raw text kept verbatim in ``Cell.verbatim``). Deterministic;
      never guesses -- an unmatched line simply contributes no reading.
   3. VISION-PROVIDER SEAM -- a page with NO usable text layer (a scanned/photographed page, or a bare image
-     upload) needs a provider. The registry is a plain ``name -> callable(page_png_bytes, context) ->
-     HandwrittenPageExtraction`` dict and ships EMPTY in this wave (no network code, no vendor/model name
-     anywhere in this seam) -- an unset/unknown provider name always refuses honestly with
-     ``HANDWRITTEN_VISION_PROVIDER_NOT_CONFIGURED``. A configured provider call is wrapped in a hard
-     threading-based timeout (``HANDWRITTEN_EXTRACTION_TIMEOUT``) and its output is re-validated through
-     ``validate_page_extraction`` before being trusted (``HANDWRITTEN_PROVIDER_OUTPUT_INVALID`` otherwise).
-     Tests inject a private fake provider via the ``providers=`` parameter; production callers never pass
-     it, so the registry stays empty end-to-end.
+     upload) needs a provider. ``TL2_HANDWRITTEN_BORELOG_PROVIDER`` (``config.handwritten_borelog_provider``,
+     surfaced here as ``provider_name``) is a DOTTED MODULE PATH (e.g.
+     ``"truelinev2.extract.vision_providers.fake"``) -- ``_load_provider`` imports it LAZILY and calls its
+     ``build_provider(config) -> callable(page_png_bytes, context) -> HandwrittenPageExtraction``, where
+     ``config`` is the small read-only ``ProviderConfig`` view (timeout seconds + a bound env-reader) so
+     each provider module reads ITS OWN env vars without this seam or ``config.py`` ever naming a
+     vendor/model literal. Unset provider, import failure, a missing/raising ``build_provider``, or a
+     non-callable result all fold into the SAME existing ``HANDWRITTEN_VISION_PROVIDER_NOT_CONFIGURED``
+     refusal (reason sanitized to the module's tail + exception class name only -- never a traceback or
+     path). A resolved provider CALL is wrapped in a hard threading-based timeout
+     (``HANDWRITTEN_EXTRACTION_TIMEOUT``); a raised ``ProviderOutputInvalid`` (from
+     ``extract/vision_providers/__init__.py``) or schema/honesty failure re-validated through
+     ``validate_page_extraction`` refuses ``HANDWRITTEN_PROVIDER_OUTPUT_INVALID``; any OTHER raised
+     exception refuses the new ``HANDWRITTEN_PROVIDER_ERROR`` (reason = the exception's CLASS NAME only).
+     Tests inject a private fake CALLABLE directly via the ``providers=`` parameter (bypassing the
+     module-path factory entirely); production callers never pass it, so the factory is what they always
+     get. One INFO log line per provider page call (module tail, page_index, outcome, duration_ms,
+     attempts) -- never the page image bytes or any env/secret value.
   4. PAGE LEDGER -- ``build_page_ledger`` guarantees EVERY physical page is accounted for exactly once
      (EXTRACTED / REFUSED / NO_USABLE_STATION_RUN), including a page whose only station runs were too
      short to normalize into a span (those runs' warnings are folded into the ledger entry itself, not left
@@ -36,9 +46,13 @@ vendor/model name. No engine, renderer, dialect registry, or AI/OCR network call
 from __future__ import annotations
 
 import hashlib
+import importlib
 import io
+import logging
+import os
 import re
 import threading
+import time
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
@@ -55,7 +69,10 @@ from truelinev2.contracts.handwritten_extraction import (
     spans_from_page,
     validate_page_extraction,
 )
+from truelinev2.extract.vision_providers import ProviderOutputInvalid
 from truelinev2.stations import parse_station, strip_station_label
+
+_LOG = logging.getLogger("truelinev2.extract.vision_providers")
 
 DEFAULT_TIMEOUT_SECONDS = 90
 
@@ -65,6 +82,10 @@ DEFAULT_TIMEOUT_SECONDS = 90
 HANDWRITTEN_VISION_PROVIDER_NOT_CONFIGURED = "HANDWRITTEN_VISION_PROVIDER_NOT_CONFIGURED"
 HANDWRITTEN_EXTRACTION_TIMEOUT = "HANDWRITTEN_EXTRACTION_TIMEOUT"
 HANDWRITTEN_PROVIDER_OUTPUT_INVALID = "HANDWRITTEN_PROVIDER_OUTPUT_INVALID"
+# A provider CALLABLE raised something other than ProviderOutputInvalid (network error, SDK auth/
+# permission error, a bare RuntimeError, ...) -- an UNNAMED provider failure. Reason is reduced to the
+# exception's CLASS NAME ONLY (never its message -- may embed request/URL/header details).
+HANDWRITTEN_PROVIDER_ERROR = "HANDWRITTEN_PROVIDER_ERROR"
 # Raised by extract/borelog_rows.py's third tier when the handwritten extractor ran but found zero usable
 # proposals across every page (defined HERE, imported there, so the reason code has one home).
 HANDWRITTEN_NO_USABLE_ROWS = "HANDWRITTEN_NO_USABLE_ROWS"
@@ -73,11 +94,58 @@ HANDWRITTEN_NO_USABLE_ROWS = "HANDWRITTEN_NO_USABLE_ROWS"
 # message spans_from_page folds into every proposal's warnings for a run with < 2 usable stations).
 TOO_FEW_USABLE_STATIONS = "TOO_FEW_USABLE_STATIONS"
 
-# Vision-provider registry: name -> callable(page_png_bytes: bytes, context: dict) -> HandwrittenPageExtraction.
-# EMPTY in this wave -- no network provider is wired. Production callers never pass ``providers=`` to
-# ``extract_handwritten``/``_vision_page``, so this module-level registry (never mutated at runtime) is
-# what they always get: every vision-needing page refuses HANDWRITTEN_VISION_PROVIDER_NOT_CONFIGURED.
-_PROVIDERS: Dict[str, Callable[[bytes, dict], dict]] = {}
+
+class ProviderConfig:
+    """Read-only view passed to a vision-provider module's ``build_provider(config)``. Carries ONLY the
+    extraction timeout and a bound env-reader (``os.environ.get``) -- provider modules read THEIR OWN env
+    vars directly through ``get_env``, so this seam (and ``config.py``) never names or enumerates a
+    third-party env var. Never mutated after construction."""
+    __slots__ = ("timeout_seconds", "get_env")
+
+    def __init__(self, *, timeout_seconds: float) -> None:
+        self.timeout_seconds = timeout_seconds
+        self.get_env = os.environ.get
+
+
+def _module_tail(module_path: str) -> str:
+    """The last dotted segment of a provider module path -- the ONLY piece of the path ever surfaced in a
+    refusal reason or log line (never the full path, never a traceback)."""
+    return str(module_path).rsplit(".", 1)[-1]
+
+
+def _load_provider(module_path: str, timeout_s: float
+                   ) -> Tuple[Optional[Callable[[bytes, dict], dict]], Optional[str]]:
+    """Lazily import ``module_path`` (the deployment-configured ``TL2_HANDWRITTEN_BORELOG_PROVIDER`` dotted
+    path) and call its ``build_provider(config) -> provider_callable``. ANY failure along the way (import
+    error, missing/non-callable ``build_provider``, ``build_provider`` raising -- including a provider's
+    own ``ProviderUnavailable``) is caught here and reduced to a SANITIZED reason string (module tail +
+    exception class name only -- never a message, path, or traceback) for the caller to fold into the
+    existing NOT_CONFIGURED refusal. Returns ``(callable_or_None, sanitized_reason_or_None)``."""
+    tail = _module_tail(module_path)
+    try:
+        module = importlib.import_module(module_path)
+    except Exception as exc:  # noqa: BLE001 - any import failure -> a sanitized NOT_CONFIGURED reason
+        return None, "%s: %s on import" % (tail, type(exc).__name__)
+    build = getattr(module, "build_provider", None)
+    if build is None or not callable(build):
+        return None, "%s: no build_provider(config)" % tail
+    try:
+        fn = build(ProviderConfig(timeout_seconds=timeout_s))
+    except Exception as exc:  # noqa: BLE001 - build_provider raised -> a sanitized NOT_CONFIGURED reason
+        return None, "%s: %s" % (tail, type(exc).__name__)
+    if fn is None or not callable(fn):
+        return None, "%s: build_provider did not return a callable" % tail
+    return fn, None
+
+
+def _log_provider_call(provider_tail: str, page_index: int, outcome: str, duration_ms: int, attempts: int
+                       ) -> None:
+    """ONE INFO log line per provider page call. NEVER includes the page image bytes, an API key, or any
+    other env/secret value -- only the module tail, page index, outcome code, timing, and attempt count."""
+    _LOG.info(
+        "vision provider call: provider=%s page_index=%d outcome=%s duration_ms=%d attempts=%d",
+        provider_tail, page_index, outcome, duration_ms, attempts,
+    )
 
 _IMAGE_EXTENSIONS = (".jpg", ".jpeg", ".png")
 
@@ -389,11 +457,14 @@ def _refused_page(source: dict, *, code: str, reason: str, extractor: str) -> di
 
 
 def _run_provider_with_timeout(fn, page_png_bytes: bytes, context: dict, timeout_s: float
-                               ) -> Tuple[Optional[dict], Optional[str]]:
+                               ) -> Tuple[Optional[dict], Optional[str], Optional[str]]:
     """Run ONE provider callable in a daemon worker thread with a hard join timeout. Returns
-    ``(record, error_code)``: ``error_code`` is None on a schema-valid success, else
-    HANDWRITTEN_EXTRACTION_TIMEOUT (still running past the deadline) or HANDWRITTEN_PROVIDER_OUTPUT_INVALID
-    (the call raised, or its output failed ``validate_page_extraction``)."""
+    ``(record, error_code, detail)``: ``error_code`` is None on a schema-valid success, else
+    HANDWRITTEN_EXTRACTION_TIMEOUT (still running past the deadline), HANDWRITTEN_PROVIDER_OUTPUT_INVALID
+    (the call raised ``ProviderOutputInvalid``, or its output failed ``validate_page_extraction`` --
+    ``detail`` carries the ``ProviderOutputInvalid`` message when present, else None), or
+    HANDWRITTEN_PROVIDER_ERROR (the call raised anything ELSE -- ``detail`` is that exception's CLASS NAME
+    ONLY, never its message)."""
     box: Dict[str, Any] = {}
 
     def _run() -> None:
@@ -406,41 +477,73 @@ def _run_provider_with_timeout(fn, page_png_bytes: bytes, context: dict, timeout
     t.start()
     t.join(timeout_s)
     if t.is_alive():
-        return None, HANDWRITTEN_EXTRACTION_TIMEOUT
+        return None, HANDWRITTEN_EXTRACTION_TIMEOUT, None
     if "error" in box:
-        return None, HANDWRITTEN_PROVIDER_OUTPUT_INVALID
+        exc = box["error"]
+        if isinstance(exc, ProviderOutputInvalid):
+            return None, HANDWRITTEN_PROVIDER_OUTPUT_INVALID, (str(exc) or None)
+        return None, HANDWRITTEN_PROVIDER_ERROR, type(exc).__name__
     record = box.get("result")
     try:
         validate_page_extraction(record)
     except HandwrittenExtractionError:
-        return None, HANDWRITTEN_PROVIDER_OUTPUT_INVALID
-    return record, None
+        return None, HANDWRITTEN_PROVIDER_OUTPUT_INVALID, None
+    return record, None, None
 
 
 def _vision_page(source: dict, page_png_bytes: bytes, *, provider_name: Optional[str],
                  providers: Optional[Dict[str, Callable]], timeout_s: float) -> dict:
-    """Resolve one page that needs a vision provider (no usable text layer): registry lookup -> timeout-
-    wrapped call -> re-validated output, or an honest named refusal at any step."""
-    registry = _PROVIDERS if providers is None else providers
-    fn = registry.get(provider_name) if provider_name else None
+    """Resolve one page that needs a vision provider (no usable text layer): resolve a provider callable
+    (TEST-INJECTED dict lookup when ``providers`` is given, else the dotted-module-path factory) ->
+    timeout-wrapped call -> re-validated output, or an honest named refusal at any step. Logs ONE INFO
+    line per call (never the image bytes or an env/secret value) -- see ``_log_provider_call``."""
+    page_index = source["page_index"]
+    load_reason: Optional[str] = None
+    if providers is not None:
+        # TEST-INJECTION PATH (unchanged from prior waves): direct callable lookup by name in the
+        # caller-supplied dict -- bypasses the dotted-module-path factory entirely. Production callers
+        # never pass ``providers``, so this branch is test-only.
+        fn = providers.get(provider_name) if provider_name else None
+        tail = provider_name or "unconfigured"
+    else:
+        # PRODUCTION PATH: ``provider_name`` (== settings.handwritten_borelog_provider ==
+        # TL2_HANDWRITTEN_BORELOG_PROVIDER) is a dotted module path, loaded lazily via ``_load_provider``.
+        tail = _module_tail(provider_name) if provider_name else "unconfigured"
+        fn, load_reason = (_load_provider(provider_name, timeout_s) if provider_name else (None, None))
+
     if fn is None:
+        reason = ("no vision provider is configured for handwritten bore-log extraction" if not load_reason
+                  else "vision provider could not be loaded (%s)" % load_reason)
+        _log_provider_call(tail, page_index, HANDWRITTEN_VISION_PROVIDER_NOT_CONFIGURED, 0, 0)
         return _refused_page(
             source, code=HANDWRITTEN_VISION_PROVIDER_NOT_CONFIGURED,
-            reason="no vision provider is configured for handwritten bore-log extraction",
-            extractor=provider_name or "unconfigured")
+            reason=reason, extractor=provider_name or "unconfigured")
+
+    attempts_box = [1]  # default: a provider that never calls report_attempts made exactly one attempt
     context = {"upload_id": source["upload_id"], "file_name": source["file_name"],
-              "page_index": source["page_index"], "page_count": source["page_count"]}
-    record, err = _run_provider_with_timeout(fn, page_png_bytes, context, timeout_s)
+              "page_index": page_index, "page_count": source["page_count"],
+              "sha256": source["sha256"],
+              "report_attempts": lambda n, _box=attempts_box: _box.__setitem__(0, n)}
+    start = time.monotonic()
+    record, err, detail = _run_provider_with_timeout(fn, page_png_bytes, context, timeout_s)
+    duration_ms = int((time.monotonic() - start) * 1000)
+    _log_provider_call(tail, page_index, err or EXTRACTED, duration_ms, attempts_box[0])
+
     if err == HANDWRITTEN_EXTRACTION_TIMEOUT:
         return _refused_page(
             source, code=HANDWRITTEN_EXTRACTION_TIMEOUT,
             reason="the vision provider did not return a result within %s seconds" % timeout_s,
-            extractor=provider_name)
+            extractor=provider_name or tail)
+    if err == HANDWRITTEN_PROVIDER_ERROR:
+        return _refused_page(
+            source, code=HANDWRITTEN_PROVIDER_ERROR,
+            reason="the vision provider raised %s" % detail,
+            extractor=provider_name or tail)
     if err == HANDWRITTEN_PROVIDER_OUTPUT_INVALID:
         return _refused_page(
             source, code=HANDWRITTEN_PROVIDER_OUTPUT_INVALID,
-            reason="the vision provider's output failed schema/honesty validation",
-            extractor=provider_name)
+            reason=detail or "the vision provider's output failed schema/honesty validation",
+            extractor=provider_name or tail)
     return record
 
 

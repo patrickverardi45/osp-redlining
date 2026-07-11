@@ -12,3 +12,10 @@ starlette==1.0.0
 uvicorn==0.47.0
 # dev/test
 pytest>=8.0
+# Optional (like sentry-sdk above it in spirit, but not even a hard requirements.txt line by convention
+# here either): anthropic -- required ONLY by truelinev2/extract/vision_providers/anthropic_messages.py,
+# and only when a deployment sets TL2_HANDWRITTEN_BORELOG_PROVIDER to that module's dotted path. Lazily
+# imported; its absence never breaks the suite or any flag-OFF path. See
+# truelinev2/docs/handwritten-vision-provider.md. A deployment that enables this provider installs it
+# itself, e.g.:
+# anthropic>=0.40

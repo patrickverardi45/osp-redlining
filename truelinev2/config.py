@@ -117,14 +117,16 @@ class Settings:
     # --- Phase-1 handwritten/scanned bore-log extraction (Wave 2: extract seam + API). DEFAULT OFF -- OFF is
     # byte-identical (no image BORE_LOG uploads accepted, no third extraction tier, no fan-out/review/source
     # routes). No vendor/model name lives here or anywhere in this seam -- the provider is opaque runtime
-    # data (a deployment-supplied label), and this wave ships NO network provider (the registry is empty).
+    # data (a deployment-supplied dotted module path), never named by this file.
     handwritten_borelog_extraction_optin: bool = False
     # Hard timeout (seconds) around one page's vision-provider call (threading-based wrapper; a provider that
     # never returns cannot hang extraction forever). Env: TL2_HANDWRITTEN_BORELOG_TIMEOUT_SECONDS.
     handwritten_borelog_timeout_seconds: int = 90
-    # Deployment-selected vision-provider NAME (opaque runtime data -- looked up in a provider registry that
-    # is EMPTY in this wave, so any value here still refuses honestly with HANDWRITTEN_VISION_PROVIDER_NOT_CONFIGURED
-    # until a real provider is wired in a later, separately-authorized change). Env: TL2_HANDWRITTEN_BORELOG_PROVIDER.
+    # Deployment-selected vision-provider DOTTED MODULE PATH (e.g. "truelinev2.extract.vision_providers.
+    # anthropic_messages") -- extract/handwritten_borelog.py's factory imports it lazily and calls its
+    # build_provider(config). Unset/unloadable/None still refuses honestly with
+    # HANDWRITTEN_VISION_PROVIDER_NOT_CONFIGURED. Env: TL2_HANDWRITTEN_BORELOG_PROVIDER. See
+    # docs/handwritten-vision-provider.md for the full config matrix.
     handwritten_borelog_provider: Optional[str] = None
 
     @classmethod

@@ -28,6 +28,7 @@ from truelinev2.extract import borelog_rows as br
 from truelinev2.extract.handwritten_borelog import (
     HANDWRITTEN_EXTRACTION_TIMEOUT,
     HANDWRITTEN_NO_USABLE_ROWS,
+    HANDWRITTEN_PROVIDER_ERROR,
     HANDWRITTEN_PROVIDER_OUTPUT_INVALID,
     HANDWRITTEN_VISION_PROVIDER_NOT_CONFIGURED,
     TOO_FEW_USABLE_STATIONS,
@@ -333,13 +334,18 @@ def test_injected_fake_provider_invalid_output_refuses_named():
     assert out["pages"][0]["refusal"]["code"] == HANDWRITTEN_PROVIDER_OUTPUT_INVALID
 
 
-def test_injected_fake_provider_raising_refuses_as_invalid_output():
+def test_injected_fake_provider_raising_refuses_as_provider_error():
+    """A provider callable that raises a generic (non-ProviderOutputInvalid) exception is an UNNAMED
+    provider failure -> HANDWRITTEN_PROVIDER_ERROR, reason = the exception's class name only."""
     def _raises(png_bytes, context):
-        raise RuntimeError("boom")
+        raise RuntimeError("boom -- must never appear in the refusal reason")
 
     out = extract_handwritten(_jpeg_bytes(), "photo.jpg", upload_id="up-1",
                               provider_name="raises", providers={"raises": _raises})
-    assert out["pages"][0]["refusal"]["code"] == HANDWRITTEN_PROVIDER_OUTPUT_INVALID
+    refusal = out["pages"][0]["refusal"]
+    assert refusal["code"] == HANDWRITTEN_PROVIDER_ERROR
+    assert "RuntimeError" in refusal["reason"]
+    assert "boom" not in refusal["reason"]
 
 
 # --------------------------------------------------------------------------- #
