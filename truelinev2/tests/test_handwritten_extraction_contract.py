@@ -305,6 +305,40 @@ def test_confidence_never_high_even_with_no_print():
     assert span["confidence"] == LOW
 
 
+def test_header_field_prefers_value_over_verbatim():
+    # A READ header cell whose verbatim (raw evidence) differs from its value (normalized) -- e.g. a
+    # positional TEXT_LAYER capture whose verbatim is the full "DATE: 2/11/2026" run but whose value is the
+    # already-stripped "2/11/2026" -- must surface the VALUE on the proposal, never the raw verbatim text.
+    readings = [_reading("1+00", row_index=0), _reading("2+00", row_index=1)]
+    header = {
+        "date": _cell("2/11/2026", verbatim="DATE: 2/11/2026"),
+        "crew": _blank_cell(),
+        "job_name": _blank_cell(),
+        "print_raw": _cell("29,30,31", verbatim="PRINT#: 29,30,31"),
+    }
+    page = _page(readings, header=header)
+    span = spans_from_page(page)[0]
+    assert span["date"] == "2/11/2026"
+    assert span["print_raw"] == "29,30,31"
+    assert span["sheet_refs"] == [29, 30, 31]                 # sheet_refs must derive from the VALUE too
+    # cell_evidence carries the verbatim (raw evidence), untouched, separately from the derived field.
+    assert span["cell_evidence"]["print_raw"]["verbatim"] == "PRINT#: 29,30,31"
+
+
+def test_header_field_falls_back_to_verbatim_when_value_is_none():
+    readings = [_reading("1+00", row_index=0), _reading("2+00", row_index=1)]
+    header = {
+        "date": _blank_cell(),
+        "crew": _blank_cell(),
+        "job_name": _blank_cell(),
+        "print_raw": _cell(None, status=READ, verbatim="12"),   # READ but value uncoerced -> verbatim used
+    }
+    page = _page(readings, header=header)
+    span = spans_from_page(page)[0]
+    assert span["print_raw"] == "12"
+    assert span["sheet_refs"] == [12]
+
+
 def test_refused_page_yields_no_spans():
     page = _page([_reading("48+52", row_index=0), _reading("49+00", row_index=1)],
                 page_status=REFUSED, refusal={"code": "PAGE_UNREADABLE", "reason": "blank scan"})

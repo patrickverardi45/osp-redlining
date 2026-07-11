@@ -284,9 +284,14 @@ def _series_evidence_entry(cells: List[Dict[str, Any]], page_index: int, status_
 
 
 def _header_text(cell: Dict[str, Any]) -> Optional[str]:
+    """The NORMALIZED text for a READ header cell -- prefers ``value`` (the normalized read), falling back
+    to ``verbatim`` only when ``value`` is None (a cell may be READ with a value the caller could not
+    separately normalize). ``verbatim`` is the raw evidence text and is carried untouched in
+    ``cell_evidence`` regardless -- this function feeds SpanProposal's date/crew/notes/print_raw/sheet_refs
+    fields, which must be the normalized value, never the raw label+value evidence string."""
     if cell["status"] != READ:
         return None
-    text = cell["verbatim"] if cell["verbatim"] is not None else cell["value"]
+    text = cell["value"] if cell["value"] is not None else cell["verbatim"]
     return None if text is None else str(text)
 
 
