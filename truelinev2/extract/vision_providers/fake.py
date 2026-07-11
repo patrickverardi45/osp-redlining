@@ -3,9 +3,9 @@ never invents a reading: it reads a pre-built, schema-shaped ``HandwrittenPageEx
 fixtures directory and returns it verbatim (defaulting ``method``/``extractor`` when the fixture omits
 them); a page with no matching fixture file refuses honestly rather than fabricating a result.
 
-Wired the SAME way the real ``anthropic_messages`` provider is: ``build_provider(config)`` reads its own
-env var (``TL2_HANDWRITTEN_FAKE_FIXTURES``, a directory path) through ``config.get_env`` -- this seam
-never names that env var, or any other provider's env var, anywhere outside the provider's own module.
+Wired the SAME way the real vendor messages-API adapter is: ``build_provider(config)`` reads its own env
+var (``TL2_HANDWRITTEN_FAKE_FIXTURES``, a directory path) through ``config.get_env`` -- this seam never
+names that env var, or any other provider's env var, anywhere outside the provider's own module.
 """
 from __future__ import annotations
 

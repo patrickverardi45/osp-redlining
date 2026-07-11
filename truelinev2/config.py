@@ -122,9 +122,9 @@ class Settings:
     # Hard timeout (seconds) around one page's vision-provider call (threading-based wrapper; a provider that
     # never returns cannot hang extraction forever). Env: TL2_HANDWRITTEN_BORELOG_TIMEOUT_SECONDS.
     handwritten_borelog_timeout_seconds: int = 90
-    # Deployment-selected vision-provider DOTTED MODULE PATH (e.g. "truelinev2.extract.vision_providers.
-    # anthropic_messages") -- extract/handwritten_borelog.py's factory imports it lazily and calls its
-    # build_provider(config). Unset/unloadable/None still refuses honestly with
+    # Deployment-selected vision-provider DOTTED MODULE PATH (e.g. one of the modules under
+    # extract/vision_providers/) -- extract/handwritten_borelog.py's factory imports it lazily and calls
+    # its build_provider(config). Unset/unloadable/None still refuses honestly with
     # HANDWRITTEN_VISION_PROVIDER_NOT_CONFIGURED. Env: TL2_HANDWRITTEN_BORELOG_PROVIDER. See
     # docs/handwritten-vision-provider.md for the full config matrix.
     handwritten_borelog_provider: Optional[str] = None

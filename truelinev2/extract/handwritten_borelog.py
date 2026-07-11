@@ -26,12 +26,19 @@ Owns, purely from ``(upload_bytes, filename)`` -- no store I/O, no engine/render
      path). A resolved provider CALL is wrapped in a hard threading-based timeout
      (``HANDWRITTEN_EXTRACTION_TIMEOUT``); a raised ``ProviderOutputInvalid`` (from
      ``extract/vision_providers/__init__.py``) or schema/honesty failure re-validated through
-     ``validate_page_extraction`` refuses ``HANDWRITTEN_PROVIDER_OUTPUT_INVALID``; any OTHER raised
-     exception refuses the new ``HANDWRITTEN_PROVIDER_ERROR`` (reason = the exception's CLASS NAME only).
-     Tests inject a private fake CALLABLE directly via the ``providers=`` parameter (bypassing the
-     module-path factory entirely); production callers never pass it, so the factory is what they always
-     get. One INFO log line per provider page call (module tail, page_index, outcome, duration_ms,
-     attempts) -- never the page image bytes or any env/secret value.
+     ``validate_page_extraction`` refuses ``HANDWRITTEN_PROVIDER_OUTPUT_INVALID`` (reason is ALWAYS one of
+     two FIXED literals -- never the raised exception's own message, which a provider could poison); any
+     OTHER raised exception refuses the new ``HANDWRITTEN_PROVIDER_ERROR`` (reason = the exception's CLASS
+     NAME only). TRUST BOUNDARY: a provider's returned ``source``/``method``/``extractor`` are NEVER
+     trusted -- ``_run_provider_with_timeout`` force-assigns all three from the seam's OWN already-known
+     values (this page's real upload_id/sha256/file_name/page_index/page_count, and the resolved provider's
+     module tail), and a provider-claimed sha256/upload_id/page_index that DISAGREES with the real value
+     refuses LOUDLY (``HANDWRITTEN_PROVIDER_OUTPUT_INVALID``) rather than being silently corrected --
+     a provider that simply omits ``source`` is not spoofing anything and gets seam-assigned identity with
+     no refusal. Tests inject a private fake CALLABLE directly via the ``providers=`` parameter (bypassing
+     the module-path factory entirely); production callers never pass it, so the factory is what they
+     always get. One INFO log line per provider page call (module tail, page_index, outcome, duration_ms,
+     attempts) -- never the page image bytes, an env/secret value, or a raised exception's message.
   4. PAGE LEDGER -- ``build_page_ledger`` guarantees EVERY physical page is accounted for exactly once
      (EXTRACTED / REFUSED / NO_USABLE_STATION_RUN), including a page whose only station runs were too
      short to normalize into a span (those runs' warnings are folded into the ledger entry itself, not left
@@ -89,6 +96,13 @@ HANDWRITTEN_PROVIDER_ERROR = "HANDWRITTEN_PROVIDER_ERROR"
 # Raised by extract/borelog_rows.py's third tier when the handwritten extractor ran but found zero usable
 # proposals across every page (defined HERE, imported there, so the reason code has one home).
 HANDWRITTEN_NO_USABLE_ROWS = "HANDWRITTEN_NO_USABLE_ROWS"
+
+# FIXED refusal-reason literals for HANDWRITTEN_PROVIDER_OUTPUT_INVALID. Deliberately never derived from a
+# raised exception's message (a provider callable's exception text is UNTRUSTED and may be poisoned --
+# a URL, a token-shaped string, request internals -- so it must NEVER reach a refusal, the page ledger, or
+# a log line; see ``_run_provider_with_timeout``).
+_REASON_PROVIDER_OUTPUT_INVALID = "provider returned output that failed validation"
+_REASON_PROVIDER_OUTPUT_MISMATCH = "provider output did not match the requested page"
 
 # A structured page-ledger "run skipped" reason (mirrors, in a stable machine-readable code, the human
 # message spans_from_page folds into every proposal's warnings for a run with < 2 usable stations).
@@ -456,15 +470,26 @@ def _refused_page(source: dict, *, code: str, reason: str, extractor: str) -> di
     return record
 
 
-def _run_provider_with_timeout(fn, page_png_bytes: bytes, context: dict, timeout_s: float
+def _run_provider_with_timeout(fn, page_png_bytes: bytes, context: dict, timeout_s: float, *,
+                               source: dict, extractor: str
                                ) -> Tuple[Optional[dict], Optional[str], Optional[str]]:
-    """Run ONE provider callable in a daemon worker thread with a hard join timeout. Returns
-    ``(record, error_code, detail)``: ``error_code`` is None on a schema-valid success, else
+    """Run ONE provider callable in a daemon worker thread with a hard join timeout, then FORCE-ASSIGN the
+    TRUST-BOUNDARY fields (source/method/extractor) from the seam's OWN already-known-good values --
+    ``source`` (this page's real upload_id/sha256/file_name/page_index/page_count, computed by
+    ``extract_handwritten`` itself, never by the provider) and ``extractor`` (the provider module's tail /
+    configured name, never a value the provider chose for itself). A provider's own claim about these
+    fields is NEVER trusted or silently corrected: if it supplies a ``source`` whose sha256/upload_id/
+    page_index DISAGREES with the real values, that is a spoof attempt and refuses LOUDLY
+    (HANDWRITTEN_PROVIDER_OUTPUT_INVALID, fixed reason) rather than being quietly overwritten. A provider
+    that simply omits ``source`` (or omits those keys) is not spoofing anything -- the seam fills identity
+    in silently, as designed (the shipped provider modules all already leave this to the seam).
+
+    Returns ``(record, error_code, reason)``: ``error_code`` is None on success, else
     HANDWRITTEN_EXTRACTION_TIMEOUT (still running past the deadline), HANDWRITTEN_PROVIDER_OUTPUT_INVALID
-    (the call raised ``ProviderOutputInvalid``, or its output failed ``validate_page_extraction`` --
-    ``detail`` carries the ``ProviderOutputInvalid`` message when present, else None), or
-    HANDWRITTEN_PROVIDER_ERROR (the call raised anything ELSE -- ``detail`` is that exception's CLASS NAME
-    ONLY, never its message)."""
+    (schema failure, a provider-raised ``ProviderOutputInvalid``, or a source-identity mismatch -- ``reason``
+    is ALWAYS one of the two FIXED literals below, NEVER the raised exception's own message, which a
+    provider could poison with request/URL/token-shaped text), or HANDWRITTEN_PROVIDER_ERROR (the call
+    raised anything ELSE -- ``reason`` is that exception's CLASS NAME only, never its message either)."""
     box: Dict[str, Any] = {}
 
     def _run() -> None:
@@ -480,14 +505,34 @@ def _run_provider_with_timeout(fn, page_png_bytes: bytes, context: dict, timeout
         return None, HANDWRITTEN_EXTRACTION_TIMEOUT, None
     if "error" in box:
         exc = box["error"]
+        # The raised exception's MESSAGE never leaves this function -- not in the refusal, not in the
+        # page ledger, not even in a log line -- only its type (ProviderOutputInvalid vs anything else)
+        # and, for the "anything else" case, its CLASS NAME.
         if isinstance(exc, ProviderOutputInvalid):
-            return None, HANDWRITTEN_PROVIDER_OUTPUT_INVALID, (str(exc) or None)
+            return None, HANDWRITTEN_PROVIDER_OUTPUT_INVALID, _REASON_PROVIDER_OUTPUT_INVALID
         return None, HANDWRITTEN_PROVIDER_ERROR, type(exc).__name__
+
     record = box.get("result")
+    if not isinstance(record, dict):
+        return None, HANDWRITTEN_PROVIDER_OUTPUT_INVALID, _REASON_PROVIDER_OUTPUT_INVALID
+
+    claimed_source = record.get("source")
+    if isinstance(claimed_source, dict):
+        for key in ("sha256", "upload_id", "page_index"):
+            claimed = claimed_source.get(key)
+            if claimed is not None and claimed != source.get(key):
+                # Loud, not silent: a disagreeing claim is a spoof attempt, never quietly "fixed".
+                return None, HANDWRITTEN_PROVIDER_OUTPUT_INVALID, _REASON_PROVIDER_OUTPUT_MISMATCH
+
+    record = dict(record)
+    record["source"] = dict(source)
+    record["method"] = VISION_OCR
+    record["extractor"] = extractor
+
     try:
         validate_page_extraction(record)
     except HandwrittenExtractionError:
-        return None, HANDWRITTEN_PROVIDER_OUTPUT_INVALID, None
+        return None, HANDWRITTEN_PROVIDER_OUTPUT_INVALID, _REASON_PROVIDER_OUTPUT_INVALID
     return record, None, None
 
 
@@ -525,7 +570,8 @@ def _vision_page(source: dict, page_png_bytes: bytes, *, provider_name: Optional
               "sha256": source["sha256"],
               "report_attempts": lambda n, _box=attempts_box: _box.__setitem__(0, n)}
     start = time.monotonic()
-    record, err, detail = _run_provider_with_timeout(fn, page_png_bytes, context, timeout_s)
+    record, err, detail = _run_provider_with_timeout(fn, page_png_bytes, context, timeout_s,
+                                                      source=source, extractor=tail)
     duration_ms = int((time.monotonic() - start) * 1000)
     _log_provider_call(tail, page_index, err or EXTRACTED, duration_ms, attempts_box[0])
 
@@ -540,9 +586,11 @@ def _vision_page(source: dict, page_png_bytes: bytes, *, provider_name: Optional
             reason="the vision provider raised %s" % detail,
             extractor=provider_name or tail)
     if err == HANDWRITTEN_PROVIDER_OUTPUT_INVALID:
+        # ``detail`` is always one of the two FIXED reason literals here -- never the raised exception's
+        # own (untrusted, possibly poisoned) message. See _run_provider_with_timeout.
         return _refused_page(
             source, code=HANDWRITTEN_PROVIDER_OUTPUT_INVALID,
-            reason=detail or "the vision provider's output failed schema/honesty validation",
+            reason=detail or _REASON_PROVIDER_OUTPUT_INVALID,
             extractor=provider_name or tail)
     return record
 

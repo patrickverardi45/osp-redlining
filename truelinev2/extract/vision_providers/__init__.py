@@ -3,8 +3,8 @@
 ``truelinev2/extract/handwritten_borelog.py`` loads a provider module BY DOTTED MODULE PATH at runtime
 (the ``TL2_HANDWRITTEN_BORELOG_PROVIDER`` env value, e.g. ``"truelinev2.extract.vision_providers.fake"``)
 and calls its ``build_provider(config) -> provider_callable``. No vendor/model literal lives in the seam
-or in ``config.py`` -- ``anthropic_messages.py`` is the ONE file in this repo where the vendor name
-"anthropic" is allowed to appear (see its own module docstring).
+or in ``config.py`` -- exactly ONE module under this package is a real vendor messages-API adapter (see
+its own module docstring for which one, and for the vendor name it alone is allowed to name).
 
 Two exception types a provider module may raise to signal a SPECIFIC, honest refusal back through the
 seam (``truelinev2/extract/handwritten_borelog.py``'s ``_load_provider``/``_run_provider_with_timeout``):

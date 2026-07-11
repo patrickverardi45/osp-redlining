@@ -300,7 +300,7 @@ def test_image_upload_unknown_provider_name_refuses_named():
 def test_injected_fake_provider_happy_path_produces_ocr_page():
     def _fake(png_bytes, context):
         assert isinstance(png_bytes, (bytes, bytearray)) and png_bytes
-        source = {"upload_id": context["upload_id"], "sha256": "a" * 64,
+        source = {"upload_id": context["upload_id"], "sha256": context["sha256"],
                  "file_name": context["file_name"], "page_index": context["page_index"],
                  "page_count": context["page_count"]}
         readings = [_reading("0+00", 3.5, 5.0, row_index=0), _reading("0+50", 3.5, 5.0, row_index=1)]
@@ -438,7 +438,8 @@ def test_handwritten_tier_maps_text_layer_to_text_parse_rows(tmp_path):
 
 def test_handwritten_tier_maps_vision_ocr_to_ocr_extraction_method(tmp_path):
     def _fake(png_bytes, context):
-        source = {"upload_id": context["upload_id"], "sha256": "a" * 64, "file_name": context["file_name"],
+        source = {"upload_id": context["upload_id"], "sha256": context["sha256"],
+                 "file_name": context["file_name"],
                  "page_index": context["page_index"], "page_count": context["page_count"]}
         readings = [_reading("0+00", 3.5, 5.0, row_index=0), _reading("0+50", 3.5, 5.0, row_index=1)]
         return _fake_provider_page(source, readings=readings)
@@ -476,7 +477,8 @@ def test_ocr_extraction_method_feeds_the_existing_footage_preflight(tmp_path):
     )
 
     def _fake(png_bytes, context):
-        source = {"upload_id": context["upload_id"], "sha256": "a" * 64, "file_name": context["file_name"],
+        source = {"upload_id": context["upload_id"], "sha256": context["sha256"],
+                 "file_name": context["file_name"],
                  "page_index": context["page_index"], "page_count": context["page_count"]}
         readings = [_reading("0+00", 3.5, 5.0, row_index=0), _reading("1+50", 3.5, 5.0, row_index=1)]
         return _fake_provider_page(source, readings=readings)

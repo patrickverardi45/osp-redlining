@@ -1,6 +1,6 @@
 """Offline tests for the runtime-configured vision-provider layer (Phase 1.5, W6): the
 extract/handwritten_borelog.py factory (dotted-module-path loading), the fixture-driven fake provider
-(extract/vision_providers/fake.py), and the Anthropic Messages API adapter
+(extract/vision_providers/fake.py), and the one real vendor messages-API adapter shipped in this repo
 (extract/vision_providers/anthropic_messages.py).
 
 ZERO network calls anywhere in this file. The ``anthropic`` SDK is NEVER required for this file to pass:
@@ -134,12 +134,122 @@ def test_fake_provider_happy_path_produces_vision_ocr_rows(tmp_path, monkeypatch
 
 
 def test_fake_provider_missing_fixture_refuses_output_invalid(tmp_path, monkeypatch):
-    """No fixture matches this page's sha256/page_index -- an honest refusal, never an invented reading."""
+    """No fixture matches this page's sha256/page_index -- an honest refusal, never an invented reading.
+    The reason is a FIXED literal, never the raised ProviderOutputInvalid's own message ("no fixture for
+    this page") -- that message is untrusted provider-authored text and must never reach the refusal."""
     monkeypatch.setenv("TL2_HANDWRITTEN_FAKE_FIXTURES", str(tmp_path))
     out = extract_handwritten(_jpeg_bytes(), "photo.jpg", upload_id="up-1", provider_name=_FAKE_MODULE_PATH)
     refusal = out["pages"][0]["refusal"]
     assert refusal["code"] == HANDWRITTEN_PROVIDER_OUTPUT_INVALID
-    assert "fixture" in refusal["reason"]
+    assert refusal["reason"] == "provider returned output that failed validation"
+    assert "fixture" not in refusal["reason"]
+
+
+def test_fake_fixture_may_omit_source_seam_fills_it(tmp_path, monkeypatch):
+    """A fixture with NO ``source`` key at all is valid -- the seam force-assigns the real identity."""
+    monkeypatch.setenv("TL2_HANDWRITTEN_FAKE_FIXTURES", str(tmp_path))
+    data = _jpeg_bytes()
+    sha = hashlib.sha256(data).hexdigest()
+    fixture = {
+        "record_format": "trueline-handwritten-page-extraction-1",
+        "method": "VISION_OCR",
+        "extractor": "fake_vision_fixture",
+        "header": _blank_header(),
+        "readings": [_reading("0+00", 3.5, 5.0, row_index=0), _reading("0+50", 3.5, 5.0, row_index=1)],
+        "page_status": "EXTRACTED", "refusal": None, "warnings": [], "audit": [],
+    }
+    assert "source" not in fixture
+    (tmp_path / ("%s-p0.json" % sha)).write_text(json.dumps(fixture), encoding="utf-8")
+
+    out = extract_handwritten(data, "photo.jpg", upload_id="up-1", provider_name=_FAKE_MODULE_PATH)
+    page = out["pages"][0]
+    assert page["page_status"] == EXTRACTED
+    assert page["source"] == {"upload_id": "up-1", "sha256": sha, "file_name": "photo.jpg",
+                              "page_index": 0, "page_count": 1}
+
+
+# --------------------------------------------------------------------------- #
+# Trust boundary -- the seam NEVER trusts a provider's own source/method/extractor claims. It force-
+# assigns all three from its OWN known-good values; a provider-claimed sha256/upload_id/page_index that
+# DISAGREES refuses LOUDLY rather than being silently "fixed"; a provider that simply omits ``source``
+# is not spoofing anything and gets seam-assigned identity with no refusal.
+# --------------------------------------------------------------------------- #
+def _full_page_record(source: Dict[str, Any], *, readings=None) -> Dict[str, Any]:
+    """A full (test-injection-shaped) HandwrittenPageExtraction a raw provider callable would return."""
+    return {
+        "record_format": "trueline-handwritten-page-extraction-1",
+        "source": dict(source),
+        "method": "VISION_OCR",
+        "extractor": "provider-claimed-name-must-be-overwritten",
+        "header": _blank_header(),
+        "readings": readings or [],
+        "page_status": "EXTRACTED",
+        "refusal": None,
+        "warnings": [],
+        "audit": [],
+    }
+
+
+def test_provider_omitting_source_entirely_gets_seam_assigned_identity():
+    def _fake(png_bytes, context):
+        record = _full_page_record(
+            {"upload_id": "wrong", "sha256": "wrong", "file_name": "wrong", "page_index": 9, "page_count": 9},
+            readings=[_reading("0+00", 3.5, 5.0, row_index=0), _reading("0+50", 3.5, 5.0, row_index=1)])
+        del record["source"]  # simulate a provider that returns no source claim at all
+        return record
+
+    data = _jpeg_bytes()
+    out = extract_handwritten(data, "photo.jpg", upload_id="up-1",
+                              provider_name="fake", providers={"fake": _fake})
+    page = out["pages"][0]
+    assert page["page_status"] == EXTRACTED
+    assert page["source"] == {"upload_id": "up-1", "sha256": hashlib.sha256(data).hexdigest(),
+                              "file_name": "photo.jpg", "page_index": 0, "page_count": 1}
+    assert page["method"] == VISION_OCR
+    assert page["extractor"] == "fake"
+
+
+@pytest.mark.parametrize("field,bad_value", [
+    ("sha256", "0" * 64),
+    ("upload_id", "someone-elses-upload"),
+    ("page_index", 7),
+])
+def test_provider_spoofed_identity_field_refuses_loudly(field, bad_value):
+    def _fake(png_bytes, context):
+        source = {"upload_id": context["upload_id"], "sha256": context["sha256"],
+                 "file_name": context["file_name"], "page_index": context["page_index"],
+                 "page_count": context["page_count"]}
+        source[field] = bad_value  # a claim that disagrees with the real, seam-known value
+        return _full_page_record(source, readings=[_reading("0+00", 3.5, 5.0, row_index=0),
+                                                    _reading("0+50", 3.5, 5.0, row_index=1)])
+
+    out = extract_handwritten(_jpeg_bytes(), "photo.jpg", upload_id="up-1",
+                              provider_name="fake", providers={"fake": _fake})
+    refusal = out["pages"][0]["refusal"]
+    assert refusal["code"] == HANDWRITTEN_PROVIDER_OUTPUT_INVALID
+    assert refusal["reason"] == "provider output did not match the requested page"
+
+
+def test_poisoned_provider_output_invalid_message_never_surfaces_anywhere(caplog):
+    """A ProviderOutputInvalid raised with a poisoned message (a fake URL+token) must NEVER appear in the
+    extract result, the page ledger, or any captured log record -- only the FIXED literal reason."""
+    poisoned = "leaked at https://internal.example/secret?token=SHOULD-NEVER-APPEAR-ANYWHERE"
+
+    def _fake(png_bytes, context):
+        raise ProviderOutputInvalid(poisoned)
+
+    with caplog.at_level(logging.INFO, logger="truelinev2.extract.vision_providers"):
+        out = extract_handwritten(_jpeg_bytes(), "photo.jpg", upload_id="up-1",
+                                  provider_name="fake", providers={"fake": _fake})
+
+    refusal = out["pages"][0]["refusal"]
+    assert refusal["code"] == HANDWRITTEN_PROVIDER_OUTPUT_INVALID
+    assert refusal["reason"] == "provider returned output that failed validation"
+    assert poisoned not in refusal["reason"]
+    assert poisoned not in json.dumps(out)  # never anywhere in the extract result (pages/proposals/ledger)
+    log_text = "\n".join(record.getMessage() for record in caplog.records)
+    assert poisoned not in log_text
+    assert "SHOULD-NEVER-APPEAR-ANYWHERE" not in log_text
 
 
 # --------------------------------------------------------------------------- #
@@ -211,7 +321,7 @@ def test_anthropic_adapter_happy_path_via_injected_client(monkeypatch):
             return _fake_response([_tool_use_block(_valid_tool_input())])
 
     class _Client:
-        def __init__(self):
+        def __init__(self, timeout=None):
             self.messages = _Messages()
 
     fn = anthropic_messages.build_provider(ProviderConfig(timeout_seconds=5), client_factory=_Client)
@@ -226,6 +336,28 @@ def test_anthropic_adapter_happy_path_via_injected_client(monkeypatch):
                                 "page_index": 0, "page_count": 1}
     assert len(calls) == 1
     assert calls[0]["model"] == "test-model-id"       # model id came straight from env, never hardcoded
+
+
+def test_anthropic_adapter_client_factory_receives_derived_sdk_timeout(monkeypatch):
+    """The adapter's client_factory is called with ONE positional arg -- the SDK request timeout derived
+    from config.timeout_seconds (seam budget minus margin, floored) -- since that timeout, not the seam's
+    abandon-only thread-join, is what actually bounds a hung request."""
+    monkeypatch.setitem(sys.modules, "anthropic", _make_fake_anthropic_module())
+    monkeypatch.setenv("TL2_HANDWRITTEN_VISION_MODEL", "test-model-id")
+
+    received = []
+
+    def _client_factory(timeout):
+        received.append(timeout)
+        messages = types.SimpleNamespace(create=lambda **kw: _fake_response([_tool_use_block(_valid_tool_input())]))
+        return types.SimpleNamespace(messages=messages)
+
+    fn = anthropic_messages.build_provider(ProviderConfig(timeout_seconds=90), client_factory=_client_factory)
+    context = {"upload_id": "up-1", "sha256": "a" * 64, "file_name": "photo.jpg",
+              "page_index": 0, "page_count": 1}
+    fn(b"png-bytes", context)
+
+    assert received == [85.0]  # max(90 - margin(5), floor(5)) == 85
 
 
 def test_anthropic_adapter_retries_429_then_succeeds(monkeypatch):
@@ -248,7 +380,10 @@ def test_anthropic_adapter_retries_429_then_succeeds(monkeypatch):
             self.messages = _Messages()
 
     client = _Client()
-    fn = anthropic_messages.build_provider(ProviderConfig(timeout_seconds=5), client_factory=lambda: client)
+    # timeout_seconds=10 -> sdk_timeout=max(10-5,5)=5 -> max_attempts=max(1,min(3,10//5))=2: exactly
+    # enough budget-bounded attempts to prove a retry-then-succeed, per _derive_max_attempts.
+    fn = anthropic_messages.build_provider(ProviderConfig(timeout_seconds=10),
+                                           client_factory=lambda timeout: client)
     attempts_seen = []
     context = {"upload_id": "up-1", "sha256": "a" * 64, "file_name": "photo.jpg",
               "page_index": 0, "page_count": 1, "report_attempts": attempts_seen.append}
@@ -322,7 +457,7 @@ def test_anthropic_adapter_malformed_output_refuses_output_invalid(monkeypatch):
             return _fake_response([types.SimpleNamespace(type="text", text="oops")])
 
     class _Client:
-        def __init__(self):
+        def __init__(self, timeout=None):
             self.messages = _Messages()
 
     fn = anthropic_messages.build_provider(ProviderConfig(timeout_seconds=5), client_factory=_Client)
@@ -341,7 +476,7 @@ def test_anthropic_adapter_model_refusal_stop_reason_refuses_output_invalid(monk
             return _fake_response([], stop_reason="refusal")
 
     class _Client:
-        def __init__(self):
+        def __init__(self, timeout=None):
             self.messages = _Messages()
 
     fn = anthropic_messages.build_provider(ProviderConfig(timeout_seconds=5), client_factory=_Client)
