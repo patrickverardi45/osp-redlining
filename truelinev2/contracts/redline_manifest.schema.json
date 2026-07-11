@@ -304,7 +304,7 @@
             "items": {
               "type": "object",
               "additionalProperties": false,
-              "required": ["index", "footage_along", "xy_display", "provenance", "origin"],
+              "required": ["index", "footage_along", "xy_display", "provenance"],
               "properties": {
                 "index": {"type": "integer", "minimum": 0, "description": "0-based dot order along the redline."},
                 "footage_along": {"type": "number", "minimum": 0, "description": "Feet from the redline start (self-calibrated from the reviewed row footage / drawn length)."},
@@ -319,7 +319,7 @@
                 "origin": {
                   "type": "string",
                   "enum": ["SOURCE_RECORDED", "DERIVED_INTERVAL"],
-                  "description": "Station-dot contract (Mission 8 addendum): SOURCE_RECORDED == an actual reading/endpoint the bore log recorded; DERIVED_INTERVAL == an interior 50'-tick this module derived (permitted only when the log records just start/end/total footage), NEVER presented as recorded. REQUIRED on every dot."
+                  "description": "Station-dot contract (Mission 8 addendum): SOURCE_RECORDED == an actual reading/endpoint the bore log recorded; DERIVED_INTERVAL == an interior 50'-tick this module derived (permitted only when the log records just start/end/total footage), NEVER presented as recorded. ADDITIVE + OPTIONAL at the schema level (fix-wave F1: NOT in `required` -- a pre-addendum bundle/manifest with dots carrying no `origin` at all must stay READABLE forever; additive-evolution law, never a breaking read-compat regression). The current builder (`contracts/source_anchor.py::build_source_anchor_manifest`, fed by `render/station_dots.py::compute_station_dots`) ALWAYS emits it on every dot it produces -- that guarantee is enforced at the builder/test level, not the schema."
                 },
                 "station_evidence": {
                   "type": "object",

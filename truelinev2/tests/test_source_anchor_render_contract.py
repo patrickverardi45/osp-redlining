@@ -211,9 +211,12 @@ _FOOTAGE_ROW = {"Bore ID": "B-9", "Print #": "17", "Start Station": "5+03", "End
 
 
 def test_build_manifest_carries_station_dots_additively_and_validates():
-    # LOCK UPDATE (Mission 8 addendum, owner's STATION-DOT CONTRACT, ``.foreman/scratch/m8/design-dots.md``):
-    # ``origin`` is now REQUIRED on every station_dots item (schema-enforced) -- this literal dot dict
-    # gains it so the fixture stays schema-valid; no other field changes.
+    # LOCK UPDATE (Mission 8 addendum, owner's STATION-DOT CONTRACT, ``.foreman/scratch/m8/design-dots.md``;
+    # CORRECTED by fix-wave F1): ``origin`` is an ADDITIVE, OPTIONAL schema property -- NOT schema-required
+    # (a pre-addendum bundle without it must stay readable forever; see
+    # test_pre_addendum_manifest_shape_still_publishes_and_reads_f1 for the read-compat regression lock).
+    # This literal dot dict carries ``origin`` anyway because that is what the REAL builder always emits in
+    # production (enforced below, at the builder level, not the schema).
     from truelinev2.contracts.redline_manifest_publisher import (
         load_schema, reconciliation_errors, validate_manifest)
     dots = [{"index": 0, "footage_along": 50.0, "station": "5+53", "xy_display": {"x": 1.0, "y": 2.0},
@@ -224,11 +227,17 @@ def test_build_manifest_carries_station_dots_additively_and_validates():
     entries = [{"source_anchor": {"source_anchor_id": "sa-1", "reviewed_bore_log_id": "rbl-1",
                                   "page_number": 1, "start_identity": {"station": "5+03"},
                                   "end_identity": {"station": "6+79"}},
-                "artifact_path": "artifacts/sa-1/x.png", "sheet": 1, "station_dots": dots}]
+                "artifact_path": "artifacts/sa-1/x.png", "sheet": 1, "station_dots": dots,
+                "station_marks_basis": "STATION_SERIES", "station_marks_warnings": []}]
     m = build_source_anchor_manifest(entries, project_id="cp-x", project_name="cp-x",
                                      engine_head="h", render_commit="h", disclaimer="d")
     assert validate_manifest(m, load_schema()) == [] and reconciliation_errors(m) == []
     assert m["logs"][0]["station_dots"] == dots
+    # Builder-level guarantee (moved off the schema by F1): every dot the builder is GIVEN with an origin
+    # carries it straight through, and the log-level basis/warnings the builder was given are present too.
+    assert all("origin" in d for d in m["logs"][0]["station_dots"])
+    assert m["logs"][0]["station_marks_basis"] == "STATION_SERIES"
+    assert m["logs"][0]["station_marks_warnings"] == []
 
 
 def test_manifest_without_station_dots_defaults_empty_and_validates():

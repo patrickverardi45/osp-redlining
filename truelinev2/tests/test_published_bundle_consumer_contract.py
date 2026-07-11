@@ -289,3 +289,85 @@ def test_consumer_imports_no_render_or_engine_path():
     # the only truelinev2 imports are the three contract modules
     tl_imports = [ln for ln in import_lines if "truelinev2" in ln]
     assert tl_imports and all("truelinev2.contracts." in ln for ln in tl_imports)
+
+
+# --------------------------------------------------------------------------- #
+# Fix-wave F1 (READ-COMPAT REGRESSION, station-dot contract addendum,
+# .foreman/scratch/m8/design-dots.md): the live foreman re-proof caught a REAL production incident --
+# a job's HUMAN_CONFIRMED_SOURCE_ANCHOR bundle published BEFORE the addendum (station_dots entries with
+# no "origin"; log entries with no station_marks_basis/station_marks_warnings) became unreadable once the
+# schema made "origin" REQUIRED. Additive-evolution law: a new key is ALWAYS optional in the schema; the
+# "always emitted" guarantee belongs to the BUILDER (contracts/source_anchor.py), never the schema. This
+# locks the fix: a manifest in the EXACT pre-addendum shape must still admit to the store AND read back
+# through the consumer, forever.
+# --------------------------------------------------------------------------- #
+def _pre_addendum_human_confirmed_bundle(root):
+    """A HUMAN_CONFIRMED_SOURCE_ANCHOR bundle shaped EXACTLY as the builder produced it before this
+    addendum: one drawn log with ONE station_dots entry that carries none of the addendum's new keys
+    (no "origin", no "station_evidence") and the log itself carries neither "station_marks_basis" nor
+    "station_marks_warnings" at all -- the real shape of every bundle published before this session."""
+    root = Path(root)
+    art_dir = root / "artifacts" / "sa-1"
+    art_dir.mkdir(parents=True)
+    data = b"FAKE-PNG-PRE-ADDENDUM"
+    (art_dir / "sa-1_s1_redline_stroke.png").write_bytes(data)
+    sha = hashlib.sha256(data).hexdigest()
+    rel = "artifacts/sa-1/sa-1_s1_redline_stroke.png"
+    art = {"kind": "FINAL_REDLINE_PNG", "path": rel, "sha256": sha, "bytes": len(data),
+          "published": True, "example_placeholder": False}
+    pre_addendum_dot = {                                    # NO "origin", NO "station_evidence"
+        "index": 0, "footage_along": 0.0, "station": "5+03",
+        "xy_display": {"x": 1.0, "y": 2.0}, "provenance": "HUMAN_CONFIRMED_CONTROL_POINTS",
+    }
+    log = {
+        "log_id": "sa-1", "parent_id": "rbl-1", "entry_role": "standalone",
+        "status": "DRAWN_REDLINE", "provenance": "OWNER_CONFIRMED_HUMAN_ADJUSTABLE",
+        "drawn": True, "covered": False, "blocked": False, "drawn_lane": "NEW_TARGETS",
+        "source_sheets": [1], "span": {"start_station": "5+03", "end_station": "6+79", "label": "x"},
+        "closure": None, "coverage": None, "blocker": None, "artifacts": [art],
+        "evidence": [{"kind": "OWNER_REVIEW", "ref": "source_anchor/sa-1"}], "warnings": [],
+        "station_dots": [pre_addendum_dot],
+        # NOTE: no "station_marks_basis" / "station_marks_warnings" keys at all -- pre-addendum shape.
+    }
+    manifest = {
+        "schema_version": "1.0.0", "mock_example": False, "disclaimer": "pre-addendum fixture",
+        "project_id": "cp-x", "project_name": "cp-x",
+        "engine": {"branch": "feat/truelinev2", "engine_head": "h",
+                  "render_commit": "human-confirmed-source-anchor", "generated_from": "test"},
+        "bundle_origin": "HUMAN_CONFIRMED_SOURCE_ANCHOR",
+        "summary": {"total_logs": 1, "drawn_count": 1, "covered_count": 0, "blocked_count": 0,
+                   "frontier": "1/1"},
+        "status_counts": {"DRAWN_REDLINE": 1, "COVERED_BY_EXISTING_REDLINE": 0,
+                         "OWNER_LOCKED_ABSTAIN": 0, "SOURCE_GAP_BLOCKED": 0,
+                         "MISSING_SOURCE_SHEET_BLOCKED": 0},
+        "provenance_counts": {"DETERMINISTIC_AUTO": 0, "OWNER_CONFIRMED_HUMAN_ADJUSTABLE": 1,
+                            "COVERED_BY_EXISTING_REDLINE": 0, "BLOCKED_OWNER_LOCKED": 0,
+                            "BLOCKED_SOURCE_GAP": 0, "BLOCKED_MISSING_SOURCE": 0},
+        "consumption_rules": ["human-confirmed source-anchor bundle"],
+        "logs": [log],
+    }
+    (root / MANIFEST_FILENAME).write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+    return root, rel
+
+
+def test_pre_addendum_manifest_shape_still_publishes_and_reads_f1(tmp_path):
+    """THE live regression, reproduced and locked: a pre-addendum-shaped bundle (station_dots without
+    "origin", log without station_marks_basis/warnings) must ADMIT to the store (schema validation +
+    reconciliation both pass -- "origin" is NOT schema-required) and then READ back through the consumer
+    exactly as before. This is the exact HTTP-404 "fails the website read contract" failure mode observed
+    live on job mission-8-route-correction-proof / source_anchor sa-hh8f46, now fixed and locked."""
+    src, rel = _pre_addendum_human_confirmed_bundle(tmp_path / "src")
+    store = tmp_path / "store"
+    res = store_bundle(src, store, created_at=CREATED)          # ADMISSION: must not raise
+    bid = res["bundle_id"]
+
+    c = StaticBundleConsumer(store, enable=True)
+    rb = c.open_bundle(bid)                                       # READ: must not raise BundleNotReadableError
+    assert rb.bundle_id == bid
+    payload = rb.manifest_payload()
+    dot = payload["logs"][0]["station_dots"][0]
+    assert "origin" not in dot and "station_evidence" not in dot           # genuinely pre-addendum shaped
+    assert "station_marks_basis" not in payload["logs"][0]
+    assert "station_marks_warnings" not in payload["logs"][0]
+    desc = rb.resolve_artifact(rel)
+    assert desc["bytes"] == len(desc["data"])

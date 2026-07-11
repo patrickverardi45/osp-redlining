@@ -541,7 +541,9 @@ contract; the reader-survey row for `render/station_dots.py` above is superseded
 
 A recorded series is rejected (falls through to `SPAN_ENDPOINTS`, named in `warnings`) when it fails any of:
 every reading parses (else `STATION_SERIES_UNPARSEABLE`), strictly ascending (else
-`STATION_SERIES_NOT_ASCENDING`), first/last match the row's own effective start/end station (else
+`STATION_SERIES_NOT_ASCENDING`), the row's own effective start/end station text itself parses (else
+`STATION_SERIES_ROW_ENDPOINTS_UNPARSEABLE` — fix-wave F2: distinct from a proven mismatch, since no
+comparison was actually made), first/last match the row's own effective start/end station (else
 `STATION_SERIES_ENDPOINT_MISMATCH`), and the recorded span matches the row's own effective footage (else
 `STATION_SERIES_FOOTAGE_MISMATCH`). The approved span always remains the truth — a violation never invents
 or partially-trusts a series, it falls through cleanly.
@@ -567,21 +569,36 @@ ALL source-anchor renders (manual and adoption). The manifest log entry gains ad
 
 ### Schema
 
-`redline_manifest.schema.json`: `station_dots[*].origin` is now REQUIRED (enum `SOURCE_RECORDED` |
-`DERIVED_INTERVAL`); `station_dots[*].station_evidence` is an optional closed object
-(`verbatim`/`status`/`confidence`); log-level `station_marks_basis` (nullable enum) and
-`station_marks_warnings` (string array) are additive, optional properties. Every object stays closed.
+`redline_manifest.schema.json`: `station_dots[*].origin` (enum `SOURCE_RECORDED` | `DERIVED_INTERVAL`) and
+`station_dots[*].station_evidence` (an optional closed object, `verbatim`/`status`/`confidence`) are
+ADDITIVE, OPTIONAL properties — NOT schema-required; log-level `station_marks_basis` (nullable enum) and
+`station_marks_warnings` (string array) are likewise additive and optional. Every object stays closed.
+
+**Fix-wave F1 (read-compat regression, caught by the foreman's live re-proof)**: the original landing made
+`origin` schema-REQUIRED, which broke the additive-evolution law — every HUMAN_CONFIRMED_SOURCE_ANCHOR
+bundle published BEFORE this addendum (no `origin` on its dots) instantly failed
+`published_bundle_consumer`'s read-contract revalidation (`BundleNotReadableError: ... fails the website
+read contract`) the moment the schema shipped, live evidence:
+`POST /v2/product/jobs/mission-8-route-correction-proof/source-anchors/sa-hh8f46/render` → `404`. Fixed by
+making `origin` optional again; the "always emitted" guarantee moved to the BUILDER
+(`contracts/source_anchor.py::build_source_anchor_manifest`, fed by the real render path), never the
+schema — locked by `test_pre_addendum_manifest_shape_still_publishes_and_reads_f1`
+(`test_published_bundle_consumer_contract.py`): a manifest in the EXACT pre-addendum shape (no `origin`, no
+log-level `station_marks_basis`/`station_marks_warnings`) still admits to the store (`store_bundle`) and
+reads back through `StaticBundleConsumer`, forever.
 
 ### Tests
 
 `truelinev2/tests/test_station_marks.py` (new; pure unit coverage of all three bases + irregular intervals +
-a short final interval + varying per-entry depth/BOC + all four named unusable-series fallbacks + the
-corrected-values precedence path). `test_station_dots.py` gains the `marks=None` byte-identity locks for
-both functions plus marks-path placement/tagging tests. `test_source_anchor_render_contract.py` gains render-
-integration coverage for the WP23 shape, a >= 4-reading irregular series with an exact short final interval,
-and a footage-only position-equality lock (dot positions bit-for-bit unchanged from the pre-addendum
-`dot_marks` ladder) — plus a schema-admission update to `test_build_manifest_carries_station_dots_
-additively_and_validates` (origin now required) and a deliberate lock update to
+a short final interval + varying per-entry depth/BOC + every named unusable-series fallback, including the
+fix-wave F2 `STATION_SERIES_ROW_ENDPOINTS_UNPARSEABLE` precision code + the corrected-values precedence
+path). `test_station_dots.py` gains the `marks=None` byte-identity locks for both functions plus marks-path
+placement/tagging tests. `test_source_anchor_render_contract.py` gains render-integration coverage for the
+WP23 shape, a >= 4-reading irregular series with an exact short final interval, and a footage-only
+position-equality lock (dot positions bit-for-bit unchanged from the pre-addendum `dot_marks` ladder) —
+plus a builder-emission update to `test_build_manifest_carries_station_dots_additively_and_validates`
+(asserts the builder always carries `origin`/`station_marks_basis`/`station_marks_warnings` through when
+given them, rather than asserting schema-requiredness) and a deliberate lock update to
 `test_render_places_station_dots_with_bore_info` (a footage-only row's dots no longer carry per-station
 depth/BOC/notes — see that test's docstring for the owner-contract citation).
 `test_source_route_adoption_api.py::test_adopted_record_station_dots_ride_the_n_point_path` gains an
