@@ -124,12 +124,19 @@ def _advance_to(store_root, customer_project_id, job_id, target, *, at, by, reas
 def _merge_abstain_blockers(rec_ev, gen):
     """Build the SPECIFIC abstain reason set: the recognition blockers (why the package is not a known
     deterministic corpus) PLUS the engine's own named blockers (why the engine could not place — never a
-    bare ENGINE_ABSTAINED, the engine's reason string is preserved). Tagged by source for the UI."""
+    bare ENGINE_ABSTAINED, the engine's reason string is preserved). Tagged by source for the UI.
+
+    Carries EVERY key an underlying blocker dict has (code/reason ALWAYS, plus any additive detail such as
+    ``reviewed_rows_detail`` — see uploaded_corpus_engine_handoff.py's reviewed-row adapter fallback), not
+    just code/reason: a blocker that named WHY the reviewed-row adapter declined (e.g.
+    OCR_ROW_REQUIRES_EXPLICIT_FOOTAGE) must not go silently generic once it reaches this composite response
+    — the honest detail the engine already computed must survive to the API caller. Additive; a blocker
+    with no extra keys is byte-identical to before (still exactly {source, code, reason})."""
     out = []
     for b in rec_ev.get("blockers", []) or []:
-        out.append({"source": "recognition", "code": b.get("code"), "reason": b.get("reason")})
+        out.append({**b, "source": "recognition"})
     for b in gen.get("blockers", []) or []:
-        out.append({"source": "engine", "code": b.get("code"), "reason": b.get("reason")})
+        out.append({**b, "source": "engine"})
     return out
 
 

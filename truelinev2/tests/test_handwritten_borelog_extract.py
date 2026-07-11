@@ -28,6 +28,7 @@ from truelinev2.extract import borelog_rows as br
 from truelinev2.extract.handwritten_borelog import (
     HANDWRITTEN_EXTRACTION_TIMEOUT,
     HANDWRITTEN_NO_USABLE_ROWS,
+    HANDWRITTEN_PROVIDER_ERROR,
     HANDWRITTEN_PROVIDER_OUTPUT_INVALID,
     HANDWRITTEN_VISION_PROVIDER_NOT_CONFIGURED,
     TOO_FEW_USABLE_STATIONS,
@@ -299,7 +300,7 @@ def test_image_upload_unknown_provider_name_refuses_named():
 def test_injected_fake_provider_happy_path_produces_ocr_page():
     def _fake(png_bytes, context):
         assert isinstance(png_bytes, (bytes, bytearray)) and png_bytes
-        source = {"upload_id": context["upload_id"], "sha256": "a" * 64,
+        source = {"upload_id": context["upload_id"], "sha256": context["sha256"],
                  "file_name": context["file_name"], "page_index": context["page_index"],
                  "page_count": context["page_count"]}
         readings = [_reading("0+00", 3.5, 5.0, row_index=0), _reading("0+50", 3.5, 5.0, row_index=1)]
@@ -333,13 +334,18 @@ def test_injected_fake_provider_invalid_output_refuses_named():
     assert out["pages"][0]["refusal"]["code"] == HANDWRITTEN_PROVIDER_OUTPUT_INVALID
 
 
-def test_injected_fake_provider_raising_refuses_as_invalid_output():
+def test_injected_fake_provider_raising_refuses_as_provider_error():
+    """A provider callable that raises a generic (non-ProviderOutputInvalid) exception is an UNNAMED
+    provider failure -> HANDWRITTEN_PROVIDER_ERROR, reason = the exception's class name only."""
     def _raises(png_bytes, context):
-        raise RuntimeError("boom")
+        raise RuntimeError("boom -- must never appear in the refusal reason")
 
     out = extract_handwritten(_jpeg_bytes(), "photo.jpg", upload_id="up-1",
                               provider_name="raises", providers={"raises": _raises})
-    assert out["pages"][0]["refusal"]["code"] == HANDWRITTEN_PROVIDER_OUTPUT_INVALID
+    refusal = out["pages"][0]["refusal"]
+    assert refusal["code"] == HANDWRITTEN_PROVIDER_ERROR
+    assert "RuntimeError" in refusal["reason"]
+    assert "boom" not in refusal["reason"]
 
 
 # --------------------------------------------------------------------------- #
@@ -432,7 +438,8 @@ def test_handwritten_tier_maps_text_layer_to_text_parse_rows(tmp_path):
 
 def test_handwritten_tier_maps_vision_ocr_to_ocr_extraction_method(tmp_path):
     def _fake(png_bytes, context):
-        source = {"upload_id": context["upload_id"], "sha256": "a" * 64, "file_name": context["file_name"],
+        source = {"upload_id": context["upload_id"], "sha256": context["sha256"],
+                 "file_name": context["file_name"],
                  "page_index": context["page_index"], "page_count": context["page_count"]}
         readings = [_reading("0+00", 3.5, 5.0, row_index=0), _reading("0+50", 3.5, 5.0, row_index=1)]
         return _fake_provider_page(source, readings=readings)
@@ -470,7 +477,8 @@ def test_ocr_extraction_method_feeds_the_existing_footage_preflight(tmp_path):
     )
 
     def _fake(png_bytes, context):
-        source = {"upload_id": context["upload_id"], "sha256": "a" * 64, "file_name": context["file_name"],
+        source = {"upload_id": context["upload_id"], "sha256": context["sha256"],
+                 "file_name": context["file_name"],
                  "page_index": context["page_index"], "page_count": context["page_count"]}
         readings = [_reading("0+00", 3.5, 5.0, row_index=0), _reading("1+50", 3.5, 5.0, row_index=1)]
         return _fake_provider_page(source, readings=readings)

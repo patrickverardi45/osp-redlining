@@ -16,11 +16,13 @@ from truelinev2.contracts.extracted_row import (
     NEEDS_CLARIFICATION,
     OCR,
     REJECTED,
+    RE_REVIEW_WOULD_DISCARD_CORRECTIONS,
     TABLE_IMPORT,
     TEXT_PARSE,
     UNREVIEWED,
     InvalidExtractionMethodError,
     InvalidReviewStatusError,
+    ReReviewWouldDiscardCorrectionsError,
     ReviewInputError,
     new_extracted_row,
     review_row,
@@ -107,6 +109,44 @@ def test_re_review_allowed_and_audited():
     row = review_row(row, CONFIRMED, at=AT, by=BY)          # re-review after clarification
     assert row_review_passes(row) is True
     assert [a["to"] for a in row["audit"]] == [UNREVIEWED, NEEDS_CLARIFICATION, CONFIRMED]
+
+
+# --------------------------------------------------------------------------- #
+# Doctrine guard: banked human review (corrected_values) is never silently overridden by a plain re-review.
+# --------------------------------------------------------------------------- #
+def test_confirmed_re_review_wiping_corrections_is_refused():
+    row = review_row(_row(), CORRECTED, at=AT, by=BY, corrected_values={"station": "0+10"})
+    with pytest.raises(ReReviewWouldDiscardCorrectionsError) as exc:
+        review_row(row, CONFIRMED, at=AT, by=BY)              # no corrected_values -> would wipe
+    assert RE_REVIEW_WOULD_DISCARD_CORRECTIONS in str(exc.value)
+    # Mutates NOTHING: the row's banked review state (status/corrected_values/audit) is untouched.
+    assert row["review"]["status"] == CORRECTED
+    assert row["review"]["corrected_values"] == {"station": "0+10"}
+    assert len(row["audit"]) == 2                             # row_created + the original CORRECTED entry
+
+
+def test_confirmed_re_review_resending_same_corrections_is_ok():
+    # The caller may re-send CORRECTED with the SAME (or updated) corrections -- that's an explicit intent,
+    # never silently discarded, so it stays idempotent-OK.
+    row = review_row(_row(), CORRECTED, at=AT, by=BY, corrected_values={"station": "0+10"})
+    row = review_row(row, CORRECTED, at=AT, by=BY, corrected_values={"station": "0+10"})
+    assert row["review"]["status"] == CORRECTED
+    assert row["review"]["corrected_values"] == {"station": "0+10"}
+
+
+def test_confirmed_re_review_idempotent_when_no_corrections_to_lose():
+    # CONFIRMED -> CONFIRMED again with no corrections: the row never had corrections, so nothing would be
+    # discarded -- stays idempotent-OK (the guard only fires when corrected_values is ALREADY non-empty).
+    row = review_row(_row(), CONFIRMED, at=AT, by=BY)
+    row = review_row(row, CONFIRMED, at=AT, by=BY)
+    assert row["review"]["status"] == CONFIRMED
+    assert row["review"]["corrected_values"] is None
+
+
+def test_fresh_row_confirmed_unaffected_by_guard():
+    row = review_row(_row(), CONFIRMED, at=AT, by=BY)          # never corrected -> no guard trip
+    assert row["review"]["status"] == CONFIRMED
+    assert row_review_passes(row) is True
 
 
 def test_no_row_level_engine_eligibility_symbol():

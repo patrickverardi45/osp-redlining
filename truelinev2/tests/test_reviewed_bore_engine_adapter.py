@@ -19,7 +19,14 @@ from pathlib import Path
 import pytest
 
 from truelinev2.contracts.customer_project import create_customer_project
-from truelinev2.contracts.extracted_row import CONFIRMED, MANUAL_ENTRY, OCR, new_extracted_row, review_row
+from truelinev2.contracts.extracted_row import (
+    CONFIRMED,
+    CORRECTED,
+    MANUAL_ENTRY,
+    OCR,
+    new_extracted_row,
+    review_row,
+)
 from truelinev2.contracts.processing_job import create_job, job_dir
 from truelinev2.contracts.reviewed_bore_log import (
     GROUPING_CONFIRMED,
@@ -362,3 +369,106 @@ def test_e2e_csv_borelog_reaches_engine_via_reviewed_rows(tmp_path):
     bore, detail = bore_from_reviewed_rows(rbl_record, source_filename="spans.csv")
     assert bore is not None and detail is None
     assert bore.station_start_ft == 503.0 and bore.station_end_ft == 753.0 and bore.span_ft == 250.0
+
+
+# --------------------------------------------------------------------------- #
+# Regression: corrected_values persisted by review_row_in_log (the SAME contract the per-row review ROUTE
+# calls) must be visible to the adapter -- an OCR row's CORRECTED footage counts as explicit human footage
+# and reaches the engine; a raw-only (no correction) OCR row still declines named, and that decline detail
+# must survive into the composite /workflow/redline blocker (previously dropped).
+# --------------------------------------------------------------------------- #
+def test_e2e_ocr_row_corrected_footage_reaches_engine_via_reviewed_rows(tmp_path):
+    create_customer_project(tmp_path, CP, "Label", AT)
+    create_job(tmp_path, CP, JOB, AT, BY)
+    accept_upload(tmp_path, CP, JOB, kind="PLAN_PDF", filename="plan.pdf", content=_PDF, stored_at=AT)
+    bore_up = accept_upload(tmp_path, CP, JOB, kind="BORE_LOG", filename="scan.csv",
+                            content=b"not,a,workbook\n", stored_at=AT)
+
+    # An OCR-method row with NO explicit footage (matches the handwritten tier's raw shape).
+    row = new_extracted_row("row-1", bore_up["upload_id"],
+                            raw={"start_station": "0+00", "end_station": "1+50"},
+                            normalized={"start_station": "0+00", "end_station": "1+50"},
+                            extraction_method=OCR, at=AT, by=BY)
+    create_reviewed_bore_log(tmp_path, CP, JOB, bore_up["upload_id"], RBL, at=AT, by=BY)
+    add_extracted_rows(tmp_path, CP, JOB, RBL, [row], at=AT, by=BY)
+    # Per-row CORRECTED review via the SAME contract function the route calls -- corrections land at
+    # row["review"]["corrected_values"], which is exactly where the adapter now reads.
+    review_row_in_log(tmp_path, CP, JOB, RBL, "row-1", CORRECTED, at=AT, by=BY,
+                      corrected_values={"footage_ft": 895})
+    define_segment_group(tmp_path, CP, JOB, RBL, "g-1", ["row-1"], SEPARATE_BORE, at=AT, by=BY)
+    set_grouping_status(tmp_path, CP, JOB, RBL, "g-1", GROUPING_CONFIRMED, at=AT, by=BY)
+
+    registry = {"corpora": [], "configured": True}
+    out = pw.run_product_redline(tmp_path, CP, JOB, registry=registry, at=AT, by=BY)
+    codes = {b["code"] for b in out["blockers"]}
+    assert uce.BORE_LOG_FORMAT_UNRECOGNIZED not in codes         # adapter accepted -- reached the engine
+    assert out["path"] == pw.PATH_ABSTAIN and out["runnable"] is False
+
+    rbl_record = load_reviewed_bore_log(tmp_path, CP, JOB, RBL)
+    bore, detail = bore_from_reviewed_rows(rbl_record, source_filename="scan.csv")
+    assert bore is not None and detail is None
+    assert bore.span_ft == 895.0
+
+
+def test_e2e_ocr_row_raw_only_declines_and_workflow_blocker_carries_detail(tmp_path):
+    # Sibling of the above with NO correction (plain CONFIRMED): raw-only DERIVED footage is absent by
+    # design for an OCR row, so the adapter still declines OCR_ROW_REQUIRES_EXPLICIT_FOOTAGE -- AND the
+    # composite /workflow/redline blocker must carry that specific detail (regression:
+    # product_workflow._merge_abstain_blockers previously rebuilt each blocker as {source, code, reason}
+    # ONLY, silently dropping the adapter's additive reviewed_rows_detail key).
+    create_customer_project(tmp_path, CP, "Label", AT)
+    create_job(tmp_path, CP, JOB, AT, BY)
+    accept_upload(tmp_path, CP, JOB, kind="PLAN_PDF", filename="plan.pdf", content=_PDF, stored_at=AT)
+    bore_up = accept_upload(tmp_path, CP, JOB, kind="BORE_LOG", filename="scan.csv",
+                            content=b"not,a,workbook\n", stored_at=AT)
+
+    row = new_extracted_row("row-1", bore_up["upload_id"],
+                            raw={"start_station": "0+00", "end_station": "1+50"},
+                            normalized={"start_station": "0+00", "end_station": "1+50"},
+                            extraction_method=OCR, at=AT, by=BY)
+    create_reviewed_bore_log(tmp_path, CP, JOB, bore_up["upload_id"], RBL, at=AT, by=BY)
+    add_extracted_rows(tmp_path, CP, JOB, RBL, [row], at=AT, by=BY)
+    review_row_in_log(tmp_path, CP, JOB, RBL, "row-1", CONFIRMED, at=AT, by=BY)   # no corrections
+    define_segment_group(tmp_path, CP, JOB, RBL, "g-1", ["row-1"], SEPARATE_BORE, at=AT, by=BY)
+    set_grouping_status(tmp_path, CP, JOB, RBL, "g-1", GROUPING_CONFIRMED, at=AT, by=BY)
+
+    registry = {"corpora": [], "configured": True}
+    out = pw.run_product_redline(tmp_path, CP, JOB, registry=registry, at=AT, by=BY)
+    assert out["path"] == pw.PATH_ABSTAIN
+
+    engine_blockers = [b for b in out["blockers"] if b.get("source") == "engine"]
+    detail_blocker = next(b for b in engine_blockers if b["code"] == uce.BORE_LOG_FORMAT_UNRECOGNIZED)
+    assert detail_blocker["reviewed_rows_detail"] == OCR_ROW_REQUIRES_EXPLICIT_FOOTAGE
+
+    rbl_record = load_reviewed_bore_log(tmp_path, CP, JOB, RBL)
+    bore, detail = bore_from_reviewed_rows(rbl_record, source_filename="scan.csv")
+    assert bore is None and detail == OCR_ROW_REQUIRES_EXPLICIT_FOOTAGE
+
+
+# --------------------------------------------------------------------------- #
+# Corrections overlay: per-field precedence + explicit-null clearing (contracts/reviewed_bore_adapter.py).
+# --------------------------------------------------------------------------- #
+def test_corrected_station_overlays_a_differently_spelled_raw_column():
+    row = _row("row-1", raw={"start_sta": "0+00", "end_sta": "1+00", "footage": "100"})
+    review_row(row, CONFIRMED, at=AT, by=BY, corrected_values={"start_station": "0+50"})
+    rbl = _rbl([row], [_group(["row-1"])])
+    bore, detail = bore_from_reviewed_rows(rbl, source_filename="f.csv")
+    assert bore is not None and bore.station_start == "0+50" and bore.station_start_ft == 50.0
+
+
+def test_explicit_null_correction_clears_required_field_and_declines():
+    row = _row("row-1", raw={"start_station": "0+00", "end_station": "1+00", "footage": "100"})
+    review_row(row, CORRECTED, at=AT, by=BY, corrected_values={"end_station": None})
+    rbl = _rbl([row], [_group(["row-1"])])
+    bore, detail = bore_from_reviewed_rows(rbl, source_filename="f.csv")
+    assert bore is None and detail == STATION_UNPARSEABLE
+
+
+def test_non_ocr_no_corrections_stays_byte_identical():
+    # TABLE_IMPORT with no corrections at all resolves EXACTLY as before this evolution.
+    row = _row("row-1", raw={"start_station": "5+03", "end_station": "7+53", "footage": "250"},
+              method=MANUAL_ENTRY)
+    rbl = _rbl([row], [_group(["row-1"])])
+    bore, detail = bore_from_reviewed_rows(rbl, source_filename="f.csv")
+    assert bore is not None and detail is None
+    assert bore.span_ft == 250.0

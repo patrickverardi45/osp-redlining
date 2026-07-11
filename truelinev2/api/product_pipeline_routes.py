@@ -63,6 +63,7 @@ from truelinev2.contracts.upload_pipeline import (
 from truelinev2.contracts.extracted_row import (
     CONFIRMED,
     ExtractedRowError,
+    ReReviewWouldDiscardCorrectionsError,
     new_extracted_row,
 )
 from truelinev2.extract.borelog_rows import (
@@ -342,7 +343,7 @@ def _to_http(exc: Exception) -> HTTPException:
         return HTTPException(status_code=404, detail=str(exc))
     if isinstance(exc, (IllegalTransitionError, UploadsClosedError, HandoffStateError,
                         CloseoutStateError, SourceAnchorStateError,
-                        ReviewAcceptanceStateError)):   # state conflicts
+                        ReviewAcceptanceStateError, ReReviewWouldDiscardCorrectionsError)):   # state conflicts
         return HTTPException(status_code=409, detail=str(exc))
     if isinstance(exc, (CrossProjectAccessError, IsolationError)):
         return HTTPException(status_code=403, detail=str(exc))

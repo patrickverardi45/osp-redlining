@@ -25,6 +25,8 @@ from truelinev2.contracts.extracted_row import (
     CONFIRMED,
     CORRECTED,
     REJECTED,
+    RE_REVIEW_WOULD_DISCARD_CORRECTIONS,
+    ReReviewWouldDiscardCorrectionsError,
     review_row,
     row_review_passes,
 )
@@ -209,12 +211,25 @@ def add_extracted_rows(store_root, customer_project_id, processing_job_id, revie
 def review_row_in_log(store_root, customer_project_id, processing_job_id, reviewed_bore_log_id, row_id,
                       to_status, *, at, by, reason=None, corrected_values=None) -> dict:
     """Apply an audited review decision (extracted_row.review_row) to one row, then persist. Returns the
-    updated record."""
+    updated record.
+
+    If the decision is a re-review to CONFIRMED that would DISCARD the row's existing corrected_values
+    (extracted_row.review_row's guard), the row's banked review state is left completely UNTOUCHED, but the
+    REFUSAL ATTEMPT ITSELF is still recorded in the reviewed_bore_log's audit trail and persisted (so a
+    blocked attempt is visible in history even though nothing changed) -- then the SAME error is re-raised
+    (the caller/route surfaces it as a 409, RE_REVIEW_WOULD_DISCARD_CORRECTIONS)."""
     rbl = load_reviewed_bore_log(store_root, customer_project_id, processing_job_id, reviewed_bore_log_id)
     row = _find_row(rbl, row_id)
     if row is None:
         raise RowNotFoundError("no row %r in %s" % (row_id, reviewed_bore_log_id))
-    review_row(row, to_status, at=at, by=by, reason=reason, corrected_values=corrected_values)
+    try:
+        review_row(row, to_status, at=at, by=by, reason=reason, corrected_values=corrected_values)
+    except ReReviewWouldDiscardCorrectionsError as exc:
+        rbl["audit"].append({"action": "row_review_refused", "at": at, "by": by, "row_id": row_id,
+                             "attempted_to": to_status, "code": RE_REVIEW_WOULD_DISCARD_CORRECTIONS,
+                             "reason": str(exc)})
+        write_reviewed_bore_log(store_root, rbl)
+        raise
     rbl["audit"].append({"action": "row_reviewed", "at": at, "by": by,
                          "row_id": row_id, "to": to_status, "reason": reason})
     write_reviewed_bore_log(store_root, rbl)
