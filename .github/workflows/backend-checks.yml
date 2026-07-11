@@ -74,4 +74,5 @@ jobs:
             truelinev2/tests/test_review_candidate.py \
             truelinev2/tests/test_station_dots.py \
             truelinev2/tests/test_station_marks.py \
+            truelinev2/tests/test_published_bundle_consumer_contract.py \
             -q
