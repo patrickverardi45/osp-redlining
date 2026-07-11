@@ -54,6 +54,11 @@ WARN_UNPARSEABLE = "STATION_SERIES_UNPARSEABLE"
 WARN_NOT_ASCENDING = "STATION_SERIES_NOT_ASCENDING"
 WARN_ENDPOINT_MISMATCH = "STATION_SERIES_ENDPOINT_MISMATCH"
 WARN_FOOTAGE_MISMATCH = "STATION_SERIES_FOOTAGE_MISMATCH"
+# Fix-wave F2 (blind-verify note 2): distinct from WARN_ENDPOINT_MISMATCH -- that code asserts a proven
+# INEQUALITY between two parseable values. When the ROW's own effective start/end station text itself
+# fails to parse, no such comparison was ever made; naming it ENDPOINT_MISMATCH would overstate what was
+# proven. This code names the actual, narrower fact: the row's own recorded endpoints are unreadable.
+WARN_ROW_ENDPOINTS_UNPARSEABLE = "STATION_SERIES_ROW_ENDPOINTS_UNPARSEABLE"
 
 DEFAULT_INTERVAL_FT = 50.0
 
@@ -156,7 +161,9 @@ def _validate_series(readings: List[Dict[str, Any]], start_station: Optional[str
     eff_start_ft = parse_station(start_station) if start_station else None
     eff_end_ft = parse_station(end_station) if end_station else None
     if eff_start_ft is None or eff_end_ft is None:
-        return None, WARN_ENDPOINT_MISMATCH
+        # The row's OWN recorded start/end station text doesn't parse -- nothing was actually compared,
+        # so this is NOT a proven mismatch (see WARN_ROW_ENDPOINTS_UNPARSEABLE's docstring).
+        return None, WARN_ROW_ENDPOINTS_UNPARSEABLE
     if abs(feet[0] - eff_start_ft) > _FT_EPS or abs(feet[-1] - eff_end_ft) > _FT_EPS:
         return None, WARN_ENDPOINT_MISMATCH
     if footage is None:

@@ -113,7 +113,7 @@ def test_no_series_absent_row_effective_fails_closed_to_none_when_footage_invali
 
 
 # --------------------------------------------------------------------------- #
-# The four named series-unusable warning codes -- each falls through to SPAN_ENDPOINTS, never guesses.
+# The named series-unusable warning codes -- each falls through to SPAN_ENDPOINTS, never guesses.
 # --------------------------------------------------------------------------- #
 def test_series_unparseable_falls_through_with_named_warning():
     readings = [_reading("3+50"), _reading("not-a-station")]
@@ -139,6 +139,20 @@ def test_series_endpoint_mismatch_falls_through_with_named_warning():
     marks, basis, warnings = SM.build_station_marks(
         row, footage=58.0, start_station="3+50", end_station="4+08")
     assert basis == SM.BASIS_SPAN_ENDPOINTS and warnings == [SM.WARN_ENDPOINT_MISMATCH]
+    assert marks is not None
+
+
+def test_series_row_endpoints_unparseable_is_distinct_from_endpoint_mismatch_f2():
+    """Fix-wave F2 (blind-verify note 2): when the ROW's own effective start/end station text is garbled
+    (unparseable), no comparison against the recorded readings was ever actually made -- this must NOT be
+    reported as STATION_SERIES_ENDPOINT_MISMATCH (which asserts a proven inequality); it gets its own,
+    narrower, named code."""
+    readings = [_reading("3+50"), _reading("4+08")]           # perfectly usable, parseable readings
+    row = _row(readings, start_station="garbled", end_station="4+08", footage_ft=58.0)
+    marks, basis, warnings = SM.build_station_marks(
+        row, footage=58.0, start_station="garbled", end_station="4+08")
+    assert basis == SM.BASIS_SPAN_ENDPOINTS and warnings == [SM.WARN_ROW_ENDPOINTS_UNPARSEABLE]
+    assert warnings != [SM.WARN_ENDPOINT_MISMATCH]
     assert marks is not None
 
 
