@@ -101,16 +101,8 @@ def _norm_key(k) -> str:
     return re.sub(r"[^a-z0-9]+", "_", str(k).strip().lower()).strip("_")
 
 
-def _effective_values(row: Dict[str, Any]) -> Dict[str, Any]:
-    """Effective row values by precedence raw < normalized < review.corrected_values (human CORRECTED wins
-    last). Keys normalized for alias matching. Reads a plain extracted_row dict; no schema coupling."""
-    merged: Dict[str, Any] = {}
-    layers = (row.get("raw"), row.get("normalized"), (row.get("review") or {}).get("corrected_values"))
-    for layer in layers:
-        if isinstance(layer, dict):
-            for k, v in layer.items():
-                merged[_norm_key(k)] = v
-    return merged
+def _normalized_layer(layer) -> Dict[str, Any]:
+    return {_norm_key(k): v for k, v in layer.items()} if isinstance(layer, dict) else {}
 
 
 def _pick(merged: Dict[str, Any], aliases: Tuple[str, ...]):
@@ -118,6 +110,28 @@ def _pick(merged: Dict[str, Any], aliases: Tuple[str, ...]):
         if a in merged and merged[a] not in (None, ""):
             return merged[a]
     return None
+
+
+def _pick_field(row: Dict[str, Any], aliases: Tuple[str, ...]):
+    """Resolve ONE logical field with PER-FIELD overlay precedence:
+    ``review.corrected_values`` wins OVER raw/normalized ENTIRELY for this field the moment corrected_values
+    carries ANY of the field's aliases -- this is what makes a human CORRECTION visible to the adapter
+    (e.g. a CORRECTED footage_ft the per-row review route persisted at ``row["review"]["corrected_values"]``
+    must be readable here, not shadowed by a differently-spelled raw column). An EXPLICIT null/empty
+    correction CLEARS the field (returns None) and never falls back to raw/normalized -- a human explicitly
+    blanking a value is a decision, not an omission; a required field left cleared then declines honestly.
+    Only when corrected_values has NONE of the field's aliases at all does resolution fall back to
+    raw < normalized (existing precedence, unchanged) -- so a TABLE_IMPORT/MANUAL_ENTRY/TEXT_PARSE row with
+    no corrections resolves EXACTLY as before this evolution (byte-identical)."""
+    corrected = _normalized_layer((row.get("review") or {}).get("corrected_values"))
+    for a in aliases:
+        if a in corrected:
+            v = corrected[a]
+            return v if v not in (None, "") else None
+    merged: Dict[str, Any] = {}
+    merged.update(_normalized_layer(row.get("raw")))
+    merged.update(_normalized_layer(row.get("normalized")))
+    return _pick(merged, aliases)
 
 
 def _coerce_ft(value) -> Optional[float]:
@@ -187,9 +201,8 @@ def bore_from_reviewed_rows(rbl: dict, *, source_filename: str) -> Tuple[Optiona
     if row is None:
         return None, ZERO_ELIGIBLE_ROWS
 
-    merged = _effective_values(row)
-    start_raw = _pick(merged, _FIELD_ALIASES["start_station"])
-    end_raw = _pick(merged, _FIELD_ALIASES["end_station"])
+    start_raw = _pick_field(row, _FIELD_ALIASES["start_station"])
+    end_raw = _pick_field(row, _FIELD_ALIASES["end_station"])
     start_ft = parse_station(start_raw) if start_raw is not None else None
     end_ft = parse_station(end_raw) if end_raw is not None else None
     if start_ft is None or end_ft is None:
@@ -198,7 +211,10 @@ def bore_from_reviewed_rows(rbl: dict, *, source_filename: str) -> Tuple[Optiona
     extraction_method = (row.get("extraction") or {}).get("extraction_method")
 
     detail = None
-    footage_raw = _pick(merged, _FIELD_ALIASES["footage"])
+    # A CORRECTED footage counts as explicit HUMAN footage even for an OCR row -- that IS what a human
+    # correction is for (see _pick_field's overlay precedence); only a raw-only DERIVED footage on an OCR
+    # row is untrusted arithmetic and declines below.
+    footage_raw = _pick_field(row, _FIELD_ALIASES["footage"])
     if footage_raw is not None:
         # Footage field is PRESENT (a non-empty alias key) -- trust it or decline; NEVER fall back to the
         # station delta here (that fallback is reserved for a truly absent field, below).
@@ -220,9 +236,9 @@ def bore_from_reviewed_rows(rbl: dict, *, source_filename: str) -> Tuple[Optiona
         footage = delta
         detail = FOOTAGE_FROM_STATION_DELTA
 
-    sheet_refs = _coerce_int_list(_pick(merged, _FIELD_ALIASES["sheet_refs"]))
-    print_raw = _as_str(_pick(merged, _FIELD_ALIASES["print_raw"]))
-    depth_min_ft = _coerce_ft(_pick(merged, _FIELD_ALIASES["depth"]))
+    sheet_refs = _coerce_int_list(_pick_field(row, _FIELD_ALIASES["sheet_refs"]))
+    print_raw = _as_str(_pick_field(row, _FIELD_ALIASES["print_raw"]))
+    depth_min_ft = _coerce_ft(_pick_field(row, _FIELD_ALIASES["depth"]))
 
     bore = Bore(
         bore_id=rbl["reviewed_bore_log_id"],

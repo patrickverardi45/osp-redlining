@@ -203,6 +203,51 @@ def test_extract_descending_only_page_400_with_page_ledger_detail(tmp_path):
 
 
 # --------------------------------------------------------------------------- #
+# Route-level E2E: a per-row CORRECTED footage persisted via the REAL review route must be visible to the
+# reviewed-row engine adapter (regression -- the adapter previously could not see corrections the route
+# actually wrote, so an OCR row with a human-corrected footage still declined OCR_ROW_REQUIRES_EXPLICIT_FOOTAGE).
+# --------------------------------------------------------------------------- #
+def test_ocr_row_corrected_footage_via_real_route_reaches_engine(tmp_path):
+    from truelinev2.contracts.reviewed_bore_adapter import bore_from_reviewed_rows
+    from truelinev2.contracts.reviewed_bore_log import load_reviewed_bore_log
+
+    c, ctx = _container(tmp_path, handwritten=True), _ctx("cp-aaa")
+    _job(c, ctx)
+    ppr.register_upload("job-1", ppr.UploadRegister(
+        kind="PLAN_PDF", filename="plan.pdf", content_base64=_b64(_pdf_bytes([["hi"]]))), ctx=ctx, c=c)
+    bore_up = ppr.register_upload("job-1", ppr.UploadRegister(
+        kind="BORE_LOG", filename="scan.csv", content_base64=_b64(b"not,a,workbook")), ctx=ctx, c=c)
+    ppr.create_bore_log_review("job-1", ppr.ReviewedBoreLogCreate(
+        reviewed_bore_log_id="rbl-1", source_upload_id=bore_up["upload_id"]), ctx=ctx, c=c)
+    # An OCR-method row with NO explicit footage (matches the handwritten tier's raw shape: footage_ft is
+    # dropped by design for OCR rows -- see extract/borelog_rows.py's OCR-only preflight lock).
+    ppr.add_rows("job-1", "rbl-1", ppr.RowsAdd(rows=[ppr.ExtractedRowInput(
+        row_id="row-1", source_upload_id=bore_up["upload_id"],
+        raw={"start_station": "0+00", "end_station": "1+50"},
+        normalized={"start_station": "0+00", "end_station": "1+50"},
+        extraction_method="OCR")]), ctx=ctx, c=c)
+    # Per-row CORRECTED review via the REAL route body -- this is what actually persists corrected_values.
+    ppr.review_row_route("job-1", "rbl-1", "row-1",
+                         ppr.RowReview(to_status=CORRECTED, corrected_values={"footage_ft": 895}),
+                         ctx=ctx, c=c)
+    ppr.define_group("job-1", "rbl-1", ppr.SegmentGroupCreate(
+        group_id="g-1", member_row_ids=["row-1"], relation="SEPARATE_BORE"), ctx=ctx, c=c)
+    ppr.set_group_status("job-1", "rbl-1", "g-1", ppr.GroupingStatus(to_status="CONFIRMED"), ctx=ctx, c=c)
+
+    # Read back the SAME persisted record the adapter reads (fresh from disk -- proves round-trip, not an
+    # in-memory artifact of the route call).
+    rbl_record = load_reviewed_bore_log(c.settings.product_store_root, "cp-aaa", "job-1", "rbl-1")
+    bore, detail = bore_from_reviewed_rows(rbl_record, source_filename="scan.csv")
+    assert bore is not None and bore.span_ft == 895.0
+
+    # And the full workflow reaches the engine (never dead-ends on the reviewed-row adapter declining).
+    out = ppr.run_product_redline_route("job-1", ctx=ctx, c=c)
+    codes = {b["code"] for b in out["blockers"]}
+    from truelinev2.contracts import uploaded_corpus_engine_handoff as uce
+    assert uce.BORE_LOG_FORMAT_UNRECOGNIZED not in codes
+
+
+# --------------------------------------------------------------------------- #
 # Row-review matrix (CONFIRMED / CORRECTED / bad-body-400 / cross-tenant-404).
 # --------------------------------------------------------------------------- #
 def _rbl_with_one_row(c, ctx, job_id="job-1", rbl_id="rbl-1"):
