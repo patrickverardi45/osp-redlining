@@ -151,6 +151,10 @@ def _validate_series(readings: List[Dict[str, Any]], start_station: Optional[str
     treatment (the approved span remains the truth, owner clause 6)."""
     feet: List[float] = []
     for entry in readings:
+        # Fix-wave B1 (Sol xhigh verification): the row is UNTRUSTED input -- a malformed entry (None, a
+        # bare string/number, anything not a cell-bearing dict) must fall back honestly, never raise.
+        if not isinstance(entry, dict):
+            return None, WARN_UNPARSEABLE
         f = _station_feet(entry.get("station"))
         if f is None:
             return None, WARN_UNPARSEABLE
@@ -188,7 +192,11 @@ def _series_marks(readings: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
             "station": _cell_str(sta_cell),
             "depth": _cell_str(entry.get("depth_ft")),
             "boc": _cell_str(entry.get("boc_ft")),
-            "notes": None,          # the ladder's per-reading cells carry no per-station notes field
+            # Fix-wave B3 (Sol xhigh verification): read THIS entry's OWN "notes" cell, the SAME
+            # cell-value pattern as depth_ft/boc_ft -- honestly None when this reading carries no note
+            # (never the row-level notes value, which is a DIFFERENT, bore-scoped fact -- see
+            # render/source_anchor_render.py's info["notes"], attached separately and never here).
+            "notes": _cell_str(entry.get("notes")),
             "station_evidence": _station_evidence(sta_cell),
         })
     return marks
@@ -199,7 +207,8 @@ def _endpoint_mark(reading: Dict[str, Any], footage_along: float) -> Dict[str, A
     return {
         "footage_along": round(footage_along, 2), "origin": SOURCE_RECORDED,
         "station": _cell_str(sta_cell), "depth": _cell_str(reading.get("depth_ft")),
-        "boc": _cell_str(reading.get("boc_ft")), "notes": None,
+        "boc": _cell_str(reading.get("boc_ft")),
+        "notes": _cell_str(reading.get("notes")),          # fix-wave B3: this entry's OWN note cell only
         "station_evidence": _station_evidence(sta_cell),
     }
 

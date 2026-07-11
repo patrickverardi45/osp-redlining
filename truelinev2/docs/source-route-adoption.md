@@ -528,12 +528,15 @@ contract; the reader-survey row for `render/station_dots.py` above is superseded
 
 - **`STATION_SERIES`** (a usable recorded series of > 2 readings): marks are EXACTLY the recorded stations
   (irregular intervals and a < 50' final interval included by construction), every one `SOURCE_RECORDED`,
-  each carrying that reading's own depth/BOC + `station_evidence` (verbatim/status/confidence). No derived
-  fill ever mixes into a genuinely recorded series.
+  each carrying that reading's own depth/BOC/notes (fix-wave B3: read from THAT entry's own cell, honestly
+  absent when the entry carries none — never a row-level value leaking onto a mark that lacks its own) +
+  `station_evidence` (verbatim/status/confidence). No derived fill ever mixes into a genuinely recorded
+  series.
 - **`SERIES_ENDPOINTS_WITH_DERIVED_FILL`** (a usable recorded series of exactly 2 readings — start/end/
-  total-only logs, e.g. the WP23 shape): the two recorded endpoints (`SOURCE_RECORDED`, with values +
-  evidence) plus interior every-50' fill dots tagged `DERIVED_INTERVAL` (arithmetic station label, no depth/
-  BOC/notes/evidence — derivation is honestly marked, never presented as recorded).
+  total-only logs, e.g. the WP23 shape): the two recorded endpoints (`SOURCE_RECORDED`, with per-entry
+  values + evidence, including notes when that entry carries one) plus interior every-50' fill dots tagged
+  `DERIVED_INTERVAL` (arithmetic station label, no depth/BOC/notes/evidence — derivation is honestly
+  marked, never presented as recorded).
 - **`SPAN_ENDPOINTS`** (no recorded series at all — the ordinary generic TABLE_IMPORT row, or a recorded
   series rejected as unusable): the row's own recorded start/end station text (`SOURCE_RECORDED`, no
   per-station depth/BOC — the row's bore-level values are not station readings) plus the same tagged
@@ -603,3 +606,23 @@ given them, rather than asserting schema-requiredness) and a deliberate lock upd
 depth/BOC/notes — see that test's docstring for the owner-contract citation).
 `test_source_route_adoption_api.py::test_adopted_record_station_dots_ride_the_n_point_path` gains an
 `origin`-tag assertion and now doubles as the adoption-lane position-equality lock.
+
+**Fix-wave B1/B2/B3 (Sol xhigh final verification)**:
+- **B1** (`contracts/station_marks.py::_validate_series`): `station_readings` is UNTRUSTED reviewed-row
+  data -- a malformed entry (`None`, a bare string/number, anything not a cell-bearing dict) now fails
+  closed to `WARN_UNPARSEABLE` + the `SPAN_ENDPOINTS` fallback instead of raising on `entry.get(...)`.
+  Locked by `test_all_null_station_readings_falls_back_without_raising_b1`,
+  `test_mixed_valid_and_malformed_station_readings_falls_back_without_raising_b1`,
+  `test_non_list_station_readings_value_falls_back_without_raising_b1`.
+- **B2** (`api/product_pipeline_routes.py::_validate_reported_route_search`): `upstream_reason_code`'s
+  shape check now uses `.fullmatch()` instead of `.match()` -- Python's `$` anchor matches immediately
+  before a trailing `\n`, so `.match()` against `^[A-Z][A-Z0-9_]{0,63}$` let a value like
+  `"NO_SOURCE_CONFIRMED_SPAN\n"` through. Locked by 4 new tests in
+  `test_source_anchor_manual_route.py`: trailing newline / embedded newline (both 400), exactly 64 chars
+  (accepted, the true boundary), 65 chars (400).
+- **B3** (`contracts/station_marks.py::_series_marks`/`_endpoint_mark`): a recorded reading's OWN `notes`
+  cell (same cell-value pattern as `depth_ft`/`boc_ft`) is now attached to its mark when present, instead
+  of being hard-coded `None`; the row-level `notes` value never leaks onto a mark that lacks its own, and
+  derived-fill marks still never carry notes. Locked by
+  `test_series_gt2_carries_per_entry_notes_only_where_present_b3` and
+  `test_series_eq2_endpoint_notes_present_only_on_the_entry_that_carries_one_b3`.

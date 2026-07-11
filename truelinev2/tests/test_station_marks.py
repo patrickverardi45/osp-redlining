@@ -11,8 +11,9 @@ def _cell(value, verbatim=None, status="READ", confidence="MEDIUM", region=None)
     return {"value": value, "verbatim": verbatim, "status": status, "confidence": confidence, "region": region}
 
 
-def _reading(station, depth=None, boc=None, *, station_verbatim=None, row_index=0, column_index=0):
-    return {
+def _reading(station, depth=None, boc=None, *, station_verbatim=None, row_index=0, column_index=0,
+            notes=None):
+    reading = {
         "station": _cell(station, verbatim=station_verbatim or ("STA %s" % station)),
         "depth_ft": _cell(depth) if depth is not None else {"value": None, "verbatim": None,
                                                             "status": "NOT_PRESENT", "confidence": None,
@@ -21,6 +22,9 @@ def _reading(station, depth=None, boc=None, *, station_verbatim=None, row_index=
                                                       "confidence": None, "region": None},
         "column_index": column_index, "row_index": row_index,
     }
+    if notes is not None:                      # fix-wave B3: an optional per-reading notes cell
+        reading["notes"] = _cell(notes)
+    return reading
 
 
 def _row(readings=None, **raw_extra):
@@ -195,3 +199,71 @@ def test_len_1_series_is_treated_as_no_series():
     marks, basis, warnings = SM.build_station_marks(
         row, footage=58.0, start_station="3+50", end_station="4+08")
     assert basis == SM.BASIS_SPAN_ENDPOINTS and warnings == []           # not a "rejected series", just none
+
+
+# --------------------------------------------------------------------------- #
+# Fix-wave B1 (Sol xhigh verification): station_readings is UNTRUSTED reviewed-row data -- a malformed
+# entry must fall back honestly (SPAN_ENDPOINTS + a named warning), never raise.
+# --------------------------------------------------------------------------- #
+def test_all_null_station_readings_falls_back_without_raising_b1():
+    row = _row([None, None], start_station="3+50", end_station="4+08", footage_ft=58.0)
+    marks, basis, warnings = SM.build_station_marks(
+        row, footage=58.0, start_station="3+50", end_station="4+08")
+    assert basis == SM.BASIS_SPAN_ENDPOINTS and warnings == [SM.WARN_UNPARSEABLE]
+    assert marks is not None and [m["footage_along"] for m in marks] == [0.0, 50.0, 58.0]
+
+
+def test_mixed_valid_and_malformed_station_readings_falls_back_without_raising_b1():
+    readings = [_reading("3+50"), "garbage", 5]
+    row = _row(readings, start_station="3+50", end_station="4+08", footage_ft=58.0)
+    marks, basis, warnings = SM.build_station_marks(
+        row, footage=58.0, start_station="3+50", end_station="4+08")
+    assert basis == SM.BASIS_SPAN_ENDPOINTS and warnings == [SM.WARN_UNPARSEABLE]
+    assert marks is not None
+
+
+def test_non_list_station_readings_value_falls_back_without_raising_b1():
+    """A ``station_readings`` value that is present but not a list at all (e.g. a stray string/dict) is
+    treated as "this row never had a series" -- the ordinary, unremarkable SPAN_ENDPOINTS case (no
+    warning; it never reached series validation at all) -- and, crucially, never raises."""
+    row = _row(None, start_station="3+50", end_station="4+08", footage_ft=58.0,
+              station_readings="not-a-list")
+    marks, basis, warnings = SM.build_station_marks(
+        row, footage=58.0, start_station="3+50", end_station="4+08")
+    assert basis == SM.BASIS_SPAN_ENDPOINTS and warnings == []
+    assert marks is not None
+
+
+# --------------------------------------------------------------------------- #
+# Fix-wave B3 (Sol xhigh verification): a recorded reading's OWN "notes" cell is attached to its mark
+# when present (the SAME cell-value pattern as depth_ft/boc_ft) -- never a row-level notes value, and
+# never on a derived-fill mark.
+# --------------------------------------------------------------------------- #
+def test_series_gt2_carries_per_entry_notes_only_where_present_b3():
+    readings = [
+        _reading("0+00", depth=5.0, boc=8.0, row_index=0, notes="soft soil"),
+        _reading("0+62", depth=6.0, boc=9.0, row_index=1),                       # no note on THIS entry
+        _reading("1+20", depth=5.5, boc=8.5, row_index=2, notes="rock"),
+    ]
+    row = _row(readings, start_station="0+00", end_station="1+20", footage_ft=120.0, notes="ROW-LEVEL NOTE")
+    marks, basis, warnings = SM.build_station_marks(
+        row, footage=120.0, start_station="0+00", end_station="1+20")
+    assert basis == SM.BASIS_STATION_SERIES and warnings == []
+    assert marks[0]["notes"] == "soft soil"
+    assert marks[1]["notes"] is None            # honestly absent -- never the row-level value leaking in
+    assert marks[2]["notes"] == "rock"
+
+
+def test_series_eq2_endpoint_notes_present_only_on_the_entry_that_carries_one_b3():
+    readings = [
+        _reading("3+50", depth=5.0, boc=8.0, row_index=0, notes="start note"),
+        _reading("4+08", depth=5.0, boc=8.0, row_index=1),                       # no note
+    ]
+    row = _row(readings, start_station="3+50", end_station="4+08", footage_ft=58.0, notes="ROW-LEVEL NOTE")
+    marks, basis, warnings = SM.build_station_marks(
+        row, footage=58.0, start_station="3+50", end_station="4+08")
+    assert basis == SM.BASIS_SERIES_ENDPOINTS_WITH_DERIVED_FILL and warnings == []
+    assert marks[0]["notes"] == "start note"
+    assert marks[2]["notes"] is None                     # the end entry carries no note of its own
+    # the derived interior fill NEVER carries notes, even though both endpoint entries have a notes cell.
+    assert marks[1]["origin"] == SM.DERIVED_INTERVAL and marks[1]["notes"] is None
