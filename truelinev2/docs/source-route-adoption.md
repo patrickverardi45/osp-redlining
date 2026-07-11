@@ -372,3 +372,141 @@ segments after the fact) is DELETED: it manufactured exactly the segment boundar
 fixture's refusal into a success, so it could not prove adoption against the unmodified spine. All 7
 pre-existing `complete_package_qa` scenarios (including `complete_ready` itself) are unchanged — `bent_ready` is
 purely additive.
+
+---
+
+## Mission 8 — manual N-point polyline / honest representative fallback (`manual_route`)
+
+**Design authority**: `.foreman/scratch/m8/design.md` (mission + scout facts + base design) +
+`.foreman/scratch/m8/design-final.md` (Sol adversarial-review amendments — SUPERSEDES `design.md` wherever
+they differ; binds the exact 21-code vocabulary, the 4 error codes, and the schema/publisher/closeout/README
+amendments this section documents as SHIPPED).
+
+**Motivation**: source-route adoption (above) is stateless and can honestly refuse (`ROUTE_EVIDENCE_NOT_READY`
+and the rest of the 21-code taxonomy). Before this mission, a refused search left the customer with an
+UNLABELED 2-point straight fallback chord that rendered across houses/aerial imagery looking like a finished
+engineered route — the exact defect the owner's Brenham screenshot showed. `manual_route` closes it: the
+operator either explicitly accepts an honestly-labeled "representative straight segment", or adds/moves/
+removes bend points into a manual polyline, and must EXPLICITLY confirm before anything is stored.
+
+### Flag — `TL2_SOURCE_ANCHOR_MANUAL_ROUTE_OPTIN`
+
+Default OFF. `Settings.source_anchor_manual_route_optin: bool = False`. **Independent** of the three-way
+`source_route_adoption_api_optin` gate above — manual confirmation needs no readiness spine / observer
+backbone at all, so it is checked on its own. Both may be enabled together; a single create request may
+never carry both `route_adoption` and `manual_route` regardless of either flag's state (see "Mutual
+exclusion" below).
+
+**OFF is byte-identical**: with the flag OFF, a request that carries the optional `manual_route` block is
+refused `400 MANUAL_ROUTE_NOT_ENABLED` before any manual-route validation/derivation runs; a BLOCKLESS
+request (the overwhelming common case) follows the EXISTING unchanged v1/v2 create path verbatim regardless
+of this flag's value — same record bytes, same response bytes (test-locked byte-for-byte:
+`test_blockless_create_is_byte_identical_flag_off_vs_on`). `contracts.source_route_adoption` is imported
+ONLY, and lazily, for the `reported_route_search` taxonomy check (see below) — a request that clears every
+earlier gate but omits `reported_route_search`, or one refused before reaching that check, never imports it
+(subprocess-isolated: `test_flag_off_never_imports_the_route_adoption_module`).
+
+### Wire contract (snake_case, additive on the EXISTING `SourceAnchorCreate` body)
+
+```json
+{"manual_route": {
+  "confirmed": true,
+  "representative_status": "MANUAL_POLYLINE_CONFIRMED" | "REPRESENTATIVE_STRAIGHT_ACCEPTED",
+  "reported_route_search": {"code": "<one of 21>", "upstream_reason_code": "<^[A-Z][A-Z0-9_]{0,63}$>" | null}
+}}
+```
+
+`reported_route_search` is OPTIONAL and, when present, is **client-attested session metadata, NEVER
+server-verified** — it echoes the route-search refusal the operator's OWN session received before deciding
+to confirm a manual/representative route. It has ZERO effect on geometry, render, billing, tier, or
+acceptance; it exists purely so the closeout record can honestly say "the operator's session reported
+refusal X" (never "the server verified refusal X"). This is the SAME trust posture as a free-text notes
+field, made vocabulary-bound rather than free text.
+
+### Validation (order, code-first 400 details unless noted)
+
+1. **Mutual exclusion** — `manual_route` AND `route_adoption` both present → `400
+   MANUAL_ROUTE_PROVENANCE_CONFLICT`. Validated BEFORE either provenance branch runs, and fires regardless of
+   either flag's state (a request this malformed is refused on shape, not on feature availability).
+2. **Flag gate** — `manual_route` present + flag OFF → `400 MANUAL_ROUTE_NOT_ENABLED`.
+3. **`confirmed` literal** — `confirmed != true` (well-typed `false`) → `400 MANUAL_ROUTE_INVALID`. A
+   **missing** `confirmed` (or any other required field) is FastAPI's own framework-standard `422` — never
+   reaches product code (same 400-vs-422 convention as `route_adoption`, proven at the real ASGI boundary:
+   `test_confirmed_missing_is_422_via_real_endpoint`).
+4. **Count↔status consistency** — exactly 2 `control_points` requires `REPRESENTATIVE_STRAIGHT_ACCEPTED`;
+   `>= 3` requires `MANUAL_POLYLINE_CONFIRMED`; a mismatch (in EITHER direction, including a count `< 2`, for
+   which no status is ever valid) → `400 MANUAL_ROUTE_STATUS_MISMATCH`. No non-collinearity test, no count
+   ceiling — matches `route_adoption`'s own "no maximum, only a floor" discipline
+   (`contracts/source_anchor.py::MIN_CONTROL_POINTS`).
+5. **Zero-total-length rejection** — a manual polyline whose control points sum to zero total arc length
+   (e.g. two or more identical points) → `400 MANUAL_ROUTE_INVALID`, even when the count↔status rule would
+   otherwise "match" (an all-identical 2-point submission is really a single point, not a representative
+   segment).
+6. **`reported_route_search` taxonomy** (only when present) — `code` must be one of the EXACT 21 codes the
+   `POST .../source-route-proposals` endpoint can actually return over HTTP 200: `ALL_REFUSAL_CODES -
+   {MALFORMED_CONTROL_POINTS}` (the five create-time `ROUTE_ADOPTION_*` exception codes are never members of
+   `ALL_REFUSAL_CODES` to begin with — a SEPARATE vocabulary — so no further subtraction is needed).
+   `MALFORMED_CONTROL_POINTS` itself is a REAL code the derivation module defines, but the proposal endpoint
+   400s before it can ever be RETURNED as a refusal payload, so it is rejected here too. An unrecognized code
+   → `400 MANUAL_ROUTE_INVALID`. Cross-field invariant: `code == ROUTE_EVIDENCE_NOT_READY` REQUIRES a non-null
+   `upstream_reason_code` matching `^[A-Z][A-Z0-9_]{0,63}$` (open vocabulary upstream, shape-bound only); ANY
+   OTHER code REQUIRES `upstream_reason_code` to be null/absent. Either direction violated → `400
+   MANUAL_ROUTE_INVALID`. This is the ONLY validation step that imports `contracts.source_route_adoption`
+   (lazily, `api/product_pipeline_routes.py::_validate_reported_route_search`).
+
+### Refusal-order note (TRUTHFUL, mirrors the route_adoption ordering above)
+
+Duplicate-anchor / job / page-bounds resolution (the SAME preamble every create request runs — 409 on a
+pre-existing id, 404 on a missing job) happens BEFORE the mutual-exclusion or flag checks — never after. This
+is stated plainly because it would be easy to assume "flag check first": it is not; resource resolution is
+first, exactly like the pre-existing `route_adoption` ordering
+(`product_pipeline_routes.py:1690` vs the mutual-exclusion/flag checks that follow it).
+
+### Server-authored record block (`create_source_anchor_v2`, `manual_route` mode)
+
+```json
+{"record_format": "trueline-source-anchor-2", "geometry_basis": "HUMAN_CLICKED_POLYLINE",
+ "confirmation_state": "HUMAN_REVIEWED",
+ "manual_route": {
+   "representative_status": "...", "intermediate_point_count": 2,
+   "human_control_points": {"start": {"x":..,"y":..}, "end": {"x":..,"y":..}, "intermediate": [...]},
+   "reported_route_search": {"code": "...", "upstream_reason_code": null} ,
+   "confirmed_by": "<ctx.session_id>", "confirmed_at": "<UTC iso>"
+ }}
+```
+
+`human_control_points` is derived from the SAME normalized point list stored in `control_points`
+(`_normalize_points`'s own float conversion) — never from a separate raw echo, so "exact" means numerically
+unchanged after that normalization, never raw JSON bytes. Audit gains one entry, `"manual_route_confirmed"`.
+`create_source_anchor_v2` now accepts two MUTUALLY EXCLUSIVE optional modes, `route_adoption` / `manual_route`
+— exactly one required; the `route_adoption` branch's record construction is BYTE-FOR-BYTE UNCHANGED (values
+AND key order) from before this mission.
+
+### Readers (Q4/Q9 — split by ACTUAL provenance block, never a bare truthy `geometry_basis`)
+
+A manual v2 record ALSO carries `geometry_basis` now (`HUMAN_CLICKED_POLYLINE`), so every reader that used to
+treat truthy `geometry_basis` as "this is an adopted record" was corrected to branch on the record's ACTUAL
+block instead:
+
+| Consumer | Behavior |
+|---|---|
+| `contracts/source_anchor.py::build_source_anchor_manifest` | Emits `geometry_basis`/`confirmation_state`/`render_control_points` whenever present, THEN emits `route_adoption` only if the record's OWN `route_adoption` is non-null, `manual_route` only if the record's OWN `manual_route` is non-null — never synthesizes a null-filled `route_adoption` for a manual record. |
+| `contracts/redline_manifest.schema.json` | `geometry_basis` enum gains `HUMAN_CLICKED_POLYLINE`; a new whitelisted `manual_route` object (schema stays CLOSED — `additionalProperties:false`). |
+| `contracts/redline_manifest_publisher.py::reconciliation_errors` | Gains four semantic checks per log: both `route_adoption` AND `manual_route` present → error; `route_adoption` present but `geometry_basis != OBSERVER_BACKBONE_HUMAN_ADOPTED` → error; `manual_route` present but `geometry_basis != HUMAN_CLICKED_POLYLINE` → error; `geometry_basis` present but its matching block is absent → error. |
+| `contracts/closeout_pdf.py` (Artifact Detail, §5) | Branches on `log.get("route_adoption") is not None` (adoption wording, BYTE-UNCHANGED) vs `log.get("manual_route") is not None` (new: representative-status wording + confirming session + `"reported route-search refusal: <CODE>"` (+ upstream) when present) — NEVER on `geometry_basis` truthiness. |
+| `contracts/export_bundle.py` README | The unconditional "the engine's ... never invented" sentence is FALSE for a manual record; branched to an honest "reviewer's OWN confirmed control points" sentence ONLY when the manifest carries ANY `manual_route` block. v1 + adoption-only exports stay byte-identical. |
+
+### Tests
+
+`truelinev2/tests/test_source_anchor_manual_route.py` (new; added to the CI targeted list): settings default/
+env, blockless byte-identity flag OFF vs ON (stored-file + response bytes), flag-off 400, happy paths (2-point
+representative + 4-point manual polyline, exact server-authored block shape + audit action), `row_ids` 0..many
+(unlike adoption's exactly-one rule), `confirmed` false/missing (400 vs 422), count↔status mismatch both
+directions, zero-length rejection (2-point and N-point), the full `reported_route_search` taxonomy (accepted
+code, `ROUTE_EVIDENCE_NOT_READY` cross-field both directions, unknown code, `MALFORMED_CONTROL_POINTS`,
+a `ROUTE_ADOPTION_*` code), the flag-off subprocess import-isolation proof, mutual-exclusion (including with
+both flags off), manifest split-emission + schema validation, four publisher reconciliation-error unit tests
++ one clean-pass unit test, closeout wording (manual polyline / representative straight / v1+adoption
+unaffected), ZIP README honesty (manual vs v1 byte-unchanged), station dots riding a manual 4-point polyline
+(exact `<= 1e-9` on-polyline distance + `xy_display == round(exact, 2)`, mirroring the adoption suite's own
+rigor), and tenant isolation.
